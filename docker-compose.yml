@@ -1,0 +1,19 @@
+version: '3'
+
+services:
+  xchain_address_indexer:
+    build: .
+    volumes:
+      - xchain_address_indexer_data:/data/
+    networks: 
+      - network1
+    ports:
+      - "3000:3000"
+      
+networks:
+  network1:
+    name: xchain_network
+    external: true
+    
+volumes:
+  xchain_address_indexer_data:
