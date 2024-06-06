@@ -2,8 +2,9 @@ const axios = require('axios');
 axios.defaults.timeout = 5000
 
 class BlockchainConnector {
-	constructor(url, rpcUser, rpcPassword) {
-		this.url = url
+	constructor(url, port, rpcUser, rpcPassword) {
+		this.url = "http://"+url+":"+port
+		this.port = port
 		this.rpcUser = rpcUser
 		this.rpcPassword = rpcPassword
 	}

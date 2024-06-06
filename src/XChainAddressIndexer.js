@@ -20,9 +20,9 @@ const SATOSHI_UNIT = 100000000.0
 const MEMPOOL_INTERVAL = 60000
 
 class XChainAddressIndexer {
-	constructor(network, nodeUrl, nodeUser, nodePassword, dbName) {
+	constructor(network, nodeUrl, nodePort, nodeUser, nodePassword, dbName) {
       this.network = CryptoNetworks.getBitcoinJsNetwork(network)
-	  this.connector = new BlockchainConnector(nodeUrl, nodeUser, nodePassword)
+	  this.connector = new BlockchainConnector(nodeUrl, nodePort, nodeUser, nodePassword)
 	  this.dbName = dbName
 	  
 	  this.db = null
