@@ -6,6 +6,6 @@ WORKDIR /XChainAddressIndexer
 RUN npm install
 
 COPY ./src /XChainAddressIndexer/src
-COPY ./.env /XChainAddressIndexer/.env
+COPY ./.en[v] /XChainAddressIndexer/.env
 
 CMD ["npm", "run", "api"]
