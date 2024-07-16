@@ -17,6 +17,7 @@ const NODE_URL =  process.env.NODE_URL
 const NODE_PORT =  process.env.NODE_PORT
 const NODE_USER =  process.env.NODE_USER
 const NODE_PASSWORD =  process.env.NODE_PASSWORD
+const ADDRESS_INDEXER_API_PORT = process.env.ADDRESS_INDEXER_API_PORT
 const DB_NAME =  "xchain-address-indexer"
 
 async function startApi(){
@@ -72,8 +73,8 @@ async function startApi(){
 
 
 	// Start the server
-	app.listen(3000, () => {
-	  console.log('API listening on port 3000');
+	app.listen(ADDRESS_INDEXER_API_PORT, () => {
+	  console.log('API listening on port '+ADDRESS_INDEXER_API_PORT);
 	});
 }
 
