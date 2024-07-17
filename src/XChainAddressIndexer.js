@@ -331,7 +331,7 @@ class XChainAddressIndexer {
 					let msLeft = (this.blockchainInfoLastBlock - nextBlockHeight)*msPerBlock
 					
 					if (msLeft > 0){
-						let msLeftFormatted = this.millisecondsToTimeString(msLeftFormatted)
+						let msLeftFormatted = this.millisecondsToTimeString(msLeft)
 						console.log("Estimated time to finish: "+msLeftFormatted)
 					}
 					
