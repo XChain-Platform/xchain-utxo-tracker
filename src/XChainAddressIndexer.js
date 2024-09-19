@@ -344,7 +344,7 @@ class XChainAddressIndexer {
 		}
 	}
 	
-	updateMempool(){
+	async updateMempool(){
 		if (!this.mempoolBusy){
 			let mempoolStartTime = Date.now()
 			//console.log("Mempool is not busy!")
