@@ -10,6 +10,7 @@ const fs = require('fs')
 const LevelUpStore = require('./LevelUpDb.js')
 const BlockchainConnector = require('./BlockchainConnector.js')
 const CryptoNetworks = require('./CryptoNetworks')
+const bs = require("binary-search")
 
 const CHECK_BLOCK_DELAY_MS = 1000 //1 second to continously ask for new block when all has been parsed
 const DB_TRANSACTION_BLOCKS_QUANTITY = 100
@@ -18,6 +19,7 @@ const PARSE_MODE_BULK_INSERTS = 1
 const SYNCED_THRESHOLD = 3
 const SATOSHI_UNIT = 100000000.0
 const MEMPOOL_INTERVAL = 60000
+const MEMPOOL_BATCH_SIZE = 1000
 
 class XChainAddressIndexer {
 	constructor(network, nodeUrl, nodePort, nodeUser, nodePassword, dbName) {
@@ -349,9 +351,22 @@ class XChainAddressIndexer {
 			let mempoolStartTime = Date.now()
 			//console.log("Mempool is not busy!")
 			this.mempoolBusy = true
-			let rawMempool = null
+			let rawMempool = []
 			try {
-				rawMempool = await this.connector.getRawMempool()
+				let rawMempoolUnordered = await this.connector.getRawMempool()
+				
+				for (let nextUnorderedItemIndex in rawMempoolUnordered){
+					let nextUnorderedItem = rawMempoolUnordered[nextUnorderedItemIndex]
+					
+					let newIndex = bs(rawMempool, nextUnorderedItem, function(element, needle) { return needle.localeCompare(element) })
+					
+					if (newIndex < 0){
+						rawMempool.splice(-newIndex-1, 0, nextUnorderedItem)
+					}
+				}
+				
+				
+				
 			} catch (error){
 				console.log("There were problems getting the mempool, trying again later.")
 				return
@@ -371,19 +386,41 @@ class XChainAddressIndexer {
 			let deletedInputsCount = deletedInfo.inputsDeleted
 			let deletedOutputsCount = deletedInfo.outputsDeleted
 			
-			for (let nextRawMempoolTxIndex=0; nextRawMempoolTxIndex<rawMempool.length;nextRawMempoolTxIndex++){
-				let nextRawMempoolTx = rawMempool[nextRawMempoolTxIndex]
-				let nextTxHex = await this.connector.getRawTransaction(nextRawMempoolTx)
+			let i = 0
+			while(i<rawMempool.length){
+				let nextRawMempoolChunk = rawMempool.slice(i, i+MEMPOOL_BATCH_SIZE)
+				
+				let nextTxsHex = []
+				try {
+					nextTxsHex = await this.connector.getRawTransactions(nextRawMempoolChunk)
 					
-				if (nextTxHex != null){
-					let nextTx = bitcoin.Transaction.fromHex(Buffer.from(nextTxHex,"hex"))
-
-					let countInfo = await this.parseTransaction(this.mempoolDb, nextTx, null, true)
-							
-					transactionsCount = transactionsCount + 1
-					inputsCount = inputsCount + countInfo["inputsCount"]
-					outputsCount = outputsCount + countInfo["outputsCount"]
+				} catch (err){
+					console.log(err)
+					console.log("There was an error trying to get raw transactions from the mempool. Trying again...")
+					await this.sleep(1000)
+					continue
 				}
+				
+				for (let nextTxHexIndex in nextTxsHex){
+					let nextTxHex = nextTxsHex[nextTxHexIndex]
+					
+					if (nextTxHex != null){
+						let nextTx = bitcoin.Transaction.fromHex(Buffer.from(nextTxHex,"hex"))
+
+						let countInfo = await this.parseTransaction(this.mempoolDb, nextTx, null, true)
+						
+						if (transactionsCount % MEMPOOL_BATCH_SIZE == 0){
+							console.log(""+transactionsCount+" parsed txs of "+rawMempool.length)
+						}
+						
+						transactionsCount = transactionsCount + 1
+						inputsCount = inputsCount + countInfo["inputsCount"]
+						outputsCount = outputsCount + countInfo["outputsCount"]
+					}
+				}
+					
+				i = i + MEMPOOL_BATCH_SIZE
+				await this.sleep(10000)
 			}
 			
 			await this.mempoolDb.endTransaction()

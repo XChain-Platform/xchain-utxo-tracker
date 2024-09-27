@@ -2,6 +2,7 @@ var levelup = require('levelup')
 var leveldown = require('leveldown')
 var memdown = require('memdown')
 const encode = require('encoding-down')
+const bs = require("binary-search")
 
 const PREFIX_LAST_BLOCK_HEIGHT = "LAST_BLOCK_HEIGHT"
 const PREFIX_BLOCK = "B"
@@ -519,8 +520,7 @@ class LevelUpStore {
 			
 			dbStream.on('data', async function(data) {
 				const txid = data.key.toString("utf-8").substr(1);
-				const txidIndex = txidList.indexOf(txid)
-					
+				const txidIndex = bs(txidList, txid, function(element, needle) { return needle.localeCompare(element) })	
 					
 				if (txidIndex == -1) {
 					await thisLevelUp.deleteTransaction(txid)

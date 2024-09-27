@@ -9,6 +9,10 @@ class BlockchainConnector {
 		this.rpcPassword = rpcPassword
 	}
 
+	async sleep(ms) {
+		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
 	async getNetworkInfo(){
 		const data = {
 			jsonrpc: '2.0',
@@ -171,33 +175,57 @@ class BlockchainConnector {
 	}
 	
 	async getRawTransaction(txid){
-		try {
-			const data = {
-				jsonrpc: '2.0',
-				method: 'getrawtransaction',
-				params: [txid],
-				id: 1
+		return new Promise(async (resolve, reject) => {
+			let maxTries = 10
+			let tries = 0
+			while (tries < maxTries){
+				tries++
+				try {
+					const data = {
+						jsonrpc: '2.0',
+						method: 'getrawtransaction',
+						params: [txid],
+						id: 1
+					}
+					
+					// Make the request to the node
+					const response = await axios.post(this.url, data, {
+						auth: {
+							username: this.rpcUser,
+							password: this.rpcPassword,
+						}
+					})
+
+					// Verify if there is a result and return it
+					if (response.data.result) {
+						resolve(response.data.result);
+						break
+					} else {
+						console.log(response.error)
+						reject('Error getting raw transaction');
+						break
+					}
+				} catch (error){
+					await this.sleep(500)
+				}
 			}
 			
-			// Make the request to the node
-			const response = await axios.post(this.url, data, {
-				auth: {
-					username: this.rpcUser,
-					password: this.rpcPassword,
-				}
-			})
-
-			// Verify if there is a result and return it
-			if (response.data.result) {
-				return response.data.result;
-			} else {
-				throw new Error('Error getting raw transaction');
+			if (tries >= maxTries){
+				reject(null)
 			}
-		} catch (error){
-			return null
-			//console.error('Error:', error.message);
-			//throw error;
+		})
+	}
+	
+	async getRawTransactions(txIdArray){
+		let requests = []
+	
+		for (let nextTxIdIndex in txIdArray){
+			let nextTxId = txIdArray[nextTxIdIndex]
+			
+			requests.push(this.getRawTransaction(nextTxId))
 		}
+		
+		return Promise.all(requests)
 	}
 	
 	async getBlock(blockhash, hexFormat=true) {
