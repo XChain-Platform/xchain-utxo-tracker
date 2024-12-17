@@ -1,4 +1,4 @@
-const util = require('util')
+const util = require('./util')
 const axios = require('axios');
 axios.defaults.timeout = 5000
 const BitcoinCore = require('bitcoin-core');
@@ -11,6 +11,7 @@ const LevelUpStore = require('./LevelUpDb.js')
 const BlockchainConnector = require('./BlockchainConnector.js')
 const CryptoNetworks = require('./CryptoNetworks')
 const bs = require("binary-search")
+const { hrtime } = require('node:process');
 
 const CHECK_BLOCK_DELAY_MS = 1000 //1 second to continously ask for new block when all has been parsed
 const DB_TRANSACTION_BLOCKS_QUANTITY = 100
@@ -20,6 +21,7 @@ const SYNCED_THRESHOLD = 3
 const SATOSHI_UNIT = 100000000.0
 const MEMPOOL_INTERVAL = 60000
 const MEMPOOL_BATCH_SIZE = 1000
+const REMOVE_SPENT = true
 
 class XChainAddressIndexer {
 	constructor(network, nodeUrl, nodePort, nodeUser, nodePassword, dbName) {
@@ -43,17 +45,6 @@ class XChainAddressIndexer {
 	
 	async sleep(ms) {
 		return new Promise((resolve) => setTimeout(resolve, ms));
-	}
-	
-	markTime(timeName){
-		this.debugTime[timeName] = Date.now()
-	}
-	
-	logTime(timeName){
-		let endTime = Date.now()
-		let msTime = (endTime - this.debugTime[timeName])
-					
-		console.log("Time('"+timeName+"'): "+(msTime)+"ms")
 	}
 	
 	millisecondsToTimeString(ms){
@@ -102,8 +93,13 @@ class XChainAddressIndexer {
 					nextOutput.height = null
 					nextOutput.confirmations = 0
 				} else {
-					nextOutput.height = nextOutputBlock.h
-					nextOutput.confirmations = this.blockchainInfoLastBlock - nextOutputBlock.h + 1
+					if (nextOutputBlock != null){
+						nextOutput.height = nextOutputBlock.h
+						nextOutput.confirmations = this.blockchainInfoLastBlock - nextOutputBlock.h + 1
+					} else { //This means the block doesn't exists because it was removed by a reorg
+						outputs.splice(nextOutputIndex, 1)
+						continue
+					}
 				}
 					
 				nextOutput.txid = nextOutputTransaction.txid.substr(1)
@@ -113,7 +109,11 @@ class XChainAddressIndexer {
 				throw new Error("There's no transaction for an output")
 			}
 			
-			let nextOutputInput = await this.db.getInput(nextOutput.txid, nextOutput.vout)
+			let nextOutputInput = null
+			
+			if (!REMOVE_SPENT){
+				nextOutputInput = await this.db.getInput(nextOutput.txid, nextOutput.vout)
+			}
 			
 			if (nextOutputInput == null){
 				nextOutputInput = await this.mempoolDb.getInput(nextOutput.txid, nextOutput.vout)
@@ -134,10 +134,17 @@ class XChainAddressIndexer {
 		let script = bitcoin.address.toOutputScript(address, this.network)
 		let scriptHash = createHash('sha256').update(script).digest('hex')
 		
-		let outputs = await this.db.getOutputsScriptPubKey(scriptHash)
-		
-		let nextOutputIndex = 0
 		let oldestOutput = null
+		let outputs	= null
+			
+		if (REMOVE_SPENT){
+			let oldestOutputDb = await this.db.getOutputScriptBlock(scriptHash)
+			outputs = [oldestOutputDb]
+		} else {
+			outputs = await this.db.getOutputsScriptPubKey(scriptHash)
+		}
+			
+		let nextOutputIndex = 0
 		while (nextOutputIndex < outputs.length){
 			let nextOutput = outputs[nextOutputIndex]
 			
@@ -168,7 +175,7 @@ class XChainAddressIndexer {
 		return oldestOutput
 	}
 	
-	async parseTransaction(db, transaction, blockHash, addHints = false){
+	async parseTransaction(db, transaction, blockHash, blockHeight = -1, addHints = false, removeSpent = false){
 		let nextTxId = transaction.getId()
 		let nextTxId8 = nextTxId.substring(0,16)
 	
@@ -185,7 +192,12 @@ class XChainAddressIndexer {
 			if (nextInput.index != 4294967295){//4294967295 = 0xFFFFFFFF. It's a Coinbase input, there's no need to trace it
 				let outputTxHash = nextTxId
 				
-				await db.insertInput({prevTxHash:nextInput.hash.reverse().toString("hex"), prevOutputIndex:nextInput.index, txHash:nextTxId8})
+				if (removeSpent){
+					let prevTxHash8 = nextInput.hash.reverse().toString("hex").substring(0, 16)
+					await db.removeOutputWithInput({prevTxHash:prevTxHash8, prevOutputIndex:nextInput.index})
+				} else {
+					await db.insertInput({prevTxHash:nextInput.hash.reverse().toString("hex"), prevOutputIndex:nextInput.index, txHash:nextTxId8})
+				}
 					
 				if (addHints){
 					await db.insertInputHint({prevTxHash:nextInput.hash.reverse().toString("hex"), prevOutputIndex:nextInput.index, txHash:nextTxId8})
@@ -196,18 +208,69 @@ class XChainAddressIndexer {
 		}
 		for (let txOutputIndex=0;txOutputIndex < transaction.outs.length;txOutputIndex++){
 			let nextOutput = transaction.outs[txOutputIndex]
+			let outputValue = nextOutput.value
 			let scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
 			
-			await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, value:nextOutput.value})
-			if (addHints){
+			await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, value:outputValue})
+
+			if (addHints || removeSpent){
 				await db.insertOutputHint({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex})
+				await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId8, blockHeight)
 			}
 			resultInfo["outputsCount"] = resultInfo["outputsCount"] + 1
-			
 		}
 		
 		return resultInfo
 	}
+	
+	async verifyReorg(){
+		let thereAreDifferences = true
+		let blocksDeleted = []
+	
+		while (thereAreDifferences){
+			let lastBlockIndex = await this.db.getLastBlockHeight()
+			let lastBlockHash = await this.db.getLastBlockHash()
+			let lastBlock = await this.db.getBlock(lastBlockHash)
+			
+			if (lastBlockIndex != lastBlock["h"]){
+				throw Error("There are inconsistents in a block height. It should be "+lastBlockIndex+" but "+lastBlock["h"]+" was found")
+			} else {
+				let blockHashFromNode
+				try {
+					blockHashFromNode = await this.connector.getBlockHash(lastBlockIndex)
+				} catch (err){
+					console.log("There was a problem trying to get a block hash from the node. Trying again...")
+					await this.sleep(3000)
+					continue
+				}
+				
+				if (lastBlockHash != blockHashFromNode){
+					try {
+						if (REMOVE_SPENT){
+							await removeOutputScriptsInBlock(lastBlockHash)
+						}
+						await this.db.deleteBlock(lastBlockHash)
+						await this.db.setLastBlockHash(lastBlock["ph"])
+						await this.db.setLastBlockHeight(lastBlock["h"]-1)
+						
+						blocksDeleted.push({"block_index":lastBlockIndex, "block_hash":lastBlockHash})
+					} catch (err){
+						console.log(err)
+						console.log("There was a problem trying to delete a block while verifying a reorg")
+					}
+				} else {
+					thereAreDifferences = false
+				}
+			}
+		}
+		
+		if (blocksDeleted.length > 0){
+			console.log(blocksDeleted.length+" blocks were removed")
+		}
+		
+		return true
+	}
+	
 	
 	async start(){
 		this.db = new LevelUpStore(this.dbName)
@@ -218,6 +281,7 @@ class XChainAddressIndexer {
 		console.log("Indexing...")
 		
 		let lastProcessedBlockIndex = await this.db.getLastBlockHeight()
+		let lastProcessedBlockHash = await this.db.getLastBlockHash()
 		let lastBlockchainInfo = null
 		this.blockchainInfoLastBlock = -1
 	    let blocksQuantity = 0
@@ -263,7 +327,6 @@ class XChainAddressIndexer {
 				
 				await this.sleep(CHECK_BLOCK_DELAY_MS)
 			} else { //If there is a new block, parse it
-			
 				//Put the flag synced false if there are too many blocks behind
 				if ((this.blockchainInfoLastBlock - lastProcessedBlockIndex) > SYNCED_THRESHOLD){
 					this.synced = false
@@ -289,14 +352,34 @@ class XChainAddressIndexer {
 				}
 				
 				var block = bitcoin.Block.fromHex(Buffer.from(nextBlockHex,"hex"))
-				
+				let previousBlockHash = block.prevHash.reverse().toString("hex")
+
+				//Check if there is a reorg
+				if (nextBlockHeight > 0){
+					//previousBlockHash is not the same, it must be a reorg	
+					if (previousBlockHash != lastProcessedBlockHash){
+						await this.db.endTransaction(false)
+						console.log("A reorg has been detected. Cleaning blocks...")
+						await this.verifyReorg()
+						lastProcessedBlockIndex = await this.db.getLastBlockHeight()
+						lastProcessedBlockHash = await this.db.getLastBlockHash()
+						
+						blocksCount = 0
+						transactionsCount = 0
+						inputsCount = 0
+						outputsCount = 0
+						startTimeStamp = Date.now()
+						console.log("Blocks were updated")
+						continue
+					}
+				}
 				//Start a transaction if there are no blocks processed yet
 				if (blocksQuantity == 0){
 					await this.db.beginTransaction()
 				}
 				
 				//Insert the processed block
-				await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp})
+				await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp, previousHash:previousBlockHash})
 				blocksCount = blocksCount + 1				
 				
 				//Parse the transactions
@@ -305,7 +388,7 @@ class XChainAddressIndexer {
 				for (let txIndex=0;txIndex < transactions.length;txIndex++){
 					let nextTransaction = transactions[txIndex]
 					
-					let countInfo = await this.parseTransaction(this.db, nextTransaction, nextBlockHash)
+					let countInfo = await this.parseTransaction(this.db, nextTransaction, nextBlockHash, nextBlockHeight, false, REMOVE_SPENT)
 					
 					transactionsCount = transactionsCount + 1
 					inputsCount = inputsCount + countInfo["inputsCount"]
@@ -316,6 +399,7 @@ class XChainAddressIndexer {
 				if ((blocksQuantity == DB_TRANSACTION_BLOCKS_QUANTITY-1) || (nextBlockHeight == this.blockchainInfoLastBlock)){
 					console.log("Indexing block "+(nextBlockHeight)+"("+nextBlockHash+")")
 					await this.db.setLastBlockHeight(nextBlockHeight)
+					await this.db.setLastBlockHash(nextBlockHash)
 					console.log("Inserting data Blocks ("+blocksCount+") Transactions ("+transactionsCount+") Inputs ("+inputsCount+") Outputs("+outputsCount+")")
 					
 					await this.db.endTransaction()
@@ -342,6 +426,7 @@ class XChainAddressIndexer {
 				
 				blocksQuantity = blocksQuantity + 1
 				lastProcessedBlockIndex = nextBlockHeight
+				lastProcessedBlockHash = nextBlockHash
 			}
 		}
 	}
@@ -349,7 +434,6 @@ class XChainAddressIndexer {
 	async updateMempool(){
 		if (!this.mempoolBusy){
 			let mempoolStartTime = Date.now()
-			//console.log("Mempool is not busy!")
 			this.mempoolBusy = true
 			let rawMempool = []
 			try {
@@ -407,7 +491,7 @@ class XChainAddressIndexer {
 					if (nextTxHex != null){
 						let nextTx = bitcoin.Transaction.fromHex(Buffer.from(nextTxHex,"hex"))
 
-						let countInfo = await this.parseTransaction(this.mempoolDb, nextTx, null, true)
+						let countInfo = await this.parseTransaction(this.mempoolDb, nextTx, null, -1, true)
 						
 						if (transactionsCount % MEMPOOL_BATCH_SIZE == 0){
 							console.log(""+transactionsCount+" parsed txs of "+rawMempool.length)
