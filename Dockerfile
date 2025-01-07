@@ -1,12 +1,12 @@
 FROM node:latest
 
-RUN mkdir /XChainAddressIndexer/
+RUN mkdir /XChainUtxoTracker/
 RUN mkdir /data/
-COPY ./package.json /XChainAddressIndexer/package.json
-WORKDIR /XChainAddressIndexer
+COPY ./package.json /XChainUtxoTracker/package.json
+WORKDIR /XChainUtxoTracker
 RUN npm install
 
-COPY ./src /XChainAddressIndexer/src
-COPY ./.en[v] /XChainAddressIndexer/.env
+COPY ./src /XChainUtxoTracker/src
+COPY ./.en[v] /XChainUtxoTracker/.env
 
 CMD ["npm", "run", "api"]

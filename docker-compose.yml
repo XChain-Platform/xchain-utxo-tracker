@@ -1,10 +1,10 @@
 version: '3'
 
 services:
-  xchain_address_indexer:
+  xchain_utxo_tracker:
     build: .
     volumes:
-      - xchain_address_indexer_data:/data/
+      - xchain_utxo_tracker_data:/data/
     networks: 
       - network1
     ports:
@@ -16,4 +16,4 @@ networks:
     external: true
     
 volumes:
-  xchain_address_indexer_data:
+  xchain_utxo_tracker_data:

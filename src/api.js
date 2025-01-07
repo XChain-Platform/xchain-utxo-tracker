@@ -8,7 +8,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const helmet = require('helmet');
 const cors = require('cors');
-const XChainAddressIndexer  = require('./XChainAddressIndexer');
+const XChainUtxoTracker  = require('./XChainUtxoTracker');
 const jsonRouter = require('express-json-rpc-router')
 
 
@@ -17,12 +17,12 @@ const NODE_URL =  process.env.NODE_URL
 const NODE_PORT =  process.env.NODE_PORT
 const NODE_USER =  process.env.NODE_USER
 const NODE_PASSWORD =  process.env.NODE_PASSWORD
-const ADDRESS_INDEXER_API_PORT = process.env.ADDRESS_INDEXER_API_PORT
-const DB_NAME =  "xchain-address-indexer"
+const UTXO_TRACKER_API_PORT = process.env.UTXO_TRACKER_API_PORT
+const DB_NAME =  "xchain-utxo-tracker"
 
 async function startApi(){
 	//Start the indexer
-	const indexer = new XChainAddressIndexer(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME);
+	const indexer = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME);
 	indexer.start()
 
 	// Create the app
@@ -73,8 +73,8 @@ async function startApi(){
 
 
 	// Start the server
-	app.listen(ADDRESS_INDEXER_API_PORT, () => {
-	  console.log('API listening on port '+ADDRESS_INDEXER_API_PORT);
+	app.listen(UTXO_TRACKER_API_PORT, () => {
+	  console.log('API listening on port '+UTXO_TRACKER_API_PORT);
 	});
 }
 

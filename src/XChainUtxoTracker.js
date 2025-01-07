@@ -23,7 +23,7 @@ const MEMPOOL_INTERVAL = 60000
 const MEMPOOL_BATCH_SIZE = 1000
 const REMOVE_SPENT = true
 
-class XChainAddressIndexer {
+class XChainUtxoTracker {
 	constructor(network, nodeUrl, nodePort, nodeUser, nodePassword, dbName) {
       this.network = CryptoNetworks.getBitcoinJsNetwork(network)
 	  this.connector = new BlockchainConnector(nodeUrl, nodePort, nodeUser, nodePassword)
@@ -523,4 +523,4 @@ class XChainAddressIndexer {
 	
 }
 
-module.exports = XChainAddressIndexer
+module.exports = XChainUtxoTracker
