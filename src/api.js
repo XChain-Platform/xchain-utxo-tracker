@@ -19,10 +19,11 @@ const NODE_USER =  process.env.NODE_USER
 const NODE_PASSWORD =  process.env.NODE_PASSWORD
 const UTXO_TRACKER_API_PORT = process.env.UTXO_TRACKER_API_PORT
 const DB_NAME =  "xchain-utxo-tracker"
+const AUX_POW = process.env.AUX_POW
 
 async function startApi(){
 	//Start the indexer
-	const indexer = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME);
+	const indexer = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
 	indexer.start()
 
 	// Create the app

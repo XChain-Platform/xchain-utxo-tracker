@@ -71,6 +71,14 @@ module.exports = {
         if(minutes > 0) str += minutes + 'm ';
         if(seconds > 0) str += seconds + '.' + milliseconds + 's';
         return str;
-    }    
-
+    },
+    
+	uint8ArrayToHex: function(uint8array){
+		let hex = '';
+		for (let i = 0; i < uint8array.length; i++) {
+			const byte = uint8array[i];
+			hex += byte.toString(16).padStart(2, '0');
+		}
+		return hex;
+	}
 }
