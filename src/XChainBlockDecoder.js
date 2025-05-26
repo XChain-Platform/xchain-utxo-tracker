@@ -1,0 +1,89 @@
+const crypto = require('crypto');
+const bitcoinjs = require('bitcoinjs-lib');
+const bufferutils_js_1 = require('bitcoinjs-lib/src/bufferutils');
+const transaction_js_1 = require('bitcoinjs-lib/src/transaction');
+
+const LITECOIN_HOGEX_FLAG = 0x08
+
+class XChainBlockDecoder {
+    
+    constructor(networkName) {
+        let networkNameSplit = networkName.split("-")
+        this.coin = networkNameSplit[0]
+    }
+    
+    blockFromHex(blockHex){
+        return this.blockFromBuffer(Buffer.from(blockHex,"hex"))
+    }
+    
+    doubleSha256AndReverse(data){
+        const firstHash = crypto.createHash('sha256').update(data).digest();
+        const secondHash = crypto.createHash('sha256').update(firstHash).digest();
+        const reversedHash = Buffer.from(secondHash).reverse();
+        return reversedHash;
+    }
+    
+    blockFromBuffer(buffer){
+        switch(this.coin){
+            case "litecoin":
+                
+                /**
+                *   This piece of code is the same as bitcoinjs-lib Block.fromBuffer with some changes for litecoin
+                */
+                if (buffer.length < 80) throw new Error('Buffer too small (< 80 bytes)');
+                const bufferReader = new bufferutils_js_1.BufferReader(buffer);
+                const block = new bitcoinjs.Block();
+                block.version = bufferReader.readInt32();
+                block.prevHash = bufferReader.readSlice(32);
+                block.merkleRoot = bufferReader.readSlice(32);
+                block.timestamp = bufferReader.readUInt32();
+                block.bits = bufferReader.readUInt32();
+                block.nonce = bufferReader.readUInt32();
+                if (buffer.length === 80) return block;
+                const readTransaction = () => {
+                  const tx = transaction_js_1.Transaction.fromBuffer(
+                    bufferReader.buffer.slice(bufferReader.offset),
+                    true,
+                  );
+                  bufferReader.offset += tx.byteLength();
+                  return tx;
+                };
+                const nTransactions = bufferReader.readVarInt();
+                block.transactions = [];
+                for (let i = 0; i < nTransactions; ++i) {
+                  try {
+                    if (BigInt(i) == nTransactions - 1n){//If it's the last transaction, then check if it's the HogEx
+                        let nextTxBuffer = bufferReader.buffer.slice(bufferReader.offset)   
+                        let txVersion = nextTxBuffer.readUInt32LE();
+                        let marker = nextTxBuffer.readUInt8(4);
+                        let flag = nextTxBuffer.readUInt8(5);
+                        
+                        if ((txVersion == 0x02) && (marker == 0x00) && (flag == LITECOIN_HOGEX_FLAG)){
+                            let removeOffsetStart = bufferReader.offset + 4 //4 bytes for txVersion
+                            let removeOffsetEnd = removeOffsetStart + 2 //2 bytes for marker + flag
+                        
+                            //Remove the flag 0x08, so bitcoinjs-lib parse this tx as a normal transaction
+                            let bufferReaderBeforeFlag = bufferReader.buffer.slice(0, removeOffsetStart)
+                            let bufferReaderAfterFlag = bufferReader.buffer.slice(removeOffsetEnd)
+                            bufferReader.buffer = Buffer.concat([bufferReaderBeforeFlag, bufferReaderAfterFlag])
+                        
+                        }
+                    }
+                    
+                    let tx = readTransaction();
+                    block.transactions.push(tx);
+                  } catch (err){
+                    throw err
+                  }
+                }
+                const witnessCommit = block.getWitnessCommit();
+                // This Block contains a witness commit
+                if (witnessCommit) block.witnessCommit = witnessCommit;
+                return block; 
+            default:
+                return bitcoin.Block.fromHex(blockHex)
+        }
+    }
+}
+
+module.exports = XChainBlockDecoder

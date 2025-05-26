@@ -58,23 +58,23 @@ class LevelUpStore {
             value: value        
         }
         
-		if (this.transactionArray != null){
-			this.transactionArray.set(key, newItem)
-			return true
-		} else {
-			switch(type){
-				case "put":
-					await this.db.put(key, value)
-					break
-				case "del":
-				    await this.db.del(key)
-					break
-				default:
-					throw new Error("Unknown db transaction type: "+type)
-			}
-			
-			return true
-		}
+        if (this.transactionArray != null){
+            this.transactionArray.set(key, newItem)
+            return true
+        } else {
+            switch(type){
+                case "put":
+                    await this.db.put(key, value)
+                    break
+                case "del":
+                    await this.db.del(key)
+                    break
+                default:
+                    throw new Error("Unknown db transaction type: "+type)
+            }
+            
+            return true
+        }
     }
   
     removeTransaction(key){
@@ -115,7 +115,7 @@ class LevelUpStore {
       
         //if (this.transactionArray != null){
             await this.addTransaction("put", key, height.toString(16))
-			return true
+            return true
         //} else {
         //    return await this.db.put(key, height.toString(16))
         //}
@@ -155,7 +155,7 @@ class LevelUpStore {
         return await this.addTransaction("put", key, data)
         //} else {
         //    return await this.db.put(key, data)
-		//}
+        //}
     }
 
     async insertTransaction(tx) {
@@ -224,7 +224,7 @@ class LevelUpStore {
         //if (this.transactionArray != null){
         await this.addTransaction("del", outputKey)
         await this.addTransaction("del", outputHintKey)
-		return true
+        return true
         //} else {
         //    await this.db.del(outputKey)
         //    return await this.db.del(outputHintKey)
@@ -277,6 +277,8 @@ class LevelUpStore {
     }
   
     async removeOutputScriptsInBlock(blockHash){
+        let thisLevelUp = this
+        
         return new Promise((resolve, reject) => {
             let prefixBlockHash = PREFIX_BLOCK_OUTPUT_SCRIPT+blockHash
         
@@ -287,7 +289,7 @@ class LevelUpStore {
                 values: true
             }
           
-            const stream = this.db.createReadStream(options);
+            const stream = thisLevelUp.db.createReadStream(options);
           
             stream.on('data', async function(data) {
                 let dataString = data.key.toString("utf-8")
@@ -298,9 +300,9 @@ class LevelUpStore {
                 let outputScriptBlockKey = PREFIX_OUTPUT_SCRIPT_BLOCK+outputScript
                 
                 //if (this.transactionArray != null){
-                await this.addTransaction("del", outputScriptBlockKey, "")
-                await this.addTransaction("del", dataString, "")
-				return true
+                await thisLevelUp.addTransaction("del", outputScriptBlockKey, "")
+                await thisLevelUp.addTransaction("del", dataString, "")
+                return true
                 //} else {
                 //    await this.db.del(outputScriptBlockKey)
                 //    return await this.db.del(dataString)

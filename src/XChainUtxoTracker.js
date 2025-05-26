@@ -10,6 +10,7 @@ const fs = require('fs')
 const LevelUpStore = require('./LevelUpDb.js')
 const BlockchainConnector = require('./BlockchainConnector.js')
 const CryptoNetworks = require('./CryptoNetworks')
+const XChainBlockDecoder = require('./XChainBlockDecoder')
 const bs = require("binary-search")
 const { hrtime } = require('node:process');
 
@@ -33,6 +34,7 @@ class XChainUtxoTracker {
       this.mempoolDb = null
       
       this.parseMode = PARSE_MODE_BULK_INSERTS
+      this.xchainBlockDecoder = new XChainBlockDecoder(network)
       
       this.debugTime = {}
       
@@ -178,7 +180,13 @@ class XChainUtxoTracker {
     }
     
     async parseTransaction(db, transaction, blockHash, blockHeight = -1, addHints = false, removeSpent = false){
-        let nextTxId = transaction.getId()
+        let nextTxId = null
+        if ("id" in transaction){ //Some transactions are changed for bitcoinjs-lib to parse them. The original hash of the transaction get stored in the "id" property
+            nextTxId = transaction["id"]
+        } else {
+            nextTxId = transaction.getId()
+        }
+		
         let nextTxId8 = nextTxId.substring(0,16)
     
         let resultInfo = {
@@ -190,12 +198,13 @@ class XChainUtxoTracker {
         
         for (let txInputIndex=0;txInputIndex < transaction.ins.length;txInputIndex++){
             let nextInput = transaction.ins[txInputIndex]
+            let standardInput = ("standard_input" in nextInput?nextInput["standard_input"]:true)
             
-            if (nextInput.index != 4294967295){//4294967295 = 0xFFFFFFFF. It's a Coinbase input, there's no need to trace it
+            if ((nextInput.index != 4294967295) && (standardInput)){//4294967295 = 0xFFFFFFFF. It's a Coinbase input, there's no need to trace it
                 let outputTxHash = nextTxId
                 
                 if (removeSpent){
-                let prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
+                    let prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
                     await db.removeOutputWithInput({prevTxHash:prevTxHash8, prevOutputIndex:nextInput.index})
                 } else {
                     await db.insertInput({
@@ -393,7 +402,7 @@ class XChainUtxoTracker {
                     continue
                 }
                 
-                var block = bitcoin.Block.fromHex(Buffer.from(nextBlockHex,"hex"))
+                var block = this.xchainBlockDecoder.blockFromHex(Buffer.from(nextBlockHex,"hex"))
                 let previousBlockHash = util.uint8ArrayToHex(block.prevHash.reverse())
 
                 //Check if there is a reorg
