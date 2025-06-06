@@ -24,6 +24,8 @@ const MEMPOOL_INTERVAL = 60000
 const MEMPOOL_BATCH_SIZE = 1000
 const REMOVE_SPENT = true
 
+const UNDO_BLOCKS = 10 //This is the number of blocks from which the outputs will be kept saved.
+
 class XChainUtxoTracker {
     constructor(network, nodeUrl, nodePort, nodeUser, nodePassword, dbName, auxPow) {
       this.network = CryptoNetworks.getBitcoinJsNetwork(network)
@@ -45,6 +47,28 @@ class XChainUtxoTracker {
       this.mempoolBusy = false
       
       this.auxPow = auxPow
+      this.lastBlocks = []
+    }
+    
+    async addToLastBlocks(blockHash){
+        this.lastBlocks.push(blockHash)
+        this.db.addLastStoredBlock(blockHash)
+        
+        while (this.lastBlocks.length > UNDO_BLOCKS){
+            let nextBlockHash = this.lastBlocks.shift()
+            
+            await this.db.processDeletedOutputs(nextBlockHash, false)
+            await this.db.removeLastStoredBlock(nextBlockHash)
+        }
+    }
+    
+    async removeFromLastBlocks(blockHash){
+        if (this.lastBlocks.indexOf(blockHash) == this.lastBlocks.length-1){
+            this.lastBlocks.pop()
+            await this.db.removeLastStoredBlock(blockHash)
+        } else {
+            throw new Error("Can't delete a block from the 'last blocks' if it's not the last one")
+        }
     }
     
     async sleep(ms) {
@@ -113,8 +137,12 @@ class XChainUtxoTracker {
                 throw new Error("There's no transaction for an output")
             }
             
+            
+            //Now let's find if there is an input in the database for this output.
+            //If there is an input, then the output is spent (not an utxo)
             let nextOutputInput = null
             
+            //if REMOVE_SPENT is true, then there will be no inputs in the database, all stored outputs are utxos
             if (!REMOVE_SPENT){
                 nextOutputInput = await this.db.getInput(nextOutput.txid, nextOutput.vout)
             }
@@ -186,7 +214,7 @@ class XChainUtxoTracker {
         } else {
             nextTxId = transaction.getId()
         }
-		
+        
         let nextTxId8 = nextTxId.substring(0,16)
     
         let resultInfo = {
@@ -205,7 +233,7 @@ class XChainUtxoTracker {
                 
                 if (removeSpent){
                     let prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
-                    await db.removeOutputWithInput({prevTxHash:prevTxHash8, prevOutputIndex:nextInput.index})
+                    await db.removeOutputWithInput({prevTxHash:prevTxHash8, prevOutputIndex:nextInput.index, blockHash:blockHash})
                 } else {
                     await db.insertInput({
                         prevTxHash:util.uint8ArrayToHex(nextInput.hash.reverse()),
@@ -278,8 +306,10 @@ class XChainUtxoTracker {
                     try {
                         if (REMOVE_SPENT){
                             await this.db.removeOutputScriptsInBlock(lastBlockHash)
+                            await this.db.processDeletedOutputs(lastBlockHash, true)
                         }
                         await this.db.deleteBlock(lastBlockHash)
+                        await this.removeFromLastBlocks(lastBlockHash)
                         await this.db.setLastBlockHash(lastBlock["ph"])
                         await this.db.setLastBlockHeight(lastBlock["h"]-1)
                         
@@ -315,6 +345,7 @@ class XChainUtxoTracker {
         
         let lastProcessedBlockIndex = await this.db.getLastBlockHeight()
         let lastProcessedBlockHash = await this.db.getLastBlockHash()
+        this.lastBlocks = await this.db.getLastStoredBlocks()
         let lastBlockchainInfo = null
         this.blockchainInfoLastBlock = -1
         let blocksQuantity = 0
@@ -446,6 +477,9 @@ class XChainUtxoTracker {
                     inputsCount = inputsCount + countInfo["inputsCount"]
                     outputsCount = outputsCount + countInfo["outputsCount"]
                 }
+                
+                //Add the block to the last blocks
+                await this.addToLastBlocks(nextBlockHash)
                 
                 //If there are enough processed blocks, then add them to the database
                 if ((blocksQuantity == DB_TRANSACTION_BLOCKS_QUANTITY-1) || (nextBlockHeight == this.blockchainInfoLastBlock)){

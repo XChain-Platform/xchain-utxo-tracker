@@ -17,11 +17,17 @@ const PREFIX_INPUT_HINT = "J"
 const PREFIX_OUTPUT_SCRIPT_BLOCK = "S"
 const PREFIX_BLOCK_OUTPUT_SCRIPT = "Z"
 
+const PREFIX_OUTPUT_DELETED = "K"
+const PREFIX_OUTPUT_HINT_DELETED = "M"
+
+const PREFIX_STORED_BLOCK = "N" //These are the blocks whose outputs will be stored instead of being deleted
+
 class LevelUpStore {
     constructor(dbName, inMemory = false) {
         this.dbName = dbName
         this.db = null
         this.transactionArray = new Map()
+        this.deletedTransactionArray = new Map()
         this.inMemory = inMemory
     }
   
@@ -77,12 +83,27 @@ class LevelUpStore {
         }
     }
   
-    removeTransaction(key){
+    removeTransactionIfExists(key){
+        if (this.transactionArray.has(key)){
+            return this.transactionArray.delete(key)
+        }
+        
+        return false
+    }
+  
+    removeTransaction(key, deletedKey){
+        if (!this.deletedTransactionArray.has(deletedKey)){
+            this.deletedTransactionArray.set(deletedKey, new Map())
+        }
+    
+        this.deletedTransactionArray.get(deletedKey).set(key, this.transactionArray.get(key).value)
+    
         return this.transactionArray.delete(key)
     }
 
     async beginTransaction(){
         this.transactionArray = new Map()
+        this.deletedTransactionArray = new Map()
     }
 
     async endTransaction(batch=true){
@@ -91,8 +112,9 @@ class LevelUpStore {
                 let transactionArrayFromMap = Array.from(this.transactionArray.values())
                 await this.db.batch(transactionArrayFromMap)
             }
-            //this.transactionArray = new Map()
+            
             this.transactionArray = null
+            this.deletedTransactionArray = null
         } catch (err){
             console.log("There were errors trying to insert data in a batch")
             console.log(err)
@@ -134,11 +156,28 @@ class LevelUpStore {
     async setLastBlockHash(hash){
         let key = PREFIX_LAST_BLOCK_HASH
       
-        //if (this.transactionArray != null){
         return await this.addTransaction("put", key, hash)
-        //} else {
-        //    return await this.db.put(key, hash)
-        //}
+    }
+
+    async addLastStoredBlock(blockHash){
+        let key = PREFIX_STORED_BLOCK + blockHash
+        
+        return await this.addTransaction("put", key, "")
+    }
+
+    async removeLastStoredBlock(blockHash){
+        let key = PREFIX_STORED_BLOCK + blockHash
+        
+        if (this.removeTransactionIfExists(key)){
+            return true
+        } else {
+            try{
+                await this.addTransaction("del", key)
+                return true
+            } catch (err) {
+                throw new Error("Error when trying to remove last stored block")
+            }
+        }
     }
 
     async insertBlock(block) {
@@ -151,11 +190,7 @@ class LevelUpStore {
             }
         )
     
-        //if (this.transactionArray != null){
         return await this.addTransaction("put", key, data)
-        //} else {
-        //    return await this.db.put(key, data)
-        //}
     }
 
     async insertTransaction(tx) {
@@ -166,21 +201,13 @@ class LevelUpStore {
             }
         )
     
-        //if (this.transactionArray != null){
         return await this.addTransaction("put", key, data)
-        //} else {
-        //    return await this.db.put(key, data)
-        //}
     }
 
     async insertInputHint(input) {
         let key = PREFIX_INPUT_HINT+input.txHash+input.prevTxHash+input.prevOutputIndex
         
-        //if (this.transactionArray != null){
         return await this.addTransaction("put", key, "")
-        //} else {
-        //    return await this.db.put(key, data)
-        //}
     }
 
     async insertInput(input) {
@@ -191,28 +218,29 @@ class LevelUpStore {
             }
         )
 
-        //if (this.transactionArray != null){
         return await this.addTransaction("put", key, data)
-        //} else {
-        //    return await this.db.put(key, data)
-        //}
     }
 
     async removeOutputWithInput(input) {
         let outputHintKey = PREFIX_OUTPUT_HINT+input.prevTxHash+input.prevOutputIndex
+        let deletedOutputHintKey = null
         let outputHintValue = null
         let outputKey = null
+        let outputScriptPubKey = null
+        let deletedOutputKey = null
         try {
+            deletedOutputHintKey = PREFIX_OUTPUT_HINT_DELETED+input.blockHash+input.prevTxHash+input.prevOutputIndex
             outputHintValue = await this.db.get(outputHintKey)
-            outputKey = PREFIX_OUTPUT_HINT+outputHintValue+input.prevTxHash+input.prevOutputIndex
+            outputKey = PREFIX_OUTPUT+outputHintValue+input.prevTxHash+input.prevOutputIndex
+            deletedOutputKey = PREFIX_OUTPUT_DELETED+input.blockHash+outputHintValue+input.prevTxHash+input.prevOutputIndex
+            outputScriptPubKey = await this.db.get(outputKey)
         } catch (err) {
             let outputScript = this.getTransactionValue(outputHintKey)
-            
             if (outputScript != null){
-                if (!this.removeTransaction(PREFIX_OUTPUT+outputScript+input.prevTxHash+input.prevOutputIndex)){
+                if (!this.removeTransaction(PREFIX_OUTPUT+outputScript+input.prevTxHash+input.prevOutputIndex, input.blockHash)){
                     throw Error("Missing output("+PREFIX_OUTPUT+outputScript+input.prevTxHash+input.prevOutputIndex+") match for input "+JSON.stringify(input))
                 }
-                if (!this.removeTransaction(outputHintKey)){
+                if (!this.removeTransaction(outputHintKey, input.blockHash)){
                     throw Error("Missing outputHintKey("+outputHintKey+") match for input "+JSON.stringify(input))
                 }
             } else {
@@ -221,25 +249,20 @@ class LevelUpStore {
             return true
         }
         
-        //if (this.transactionArray != null){
+        //The output won't be deleted, instead it will remain in the database and it will be deleted later
+        await this.addTransaction("put", deletedOutputHintKey, outputHintValue)
+        await this.addTransaction("put", deletedOutputKey, outputScriptPubKey)
+        
         await this.addTransaction("del", outputKey)
         await this.addTransaction("del", outputHintKey)
         return true
-        //} else {
-        //    await this.db.del(outputKey)
-        //    return await this.db.del(outputHintKey)
-        //}
     }
 
     async insertOutputHint(output){
         let key = PREFIX_OUTPUT_HINT+output.txHash+output.outputIndex
         let data = output.scriptPubKey
 
-        //if (this.transactionArray != null){
         return await this.addTransaction("put", key, data)
-        //} else {
-        //    return await this.db.put(key, data)
-        //}
     }
 
     async insertOutput(output) {
@@ -251,12 +274,7 @@ class LevelUpStore {
             (_, v) => typeof v === 'bigint' ? v.toString() : v
         )
     
-        //if (this.transactionArray != null){
         return await this.addTransaction("put", key, data)
-        //    return true
-        //} else {
-        //    return await this.db.put(key, data)
-        //}
     }
   
     async getOutputScriptBlock(outputScript){
@@ -274,6 +292,103 @@ class LevelUpStore {
                 throw err
             }
         }
+    }
+  
+    async processDeletedOutputs(blockHash, recover = true){
+        if (this.deletedTransactionArray.has(blockHash)){
+            if (recover){
+                this.deletedTransactionArray.forEach((value, key) => {
+                    this.transactionArray.set(key, value)
+                });
+            }
+            
+            this.deletedTransactionArray.delete(blockHash)
+        }
+        
+        await this.processDeletedOutputsInDb(blockHash, recover, false)
+        await this.processDeletedOutputsInDb(blockHash, recover, true)
+    }
+  
+    async processDeletedOutputsInDb(blockHash, recover = true, processOutputHints = false){
+        let thisLevelUp = this
+        
+        return new Promise((resolve, reject) => {
+            let prefixBlockHash = null
+            if (processOutputHints){
+                prefixBlockHash = PREFIX_OUTPUT_HINT_DELETED+blockHash
+            } else {
+                prefixBlockHash = PREFIX_OUTPUT_DELETED+blockHash
+            }
+        
+            const options = {
+                gte: prefixBlockHash,
+                lte: prefixBlockHash+"\xFF",
+                keys: true,
+                values: true
+            }
+          
+            const stream = thisLevelUp.db.createReadStream(options);
+          
+            stream.on('data', async function(data) {
+                let deletedKey = data.key.toString("utf-8")
+                
+                if (recover){
+                    let outputKey = deletedKey.substr(prefixBlockHash.length)
+                    await thisLevelUp.addTransaction("put", outputKey, data.value)
+                }
+                
+                await thisLevelUp.addTransaction("del", deletedKey, "")
+                return true
+            })
+
+            stream.on('error', function(err) {
+                console.log("Error getting deleted output for a block hash")
+                console.log(err)
+                reject(err)
+            })
+
+            stream.on('end', function() {
+                resolve(true)
+            })
+        })
+    }
+    
+    async recoverDeletedOutputsHints(blockHash){
+        let thisLevelUp = this
+        
+        return new Promise((resolve, reject) => {
+            let prefixBlockHash = PREFIX_OUTPUT_HINT_DELETED+blockHash
+        
+            const options = {
+                gte: prefixBlockHash,
+                lte: prefixBlockHash+"\xFF",
+                keys: true,
+                values: true
+            }
+          
+            const stream = thisLevelUp.db.createReadStream(options);
+          
+            stream.on('data', async function(data) {
+                let deletedKey = data.key.toString("utf-8")
+                let outputHintKey = deletedKey.substr(prefixBlockHash.length)
+                
+                let outputScriptBlockKey = PREFIX_OUTPUT_SCRIPT_BLOCK+outputScript
+                
+                await thisLevelUp.addTransaction("put", outputHintKey, data.value)
+                await thisLevelUp.addTransaction("del", deletedKey, "")
+                return true
+            })
+
+            stream.on('error', function(err) {
+                console.log("Error getting deleted output for a block hash")
+                console.log(err)
+                reject(err)
+            })
+
+            stream.on('end', function() {
+                resolve(true)
+            })
+        })
     }
   
     async removeOutputScriptsInBlock(blockHash){
@@ -299,14 +414,9 @@ class LevelUpStore {
                 
                 let outputScriptBlockKey = PREFIX_OUTPUT_SCRIPT_BLOCK+outputScript
                 
-                //if (this.transactionArray != null){
                 await thisLevelUp.addTransaction("del", outputScriptBlockKey, "")
                 await thisLevelUp.addTransaction("del", dataString, "")
                 return true
-                //} else {
-                //    await this.db.del(outputScriptBlockKey)
-                //    return await this.db.del(dataString)
-                //}
             })
 
             stream.on('error', function(err) {
@@ -338,16 +448,10 @@ class LevelUpStore {
                     }
                 )
                 
-                //if (this.transactionArray != null){
                 await this.addTransaction("put", key, data)
                 await this.addTransaction("put", hintKey, "")
                     
                 return true
-                //} else {
-                //    return await this.db.put(key, data)
-                //}
-                
-                //Do nothing
             } else {
                 throw err
             }
@@ -497,19 +601,6 @@ class LevelUpStore {
                 //delete the output
                 await thisLevelUp.addTransaction("del", PREFIX_OUTPUT + scriptPubKey + txid + outputIndex, null)
                 await thisLevelUp.addTransaction("del", data.key, null)
-
-
-                /*thisLevelUp.transactionArray.push({
-                    type:"del",
-                    key: PREFIX_OUTPUT+scriptPubKey+txid+outputIndex,
-                    value: null
-                })
-                //delete the hint
-                thisLevelUp.transactionArray.push({
-                    type:"del",
-                    key: data.key,
-                    value: null
-                })*/
                 
                 outputsCount = outputsCount + 1
             })
@@ -658,21 +749,13 @@ class LevelUpStore {
     async deleteTransaction(txid) {
         let key = PREFIX_TRANSACTION+txid
 
-        //if (this.transactionArray != null){
         return await this.addTransaction("del", key, null)
-        //} else {
-        //    return await this.db.del(key)
-        //}
     }
 
     async deleteBlock(blockHash) {
         let key = PREFIX_BLOCK+blockHash
 
-        //if (this.transactionArray != null){
         return await this.addTransaction("del", key, null)
-        //} else {
-        //    return await this.db.del(key)
-        //}
     }
 
     async deleteAndCompareTxsNotInList(txidList){
@@ -799,6 +882,38 @@ class LevelUpStore {
 
             stream.on('end', function() {
                 resolve(maxBlockObj)
+            })
+        })
+    }
+    
+    async getLastStoredBlocks(){
+        let thisObject = this
+
+        return new Promise((resolve, reject) => {
+            var result = []
+            const options = {
+                gte: PREFIX_STORED_BLOCK,
+                lte: PREFIX_STORED_BLOCK+"\xFF",
+                keys: true,
+                values: true
+            }
+            const stream = this.db.createReadStream(options);
+
+            stream.on('data', async function(data) {
+                let dataString = data.key.toString("utf-8")
+
+                let blockHash = dataString.substr(
+                    PREFIX_BLOCK.length
+                )
+                result.push(blockHash)
+            })
+
+            stream.on('error', function(err) {
+                reject(err)
+            })
+
+            stream.on('end', function() {
+                resolve(result)
             })
         })
     }
