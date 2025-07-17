@@ -28,13 +28,35 @@ module.exports = {
         let hash = crypto.createHash('sha256').update(json).digest('hex');
         return hash;
     },
-	markTime: function(timeName){
-		debugTime[timeName] = hrtime()
-	},
-	logTime: function(timeName){
-		let diffTime = hrtime(debugTime[timeName])
-		console.log("Time('"+timeName+"'): "+(diffTime[0] * NS_PER_SEC + diffTime[1])+" ns");
-	},
+    markTime: function(timeName){
+        debugTime[timeName] = hrtime()
+    },
+    addTime: function(timeName){
+        let label = timeName+"**TOTAL"
+        let labelCount = timeName+"**COUNT"
+        let diffTime = hrtime(debugTime[timeName])
+        
+        if (!(label in debugTime)){
+            debugTime[label] = [0,0]
+            debugTime[labelCount] = 0
+        }
+        
+        debugTime[label] = [debugTime[label][0] + diffTime[0],debugTime[label][1] + diffTime[1]]
+    },
+    logTotalTime: function(timeName){
+        if (timeName+"**TOTAL" in debugTime){
+            let diffTime = debugTime[timeName+"**TOTAL"]
+            console.log("Time('"+timeName+"'): "+(diffTime[0] * NS_PER_SEC + diffTime[1])+" ns. It was called "+debugTime[timeName+"**COUNT"]+" times");
+            debugTime[timeName+"**TOTAL"] = [0,0]
+            debugTime[timeName+"**COUNT"] = 0
+            delete debugTime[timeName+"**TOTAL"]
+            delete debugTime[timeName+"**COUNT"]
+        }
+    },
+    logTime: function(timeName){
+        let diffTime = hrtime(debugTime[timeName])
+        console.log("Time('"+timeName+"'): "+(diffTime[0] * NS_PER_SEC + diffTime[1])+" ns");
+    },
     // Start a debug timer
     startTimer: function(){
         let now = Date.now();
@@ -73,12 +95,12 @@ module.exports = {
         return str;
     },
     
-	uint8ArrayToHex: function(uint8array){
-		let hex = '';
-		for (let i = 0; i < uint8array.length; i++) {
-			const byte = uint8array[i];
-			hex += byte.toString(16).padStart(2, '0');
-		}
-		return hex;
-	}
+    uint8ArrayToHex: function(uint8array){
+        let hex = '';
+        for (let i = 0; i < uint8array.length; i++) {
+            const byte = uint8array[i];
+            hex += byte.toString(16).padStart(2, '0');
+        }
+        return hex;
+    }
 }

@@ -23,6 +23,25 @@ class XChainBlockDecoder {
         return reversedHash;
     }
     
+    txFromHex(hexString){
+        switch(this.coin){
+            case "litecoin":
+                let littleEndianTxVersion = hexString.substr(0, 8)
+                let marker = hexString.substr(8, 2)
+                let flag = hexString.substr(10, 2)
+                        
+                if ((littleEndianTxVersion == "02000000") && (marker == "00") && (flag == "08")){
+                    hexString = hexString.substr(0, 8) + hexString.substr(12)
+                }
+            default:
+                const tx = transaction_js_1.Transaction.fromBuffer(
+                    Buffer.from(hexString,"hex"),
+                    true
+                );
+                return tx;
+        }
+    }
+    
     blockFromBuffer(buffer){
         switch(this.coin){
             case "litecoin":

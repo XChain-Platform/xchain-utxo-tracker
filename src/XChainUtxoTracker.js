@@ -22,7 +22,7 @@ const SYNCED_THRESHOLD = 3
 const SATOSHI_UNIT = 100000000.0
 const MEMPOOL_INTERVAL = 60000
 const MEMPOOL_BATCH_SIZE = 1000
-const REMOVE_SPENT = true
+const REMOVE_SPENT = false
 
 const UNDO_BLOCKS = 10 //This is the number of blocks from which the outputs will be kept saved.
 
@@ -575,7 +575,7 @@ class XChainUtxoTracker {
                     let nextTxHex = nextTxsHex[nextTxHexIndex]
                     
                     if (nextTxHex != null){
-                        let nextTx = bitcoin.Transaction.fromHex(Buffer.from(nextTxHex,"hex"))
+                        let nextTx = this.xchainBlockDecoder.txFromHex(nextTxHex)
 
                         let countInfo = await this.parseTransaction(this.mempoolDb, nextTx, null, -1, true)
                         
