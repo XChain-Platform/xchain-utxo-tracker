@@ -30,7 +30,7 @@ class XChainBlockDecoder {
                 let marker = hexString.substr(8, 2)
                 let flag = hexString.substr(10, 2)
                         
-                if ((littleEndianTxVersion == "02000000") && (marker == "00") && (flag == "08")){
+                if ((littleEndianTxVersion == "02000000") && (marker == "00") && ((flag == "08") || (flag == "09"))){
                     hexString = hexString.substr(0, 8) + hexString.substr(12)
                 }
             default:
