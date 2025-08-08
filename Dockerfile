@@ -1,5 +1,9 @@
 FROM node:latest
 
+RUN apt-get update && \
+    apt-get install -y pigz pv && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN mkdir /XChainUtxoTracker/
 RUN mkdir /data/
 COPY ./package.json /XChainUtxoTracker/package.json

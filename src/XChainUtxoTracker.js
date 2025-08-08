@@ -48,6 +48,8 @@ class XChainUtxoTracker {
       
       this.auxPow = auxPow
       this.lastBlocks = []
+      
+      this.keepParsing = true
     }
     
     async addToLastBlocks(blockHash){
@@ -90,6 +92,24 @@ class XChainUtxoTracker {
     
     isSynced(){
         return this.synced
+    }
+    
+    async stopParsing(){
+        return new Promise(async(resolve, reject) => {
+            this.keepParsing = false
+            let triesCount = 10
+        
+            while((!this.parsingStopped) && (triesCount > 0)){
+                await this.sleep(1000)
+                triesCount = triesCount - 1
+            }
+            
+            if ((triesCount == 0) && (!this.parsingStopped)){
+                reject("There was an error trying to stop the parsing")
+            } else {    
+                resolve(true)
+            }
+        })
     }
     
     async getUtxosAddress(address){
@@ -362,157 +382,167 @@ class XChainUtxoTracker {
         let inputsCount = 0
         let outputsCount = 0
         
+        this.keepParsing = true
+        this.parsingStopped = false
+    
         while (true){
-            //Getting the last block from the blockchain
-            if (!lastBlockchainInfo || (lastProcessedBlockIndex >= this.blockchainInfoLastBlock)){
-                try {
-                    lastBlockchainInfo = await this.connector.getBlockchainInfo()
-                    
-                    this.blockchainInfoLastBlock = lastBlockchainInfo["blocks"]
-                } catch (e){
-                    console.log("Error trying to get network info from the node. Trying again...")
-                    await this.sleep(3000)
-                    continue
-                }
-                
-                if (lastProcessedBlockIndex > this.blockchainInfoLastBlock){
-                    //This shouldn't happen, but let's try to find the real lastBlockIndex
-                    console.log("The last processed block height are greater than the last block of the node. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
-                    let lastBlockDb = await this.db.getLastBlock()
-                    
-                    if (lastBlockDb.height > this.blockchainInfoLastBlock){
-                        throw Error("The last processed block height is greater than the last block from the network")
-                    } else {
-                        await this.db.setLastBlockHash(lastBlockDb.hash)
-                        await this.db.setLastBlockHeight(lastBlockDb.height)
-                        lastProcessedBlockIndex = lastBlockDb.height
-                        lastProcessedBlockHash = lastBlockDb.hash
-                        console.log("Last block index was fixed!")
+            if (this.keepParsing){
+                //Getting the last block from the blockchain
+                if (!lastBlockchainInfo || (lastProcessedBlockIndex >= this.blockchainInfoLastBlock)){
+                    try {
+                        lastBlockchainInfo = await this.connector.getBlockchainInfo()
+                        
+                        this.blockchainInfoLastBlock = lastBlockchainInfo["blocks"]
+                    } catch (e){
+                        console.log("Error trying to get network info from the node. Trying again...")
+                        await this.sleep(3000)
                         continue
                     }
-                }
-            }
-            
-            //If there is no new block, wait for some seconds to ask again
-            if (lastProcessedBlockIndex == this.blockchainInfoLastBlock){
-                this.synced = true
-                if (this.mempoolInterval == null){
-                    console.log("Mempool updates started!")
-                    this.updateMempool()
-                    this.mempoolInterval = setInterval(this.updateMempool.bind(this), MEMPOOL_INTERVAL)
-                }
-                
-                await this.sleep(CHECK_BLOCK_DELAY_MS)
-            } else { //If there is a new block, parse it
-                //Put the flag synced false if there are too many blocks behind
-                if ((this.blockchainInfoLastBlock - lastProcessedBlockIndex) > SYNCED_THRESHOLD){
-                    this.synced = false
-                    if (this.mempoolInterval != null){
-                        console.log("Mempool updates stopped!")
-                        clearInterval(this.mempoolInterval)
-                        this.mempoolInterval = null
-                    }   
-                }
-                
-                //Get the next block
-                let nextBlockHeight = lastProcessedBlockIndex + 1
-            
-                let nextBlockHash = null
-                let nextBlockHex = null             
-                try {
-                    nextBlockHash = await this.connector.getBlockHash(nextBlockHeight)
                     
-                    if (this.auxPow) {
-                        nextBlockHex = await this.connector.getBlockWithoutAuxPow(nextBlockHash)
-                    } else {
-                        nextBlockHex = await this.connector.getBlock(nextBlockHash)
+                    if (lastProcessedBlockIndex > this.blockchainInfoLastBlock){
+                        //This shouldn't happen, but let's try to find the real lastBlockIndex
+                        console.log("The last processed block height are greater than the last block of the node. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
+                        let lastBlockDb = await this.db.getLastBlock()
+                        
+                        if (lastBlockDb.height > this.blockchainInfoLastBlock){
+                            throw Error("The last processed block height is greater than the last block from the network")
+                        } else {
+                            await this.db.setLastBlockHash(lastBlockDb.hash)
+                            await this.db.setLastBlockHeight(lastBlockDb.height)
+                            lastProcessedBlockIndex = lastBlockDb.height
+                            lastProcessedBlockHash = lastBlockDb.hash
+                            console.log("Last block index was fixed!")
+                            continue
+                        }
                     }
-                } catch (e){
-                    console.log("Error trying to get next block from the node. Trying again...")
-                    await this.sleep(3000)
-                    continue
                 }
                 
-                var block = this.xchainBlockDecoder.blockFromHex(Buffer.from(nextBlockHex,"hex"))
-                let previousBlockHash = util.uint8ArrayToHex(block.prevHash.reverse())
-
-                //Check if there is a reorg
-                if (nextBlockHeight > 0){
-                    //previousBlockHash is not the same, it must be a reorg 
-                    if (previousBlockHash != lastProcessedBlockHash){
-                        await this.db.endTransaction(false)
-                        console.log("A reorg has been detected. Cleaning blocks...")
-                        await this.verifyReorg()
-                        lastProcessedBlockIndex = await this.db.getLastBlockHeight()
-                        lastProcessedBlockHash = await this.db.getLastBlockHash()
+                //If there is no new block, wait for some seconds to ask again
+                if (lastProcessedBlockIndex == this.blockchainInfoLastBlock){
+                    this.synced = true
+                    if (this.mempoolInterval == null){
+                        console.log("Mempool updates started!")
+                        this.updateMempool()
+                        this.mempoolInterval = setInterval(this.updateMempool.bind(this), MEMPOOL_INTERVAL)
+                    }
+                    
+                    await this.sleep(CHECK_BLOCK_DELAY_MS)
+                } else { //If there is a new block, parse it
+                    //Put the flag synced false if there are too many blocks behind
+                    if ((this.blockchainInfoLastBlock - lastProcessedBlockIndex) > SYNCED_THRESHOLD){
+                        this.synced = false
+                        if (this.mempoolInterval != null){
+                            console.log("Mempool updates stopped!")
+                            clearInterval(this.mempoolInterval)
+                            this.mempoolInterval = null
+                        }   
+                    }
+                    
+                    //Get the next block
+                    let nextBlockHeight = lastProcessedBlockIndex + 1
+                
+                    let nextBlockHash = null
+                    let nextBlockHex = null             
+                    try {
+                        nextBlockHash = await this.connector.getBlockHash(nextBlockHeight)
                         
-                        blocksQuantity = 0
+                        if (this.auxPow) {
+                            nextBlockHex = await this.connector.getBlockWithoutAuxPow(nextBlockHash)
+                        } else {
+                            nextBlockHex = await this.connector.getBlock(nextBlockHash)
+                        }
+                    } catch (e){
+                        console.log("Error trying to get next block from the node. Trying again...")
+                        await this.sleep(3000)
+                        continue
+                    }
+                    
+                    var block = this.xchainBlockDecoder.blockFromHex(Buffer.from(nextBlockHex,"hex"))
+                    let previousBlockHash = util.uint8ArrayToHex(block.prevHash.reverse())
+
+                    //Check if there is a reorg
+                    if (nextBlockHeight > 0){
+                        //previousBlockHash is not the same, it must be a reorg 
+                        if (previousBlockHash != lastProcessedBlockHash){
+                            await this.db.endTransaction(false)
+                            console.log("A reorg has been detected. Cleaning blocks...")
+                            await this.verifyReorg()
+                            lastProcessedBlockIndex = await this.db.getLastBlockHeight()
+                            lastProcessedBlockHash = await this.db.getLastBlockHash()
+                            
+                            blocksQuantity = 0
+                            blocksCount = 0
+                            transactionsCount = 0
+                            inputsCount = 0
+                            outputsCount = 0
+                            startTimeStamp = Date.now()
+                            console.log("Blocks were updated")
+                            continue
+                        }
+                    }
+                    //Start a transaction if there are no blocks processed yet
+                    if (blocksQuantity == 0){
+                        await this.db.beginTransaction()
+                    }
+                    
+                    //Insert the processed block
+                    await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp, previousHash:previousBlockHash})
+                    blocksCount = blocksCount + 1               
+                    
+                    //Parse the transactions
+                    var transactions = block.transactions
+
+                    for (let txIndex=0;txIndex < transactions.length;txIndex++){
+                        let nextTransaction = transactions[txIndex]
+                        
+                        let countInfo = await this.parseTransaction(this.db, nextTransaction, nextBlockHash, nextBlockHeight, false, REMOVE_SPENT)
+                        
+                        transactionsCount = transactionsCount + 1
+                        inputsCount = inputsCount + countInfo["inputsCount"]
+                        outputsCount = outputsCount + countInfo["outputsCount"]
+                    }
+                    
+                    //Add the block to the last blocks
+                    await this.addToLastBlocks(nextBlockHash)
+                    
+                    //If there are enough processed blocks, then add them to the database
+                    if ((blocksQuantity == DB_TRANSACTION_BLOCKS_QUANTITY-1) || (nextBlockHeight == this.blockchainInfoLastBlock)){
+                        console.log("Indexing block "+(nextBlockHeight)+"("+nextBlockHash+")")
+                        await this.db.setLastBlockHeight(nextBlockHeight)
+                        await this.db.setLastBlockHash(nextBlockHash)
+                        console.log("Inserting data Blocks ("+blocksCount+") Transactions ("+transactionsCount+") Inputs ("+inputsCount+") Outputs("+outputsCount+")")
+                        
+                        await this.db.endTransaction()
+                        
                         blocksCount = 0
                         transactionsCount = 0
                         inputsCount = 0
                         outputsCount = 0
+                        
+                        let endTimeStamp = Date.now()
+                        
+                        let msPerBlock = ((endTimeStamp - startTimeStamp)/DB_TRANSACTION_BLOCKS_QUANTITY)
                         startTimeStamp = Date.now()
-                        console.log("Blocks were updated")
-                        continue
-                    }
-                }
-                //Start a transaction if there are no blocks processed yet
-                if (blocksQuantity == 0){
-                    await this.db.beginTransaction()
-                }
-                
-                //Insert the processed block
-                await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp, previousHash:previousBlockHash})
-                blocksCount = blocksCount + 1               
-                
-                //Parse the transactions
-                var transactions = block.transactions
-
-                for (let txIndex=0;txIndex < transactions.length;txIndex++){
-                    let nextTransaction = transactions[txIndex]
-                    
-                    let countInfo = await this.parseTransaction(this.db, nextTransaction, nextBlockHash, nextBlockHeight, false, REMOVE_SPENT)
-                    
-                    transactionsCount = transactionsCount + 1
-                    inputsCount = inputsCount + countInfo["inputsCount"]
-                    outputsCount = outputsCount + countInfo["outputsCount"]
-                }
-                
-                //Add the block to the last blocks
-                await this.addToLastBlocks(nextBlockHash)
-                
-                //If there are enough processed blocks, then add them to the database
-                if ((blocksQuantity == DB_TRANSACTION_BLOCKS_QUANTITY-1) || (nextBlockHeight == this.blockchainInfoLastBlock)){
-                    console.log("Indexing block "+(nextBlockHeight)+"("+nextBlockHash+")")
-                    await this.db.setLastBlockHeight(nextBlockHeight)
-                    await this.db.setLastBlockHash(nextBlockHash)
-                    console.log("Inserting data Blocks ("+blocksCount+") Transactions ("+transactionsCount+") Inputs ("+inputsCount+") Outputs("+outputsCount+")")
-                    
-                    await this.db.endTransaction()
-                    
-                    blocksCount = 0
-                    transactionsCount = 0
-                    inputsCount = 0
-                    outputsCount = 0
-                    
-                    let endTimeStamp = Date.now()
-                    
-                    let msPerBlock = ((endTimeStamp - startTimeStamp)/DB_TRANSACTION_BLOCKS_QUANTITY)
-                    startTimeStamp = Date.now()
-                    
-                    let msLeft = (this.blockchainInfoLastBlock - nextBlockHeight)*msPerBlock
-                    
-                    if (msLeft > 0){
-                        let msLeftFormatted = this.millisecondsToTimeString(msLeft)
-                        console.log("Estimated time to finish: "+msLeftFormatted)
+                        
+                        let msLeft = (this.blockchainInfoLastBlock - nextBlockHeight)*msPerBlock
+                        
+                        if (msLeft > 0){
+                            let msLeftFormatted = this.millisecondsToTimeString(msLeft)
+                            console.log("Estimated time to finish: "+msLeftFormatted)
+                        }
+                        
+                        blocksQuantity = -1
                     }
                     
-                    blocksQuantity = -1
+                    blocksQuantity = blocksQuantity + 1
+                    lastProcessedBlockIndex = nextBlockHeight
+                    lastProcessedBlockHash = nextBlockHash
                 }
-                
-                blocksQuantity = blocksQuantity + 1
-                lastProcessedBlockIndex = nextBlockHeight
-                lastProcessedBlockHash = nextBlockHash
+            } else {
+                console.log("Stopping the parsing...")
+                await this.db.close()
+                this.parsingStopped = true
+                break
             }
         }
     }

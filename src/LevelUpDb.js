@@ -34,6 +34,10 @@ class LevelUpStore {
     async sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
+    
+    async close(){
+        await this.db.close()
+    }
   
     async createDatabase() {
         try {
