@@ -29,6 +29,29 @@ async function startApi(){
     const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
     tracker.start()
 
+    async function getUtxos(address){
+        let utxos = await tracker.getUtxosAddress(address)
+        return utxos
+    }
+
+    async function getOldestTransaction(address){
+        let oldestTx = await tracker.getOldestTransaction(address)
+
+        return oldestTx
+    }
+    
+    async function getBalance(address){
+        let utxos = await tracker.getUtxosAddress(address)
+        let balance = 0
+
+        for (let nextUtxo of utxos){
+            balance = balance + nextUtxo.amount
+        }
+
+        // Return balance
+        return balance
+    }
+
     // Create the app
     const app = express();
 
@@ -41,22 +64,46 @@ async function startApi(){
     // Allow CORS for development
     app.use(cors());
 
+    app.get('/utxos/:address', (req, res) => {
+        const address = req.params.address;
+        const utxos = await getUtxos(address);
+        res.send(utxos);
+    })
+
+    app.get('/oldesttx/:address', (req, res) => {
+        const address = req.params.address;
+        const oldestTx = await getOldestTransaction(address);
+        res.send(oldestTx);
+    })
+
+    app.get('/balance/:address', (req, res) => {
+        const address = req.params.address;
+        const balance = await getBalance(address);
+        res.send(balance);
+    })
 
     const jsonRpcController = {
 
         // Function to create transactions hex for a given data and encoding type
         async get_utxos({address}) {
-            let utxos = await tracker.getUtxosAddress(address)
+            let utxos = await getUtxos(address)
 
             // Return utxos
             return { utxos: utxos}
         },
         // Function to retrieve the oldest tx of an address
         async get_oldest_tx({address}) {
-            let oldestTx = await tracker.getOldestTransaction(address)
+            let oldestTx = await getOldestTransaction(address)
 
-            // Return utxos
+            // Return oldest tx
             return { oldest_tx: oldestTx}
+        },
+        
+        async get_balance({address}) {
+            let balance = await getBalance(address)
+
+            // Return balance
+            return { balance: balance}
         },
         
         async get_input_from_key_pattern({pattern}) {
