@@ -64,19 +64,19 @@ async function startApi(){
     // Allow CORS for development
     app.use(cors());
 
-    app.get('/utxos/:address', (req, res) => {
+    app.get('/utxos/:address', async (req, res) => {
         const address = req.params.address;
         const utxos = await getUtxos(address);
         res.send(utxos);
     })
 
-    app.get('/oldesttx/:address', (req, res) => {
+    app.get('/oldesttx/:address', async (req, res) => {
         const address = req.params.address;
         const oldestTx = await getOldestTransaction(address);
         res.send(oldestTx);
     })
 
-    app.get('/balance/:address', (req, res) => {
+    app.get('/balance/:address', async (req, res) => {
         const address = req.params.address;
         const balance = await getBalance(address);
         res.send(balance);
