@@ -405,7 +405,7 @@ class XChainUtxoTracker {
                         let lastBlockDb = await this.db.getLastBlock()
                         
                         if (lastBlockDb.height > this.blockchainInfoLastBlock){
-                            throw Error("The last processed block height is greater than the last block from the network")
+                            throw Error("The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+")")
                         } else {
                             await this.db.setLastBlockHash(lastBlockDb.hash)
                             await this.db.setLastBlockHeight(lastBlockDb.height)
