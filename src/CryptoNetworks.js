@@ -44,6 +44,45 @@ class CryptoNetworks {
                     "scriptHash": 0xc4,
                     "wif": 0xf1,
                     "dustThreshold": 546
+                }
+            case "litecoin-mainnet":
+                return {
+                    "messagePrefix": '\x19Litecoin Signed Message:\n',
+                    "bech32": 'ltc',
+                    "bip32": {
+                       "public": 0x019da462,
+                       "private": 0x019d9cfe 
+                    },
+                    "pubKeyHash": 0x30,
+                    "scriptHash": 0x32,
+                    "wif": 0xb0,
+                    "dustThreshold": 546
+                }
+            case "litecoin-testnet":
+                return {
+                    "messagePrefix": '\x19Litecoin Signed Message:\n',
+                    "bech32": 'tltc',
+                    "bip32": {
+                       "public": 0x0436f6e1,
+                       "private": 0x0436ef7d 
+                    },
+                    "pubKeyHash": 0x6f,
+                    "scriptHash": 0xc4,
+                    "wif": 0xef,
+                    "dustThreshold": 546
+                }
+            case "litecoin-regtest":
+                return {
+                    "messagePrefix": '\x19Litecoin Signed Message:\n',
+                    "bech32": 'rltc',
+                    "bip32": {
+                       "public": 0x0436f6e1,
+                       "private": 0x0436ef7d 
+                    },
+                    "pubKeyHash": 0x6f,
+                    "scriptHash": 0xc4,
+                    "wif": 0xef,
+                    "dustThreshold": 546
                 }   
         }
     }

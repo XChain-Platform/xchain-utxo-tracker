@@ -112,6 +112,133 @@ class XChainUtxoTracker {
         })
     }
     
+    getAddressType(address, network) {
+        try {
+            bitcoin.payments.p2pkh({ address, network })
+            return 'p2pkh'
+        } catch (e) {}
+
+        try {
+            bitcoin.payments.p2sh({ address, network });
+            return 'p2sh'
+        } catch (e) {}
+
+        try {
+            bitcoin.payments.p2wpkh({ address, network });
+            return 'p2wpkh'
+        } catch (e) {}
+
+        try {
+            bitcoin.payments.p2tr({ address, network });
+            return 'p2tr';
+        } catch (e) {}
+
+        return "unknown"
+    }
+    
+    async getBalanceInfo(address){
+        let script = bitcoin.address.toOutputScript(address, this.network)
+        let scriptHash = createHash('sha256').update(script).digest('hex')
+        
+        let confirmedBalance = 0
+        let pendingBalance = 0
+        let utxosConfirmed = 0
+        let utxosPending = 0
+        let totalReceived = 0
+        
+        let outputs = await this.db.getOutputsScriptPubKey(scriptHash)
+        let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash)
+        outputs = outputs.concat(mempoolOutputs)
+        
+        let nextOutputIndex = 0
+        while (nextOutputIndex < outputs.length){
+            let mempoolTransaction = false
+            let nextOutput = outputs[nextOutputIndex]
+            
+            let nextOutputTransactions = await this.db.getTransactions(nextOutput.txid) 
+                
+            if (nextOutputTransactions.length == 0){
+                nextOutputTransactions = await this.mempoolDb.getTransactions(nextOutput.txid)  
+                mempoolTransaction = true
+            }
+                
+            if (nextOutputTransactions.length > 0){
+                let nextOutputTransaction = nextOutputTransactions[0]
+                let nextOutputBlock = await this.db.getBlock(nextOutputTransaction.block_hash)
+                
+                if (mempoolTransaction){
+                    nextOutput.height = null
+                    nextOutput.confirmations = 0
+                } else {
+                    if (nextOutputBlock != null){
+                        nextOutput.height = nextOutputBlock.h
+                        nextOutput.confirmations = this.blockchainInfoLastBlock - nextOutputBlock.h + 1
+                    } else { //This means the block doesn't exists because it was removed by a reorg
+                        outputs.splice(nextOutputIndex, 1)
+                        continue
+                    }
+                }
+                    
+                nextOutput.txid = nextOutputTransaction.txid.substr(1)
+                nextOutput.amount = nextOutput.value/SATOSHI_UNIT
+                
+                totalReceived = totalReceived + nextOutput.amount
+            } else {
+                throw new Error("There's no transaction for an output")
+            }
+            
+            
+            //Now let's find if there is an input in the database for this output.
+            //If there is an input, then the output is spent (not an utxo)
+            let nextOutputInput = null
+            let nextOutputInputIsMempool = false
+            //if REMOVE_SPENT is true, then there will be no inputs in the database, all stored outputs are utxos
+            if (!REMOVE_SPENT){
+                nextOutputInput = await this.db.getInput(nextOutput.txid, nextOutput.vout)
+            }
+            
+            if (nextOutputInput == null){
+                nextOutputInput = await this.mempoolDb.getInput(nextOutput.txid, nextOutput.vout)
+                nextOutputInputIsMempool = true
+            }
+            
+            if (nextOutputInput != null){
+                if (!mempoolTransaction && nextOutputInputIsMempool){
+                    confirmedBalance = confirmedBalance + nextOutput.amount
+                    pendingBalance = pendingBalance - nextOutput.amount
+                    utxosConfirmed = utxosConfirmed + 1
+                }
+                    
+                outputs.splice(nextOutputIndex, 1)
+                continue
+            } else {
+                if (mempoolTransaction){
+                    pendingBalance = pendingBalance + nextOutput.amount
+                    utxosPending = utxosPending + 1
+                } else {
+                    confirmedBalance = confirmedBalance + nextOutput.amount
+                    utxosConfirmed = utxosConfirmed + 1
+                }
+            }
+            
+            nextOutputIndex = nextOutputIndex + 1
+        }
+        
+        return {
+            "address": address,
+            "type": this.getAddressType(address, this.network),
+            "balances": {
+                "confirmed": confirmedBalance.toFixed(8),
+                "pending": pendingBalance.toFixed(8),
+                "received": totalReceived.toFixed(8)
+            },
+            "utxos": {
+                "confirmed": utxosConfirmed,
+                "pending": utxosPending
+            }
+        }
+    }
+    
     async getUtxosAddress(address){
         let script = bitcoin.address.toOutputScript(address, this.network)
         let scriptHash = createHash('sha256').update(script).digest('hex')
@@ -405,7 +532,8 @@ class XChainUtxoTracker {
                         let lastBlockDb = await this.db.getLastBlock()
                         
                         if (lastBlockDb.height > this.blockchainInfoLastBlock){
-                            throw Error("The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+")")
+                            console.log("WARNING! The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"). It's possible that the node was reset.")
+                            //throw Error("The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+")")
                         } else {
                             await this.db.setLastBlockHash(lastBlockDb.hash)
                             await this.db.setLastBlockHeight(lastBlockDb.height)

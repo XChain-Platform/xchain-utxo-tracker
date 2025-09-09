@@ -51,6 +51,12 @@ async function startApi(){
         // Return balance
         return balance
     }
+    
+    async function getInfo(address){
+        let infoAddress = await tracker.getBalanceInfo(address)
+
+        return infoAddress
+    }
 
     // Create the app
     const app = express();
@@ -82,8 +88,19 @@ async function startApi(){
         res.send(balance);
     })
 
+    app.get('/info/:address', async (req, res) => {
+        const address = req.params.address;
+        const info = await getInfo(address);
+        res.send(info);
+    })
+
     const jsonRpcController = {
 
+        // Function to check if xchain-utxo-tracker is up
+        async ping() {
+            return {status:"success"};
+        },
+        
         // Function to create transactions hex for a given data and encoding type
         async get_utxos({address}) {
             let utxos = await getUtxos(address)
@@ -104,6 +121,14 @@ async function startApi(){
 
             // Return balance
             return { balance: balance}
+        },
+        
+        // Function to retrieve the confirmed, pending balances of an address
+        async get_info({address}) {
+            let info = await getInfo(address)
+
+            // Return oldest tx
+            return info
         },
         
         async get_input_from_key_pattern({pattern}) {
