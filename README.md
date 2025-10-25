@@ -1,4 +1,4 @@
-# XChainUtxoTracker
+# XChain Platform UTXO Tracker
 
 **XChainUtxoTracker** sorts all inputs and outputs of all blockchain transactions in a database and then serves the balance, utxos, and the oldest transaction associated with an address through an API.
 
@@ -69,5 +69,17 @@ The JSON-RPC interface allows to do the same requests and some others using **PO
 | `getbootstrapstatus` | Gets the status of a task. | `{ "taskid": "string" }` | `{ "progress": 50, "filename": "..." }` |
 | `restorebootstrap` | Restores a compressed backup in the server. | `{ "filename": "string" }` | `{ "task_id": "uuid" }` |
 | `getbootstraprestorestatus`| Gets the status of a backup restoration. | `{ "taskid": "string" }` | `{ "progress": 80, "filename": "..." }` |
+
+---
+
+**Copyright © 2025 Dankest, LLC**
+
+**Based on XChain Platform by Dankest, LLC – https://dankest.llc**  
+
+Licensed under the **Dankest Community License**  
+(based on the Apache License 2.0 with additional non-commercial and network-disclosure terms).  
+
+You may not use, modify, or distribute this material except in compliance with the License.  
+A full copy of the License is available at: [https://dankest.llc/license](https://dankest.llc/license)
 
 ---
