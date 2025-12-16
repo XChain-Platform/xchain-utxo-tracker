@@ -45,6 +45,7 @@ const SATOSHI_UNIT = 100000000.0
 const MEMPOOL_INTERVAL = 60000
 const MEMPOOL_BATCH_SIZE = 1000
 const REMOVE_SPENT = false
+const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node need to have to start parsing
 
 const UNDO_BLOCKS = 10 //This is the number of blocks from which the outputs will be kept saved.
 
@@ -534,12 +535,27 @@ class XChainUtxoTracker {
         this.keepParsing = true
         this.parsingStopped = false
     
+        let nodeSyncedProblem = false
+    
         while (true){
             if (this.keepParsing){
                 //Getting the last block from the blockchain
                 if (!lastBlockchainInfo || (lastProcessedBlockIndex >= this.blockchainInfoLastBlock)){
                     try {
                         lastBlockchainInfo = await this.connector.getBlockchainInfo()
+                        
+                        if (lastBlockchainInfo["verificationprogress"] < MIN_VERIFICATION_PROGRESS_TO_PARSE){
+                            if (!nodeSyncedProblem){
+                                console.log("The node is not synced. Waiting for it to synchronize...")
+                            }
+                            
+                            lastBlockchainInfo = null
+                            nodeSyncedProblem = true
+                            await this.sleep(3000)
+                            continue
+                        } else {
+                            nodeSyncedProblem = false
+                        }
                         
                         this.blockchainInfoLastBlock = lastBlockchainInfo["blocks"]
                     } catch (e){
