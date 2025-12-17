@@ -449,12 +449,12 @@ class XChainUtxoTracker {
             let lastBlockHash = await this.db.getLastBlockHash()
             let lastBlock = await this.db.getBlock(lastBlockHash)
             
-            if (lastBlockIndex != lastBlock["h"]){
+            if (!lastBlock || (lastBlockIndex != lastBlock["h"])){
                 //This shouldn't happen, but let's try to find the real lastBlockIndex
                 console.log("The blocks height for the same hash are not equal. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
                 let lastBlockDb = await this.db.getLastBlock()
                 
-                if (lastBlockDb.height != lastBlock["h"]){
+                if (lastBlock && (lastBlockDb.height != lastBlock["h"])){
                     throw Error("There are inconsistents in a block height. It should be "+lastBlockIndex+" but "+lastBlock["h"]+" was found")
                 } else {
                     await this.db.setLastBlockHash(lastBlockDb.hash)
