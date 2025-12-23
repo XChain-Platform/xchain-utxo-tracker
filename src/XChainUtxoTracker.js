@@ -449,16 +449,23 @@ class XChainUtxoTracker {
             let lastBlockHash = await this.db.getLastBlockHash()
             let lastBlock = await this.db.getBlock(lastBlockHash)
             
+            console.log("Last block index is "+lastBlockIndex)
+            console.log("Last block hash is "+lastBlockHash)
+            console.log("Last block height is "+(lastBlock?lastBlock["h"]:"null"))
+            
             if (!lastBlock || (lastBlockIndex != lastBlock["h"])){
                 //This shouldn't happen, but let's try to find the real lastBlockIndex
                 console.log("The blocks height for the same hash are not equal. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
                 let lastBlockDb = await this.db.getLastBlock()
+                console.log("Last block from db is "+(lastBlockDb?lastBlockDb:"null"))
                 
                 if (lastBlock && (lastBlockDb.height != lastBlock["h"])){
                     throw Error("There are inconsistents in a block height. It should be "+lastBlockIndex+" but "+lastBlock["h"]+" was found")
                 } else {
                     await this.db.setLastBlockHash(lastBlockDb.hash)
                     await this.db.setLastBlockHeight(lastBlockDb.height)
+                    console.log("The new last block hash in the db is "+lastBlockDb.hash)
+                    console.log("The new last block index in the db is "+lastBlockDb.height)
                     console.log("Last block index was fixed!")
                     continue
                 }
@@ -471,6 +478,8 @@ class XChainUtxoTracker {
                     await this.sleep(3000)
                     continue
                 }
+                
+                console.log("Last block hash from node is "+blockHashFromNode)
                 
                 if (lastBlockHash != blockHashFromNode){
                     try {

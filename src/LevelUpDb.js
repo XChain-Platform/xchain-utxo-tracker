@@ -110,7 +110,7 @@ class LevelUpStore {
     }
   
     removeTransactionIfExists(key){
-        if (this.transactionArray.has(key)){
+        if (this.transactionArray && this.transactionArray.has(key)){
             return this.transactionArray.delete(key)
         }
         
