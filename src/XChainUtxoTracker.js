@@ -632,7 +632,7 @@ class XChainUtxoTracker {
                         continue
                     }
                     
-                    var block = this.xchainBlockDecoder.blockFromHex(Buffer.from(nextBlockHex,"hex"))
+                    var block = this.xchainBlockDecoder.blockFromHex(nextBlockHex)
                     let previousBlockHash = util.uint8ArrayToHex(block.prevHash.reverse())
 
                     //Check if there is a reorg
