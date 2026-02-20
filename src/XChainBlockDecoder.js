@@ -105,7 +105,7 @@ class XChainBlockDecoder {
                 block.transactions = [];
                 for (let i = 0; i < nTransactions; ++i) {
                   try {
-                    if (BigInt(i) == nTransactions - 1n){//If it's the last transaction, then check if it's the HogEx
+                    if (i == nTransactions - 1){//If it's the last transaction, then check if it's the HogEx
                         let nextTxBuffer = bufferReader.buffer.slice(bufferReader.offset)   
                         let txVersion = nextTxBuffer.readUInt32LE();
                         let marker = nextTxBuffer.readUInt8(4);
