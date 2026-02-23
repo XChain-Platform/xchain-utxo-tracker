@@ -174,9 +174,11 @@ async function startApi(){
                 let destination = "/bootstrap/xchain-utxo-tracker/"+filename
                 tasks[taskId] = {"progress": 0, "filename": filename}//, last_block_index":}
                 compressDirPigz(taskId, "/data/"+DB_NAME, destination).then((finished) =>{
+                    tasks[taskId]["progress"] = 100
                     console.log("Starting the parsing again")
                     tracker.start()
                 }).catch(error => {
+                    tasks[taskId]["progress"] = -1
                     console.log("Warning, compression was not succesful: "+error)
                     delete tasks[taskId]
                 })
@@ -205,9 +207,11 @@ async function startApi(){
                 let source = "/bootstrap/xchain-utxo-tracker/"+filename
                 tasks[taskId] = {"progress": 0, "filename": filename}
                 decompressPigz(taskId, source, "/data/"+DB_NAME).then((finished) =>{
+                    tasks[taskId]["progress"] = 100
                     console.log("Starting the parsing")
                     tracker.start()
                 }).catch(error => {
+                    tasks[taskId]["progress"] = -1
                     console.log("Warning, decompression was not succesful: "+error)
                     delete tasks[taskId]
                 })
