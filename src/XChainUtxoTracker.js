@@ -45,6 +45,7 @@ const SATOSHI_UNIT = 100000000.0
 const MEMPOOL_INTERVAL = 60000
 const MEMPOOL_BATCH_SIZE = 1000
 const REMOVE_SPENT = true
+const ETA_WINDOW_BLOCKS = 1000 //Rolling window size for ETA calculation
 const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node need to have to start parsing
 
 const UNDO_BLOCKS = 10 //This is the number of blocks from which the outputs will be kept saved.
@@ -104,13 +105,16 @@ class XChainUtxoTracker {
         var milliseconds = Math.floor((ms % 1000) / 100),
         seconds = Math.floor((ms / 1000) % 60),
         minutes = Math.floor((ms / (1000 * 60)) % 60),
-        hours = Math.floor((ms / (1000 * 60 * 60)) % 24);
+        hours = Math.floor((ms / (1000 * 60 * 60)) % 24),
+        days = Math.floor(ms / (1000 * 60 * 60 * 24));
 
         hours = (hours < 10) ? "0" + hours : hours;
         minutes = (minutes < 10) ? "0" + minutes : minutes;
         seconds = (seconds < 10) ? "0" + seconds : seconds;
 
-        return hours + "h" + minutes + "m" + seconds + "." + milliseconds+"s";
+        let result = hours + "h" + minutes + "m" + seconds + "." + milliseconds+"s";
+        if (days > 0) result = days + "d " + result;
+        return result;
     }
     
     isSynced(){
@@ -463,8 +467,8 @@ class XChainUtxoTracker {
         this.blockchainInfoLastBlock = -1
         let blocksQuantity = 0
         
-        let startTimeStamp = Date.now()
-        
+        let blockTimestamps = [] // Rolling window of {height, time} for ETA calculation
+
         let blocksToInsert = []
         let transactionsToInsert = []
         let inputsToInsert = []
@@ -622,22 +626,26 @@ class XChainUtxoTracker {
                         console.log("Inserting data Blocks ("+blocksCount+") Transactions ("+transactionsCount+") Inputs ("+inputsCount+") Outputs("+outputsCount+")")
                         
                         await this.db.endTransaction()
-                        
+
                         blocksCount = 0
                         transactionsCount = 0
                         inputsCount = 0
                         outputsCount = 0
-                        
-                        let endTimeStamp = Date.now()
-                        
-                        let msPerBlock = ((endTimeStamp - startTimeStamp)/DB_TRANSACTION_BLOCKS_QUANTITY)
-                        startTimeStamp = Date.now()
-                        
-                        let msLeft = (this.blockchainInfoLastBlock - nextBlockHeight)*msPerBlock
-                        
-                        if (msLeft > 0){
-                            let msLeftFormatted = this.millisecondsToTimeString(msLeft)
-                            console.log("Estimated time to finish: "+msLeftFormatted)
+
+                        // Rolling ETA: keep the last ETA_WINDOW_BLOCKS timestamps
+                        blockTimestamps.push({height: nextBlockHeight, time: Date.now()})
+                        if (blockTimestamps.length > ETA_WINDOW_BLOCKS) {
+                            blockTimestamps.shift()
+                        }
+
+                        let blocksLeft = this.blockchainInfoLastBlock - nextBlockHeight
+                        if (blocksLeft > 0 && blockTimestamps.length >= 2) {
+                            let oldest = blockTimestamps[0]
+                            let newest = blockTimestamps[blockTimestamps.length - 1]
+                            let msPerBlock = (newest.time - oldest.time) / (newest.height - oldest.height)
+                            let msLeft = blocksLeft * msPerBlock
+                            let windowSize = newest.height - oldest.height + 1
+                            console.log("Estimated time to finish: "+this.millisecondsToTimeString(msLeft)+" (avg over last "+windowSize+" blocks)")
                         }
                         
                         blocksQuantity = -1
