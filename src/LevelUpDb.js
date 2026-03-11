@@ -295,11 +295,13 @@ class LevelUpStore {
         let key = PREFIX_OUTPUT+output.scriptPubKey+output.txHash+output.outputIndex
         let data = JSON.stringify(
             {
-                v:output.value
-            }, 
+                v: output.value,
+                h: output.height != null ? output.height : -1,
+                t: output.fullTxHash || null
+            },
             (_, v) => typeof v === 'bigint' ? v.toString() : v
         )
-    
+
         return await this.addTransaction("put", key, data)
     }
   
@@ -853,8 +855,10 @@ class LevelUpStore {
                 
                 outputs.push({
                     txid: txHash8,
+                    fullTxid: dataJson.t || null,
                     vout: n,
-                    value: dataJson.v
+                    value: dataJson.v,
+                    height: dataJson.h != null ? dataJson.h : -1
                 })
             })
 

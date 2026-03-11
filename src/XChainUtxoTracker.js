@@ -44,7 +44,7 @@ const SYNCED_THRESHOLD = 3
 const SATOSHI_UNIT = 100000000.0
 const MEMPOOL_INTERVAL = 60000
 const MEMPOOL_BATCH_SIZE = 1000
-const REMOVE_SPENT = false
+const REMOVE_SPENT = true
 const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node need to have to start parsing
 
 const UNDO_BLOCKS = 10 //This is the number of blocks from which the outputs will be kept saved.
@@ -162,91 +162,45 @@ class XChainUtxoTracker {
     async getBalanceInfo(address){
         let script = bitcoin.address.toOutputScript(address, this.network)
         let scriptHash = createHash('sha256').update(script).digest('hex')
-        
+
         let confirmedBalance = 0
         let pendingBalance = 0
         let utxosConfirmed = 0
         let utxosPending = 0
         let totalReceived = 0
-        
-        let outputs = await this.db.getOutputsScriptPubKey(scriptHash)
+
+        let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash)
         let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash)
-        outputs = outputs.concat(mempoolOutputs)
-        
-        let nextOutputIndex = 0
-        while (nextOutputIndex < outputs.length){
-            let mempoolTransaction = false
-            let nextOutput = outputs[nextOutputIndex]
-            
-            let nextOutputTransactions = await this.db.getTransactions(nextOutput.txid) 
-                
-            if (nextOutputTransactions.length == 0){
-                nextOutputTransactions = await this.mempoolDb.getTransactions(nextOutput.txid)  
-                mempoolTransaction = true
-            }
-                
-            if (nextOutputTransactions.length > 0){
-                let nextOutputTransaction = nextOutputTransactions[0]
-                let nextOutputBlock = await this.db.getBlock(nextOutputTransaction.block_hash)
-                
-                if (mempoolTransaction){
-                    nextOutput.height = null
-                    nextOutput.confirmations = 0
-                } else {
-                    if (nextOutputBlock != null){
-                        nextOutput.height = nextOutputBlock.h
-                        nextOutput.confirmations = this.blockchainInfoLastBlock - nextOutputBlock.h + 1
-                    } else { //This means the block doesn't exists because it was removed by a reorg
-                        outputs.splice(nextOutputIndex, 1)
-                        continue
-                    }
-                }
-                    
-                nextOutput.txid = nextOutputTransaction.txid.substr(1)
-                nextOutput.amount = nextOutput.value/SATOSHI_UNIT
-                
-                totalReceived = totalReceived + nextOutput.amount
+
+        for (let nextOutput of confirmedOutputs) {
+            let txid = nextOutput.fullTxid || nextOutput.txid
+            let amount = nextOutput.value / SATOSHI_UNIT
+
+            // Note: with REMOVE_SPENT=true, totalReceived only reflects currently unspent confirmed outputs
+            totalReceived += amount
+
+            let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
+            if (mempoolInput != null) {
+                // Confirmed output being spent in the mempool: counts as confirmed but pending out
+                confirmedBalance += amount
+                pendingBalance -= amount
+                utxosConfirmed++
             } else {
-                throw new Error("There's no transaction for an output")
+                confirmedBalance += amount
+                utxosConfirmed++
             }
-            
-            
-            //Now let's find if there is an input in the database for this output.
-            //If there is an input, then the output is spent (not an utxo)
-            let nextOutputInput = null
-            let nextOutputInputIsMempool = false
-            //if REMOVE_SPENT is true, then there will be no inputs in the database, all stored outputs are utxos
-            if (!REMOVE_SPENT){
-                nextOutputInput = await this.db.getInput(nextOutput.txid, nextOutput.vout)
-            }
-            
-            if (nextOutputInput == null){
-                nextOutputInput = await this.mempoolDb.getInput(nextOutput.txid, nextOutput.vout)
-                nextOutputInputIsMempool = true
-            }
-            
-            if (nextOutputInput != null){
-                if (!mempoolTransaction && nextOutputInputIsMempool){
-                    confirmedBalance = confirmedBalance + nextOutput.amount
-                    pendingBalance = pendingBalance - nextOutput.amount
-                    utxosConfirmed = utxosConfirmed + 1
-                }
-                    
-                outputs.splice(nextOutputIndex, 1)
-                continue
-            } else {
-                if (mempoolTransaction){
-                    pendingBalance = pendingBalance + nextOutput.amount
-                    utxosPending = utxosPending + 1
-                } else {
-                    confirmedBalance = confirmedBalance + nextOutput.amount
-                    utxosConfirmed = utxosConfirmed + 1
-                }
-            }
-            
-            nextOutputIndex = nextOutputIndex + 1
         }
-        
+
+        for (let nextOutput of mempoolOutputs) {
+            let txid = nextOutput.fullTxid || nextOutput.txid
+
+            let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
+            if (mempoolInput == null) {
+                pendingBalance += nextOutput.value / SATOSHI_UNIT
+                utxosPending++
+            }
+        }
+
         return {
             "address": address,
             "type": this.getAddressType(address, this.network),
@@ -265,115 +219,93 @@ class XChainUtxoTracker {
     async getUtxosAddress(address){
         let script = bitcoin.address.toOutputScript(address, this.network)
         let scriptHash = createHash('sha256').update(script).digest('hex')
-        
-        let outputs = await this.db.getOutputsScriptPubKey(scriptHash)
+        let scriptPubKeyHex = util.uint8ArrayToHex(script)
+
+        let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash)
         let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash)
-        
-        outputs = outputs.concat(mempoolOutputs)
-        
-        let nextOutputIndex = 0
-        while (nextOutputIndex < outputs.length){
-            let mempoolTransaction = false
-            let nextOutput = outputs[nextOutputIndex]
-            
-            let nextOutputTransactions = await this.db.getTransactions(nextOutput.txid) 
-                
-            if (nextOutputTransactions.length == 0){
-                nextOutputTransactions = await this.mempoolDb.getTransactions(nextOutput.txid)  
-                mempoolTransaction = true
-            }
-                
-            if (nextOutputTransactions.length > 0){
-                let nextOutputTransaction = nextOutputTransactions[0]
-                let nextOutputBlock = await this.db.getBlock(nextOutputTransaction.block_hash)
-                
-                if (mempoolTransaction){
-                    nextOutput.height = null
-                    nextOutput.confirmations = 0
-                } else {
-                    if (nextOutputBlock != null){
-                        nextOutput.height = nextOutputBlock.h
-                        nextOutput.confirmations = this.blockchainInfoLastBlock - nextOutputBlock.h + 1
-                    } else { //This means the block doesn't exists because it was removed by a reorg
-                        outputs.splice(nextOutputIndex, 1)
-                        continue
-                    }
-                }
-                    
-                nextOutput.txid = nextOutputTransaction.txid.substr(1)
-                nextOutput.amount = nextOutput.value/SATOSHI_UNIT
-                nextOutput.scriptPubKey = util.uint8ArrayToHex(script)
-            } else {
-                throw new Error("There's no transaction for an output")
-            }
-            
-            
-            //Now let's find if there is an input in the database for this output.
-            //If there is an input, then the output is spent (not an utxo)
-            let nextOutputInput = null
-            
-            //if REMOVE_SPENT is true, then there will be no inputs in the database, all stored outputs are utxos
-            if (!REMOVE_SPENT){
-                nextOutputInput = await this.db.getInput(nextOutput.txid, nextOutput.vout)
-            }
-            
-            if (nextOutputInput == null){
-                nextOutputInput = await this.mempoolDb.getInput(nextOutput.txid, nextOutput.vout)
-            }
-            
-            if (nextOutputInput != null){
-                outputs.splice(nextOutputIndex, 1)
-                continue
-            } 
-            
-            nextOutputIndex = nextOutputIndex + 1
+
+        let results = []
+
+        for (let nextOutput of confirmedOutputs) {
+            let txid = nextOutput.fullTxid || nextOutput.txid
+
+            // Skip confirmed outputs being spent in the mempool
+            let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
+            if (mempoolInput != null) continue
+
+            nextOutput.txid = txid
+            nextOutput.confirmations = this.blockchainInfoLastBlock - nextOutput.height + 1
+            nextOutput.amount = nextOutput.value / SATOSHI_UNIT
+            nextOutput.scriptPubKey = scriptPubKeyHex
+            results.push(nextOutput)
         }
-        
-        return outputs
+
+        for (let nextOutput of mempoolOutputs) {
+            let txid = nextOutput.fullTxid || nextOutput.txid
+
+            // Skip mempool outputs that are also spent by another mempool tx
+            let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
+            if (mempoolInput != null) continue
+
+            nextOutput.txid = txid
+            nextOutput.height = null
+            nextOutput.confirmations = 0
+            nextOutput.amount = nextOutput.value / SATOSHI_UNIT
+            nextOutput.scriptPubKey = scriptPubKeyHex
+            results.push(nextOutput)
+        }
+
+        return results
     }
     
     async getOldestTransaction(address){
         let script = bitcoin.address.toOutputScript(address, this.network)
         let scriptHash = createHash('sha256').update(script).digest('hex')
-        
-        let oldestOutput = null
-        let outputs = null
-            
+
         if (REMOVE_SPENT){
+            // With REMOVE_SPENT=true, the S prefix stores the first block where this script appeared.
+            // Transaction records (T prefix) are not written, so we read the full txid directly from S.
             let oldestOutputDb = await this.db.getOutputScriptBlock(scriptHash)
-            outputs = [oldestOutputDb]
-        } else {
-            outputs = await this.db.getOutputsScriptPubKey(scriptHash)
+            if (!oldestOutputDb) return null
+
+            return {
+                txid: oldestOutputDb.txid,
+                height: oldestOutputDb.h,
+                confirmations: this.blockchainInfoLastBlock - oldestOutputDb.h + 1,
+                vout: 0,
+                amount: null,
+                scriptPubKey: util.uint8ArrayToHex(script)
+            }
         }
-            
+
+        let outputs = await this.db.getOutputsScriptPubKey(scriptHash)
+        let oldestOutput = null
+
         let nextOutputIndex = 0
         while (nextOutputIndex < outputs.length){
             let nextOutput = outputs[nextOutputIndex]
-            
-            let nextOutputTransactions = await this.db.getTransactions(nextOutput.txid) 
-                
+
+            let nextOutputTransactions = await this.db.getTransactions(nextOutput.txid)
+
             if (nextOutputTransactions.length > 0){
                 let nextOutputTransaction = nextOutputTransactions[0]
                 let nextOutputBlock = await this.db.getBlock(nextOutputTransaction.block_hash)
-                
-                    
+
                 nextOutput.txid = nextOutputTransaction.txid.substr(1)
                 nextOutput.height = nextOutputBlock.h
                 nextOutput.confirmations = this.blockchainInfoLastBlock - nextOutputBlock.h + 1
                 nextOutput.amount = nextOutput.value/SATOSHI_UNIT
-                
+
                 if ((oldestOutput == null) || (nextOutput.height < oldestOutput.height)){
                     oldestOutput = nextOutput
                 }
-                
-                
             } else {
                 throw new Error("There's no transaction for an output")
             }
-            
+
             nextOutputIndex = nextOutputIndex + 1
         }
-        
+
         return oldestOutput
     }
     
@@ -392,7 +324,9 @@ class XChainUtxoTracker {
             outputsCount: 0
         }
     
-        await db.insertTransaction({hash:nextTxId, blockHash:blockHash})
+        if (!removeSpent) {
+            await db.insertTransaction({hash:nextTxId, blockHash:blockHash})
+        }
         
         for (let txInputIndex=0;txInputIndex < transaction.ins.length;txInputIndex++){
             let nextInput = transaction.ins[txInputIndex]
@@ -428,11 +362,11 @@ class XChainUtxoTracker {
             let outputValue = nextOutput.value
             let scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
             
-            await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, value:outputValue})
+            await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, value:outputValue, height:blockHeight, fullTxHash:nextTxId})
 
             if (addHints || removeSpent){
                 await db.insertOutputHint({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex})
-                await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId8, blockHeight)
+                await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId, blockHeight)
             }
             resultInfo["outputsCount"] = resultInfo["outputsCount"] + 1
         }
