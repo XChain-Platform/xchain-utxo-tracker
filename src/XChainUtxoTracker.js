@@ -288,19 +288,9 @@ class XChainUtxoTracker {
         let scriptHash = createHash('sha256').update(script).digest('hex')
 
         if (REMOVE_SPENT){
-            // With REMOVE_SPENT=true, the S prefix stores the first block where this script appeared.
-            // Transaction records (T prefix) are not written, so we read the full txid directly from S.
-            let oldestOutputDb = await this.db.getOutputScriptBlock(scriptHash)
-            if (!oldestOutputDb) return null
-
-            return {
-                txid: oldestOutputDb.txid,
-                height: oldestOutputDb.h,
-                confirmations: this.blockchainInfoLastBlock - oldestOutputDb.h + 1,
-                vout: 0,
-                amount: null,
-                scriptPubKey: util.uint8ArrayToHex(script)
-            }
+            // With REMOVE_SPENT=true, T prefix records are not written and S/Z tracking is disabled,
+            // so oldest transaction lookup is not available.
+            return null
         }
 
         let outputs = await this.db.getOutputsScriptPubKey(scriptHash)
@@ -391,7 +381,6 @@ class XChainUtxoTracker {
 
             if (addHints || removeSpent){
                 await db.insertOutputHint({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex})
-                await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId, blockHeight)
             }
             resultInfo["outputsCount"] = resultInfo["outputsCount"] + 1
         }
@@ -443,7 +432,6 @@ class XChainUtxoTracker {
                 if (lastBlockHash != blockHashFromNode){
                     try {
                         if (REMOVE_SPENT){
-                            await this.db.removeOutputScriptsInBlock(lastBlockHash)
                             await this.db.processDeletedOutputs(lastBlockHash, true)
                         }
                         await this.db.deleteBlock(lastBlockHash)
