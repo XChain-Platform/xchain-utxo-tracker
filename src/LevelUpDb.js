@@ -338,125 +338,76 @@ class LevelUpStore {
     }
   
     async processDeletedOutputsInDb(blockHash, recover = true, processOutputHints = false){
-        let thisLevelUp = this
-        
-        return new Promise((resolve, reject) => {
-            let prefixBlockHash = null
-            if (processOutputHints){
-                prefixBlockHash = PREFIX_OUTPUT_HINT_DELETED+blockHash
-            } else {
-                prefixBlockHash = PREFIX_OUTPUT_DELETED+blockHash
-            }
-        
-            const options = {
-                gte: prefixBlockHash,
-                lte: prefixBlockHash+"\xFF",
-                keys: true,
-                values: true
-            }
-          
-            const stream = thisLevelUp.db.createReadStream(options);
-          
-            stream.on('data', async function(data) {
-                let deletedKey = data.key.toString("utf-8")
-                
-                if (recover){
-                    let outputKey = deletedKey.substr(prefixBlockHash.length)
-                    await thisLevelUp.addTransaction("put", outputKey, data.value)
-                }
-                
-                await thisLevelUp.addTransaction("del", deletedKey, "")
-                return true
-            })
+        let prefixBlockHash = null
+        if (processOutputHints){
+            prefixBlockHash = PREFIX_OUTPUT_HINT_DELETED+blockHash
+        } else {
+            prefixBlockHash = PREFIX_OUTPUT_DELETED+blockHash
+        }
 
-            stream.on('error', function(err) {
-                console.log("Error getting deleted output for a block hash")
-                console.log(err)
-                reject(err)
-            })
+        const options = {
+            gte: prefixBlockHash,
+            lte: prefixBlockHash+"\xFF",
+            keys: true,
+            values: true
+        }
 
-            stream.on('end', function() {
-                resolve(true)
-            })
-        })
+        const stream = this.db.createReadStream(options);
+
+        for await (const data of stream) {
+            let deletedKey = data.key.toString("utf-8")
+
+            if (recover){
+                let outputKey = deletedKey.substr(prefixBlockHash.length)
+                await this.addTransaction("put", outputKey, data.value)
+            }
+
+            await this.addTransaction("del", deletedKey, "")
+        }
     }
     
     async recoverDeletedOutputsHints(blockHash){
-        let thisLevelUp = this
-        
-        return new Promise((resolve, reject) => {
-            let prefixBlockHash = PREFIX_OUTPUT_HINT_DELETED+blockHash
-        
-            const options = {
-                gte: prefixBlockHash,
-                lte: prefixBlockHash+"\xFF",
-                keys: true,
-                values: true
-            }
-          
-            const stream = thisLevelUp.db.createReadStream(options);
-          
-            stream.on('data', async function(data) {
-                let deletedKey = data.key.toString("utf-8")
-                let outputHintKey = deletedKey.substr(prefixBlockHash.length)
-                
-                let outputScriptBlockKey = PREFIX_OUTPUT_SCRIPT_BLOCK+outputScript
-                
-                await thisLevelUp.addTransaction("put", outputHintKey, data.value)
-                await thisLevelUp.addTransaction("del", deletedKey, "")
-                return true
-            })
+        let prefixBlockHash = PREFIX_OUTPUT_HINT_DELETED+blockHash
 
-            stream.on('error', function(err) {
-                console.log("Error getting deleted output for a block hash")
-                console.log(err)
-                reject(err)
-            })
+        const options = {
+            gte: prefixBlockHash,
+            lte: prefixBlockHash+"\xFF",
+            keys: true,
+            values: true
+        }
 
-            stream.on('end', function() {
-                resolve(true)
-            })
-        })
+        const stream = this.db.createReadStream(options);
+
+        for await (const data of stream) {
+            let deletedKey = data.key.toString("utf-8")
+            let outputHintKey = deletedKey.substr(prefixBlockHash.length)
+
+            await this.addTransaction("put", outputHintKey, data.value)
+            await this.addTransaction("del", deletedKey, "")
+        }
     }
   
     async removeOutputScriptsInBlock(blockHash){
-        let thisLevelUp = this
-        
-        return new Promise((resolve, reject) => {
-            let prefixBlockHash = PREFIX_BLOCK_OUTPUT_SCRIPT+blockHash
-        
-            const options = {
-                gte: prefixBlockHash,
-                lte: prefixBlockHash+"\xFF",
-                keys: true,
-                values: true
-            }
-          
-            const stream = thisLevelUp.db.createReadStream(options);
-          
-            stream.on('data', async function(data) {
-                let dataString = data.key.toString("utf-8")
-                
-                //Find its transaction and input(if it exists)
-                let outputScript = dataString.substr(prefixBlockHash.length)
-                
-                let outputScriptBlockKey = PREFIX_OUTPUT_SCRIPT_BLOCK+outputScript
-                
-                await thisLevelUp.addTransaction("del", outputScriptBlockKey, "")
-                await thisLevelUp.addTransaction("del", dataString, "")
-                return true
-            })
+        let prefixBlockHash = PREFIX_BLOCK_OUTPUT_SCRIPT+blockHash
 
-            stream.on('error', function(err) {
-                console.log("Error getting output scripts in a block")
-                console.log(err)
-                reject(err)
-            })
+        const options = {
+            gte: prefixBlockHash,
+            lte: prefixBlockHash+"\xFF",
+            keys: true,
+            values: true
+        }
 
-            stream.on('end', function() {
-                resolve(true)
-            })
-        })
+        const stream = this.db.createReadStream(options);
+
+        for await (const data of stream) {
+            let dataString = data.key.toString("utf-8")
+
+            let outputScript = dataString.substr(prefixBlockHash.length)
+            let outputScriptBlockKey = PREFIX_OUTPUT_SCRIPT_BLOCK+outputScript
+
+            await this.addTransaction("del", outputScriptBlockKey, "")
+            await this.addTransaction("del", dataString, "")
+        }
     }
   
     async insertOutputScriptBlock(outputScript, blockHash, txHash, blockHeight){
@@ -609,169 +560,133 @@ class LevelUpStore {
     }
 
     async deleteOutputsByHint(txid){
-        let thisLevelUp = this
-        return new Promise((resolve, reject) => {
-            txid = txid.substr(0, 16)
-            
-            const options = {
-                gte: PREFIX_OUTPUT_HINT+txid,
-                lte: PREFIX_OUTPUT_HINT+txid+"\xFF",
-                keys: true,
-                values: true
-            }
-            
-            var outputsCount = 0
-            const dbStream = this.db.createReadStream(options)
-            dbStream.on('data', async function(data) {
-                const outputIndex = data.key.toString("utf-8")
-                const scriptPubKey = data.value.toString("utf-8")
-                
-                //delete the output
-                await thisLevelUp.addTransaction("del", PREFIX_OUTPUT + scriptPubKey + txid + outputIndex, null)
-                await thisLevelUp.addTransaction("del", data.key, null)
-                
-                outputsCount = outputsCount + 1
-            })
-            dbStream.on('error', function(err) {
-                reject(err)
-            })
+        txid = txid.substr(0, 16)
 
-            dbStream.on('end', function() {
-                resolve(outputsCount)
-            })
-        })
+        const options = {
+            gte: PREFIX_OUTPUT_HINT+txid,
+            lte: PREFIX_OUTPUT_HINT+txid+"\xFF",
+            keys: true,
+            values: true
+        }
+
+        var outputsCount = 0
+        const dbStream = this.db.createReadStream(options)
+
+        for await (const data of dbStream) {
+            const outputIndex = data.key.toString("utf-8")
+            const scriptPubKey = data.value.toString("utf-8")
+
+            await this.addTransaction("del", PREFIX_OUTPUT + scriptPubKey + txid + outputIndex, null)
+            await this.addTransaction("del", data.key, null)
+
+            outputsCount = outputsCount + 1
+        }
+
+        return outputsCount
     }
 
     async deleteInputsByHint(txid){
-        let thisLevelUp = this
-        
-        return new Promise((resolve, reject) => {
-            txid = txid.substr(0, 16)
-            
-            const options = {
-                gte: PREFIX_INPUT_HINT+txid,
-                lte: PREFIX_INPUT_HINT+txid+"\xFF",
-                keys: true,
-                values: true
-            }
-            
-            var inputsCount = 0
-            const dbStream = this.db.createReadStream(options)
-            dbStream.on('data', async function(data) {
-                const keyString = data.key.toString("utf-8")
-                const prevOutputTxHash = keyString.substr(1 + 64, 16)
-                const prevOutputIndex = keyString.substr(1 + 64 + 16)
-                
-                //delete the input
-                await thisLevelUp.addTransaction(
-                    "del",
-                    PREFIX_INPUT+prevOutputTxHash+prevOutputIndex,
-                    null
-                )
-                //delete the hint
-                await thisLevelUp.addTransaction(
+        txid = txid.substr(0, 16)
+
+        const options = {
+            gte: PREFIX_INPUT_HINT+txid,
+            lte: PREFIX_INPUT_HINT+txid+"\xFF",
+            keys: true,
+            values: true
+        }
+
+        var inputsCount = 0
+        const dbStream = this.db.createReadStream(options)
+
+        for await (const data of dbStream) {
+            const keyString = data.key.toString("utf-8")
+            const prevOutputTxHash = keyString.substr(1 + 64, 16)
+            const prevOutputIndex = keyString.substr(1 + 64 + 16)
+
+            await this.addTransaction(
+                "del",
+                PREFIX_INPUT+prevOutputTxHash+prevOutputIndex,
+                null
+            )
+            await this.addTransaction(
+                "del",
+                data.key,
+                null
+            )
+
+            inputsCount = inputsCount + 1
+        }
+
+        return inputsCount
+    }
+
+    async deleteOutputsByHints(txids){
+        if (txids.length == 0){
+            return 0
+        }
+
+        let outputsDeleted = 0
+
+        for (let nextTxidIndex in txids){
+            let nextTxid = txids[nextTxidIndex]
+            let outputsDeletedTxid = await this.deleteOutputsByHint(nextTxid)
+            outputsDeleted = outputsDeleted + outputsDeletedTxid
+        }
+
+        return outputsDeleted
+    }
+
+    async deleteInputsByHints(txids){
+        if (txids.length == 0){
+            return 0
+        }
+
+        let inputsDeleted = 0
+
+        for (let nextTxidIndex in txids){
+            let nextTxid = txids[nextTxidIndex]
+            let inputsDeletedTxid = await this.deleteInputsByHint(nextTxid)
+            inputsDeleted = inputsDeleted + inputsDeletedTxid
+        }
+
+        return inputsDeleted
+    }
+
+    async deleteInputs(txids){
+        if (txids.length == 0){
+            return 0
+        }
+
+        const options = {
+            gte: PREFIX_INPUT,
+            lte: PREFIX_INPUT+"\xFF",
+            keys: true,
+            values: true,
+        }
+
+        let txids8 = []
+        for (let nextTxidIndex in txids){
+            txids8.push(txids[nextTxidIndex].toString("utf-8"))
+        }
+
+        const dbStream = this.db.createReadStream(options)
+        var inputsCount = 0
+
+        for await (const data of dbStream) {
+            const txHash = JSON.parse(data.value)["th"]
+
+            if (!txids8.includes(txHash)) {
+                await this.addTransaction(
                     "del",
                     data.key,
                     null
                 )
-                
+
                 inputsCount = inputsCount + 1
-            })
-            dbStream.on('error', function(err) {
-                reject(err)
-            })
-
-            dbStream.on('end', function() {
-                resolve(inputsCount)
-            })
-        })
-    }
-
-    async deleteOutputsByHints(txids){
-        let thisLevelUp = this
-        
-        if (txids.length == 0){
-            return 0
-        } else {
-            return new Promise(async(resolve, reject) => {
-                let outputsDeleted = 0
-                
-                for (let nextTxidIndex in txids){
-                    let nextTxid = txids[nextTxidIndex]
-                    
-                    let outputsDeletedTxid = await this.deleteOutputsByHint(nextTxid)
-                    outputsDeleted = outputsDeleted + outputsDeletedTxid
-                }
-                
-                resolve(outputsDeleted)             
-            })
+            }
         }
-    }
 
-    async deleteInputsByHints(txids){
-        let thisLevelUp = this
-        
-        if (txids.length == 0){
-            return 0
-        } else {
-            return new Promise(async(resolve, reject) => {
-                let inputsDeleted = 0
-                
-                for (let nextTxidIndex in txids){
-                    let nextTxid = txids[nextTxidIndex]
-                    
-                    let inputsDeletedTxid = await this.deleteInputsByHint(nextTxid)
-                    inputsDeleted = inputsDeleted + inputsDeletedTxid
-                }
-                
-                resolve(inputsDeleted)              
-            })
-        }
-    }
-
-    async deleteInputs(txids){
-        let thisLevelUp = this
-        
-        if (txids.length == 0){
-            return 0
-        } else {
-            return new Promise(async(resolve, reject) => {
-                const options = {
-                    gte: PREFIX_INPUT,
-                    lte: PREFIX_INPUT+"\xFF",
-                    keys: true,
-                    values: true,
-                }
-                
-                let txids8 = []
-                for (let nextTxidIndex in txids){
-                    txids8.push(txids[nextTxidIndex].toString("utf-8"))
-                }
-                
-                const dbStream = this.db.createReadStream(options)
-                var inputsCount = 0
-                dbStream.on('data', async function(data) {
-                    const txHash = JSON.parse(data.value)["th"]
-                    
-                    if (!txids8.includes(txHash)) {
-                        await thisLevelUp.addTransaction(
-                            "del",
-                            data.key,
-                            null
-                        )
-                        
-                        inputsCount = inputsCount + 1
-                    }
-                })
-                dbStream.on('error', function(err) {
-                    reject(err)
-                })
-
-                dbStream.on('end', function() {
-                    resolve(inputsCount)
-                })
-            })
-        }
+        return inputsCount
     }
 
     async deleteTransaction(txid) {
@@ -787,41 +702,31 @@ class LevelUpStore {
     }
 
     async deleteAndCompareTxsNotInList(txidList){
-        let thisLevelUp = this
-        
-        return new Promise((resolve, reject) => {
-            let deletedTxs = []
-            const options = {
-                gte: PREFIX_TRANSACTION,
-                lte: PREFIX_TRANSACTION+"\xFF",
-                keys: true
-            }
-            
-            const dbStream = this.db.createReadStream(options)
-            
-            dbStream.on('data', async function(data) {
-                const txid = data.key.toString("utf-8").substr(1);
-                const txidIndex = bs(txidList, txid, function(element, needle) { return needle.localeCompare(element) })    
-                    
-                if (txidIndex == -1) {
-                    await thisLevelUp.deleteTransaction(txid)
-                    deletedTxs.push(txid)
-                } else {
-                    txidList.splice(txidIndex, 1)
-                }
-            })
-            
-            dbStream.on('error', function(err) {
-                reject(err)
-            })
+        let deletedTxs = []
+        const options = {
+            gte: PREFIX_TRANSACTION,
+            lte: PREFIX_TRANSACTION+"\xFF",
+            keys: true
+        }
 
-            dbStream.on('end', async function() {
-                let outputsDeleted = await thisLevelUp.deleteOutputsByHints(deletedTxs)
-                let inputsDeleted = await thisLevelUp.deleteInputsByHints(deletedTxs)
-                
-                resolve({transactionsDeleted: deletedTxs.length, outputsDeleted: outputsDeleted, inputsDeleted: inputsDeleted})
-            })
-        })
+        const dbStream = this.db.createReadStream(options)
+
+        for await (const data of dbStream) {
+            const txid = data.key.toString("utf-8").substr(1);
+            const txidIndex = bs(txidList, txid, function(element, needle) { return needle.localeCompare(element) })
+
+            if (txidIndex == -1) {
+                await this.deleteTransaction(txid)
+                deletedTxs.push(txid)
+            } else {
+                txidList.splice(txidIndex, 1)
+            }
+        }
+
+        let outputsDeleted = await this.deleteOutputsByHints(deletedTxs)
+        let inputsDeleted = await this.deleteInputsByHints(deletedTxs)
+
+        return {transactionsDeleted: deletedTxs.length, outputsDeleted: outputsDeleted, inputsDeleted: inputsDeleted}
     }
     
     async getOutputsScriptPubKey(scriptPubKey){
@@ -933,7 +838,7 @@ class LevelUpStore {
                 let dataString = data.key.toString("utf-8")
 
                 let blockHash = dataString.substr(
-                    PREFIX_BLOCK.length
+                    PREFIX_STORED_BLOCK.length
                 )
                 result.push(blockHash)
             })
