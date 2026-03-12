@@ -74,18 +74,39 @@ class XChainUtxoTracker {
       this.lastBlocks = []
       
       this.keepParsing = true
+      this.pendingKMCleanup = []
     }
     
     async addToLastBlocks(blockHash){
         this.lastBlocks.push(blockHash)
         this.db.addLastStoredBlock(blockHash)
-        
+
         while (this.lastBlocks.length > UNDO_BLOCKS){
             let nextBlockHash = this.lastBlocks.shift()
-            
-            await this.db.processDeletedOutputs(nextBlockHash, false)
-            await this.db.removeLastStoredBlock(nextBlockHash)
+
+            // Discard in-memory deletions for outputs created & spent within the same batch.
+            // On-disk K/M cleanup is deferred to after the batch is committed via cleanupAgedBlocks().
+            if (this.db.deletedTransactionArray && this.db.deletedTransactionArray.has(nextBlockHash)){
+                this.db.deletedTransactionArray.delete(nextBlockHash)
+            }
+
+            this.pendingKMCleanup.push(nextBlockHash)
         }
+    }
+
+    async cleanupAgedBlocks(){
+        // Called after endTransaction() so K/M entries are committed to disk and can be found
+        if (this.pendingKMCleanup.length === 0) return
+
+        await this.db.beginTransaction()
+
+        for (let blockHash of this.pendingKMCleanup){
+            await this.db.processDeletedOutputs(blockHash, false)
+            await this.db.removeLastStoredBlock(blockHash)
+        }
+
+        await this.db.endTransaction()
+        this.pendingKMCleanup = []
     }
     
     async removeFromLastBlocks(blockHash){
@@ -588,6 +609,7 @@ class XChainUtxoTracker {
                             transactionsCount = 0
                             inputsCount = 0
                             outputsCount = 0
+                            this.pendingKMCleanup = []
                             startTimeStamp = Date.now()
                             console.log("Blocks were updated")
                             continue
@@ -626,6 +648,9 @@ class XChainUtxoTracker {
                         console.log("Inserting data Blocks ("+blocksCount+") Transactions ("+transactionsCount+") Inputs ("+inputsCount+") Outputs("+outputsCount+")")
                         
                         await this.db.endTransaction()
+
+                        // Clean up K/M entries for aged-out blocks now that the batch is committed
+                        await this.cleanupAgedBlocks()
 
                         blocksCount = 0
                         transactionsCount = 0
