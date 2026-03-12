@@ -221,24 +221,24 @@ class LevelUpStore {
     }
 
     async insertTransaction(tx) {
-        let key = PREFIX_TRANSACTION+tx.hash
+        let key = PREFIX_TRANSACTION+tx.hash.substring(0, 16)
         let data = JSON.stringify(
             {
                 bh:tx.blockHash
             }
         )
-    
+
         return await this.addTransaction("put", key, data)
     }
 
     async insertInputHint(input) {
-        let key = PREFIX_INPUT_HINT+input.txHash+input.prevTxHash+input.prevOutputIndex
-        
+        let key = PREFIX_INPUT_HINT+input.txHash+input.prevTxHash.substring(0, 16)+input.prevOutputIndex
+
         return await this.addTransaction("put", key, "")
     }
 
     async insertInput(input) {
-        let key = PREFIX_INPUT+input.prevTxHash+input.prevOutputIndex
+        let key = PREFIX_INPUT+input.prevTxHash.substring(0, 16)+input.prevOutputIndex
         let data = JSON.stringify(
             {
                 th:input.txHash
@@ -601,8 +601,8 @@ class LevelUpStore {
 
         for await (const data of dbStream) {
             const keyString = data.key.toString("utf-8")
-            const prevOutputTxHash = keyString.substr(1 + 64, 16)
-            const prevOutputIndex = keyString.substr(1 + 64 + 16)
+            const prevOutputTxHash = keyString.substr(1 + 16, 16)
+            const prevOutputIndex = keyString.substr(1 + 16 + 16)
 
             await this.addTransaction(
                 "del",
@@ -691,7 +691,7 @@ class LevelUpStore {
     }
 
     async deleteTransaction(txid) {
-        let key = PREFIX_TRANSACTION+txid
+        let key = PREFIX_TRANSACTION+txid.substring(0, 16)
 
         return await this.addTransaction("del", key, null)
     }
@@ -714,7 +714,7 @@ class LevelUpStore {
 
         for await (const data of dbStream) {
             const txid = data.key.toString("utf-8").substr(1);
-            const txidIndex = bs(txidList, txid, function(element, needle) { return needle.localeCompare(element) })
+            const txidIndex = bs(txidList, txid, function(element, needle) { return needle.localeCompare(element.substring(0, 16)) })
 
             if (txidIndex == -1) {
                 await this.deleteTransaction(txid)

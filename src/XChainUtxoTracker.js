@@ -391,7 +391,7 @@ class XChainUtxoTracker {
 
             if (addHints || removeSpent){
                 await db.insertOutputHint({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex})
-                await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId, blockHeight)
+                await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId8, blockHeight)
             }
             resultInfo["outputsCount"] = resultInfo["outputsCount"] + 1
         }
