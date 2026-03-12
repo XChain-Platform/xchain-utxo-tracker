@@ -6,24 +6,24 @@
 
 ## 💻 Installation
 
-Clone this repository. Make sure you have Node.js y npm installed on your system.
+Clone this repository. Make sure you have Node.js and npm installed on your system.
 
 ```bash
 git clone [https://github.com/XChain-platform/xchain-utxo-tracker.git](https://XChain-platform/xchain-utxo-tracker.git)
 cd XChainUtxoTracker
 npm install
 ```
-Para ejecutar el servidor, usa el siguiente comando:
+To start the server, use the following command:
 
 ```bash
-npm api
+npm run api
 ```
 
 ---
 
 ## 📖 API
 
-There are two interfaces for **XChainUtxoTracker** API: **REST** y **JSON-RPC**.
+There are two interfaces for **XChainUtxoTracker** API: **REST** and **JSON-RPC**.
 
 ### REST Endpoints 
 
@@ -69,6 +69,7 @@ The JSON-RPC interface allows to do the same requests and some others using **PO
 | `getbootstrapstatus` | Gets the status of a task. | `{ "taskid": "string" }` | `{ "progress": 50, "filename": "..." }` |
 | `restorebootstrap` | Restores a compressed backup in the server. | `{ "filename": "string" }` | `{ "task_id": "uuid" }` |
 | `getbootstraprestorestatus`| Gets the status of a backup restoration. | `{ "taskid": "string" }` | `{ "progress": 80, "filename": "..." }` |
+| `get_input_from_key_pattern` | Queries raw LevelDB keys matching a prefix pattern. Pattern must be at least 32 characters. | `{ "pattern": "string" }` | `{ "result": [ { "key": "...", "value": "..." }, ... ] }` |
 
 ---
 
