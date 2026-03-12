@@ -80,7 +80,8 @@ class LevelUpStore {
     }
 
     getTransactionValue(key){
-        return this.transactionArray.get(key).value
+        const item = this.transactionArray.get(key)
+        return item != null ? item.value : null
     }
 
     async addTransaction(type, key, value=null){
