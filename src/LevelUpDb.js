@@ -271,7 +271,7 @@ class LevelUpStore {
                     throw Error("Missing outputHintKey("+outputHintKey+") match for input "+JSON.stringify(input))
                 }
             } else {
-                throw Error("Missing outputHintKey("+outputHintKey+") match for input "+JSON.stringify(input))
+                console.log("Warning: Missing outputHintKey("+outputHintKey+") for input "+JSON.stringify(input)+" - output may have been indexed before REMOVE_SPENT was enabled")
             }
             return true
         }
