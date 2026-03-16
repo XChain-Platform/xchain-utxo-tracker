@@ -694,6 +694,9 @@ class LevelUpStore {
     // ─── Output script block (S / Z prefix) ──────────────────────────────────
 
     async insertOutputScriptBlock(outputScript, blockHash, txHash, blockHeight){
+        // Mempool transactions have no confirmed block — S/Z prefix tracking is meaningless
+        if (!blockHash) return true
+
         const sKey = kScriptBlk(outputScript)
 
         // Check the in-memory batch first — avoids a real LevelDB read for any
