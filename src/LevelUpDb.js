@@ -146,7 +146,7 @@ function decodeBlock(buf) {
 }
 
 // T value: [blockHash(32)] = 32 bytes
-function encodeTx(blockHashHex) { return h2b(blockHashHex) }
+function encodeTx(blockHashHex) { return h2b(blockHashHex || ZERO_HASH) }
 function decodeTx(buf)          { return { bh: b2h(buf.slice(0, 32)) } }
 
 // I value: [txHash8(8)] = 8 bytes
