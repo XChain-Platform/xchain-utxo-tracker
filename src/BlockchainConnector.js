@@ -21,7 +21,7 @@
 
 // Load required libraries
 const axios = require('axios');
-axios.defaults.timeout = 5000
+axios.defaults.timeout = 30000
 
 class BlockchainConnector {
     constructor(url, port, rpcUser, rpcPassword) {

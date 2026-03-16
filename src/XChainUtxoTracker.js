@@ -22,7 +22,7 @@
 // Load required libraries
 const util = require('./util')
 const axios = require('axios');
-axios.defaults.timeout = 5000
+axios.defaults.timeout = 30000
 const BitcoinCore = require('bitcoin-core');
 const crypto = require('crypto');
 const bs58check = require('bs58check')
