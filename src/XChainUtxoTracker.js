@@ -21,8 +21,6 @@
 
 // Load required libraries
 const util = require('./util')
-const axios = require('axios');
-axios.defaults.timeout = 30000
 const BitcoinCore = require('bitcoin-core');
 const crypto = require('crypto');
 const bs58check = require('bs58check')
@@ -585,10 +583,29 @@ class XChainUtxoTracker {
             if (prefetchQueue.length > 0) {
                 maxQueued = prefetchQueue[prefetchQueue.length - 1].height
             }
-            while (prefetchQueue.length < PREFETCH_SIZE && maxQueued + 1 <= tipHeight) {
-                const h = maxQueued + 1
-                prefetchQueue.push({ height: h, promise: fetchBlock(h) })
-                maxQueued = h
+
+            // Collect all heights that still need to be queued
+            const heights = []
+            while (prefetchQueue.length + heights.length < PREFETCH_SIZE && maxQueued + 1 <= tipHeight) {
+                maxQueued++
+                heights.push(maxQueued)
+            }
+            if (heights.length === 0) return
+
+            if (this.auxPow) {
+                // AuxPoW requires custom header stripping — fetch individually
+                heights.forEach(h => {
+                    prefetchQueue.push({ height: h, promise: fetchBlock(h) })
+                })
+            } else {
+                // Non-AuxPoW: one batch HTTP request for all getblockhash + one for all getblock
+                const batchPromise = this.connector.getBlocksBatch(heights)
+                heights.forEach((h, i) => {
+                    prefetchQueue.push({
+                        height: h,
+                        promise: batchPromise.then(results => ({ hash: results[i].hash, hex: results[i].hex }))
+                    })
+                })
             }
         }
 
