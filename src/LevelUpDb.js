@@ -696,6 +696,12 @@ class LevelUpStore {
     async insertOutputScriptBlock(outputScript, blockHash, txHash, blockHeight){
         const sKey = kScriptBlk(outputScript)
 
+        // Check the in-memory batch first — avoids a real LevelDB read for any
+        // script already staged in the current 500-block batch window
+        if (this.getTransactionValue(sKey) !== null) {
+            return true
+        }
+
         try {
             await this.db.get(sKey)
             return true  // already exists
