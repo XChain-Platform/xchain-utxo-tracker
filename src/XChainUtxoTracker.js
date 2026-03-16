@@ -49,6 +49,7 @@ const ETA_WINDOW_BLOCKS = 1000 //Rolling window size for ETA calculation
 const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node need to have to start parsing
 
 const UNDO_BLOCKS = 10 //This is the number of blocks from which the outputs will be kept saved.
+const PREFETCH_SIZE = 10 //Number of blocks to pre-fetch concurrently while processing the current one
 
 class XChainUtxoTracker {
     constructor(network, nodeUrl, nodePort, nodeUser, nodePassword, dbName, auxPow) {
@@ -502,7 +503,30 @@ class XChainUtxoTracker {
         
         this.keepParsing = true
         this.parsingStopped = false
-    
+
+        // Prefetch queue: each entry is { height, promise } where promise resolves to { hash, hex }
+        let prefetchQueue = []
+
+        const fetchBlock = async (height) => {
+            const hash = await this.connector.getBlockHash(height)
+            const hex = this.auxPow
+                ? await this.connector.getBlockWithoutAuxPow(hash)
+                : await this.connector.getBlock(hash)
+            return { hash, hex }
+        }
+
+        const fillPrefetchQueue = (fromHeight, tipHeight) => {
+            let maxQueued = fromHeight - 1
+            if (prefetchQueue.length > 0) {
+                maxQueued = prefetchQueue[prefetchQueue.length - 1].height
+            }
+            while (prefetchQueue.length < PREFETCH_SIZE && maxQueued + 1 <= tipHeight) {
+                const h = maxQueued + 1
+                prefetchQueue.push({ height: h, promise: fetchBlock(h) })
+                maxQueued = h
+            }
+        }
+
         let nodeSyncedProblem = false
     
         while (true){
@@ -574,18 +598,25 @@ class XChainUtxoTracker {
                     
                     //Get the next block
                     let nextBlockHeight = lastProcessedBlockIndex + 1
-                
+
+                    // Kick off pre-fetches for upcoming blocks while we process the current one
+                    fillPrefetchQueue(nextBlockHeight, this.blockchainInfoLastBlock)
+
                     let nextBlockHash = null
-                    let nextBlockHex = null             
+                    let nextBlockHex = null
                     try {
-                        nextBlockHash = await this.connector.getBlockHash(nextBlockHeight)
-                        
-                        if (this.auxPow) {
-                            nextBlockHex = await this.connector.getBlockWithoutAuxPow(nextBlockHash)
+                        let fetched
+                        if (prefetchQueue.length > 0 && prefetchQueue[0].height === nextBlockHeight) {
+                            fetched = await prefetchQueue.shift().promise
                         } else {
-                            nextBlockHex = await this.connector.getBlock(nextBlockHash)
+                            // Queue is out of sync (e.g. after reorg) — fetch directly
+                            prefetchQueue = []
+                            fetched = await fetchBlock(nextBlockHeight)
                         }
+                        nextBlockHash = fetched.hash
+                        nextBlockHex = fetched.hex
                     } catch (e){
+                        prefetchQueue = []
                         console.log("Error trying to get next block from the node. Trying again...")
                         await this.sleep(3000)
                         continue
@@ -598,6 +629,7 @@ class XChainUtxoTracker {
                     if (nextBlockHeight > 0){
                         //previousBlockHash is not the same, it must be a reorg 
                         if (previousBlockHash != lastProcessedBlockHash){
+                            prefetchQueue = []
                             await this.db.endTransaction(false)
                             console.log("A reorg has been detected. Cleaning blocks...")
                             await this.verifyReorg()
