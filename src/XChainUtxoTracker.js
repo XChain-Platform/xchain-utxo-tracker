@@ -353,50 +353,53 @@ class XChainUtxoTracker {
         if (!removeSpent) {
             await db.insertTransaction({hash:nextTxId, blockHash:blockHash})
         }
-        
-        for (let txInputIndex=0;txInputIndex < transaction.ins.length;txInputIndex++){
-            let nextInput = transaction.ins[txInputIndex]
-            let standardInput = ("standard_input" in nextInput?nextInput["standard_input"]:true)
-            
-            if ((nextInput.index != 4294967295) && (standardInput)){//4294967295 = 0xFFFFFFFF. It's a Coinbase input, there's no need to trace it
-                let outputTxHash = nextTxId
-                
-                if (removeSpent){
-                    let prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
-                    await db.removeOutputWithInput({prevTxHash:prevTxHash8, prevOutputIndex:nextInput.index, blockHash:blockHash})
-                } else {
-                    await db.insertInput({
-                        prevTxHash:util.uint8ArrayToHex(nextInput.hash.reverse()),
-                        prevOutputIndex:nextInput.index,
-                        txHash:nextTxId8
-                    })
-                }
-                    
-                if (addHints){
-                    await db.insertInputHint({
-                        prevTxHash:util.uint8ArrayToHex(nextInput.hash.reverse()), 
-                        prevOutputIndex:nextInput.index, 
-                        txHash:nextTxId8
-                    })
-                }
-                
-                resultInfo["inputsCount"] = resultInfo["inputsCount"] + 1
+
+        // Process all inputs concurrently — each input has its own hash buffer so
+        // the in-place .reverse() calls don't interfere between parallel closures
+        const inputCounts = await Promise.all(transaction.ins.map(async (nextInput) => {
+            const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
+
+            if ((nextInput.index === 4294967295) || !standardInput) { //4294967295 = 0xFFFFFFFF. It's a Coinbase input, there's no need to trace it
+                return 0
             }
-        }
-        for (let txOutputIndex=0;txOutputIndex < transaction.outs.length;txOutputIndex++){
-            let nextOutput = transaction.outs[txOutputIndex]
-            let outputValue = nextOutput.value
-            let scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
-            
-            await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, value:outputValue, height:blockHeight, fullTxHash:nextTxId})
+
+            if (removeSpent){
+                let prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
+                await db.removeOutputWithInput({prevTxHash:prevTxHash8, prevOutputIndex:nextInput.index, blockHash:blockHash})
+            } else {
+                await db.insertInput({
+                    prevTxHash:util.uint8ArrayToHex(nextInput.hash.reverse()),
+                    prevOutputIndex:nextInput.index,
+                    txHash:nextTxId8
+                })
+            }
+
+            if (addHints){
+                await db.insertInputHint({
+                    prevTxHash:util.uint8ArrayToHex(nextInput.hash.reverse()),
+                    prevOutputIndex:nextInput.index,
+                    txHash:nextTxId8
+                })
+            }
+
+            return 1
+        }))
+
+        // Process all outputs concurrently — each output is fully independent
+        await Promise.all(transaction.outs.map(async (nextOutput, txOutputIndex) => {
+            const scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
+
+            await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, value:nextOutput.value, height:blockHeight, fullTxHash:nextTxId})
 
             if (addHints || removeSpent){
                 await db.insertOutputHint({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex})
                 await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId8, blockHeight)
             }
-            resultInfo["outputsCount"] = resultInfo["outputsCount"] + 1
-        }
-        
+        }))
+
+        resultInfo["inputsCount"]  = inputCounts.reduce((acc, n) => acc + n, 0)
+        resultInfo["outputsCount"] = transaction.outs.length
+
         return resultInfo
     }
     
