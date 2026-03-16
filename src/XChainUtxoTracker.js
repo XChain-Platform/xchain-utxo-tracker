@@ -403,6 +403,68 @@ class XChainUtxoTracker {
         return resultInfo
     }
     
+    // Pass 1 of two-pass block processing: insert all outputs (and the tx record).
+    // Must complete for ALL transactions before parseTxInputs runs, so that
+    // removeOutputWithInput can find same-block outputs in transactionArray.
+    async parseTxOutputs(db, transaction, blockHash, blockHeight, addHints, removeSpent){
+        const nextTxId  = "id" in transaction ? transaction["id"] : transaction.getId()
+        const nextTxId8 = nextTxId.substring(0, 16)
+
+        if (!removeSpent) {
+            await db.insertTransaction({hash: nextTxId, blockHash: blockHash})
+        }
+
+        await Promise.all(transaction.outs.map(async (nextOutput, txOutputIndex) => {
+            const scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
+            await db.insertOutput({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex, value: nextOutput.value, height: blockHeight, fullTxHash: nextTxId})
+            if (addHints || removeSpent) {
+                await db.insertOutputHint({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex})
+                await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId8, blockHeight)
+            }
+        }))
+
+        return transaction.outs.length
+    }
+
+    // Pass 2 of two-pass block processing: process all inputs.
+    // By the time this runs, all same-block outputs are already in transactionArray,
+    // so removeOutputWithInput will resolve intra-block spends correctly.
+    async parseTxInputs(db, transaction, blockHash, addHints, removeSpent){
+        const nextTxId  = "id" in transaction ? transaction["id"] : transaction.getId()
+        const nextTxId8 = nextTxId.substring(0, 16)
+
+        const inputCounts = await Promise.all(transaction.ins.map(async (nextInput) => {
+            const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
+
+            if ((nextInput.index === 4294967295) || !standardInput) { //4294967295 = 0xFFFFFFFF. It's a Coinbase input, there's no need to trace it
+                return 0
+            }
+
+            if (removeSpent) {
+                const prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
+                await db.removeOutputWithInput({prevTxHash: prevTxHash8, prevOutputIndex: nextInput.index, blockHash: blockHash})
+            } else {
+                await db.insertInput({
+                    prevTxHash: util.uint8ArrayToHex(nextInput.hash.reverse()),
+                    prevOutputIndex: nextInput.index,
+                    txHash: nextTxId8
+                })
+            }
+
+            if (addHints) {
+                await db.insertInputHint({
+                    prevTxHash: util.uint8ArrayToHex(nextInput.hash.reverse()),
+                    prevOutputIndex: nextInput.index,
+                    txHash: nextTxId8
+                })
+            }
+
+            return 1
+        }))
+
+        return inputCounts.reduce((acc, n) => acc + n, 0)
+    }
+
     async verifyReorg(){
         let thereAreDifferences = true
         let blocksDeleted = []
@@ -659,18 +721,22 @@ class XChainUtxoTracker {
                     await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp, previousHash:previousBlockHash})
                     blocksCount = blocksCount + 1               
                     
-                    //Parse the transactions
+                    //Parse the transactions — two-pass approach to allow full parallelism:
+                    //  Pass 1: insert all outputs for every tx concurrently
+                    //  Pass 2: process all inputs concurrently (same-block outputs are
+                    //          now in transactionArray so removeOutputWithInput finds them)
                     var transactions = block.transactions
 
-                    for (let txIndex=0;txIndex < transactions.length;txIndex++){
-                        let nextTransaction = transactions[txIndex]
-                        
-                        let countInfo = await this.parseTransaction(this.db, nextTransaction, nextBlockHash, nextBlockHeight, false, REMOVE_SPENT)
-                        
-                        transactionsCount = transactionsCount + 1
-                        inputsCount = inputsCount + countInfo["inputsCount"]
-                        outputsCount = outputsCount + countInfo["outputsCount"]
-                    }
+                    const blockOutputCounts = await Promise.all(
+                        transactions.map(tx => this.parseTxOutputs(this.db, tx, nextBlockHash, nextBlockHeight, false, REMOVE_SPENT))
+                    )
+                    const blockInputCounts = await Promise.all(
+                        transactions.map(tx => this.parseTxInputs(this.db, tx, nextBlockHash, false, REMOVE_SPENT))
+                    )
+
+                    transactionsCount = transactionsCount + transactions.length
+                    outputsCount = outputsCount + blockOutputCounts.reduce((acc, n) => acc + n, 0)
+                    inputsCount  = inputsCount  + blockInputCounts.reduce((acc, n) => acc + n, 0)
                     
                     //Add the block to the last blocks
                     await this.addToLastBlocks(nextBlockHash)
