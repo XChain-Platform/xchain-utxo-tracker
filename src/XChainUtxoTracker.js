@@ -35,7 +35,7 @@ const bs = require("binary-search")
 const { hrtime } = require('node:process');
 
 const CHECK_BLOCK_DELAY_MS = 1000 //1 second to continously ask for new block when all has been parsed
-const DB_TRANSACTION_BLOCKS_QUANTITY = 500
+const DB_TRANSACTION_BLOCKS_QUANTITY = 100
 const PARSE_MODE_FILES = 0
 const PARSE_MODE_BULK_INSERTS = 1
 const SYNCED_THRESHOLD = 3
