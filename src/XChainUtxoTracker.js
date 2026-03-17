@@ -714,18 +714,19 @@ class XChainUtxoTracker {
                         if (previousBlockHash != lastProcessedBlockHash){
                             prefetchQueue = []
                             await this.db.endTransaction(false)
+                            this.lastBlocks = await this.db.getLastStoredBlocks()
                             console.log("A reorg has been detected. Cleaning blocks...")
                             await this.verifyReorg()
                             lastProcessedBlockIndex = await this.db.getLastBlockHeight()
                             lastProcessedBlockHash = await this.db.getLastBlockHash()
-                            
+
                             blocksQuantity = 0
                             blocksCount = 0
                             transactionsCount = 0
                             inputsCount = 0
                             outputsCount = 0
                             this.pendingKMCleanup = []
-                            startTimeStamp = Date.now()
+                            blockTimestamps = []
                             console.log("Blocks were updated")
                             continue
                         }
