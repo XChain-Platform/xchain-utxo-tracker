@@ -595,16 +595,17 @@ class XChainUtxoTracker {
             if (this.auxPow) {
                 // AuxPoW requires custom header stripping — fetch individually
                 heights.forEach(h => {
-                    prefetchQueue.push({ height: h, promise: fetchBlock(h) })
+                    const p = fetchBlock(h)
+                    p.catch(() => {}) // suppress unhandled rejection if entry is cleared from queue before being awaited
+                    prefetchQueue.push({ height: h, promise: p })
                 })
             } else {
                 // Non-AuxPoW: one batch HTTP request for all getblockhash + one for all getblock
                 const batchPromise = this.connector.getBlocksBatch(heights)
                 heights.forEach((h, i) => {
-                    prefetchQueue.push({
-                        height: h,
-                        promise: batchPromise.then(results => ({ hash: results[i].hash, hex: results[i].hex }))
-                    })
+                    const p = batchPromise.then(results => ({ hash: results[i].hash, hex: results[i].hex }))
+                    p.catch(() => {}) // suppress unhandled rejection if entry is cleared from queue before being awaited
+                    prefetchQueue.push({ height: h, promise: p })
                 })
             }
         }
