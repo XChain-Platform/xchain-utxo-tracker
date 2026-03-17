@@ -620,7 +620,7 @@ class LevelUpStore {
 
     async processDeletedOutputs(blockHash, recover = true){
         const delMapKey = toMapKey(blockHash)
-        if (this.deletedTransactionArray.has(delMapKey)){
+        if (this.deletedTransactionArray && this.deletedTransactionArray.has(delMapKey)){
             if (recover){
                 const innerMap = this.deletedTransactionArray.get(delMapKey)
                 innerMap.forEach((value, mapKey) => {
