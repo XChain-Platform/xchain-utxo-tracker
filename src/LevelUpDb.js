@@ -82,7 +82,7 @@ function idxBuf(n) {
 }
 
 function rangeEnd(prefix) {
-    return Buffer.concat([prefix, Buffer.from([0xFF])])
+    return Buffer.concat([prefix, Buffer.alloc(12, 0xFF)])
 }
 
 // Normalize a key to a hex string for use as a JavaScript Map key.
