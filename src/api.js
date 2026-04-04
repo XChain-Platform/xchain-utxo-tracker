@@ -158,7 +158,7 @@ async function startApi(){
                 return {error: "pattern is too short"}
             } else {
             
-                let results = await db.getValuesFromKeyPattern(pattern)
+                let results = await tracker.db.getValuesFromKeyPattern(pattern)
 
                 // Return utxos
                 return { result: results}
