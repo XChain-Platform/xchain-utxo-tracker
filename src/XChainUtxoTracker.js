@@ -21,8 +21,6 @@
 
 // Load required libraries
 const util = require('./util')
-const axios = require('axios');
-axios.defaults.timeout = 5000
 const BitcoinCore = require('bitcoin-core');
 const crypto = require('crypto');
 const bs58check = require('bs58check')
@@ -49,6 +47,7 @@ const ETA_WINDOW_BLOCKS = 1000 //Rolling window size for ETA calculation
 const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node need to have to start parsing
 
 const UNDO_BLOCKS = 10 //This is the number of blocks from which the outputs will be kept saved.
+const PREFETCH_SIZE = 10 //Number of blocks to pre-fetch concurrently while processing the current one
 
 class XChainUtxoTracker {
     constructor(network, nodeUrl, nodePort, nodeUser, nodePassword, dbName, auxPow) {
@@ -352,53 +351,118 @@ class XChainUtxoTracker {
         if (!removeSpent) {
             await db.insertTransaction({hash:nextTxId, blockHash:blockHash})
         }
-        
-        for (let txInputIndex=0;txInputIndex < transaction.ins.length;txInputIndex++){
-            let nextInput = transaction.ins[txInputIndex]
-            let standardInput = ("standard_input" in nextInput?nextInput["standard_input"]:true)
-            
-            if ((nextInput.index != 4294967295) && (standardInput)){//4294967295 = 0xFFFFFFFF. It's a Coinbase input, there's no need to trace it
-                let outputTxHash = nextTxId
-                
-                if (removeSpent){
-                    let prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
-                    await db.removeOutputWithInput({prevTxHash:prevTxHash8, prevOutputIndex:nextInput.index, blockHash:blockHash})
-                } else {
-                    await db.insertInput({
-                        prevTxHash:util.uint8ArrayToHex(nextInput.hash.reverse()),
-                        prevOutputIndex:nextInput.index,
-                        txHash:nextTxId8
-                    })
-                }
-                    
-                if (addHints){
-                    await db.insertInputHint({
-                        prevTxHash:util.uint8ArrayToHex(nextInput.hash.reverse()), 
-                        prevOutputIndex:nextInput.index, 
-                        txHash:nextTxId8
-                    })
-                }
-                
-                resultInfo["inputsCount"] = resultInfo["inputsCount"] + 1
+
+        // Process all inputs concurrently — each input has its own hash buffer so
+        // the in-place .reverse() calls don't interfere between parallel closures
+        const inputCounts = await Promise.all(transaction.ins.map(async (nextInput) => {
+            const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
+
+            if ((nextInput.index === 4294967295) || !standardInput) { //4294967295 = 0xFFFFFFFF. It's a Coinbase input, there's no need to trace it
+                return 0
             }
-        }
-        for (let txOutputIndex=0;txOutputIndex < transaction.outs.length;txOutputIndex++){
-            let nextOutput = transaction.outs[txOutputIndex]
-            let outputValue = nextOutput.value
-            let scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
-            
-            await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, value:outputValue, height:blockHeight, fullTxHash:nextTxId})
+
+            if (removeSpent){
+                let prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
+                await db.removeOutputWithInput({prevTxHash:prevTxHash8, prevOutputIndex:nextInput.index, blockHash:blockHash})
+            } else {
+                await db.insertInput({
+                    prevTxHash:util.uint8ArrayToHex(nextInput.hash.reverse()),
+                    prevOutputIndex:nextInput.index,
+                    txHash:nextTxId8
+                })
+            }
+
+            if (addHints){
+                await db.insertInputHint({
+                    prevTxHash:util.uint8ArrayToHex(nextInput.hash.reverse()),
+                    prevOutputIndex:nextInput.index,
+                    txHash:nextTxId8
+                })
+            }
+
+            return 1
+        }))
+
+        // Process all outputs concurrently — each output is fully independent
+        await Promise.all(transaction.outs.map(async (nextOutput, txOutputIndex) => {
+            const scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
+
+            await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, value:nextOutput.value, height:blockHeight, fullTxHash:nextTxId})
 
             if (addHints || removeSpent){
                 await db.insertOutputHint({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex})
-                await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId, blockHeight)
+                await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId8, blockHeight)
             }
-            resultInfo["outputsCount"] = resultInfo["outputsCount"] + 1
-        }
-        
+        }))
+
+        resultInfo["inputsCount"]  = inputCounts.reduce((acc, n) => acc + n, 0)
+        resultInfo["outputsCount"] = transaction.outs.length
+
         return resultInfo
     }
     
+    // Pass 1 of two-pass block processing: insert all outputs (and the tx record).
+    // Must complete for ALL transactions before parseTxInputs runs, so that
+    // removeOutputWithInput can find same-block outputs in transactionArray.
+    async parseTxOutputs(db, transaction, blockHash, blockHeight, addHints, removeSpent){
+        const nextTxId  = "id" in transaction ? transaction["id"] : transaction.getId()
+        const nextTxId8 = nextTxId.substring(0, 16)
+
+        if (!removeSpent) {
+            await db.insertTransaction({hash: nextTxId, blockHash: blockHash})
+        }
+
+        await Promise.all(transaction.outs.map(async (nextOutput, txOutputIndex) => {
+            const scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
+            await db.insertOutput({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex, value: nextOutput.value, height: blockHeight, fullTxHash: nextTxId})
+            if (addHints || removeSpent) {
+                await db.insertOutputHint({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex})
+                await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId8, blockHeight)
+            }
+        }))
+
+        return transaction.outs.length
+    }
+
+    // Pass 2 of two-pass block processing: process all inputs.
+    // By the time this runs, all same-block outputs are already in transactionArray,
+    // so removeOutputWithInput will resolve intra-block spends correctly.
+    async parseTxInputs(db, transaction, blockHash, addHints, removeSpent){
+        const nextTxId  = "id" in transaction ? transaction["id"] : transaction.getId()
+        const nextTxId8 = nextTxId.substring(0, 16)
+
+        const inputCounts = await Promise.all(transaction.ins.map(async (nextInput) => {
+            const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
+
+            if ((nextInput.index === 4294967295) || !standardInput) { //4294967295 = 0xFFFFFFFF. It's a Coinbase input, there's no need to trace it
+                return 0
+            }
+
+            if (removeSpent) {
+                const prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
+                await db.removeOutputWithInput({prevTxHash: prevTxHash8, prevOutputIndex: nextInput.index, blockHash: blockHash})
+            } else {
+                await db.insertInput({
+                    prevTxHash: util.uint8ArrayToHex(nextInput.hash.reverse()),
+                    prevOutputIndex: nextInput.index,
+                    txHash: nextTxId8
+                })
+            }
+
+            if (addHints) {
+                await db.insertInputHint({
+                    prevTxHash: util.uint8ArrayToHex(nextInput.hash.reverse()),
+                    prevOutputIndex: nextInput.index,
+                    txHash: nextTxId8
+                })
+            }
+
+            return 1
+        }))
+
+        return inputCounts.reduce((acc, n) => acc + n, 0)
+    }
+
     async verifyReorg(){
         let thereAreDifferences = true
         let blocksDeleted = []
@@ -502,7 +566,50 @@ class XChainUtxoTracker {
         
         this.keepParsing = true
         this.parsingStopped = false
-    
+
+        // Prefetch queue: each entry is { height, promise } where promise resolves to { hash, hex }
+        let prefetchQueue = []
+
+        const fetchBlock = async (height) => {
+            const hash = await this.connector.getBlockHash(height)
+            const hex = this.auxPow
+                ? await this.connector.getBlockWithoutAuxPow(hash)
+                : await this.connector.getBlock(hash)
+            return { hash, hex }
+        }
+
+        const fillPrefetchQueue = (fromHeight, tipHeight) => {
+            let maxQueued = fromHeight - 1
+            if (prefetchQueue.length > 0) {
+                maxQueued = prefetchQueue[prefetchQueue.length - 1].height
+            }
+
+            // Collect all heights that still need to be queued
+            const heights = []
+            while (prefetchQueue.length + heights.length < PREFETCH_SIZE && maxQueued + 1 <= tipHeight) {
+                maxQueued++
+                heights.push(maxQueued)
+            }
+            if (heights.length === 0) return
+
+            if (this.auxPow) {
+                // AuxPoW requires custom header stripping — fetch individually
+                heights.forEach(h => {
+                    const p = fetchBlock(h)
+                    p.catch(() => {}) // suppress unhandled rejection if entry is cleared from queue before being awaited
+                    prefetchQueue.push({ height: h, promise: p })
+                })
+            } else {
+                // Non-AuxPoW: one batch HTTP request for all getblockhash + one for all getblock
+                const batchPromise = this.connector.getBlocksBatch(heights)
+                heights.forEach((h, i) => {
+                    const p = batchPromise.then(results => ({ hash: results[i].hash, hex: results[i].hex }))
+                    p.catch(() => {}) // suppress unhandled rejection if entry is cleared from queue before being awaited
+                    prefetchQueue.push({ height: h, promise: p })
+                })
+            }
+        }
+
         let nodeSyncedProblem = false
     
         while (true){
@@ -574,18 +681,25 @@ class XChainUtxoTracker {
                     
                     //Get the next block
                     let nextBlockHeight = lastProcessedBlockIndex + 1
-                
+
+                    // Kick off pre-fetches for upcoming blocks while we process the current one
+                    fillPrefetchQueue(nextBlockHeight, this.blockchainInfoLastBlock)
+
                     let nextBlockHash = null
-                    let nextBlockHex = null             
+                    let nextBlockHex = null
                     try {
-                        nextBlockHash = await this.connector.getBlockHash(nextBlockHeight)
-                        
-                        if (this.auxPow) {
-                            nextBlockHex = await this.connector.getBlockWithoutAuxPow(nextBlockHash)
+                        let fetched
+                        if (prefetchQueue.length > 0 && prefetchQueue[0].height === nextBlockHeight) {
+                            fetched = await prefetchQueue.shift().promise
                         } else {
-                            nextBlockHex = await this.connector.getBlock(nextBlockHash)
+                            // Queue is out of sync (e.g. after reorg) — fetch directly
+                            prefetchQueue = []
+                            fetched = await fetchBlock(nextBlockHeight)
                         }
+                        nextBlockHash = fetched.hash
+                        nextBlockHex = fetched.hex
                     } catch (e){
+                        prefetchQueue = []
                         console.log("Error trying to get next block from the node. Trying again...")
                         await this.sleep(3000)
                         continue
@@ -598,19 +712,21 @@ class XChainUtxoTracker {
                     if (nextBlockHeight > 0){
                         //previousBlockHash is not the same, it must be a reorg 
                         if (previousBlockHash != lastProcessedBlockHash){
+                            prefetchQueue = []
                             await this.db.endTransaction(false)
+                            this.lastBlocks = await this.db.getLastStoredBlocks()
                             console.log("A reorg has been detected. Cleaning blocks...")
                             await this.verifyReorg()
                             lastProcessedBlockIndex = await this.db.getLastBlockHeight()
                             lastProcessedBlockHash = await this.db.getLastBlockHash()
-                            
+
                             blocksQuantity = 0
                             blocksCount = 0
                             transactionsCount = 0
                             inputsCount = 0
                             outputsCount = 0
                             this.pendingKMCleanup = []
-                            startTimeStamp = Date.now()
+                            blockTimestamps = []
                             console.log("Blocks were updated")
                             continue
                         }
@@ -624,18 +740,22 @@ class XChainUtxoTracker {
                     await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp, previousHash:previousBlockHash})
                     blocksCount = blocksCount + 1               
                     
-                    //Parse the transactions
+                    //Parse the transactions — two-pass approach to allow full parallelism:
+                    //  Pass 1: insert all outputs for every tx concurrently
+                    //  Pass 2: process all inputs concurrently (same-block outputs are
+                    //          now in transactionArray so removeOutputWithInput finds them)
                     var transactions = block.transactions
 
-                    for (let txIndex=0;txIndex < transactions.length;txIndex++){
-                        let nextTransaction = transactions[txIndex]
-                        
-                        let countInfo = await this.parseTransaction(this.db, nextTransaction, nextBlockHash, nextBlockHeight, false, REMOVE_SPENT)
-                        
-                        transactionsCount = transactionsCount + 1
-                        inputsCount = inputsCount + countInfo["inputsCount"]
-                        outputsCount = outputsCount + countInfo["outputsCount"]
-                    }
+                    const blockOutputCounts = await Promise.all(
+                        transactions.map(tx => this.parseTxOutputs(this.db, tx, nextBlockHash, nextBlockHeight, false, REMOVE_SPENT))
+                    )
+                    const blockInputCounts = await Promise.all(
+                        transactions.map(tx => this.parseTxInputs(this.db, tx, nextBlockHash, false, REMOVE_SPENT))
+                    )
+
+                    transactionsCount = transactionsCount + transactions.length
+                    outputsCount = outputsCount + blockOutputCounts.reduce((acc, n) => acc + n, 0)
+                    inputsCount  = inputsCount  + blockInputCounts.reduce((acc, n) => acc + n, 0)
                     
                     //Add the block to the last blocks
                     await this.addToLastBlocks(nextBlockHash)

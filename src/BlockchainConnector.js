@@ -1,27 +1,27 @@
 /*********************************************************************
- * 
+ *
  * Copyright © 2025 Dankest, LLC
  * Based on XChain Platform by Dankest, LLC – https://dankest.llc
  *
  * Licensed under the Dankest Community License (Apache License 2.0 + Additional Terms).
  * You may not use this file except in compliance with that License.
- * 
+ *
  * A copy of the License is available at:
  *     https://dankest.llc/license
  *
- * This software is provided “AS IS”, without warranties or conditions of any kind.
- * 
+ * This software is provided "AS IS", without warranties or conditions of any kind.
+ *
  **********************************************************************
  *
  * XChain UTXO Tracker - Blockchain Connector Class
- * 
+ *
  * This file handles pulling blockchain data from a coin daemon
- * 
+ *
  ********************************************************************/
 
 // Load required libraries
 const axios = require('axios');
-axios.defaults.timeout = 5000
+const http  = require('http');
 
 class BlockchainConnector {
     constructor(url, port, rpcUser, rpcPassword) {
@@ -29,7 +29,14 @@ class BlockchainConnector {
         this.port = port
         this.rpcUser = rpcUser
         this.rpcPassword = rpcPassword
-        }
+
+        // Reuse TCP connections across all RPC calls and authenticate once per instance
+        this.client = axios.create({
+            timeout: 30000,
+            httpAgent: new http.Agent({ keepAlive: true, maxSockets: 25 }),
+            auth: { username: rpcUser, password: rpcPassword }
+        })
+    }
 
     async sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
@@ -41,39 +48,25 @@ class BlockchainConnector {
             method: 'getnetworkinfo',
             id: 1
         }
-        
-        // Make the request to the node
-        const response = await axios.post(this.url, data, {
-            auth: {
-                username: this.rpcUser,
-                password: this.rpcPassword,
-            }
-        })
 
-        // Verify if there is a result and return it
+        const response = await this.client.post(this.url, data)
+
         if (response.data.result) {
             return response.data.result;
         } else {
             throw new Error('Error getting network info');
         }
     }
-    
+
     async getBlockchainInfo(){
         const data = {
             jsonrpc: '2.0',
             method: 'getblockchaininfo',
             id: 1
         }
-        
-        // Make the request to the node
-        const response = await axios.post(this.url, data, {
-            auth: {
-                username: this.rpcUser,
-                password: this.rpcPassword,
-            }
-        })
 
-        // Verify if there is a result and return it
+        const response = await this.client.post(this.url, data)
+
         if (response.data.result) {
             return response.data.result;
         } else {
@@ -90,15 +83,8 @@ class BlockchainConnector {
                 id: 1,
             }
 
-            // Make the request to the node
-            const response = await axios.post(this.url, data, {
-                auth: {
-                    username: this.rpcUser,
-                    password: this.rpcPassword,
-                }
-            })
+            const response = await this.client.post(this.url, data)
 
-            // Verify if there is a result and return it
             if (response.data.result) {
                 return response.data.result;
             } else {
@@ -122,15 +108,8 @@ class BlockchainConnector {
                     id: 1,
                 }
 
-                // Make the request to the node
-                const response = await axios.post(this.url, data, {
-                    auth: {
-                        username: this.rpcUser,
-                        password: this.rpcPassword,
-                    }
-                })
+                const response = await this.client.post(this.url, data)
 
-                // Verify if there is a result and return it
                 if (response.data.result) {
                     return response.data.result;
                 } else {
@@ -167,7 +146,7 @@ class BlockchainConnector {
             throw new Error("There were problems getting a block hex without auxpow. ")
         }
     }
-    
+
     async getRawMempool(){
         try {
             const data = {
@@ -175,16 +154,9 @@ class BlockchainConnector {
                 method: 'getrawmempool',
                 id: 1
             }
-            
-            // Make the request to the node
-            const response = await axios.post(this.url, data, {
-                auth: {
-                    username: this.rpcUser,
-                    password: this.rpcPassword,
-                }
-            })
 
-            // Verify if there is a result and return it
+            const response = await this.client.post(this.url, data)
+
             if (response.data.result) {
                 return response.data.result;
             } else {
@@ -195,7 +167,7 @@ class BlockchainConnector {
             throw error;
         }
     }
-    
+
     async getMempoolEntry(txid){
         try {
             const data = {
@@ -204,16 +176,9 @@ class BlockchainConnector {
                 params: [txid],
                 id: 1
             }
-            
-            // Make the request to the node
-            const response = await axios.post(this.url, data, {
-                auth: {
-                    username: this.rpcUser,
-                    password: this.rpcPassword,
-                }
-            })
 
-            // Verify if there is a result and return it
+            const response = await this.client.post(this.url, data)
+
             if (response.data.result) {
                 return response.data.result;
             } else {
@@ -224,7 +189,7 @@ class BlockchainConnector {
             throw error;
         }
     }
-    
+
     async getRawTransaction(txid){
         return new Promise(async (resolve, reject) => {
             let maxTries = 10
@@ -238,16 +203,9 @@ class BlockchainConnector {
                         params: [txid],
                         id: 1
                     }
-                    
-                    // Make the request to the node
-                    const response = await axios.post(this.url, data, {
-                        auth: {
-                            username: this.rpcUser,
-                            password: this.rpcPassword,
-                        }
-                    })
 
-                    // Verify if there is a result and return it
+                    const response = await this.client.post(this.url, data)
+
                     if (response.data.result) {
                         resolve(response.data.result);
                         break
@@ -260,25 +218,25 @@ class BlockchainConnector {
                     await this.sleep(500)
                 }
             }
-            
+
             if (tries >= maxTries){
                 reject(null)
             }
         })
     }
-    
+
     async getRawTransactions(txIdArray){
         let requests = []
-    
+
         for (let nextTxIdIndex in txIdArray){
             let nextTxId = txIdArray[nextTxIdIndex]
-            
+
             requests.push(this.getRawTransaction(nextTxId))
         }
-        
+
         return Promise.all(requests)
     }
-    
+
     async getBlock(blockhash, hexFormat=true) {
         try {
             const data = {
@@ -288,15 +246,8 @@ class BlockchainConnector {
                 id: 1,
             }
 
-            // Make the request to the node
-            const response = await axios.post(this.url, data, {
-                auth: {
-                    username: this.rpcUser,
-                    password: this.rpcPassword,
-                }
-            })
+            const response = await this.client.post(this.url, data)
 
-            // Verify if there is a result and return it
             if (response.data.result) {
                 return response.data.result;
             } else {
@@ -306,6 +257,44 @@ class BlockchainConnector {
             console.error('Error:', error.message);
             throw error;
         }
+    }
+
+    // Fetch multiple blocks in two batched JSON-RPC requests instead of 2×N individual ones:
+    //   Request 1: batch getblockhash for all heights  → N hashes
+    //   Request 2: batch getblock for all hashes       → N block hexes
+    // Returns array of { height, hash, hex } in the same order as `heights`.
+    async getBlocksBatch(heights) {
+        if (heights.length === 0) return []
+
+        // Batch 1: all getblockhash calls in one HTTP request
+        const hashBatch = heights.map((h, i) => ({
+            jsonrpc: '2.0',
+            method: 'getblockhash',
+            params: [h],
+            id: i
+        }))
+        const hashResponse = await this.client.post(this.url, hashBatch)
+        const hashResults  = hashResponse.data.sort((a, b) => a.id - b.id)
+        const hashes = hashResults.map(r => {
+            if (!r.result) throw new Error('Error getting block hash in batch for id ' + r.id)
+            return r.result
+        })
+
+        // Batch 2: all getblock calls in one HTTP request
+        const blockBatch = hashes.map((hash, i) => ({
+            jsonrpc: '2.0',
+            method: 'getblock',
+            params: [hash, false],  // false = hex format
+            id: i
+        }))
+        const blockResponse = await this.client.post(this.url, blockBatch)
+        const blockResults  = blockResponse.data.sort((a, b) => a.id - b.id)
+
+        return heights.map((h, i) => ({
+            height: h,
+            hash:   hashes[i],
+            hex:    blockResults[i].result
+        }))
     }
 }
 
