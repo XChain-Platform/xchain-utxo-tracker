@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-04-05
+
+### Added
+- StrykerJS mutation testing setup with per-priority configs (P1/P2/P3), quick mode, and incremental mode
+- Custom buffer mutator plugin for endianness swap and LevelDB key prefix byte swap mutations
+- Standalone custom mutation runner (`stryker-plugins/run-custom-mutants.js`) for Buffer/encoding-specific mutations
+- Mocha config for Stryker runs (`.mocharc.stryker.yml`) with 30s timeout override
+- Local `bufferutils.js` test coverage via Module resolution patching (enables mutation testing of patched file)
+- npm scripts: `mutate`, `mutate:quick`, `mutate:p1`, `mutate:p2`, `mutate:p3`, `mutate:incremental`, `mutate:custom`, `mutate:custom:p1`
+
+### Changed
+- `src/api.js`: wrapped `startApi()` in `require.main === module` guard to support safe `require()` by Stryker workers
+
 ## [1.0.3] - 2026-04-05
 
 ### Added

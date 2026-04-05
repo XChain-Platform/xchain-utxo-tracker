@@ -447,4 +447,4 @@ function deleteFilesInDirectorySync(directoryPath) {
     }
 }
 
-startApi()
+if (require.main === module) startApi()

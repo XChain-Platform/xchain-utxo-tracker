@@ -2,3 +2,8 @@
 node_modules/
 package-lock.json
 .DS_Store
+
+# Stryker mutation testing
+reports/mutation/
+stryker-incremental.json
+.stryker-tmp/

@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "mocha",
+  "plugins": [
+    "@stryker-mutator/mocha-runner"
+  ],
+  "mochaOptions": {
+    "spec": [
+      "test/unit/**/*.test.js"
+    ],
+    "config": ".mocharc.stryker.yml"
+  },
+  "mutate": [
+    "src/CryptoNetworks.js",
+    "src/util.js"
+  ],
+  "reporters": ["html", "clear-text", "progress"],
+  "htmlReporter": {
+    "fileName": "reports/mutation/mutation-p3.html"
+  },
+  "concurrency": 4,
+  "timeoutMS": 30000,
+  "timeoutFactor": 1.5,
+  "coverageAnalysis": "perTest",
+  "thresholds": {
+    "high": 85,
+    "low": 75,
+    "break": null
+  }
+}

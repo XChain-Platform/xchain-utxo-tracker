@@ -1,0 +1,4 @@
+# Mocha config for Stryker mutation testing runs.
+# Overrides --timeout 0 from npm scripts with a finite timeout so Stryker
+# can detect infinite-loop mutants.
+timeout: 30000
