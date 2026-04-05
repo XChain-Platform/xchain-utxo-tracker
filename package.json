@@ -43,14 +43,14 @@
     "test:perf:deep": "PERF_SCALE=large node --max-old-space-size=4096 ./node_modules/.bin/mocha --timeout 0 --recursive test/performance/**/*.perf.js --exit",
     "test:chaos": "mocha --timeout 0 --recursive test/chaos/**/*.chaos.js",
     "test:all": "mocha --timeout 0 --recursive test/**/*.test.js --exit",
-    "mutate": "stryker run",
-    "mutate:quick": "stryker run stryker.quick.config.json",
-    "mutate:p1": "stryker run stryker.p1.config.json",
-    "mutate:p2": "stryker run stryker.p2.config.json",
-    "mutate:p3": "stryker run stryker.p3.config.json",
-    "mutate:incremental": "stryker run --incremental",
-    "mutate:custom": "node stryker-plugins/run-custom-mutants.js",
-    "mutate:custom:p1": "node stryker-plugins/run-custom-mutants.js --spec 'test/unit/**/*.test.js' --spec 'test/integration/**/*.test.js' src/LevelUpDb.js src/XChainUtxoTracker.js bufferutils.js"
+    "mutate": "stryker run test/mutation/stryker.config.json",
+    "mutate:quick": "stryker run test/mutation/stryker.quick.config.json",
+    "mutate:p1": "stryker run test/mutation/stryker.p1.config.json",
+    "mutate:p2": "stryker run test/mutation/stryker.p2.config.json",
+    "mutate:p3": "stryker run test/mutation/stryker.p3.config.json",
+    "mutate:incremental": "stryker run test/mutation/stryker.config.json --incremental",
+    "mutate:custom": "node test/mutation/stryker-plugins/run-custom-mutants.js",
+    "mutate:custom:p1": "node test/mutation/stryker-plugins/run-custom-mutants.js --spec 'test/unit/**/*.test.js' --spec 'test/integration/**/*.test.js' src/LevelUpDb.js src/XChainUtxoTracker.js bufferutils.js"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^8.6.0",

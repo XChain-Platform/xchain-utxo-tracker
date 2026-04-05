@@ -14,12 +14,12 @@
 //   6. Printing a summary report
 //
 // Usage:
-//   node stryker-plugins/run-custom-mutants.js [--spec <glob>] [--timeout <ms>] [files...]
+//   node test/mutation/stryker-plugins/run-custom-mutants.js [--spec <glob>] [--timeout <ms>] [files...]
 //
 // Examples:
-//   node stryker-plugins/run-custom-mutants.js
-//   node stryker-plugins/run-custom-mutants.js src/LevelUpDb.js bufferutils.js
-//   node stryker-plugins/run-custom-mutants.js --spec "test/unit/**/*.test.js" --timeout 10000
+//   node test/mutation/stryker-plugins/run-custom-mutants.js
+//   node test/mutation/stryker-plugins/run-custom-mutants.js src/LevelUpDb.js bufferutils.js
+//   node test/mutation/stryker-plugins/run-custom-mutants.js --spec "test/unit/**/*.test.js" --timeout 10000
 
 const fs = require('fs');
 const path = require('path');
