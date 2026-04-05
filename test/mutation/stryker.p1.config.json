@@ -14,7 +14,7 @@
   "mutate": [
     "src/LevelUpDb.js",
     "src/XChainUtxoTracker.js",
-    "bufferutils.js"
+    "src/bufferutils.js"
   ],
   "reporters": ["html", "clear-text", "progress"],
   "htmlReporter": {

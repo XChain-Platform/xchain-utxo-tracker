@@ -18,7 +18,7 @@
 //
 // Examples:
 //   node test/mutation/stryker-plugins/run-custom-mutants.js
-//   node test/mutation/stryker-plugins/run-custom-mutants.js src/LevelUpDb.js bufferutils.js
+//   node test/mutation/stryker-plugins/run-custom-mutants.js src/LevelUpDb.js src/bufferutils.js
 //   node test/mutation/stryker-plugins/run-custom-mutants.js --spec "test/unit/**/*.test.js" --timeout 10000
 
 const fs = require('fs');
@@ -46,7 +46,7 @@ for (let i = 0; i < args.length; i++) {
 const DEFAULT_TARGETS = [
   'src/LevelUpDb.js',
   'src/XChainUtxoTracker.js',
-  'bufferutils.js',
+  'src/bufferutils.js',
   'src/BlockchainConnector.js',
   'src/XChainBlockDecoder.js',
 ];

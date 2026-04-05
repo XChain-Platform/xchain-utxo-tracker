@@ -10,8 +10,8 @@ COPY ./package.json /XChainUtxoTracker/package.json
 WORKDIR /XChainUtxoTracker
 RUN npm install
 
-COPY ./bufferutils.js /XChainUtxoTracker/node_modules/bitcoinjs-lib/src/bufferutils.js
 COPY ./src /XChainUtxoTracker/src
+COPY ./src/bufferutils.js /XChainUtxoTracker/node_modules/bitcoinjs-lib/src/bufferutils.js
 COPY ./.en[v] /XChainUtxoTracker/.env
 
 CMD ["npm", "run", "api"]

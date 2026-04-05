@@ -50,7 +50,7 @@
     "mutate:p3": "stryker run test/mutation/stryker.p3.config.json",
     "mutate:incremental": "stryker run test/mutation/stryker.config.json --incremental",
     "mutate:custom": "node test/mutation/stryker-plugins/run-custom-mutants.js",
-    "mutate:custom:p1": "node test/mutation/stryker-plugins/run-custom-mutants.js --spec 'test/unit/**/*.test.js' --spec 'test/integration/**/*.test.js' src/LevelUpDb.js src/XChainUtxoTracker.js bufferutils.js"
+    "mutate:custom:p1": "node test/mutation/stryker-plugins/run-custom-mutants.js --spec 'test/unit/**/*.test.js' --spec 'test/integration/**/*.test.js' src/LevelUpDb.js src/XChainUtxoTracker.js src/bufferutils.js"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^8.6.0",

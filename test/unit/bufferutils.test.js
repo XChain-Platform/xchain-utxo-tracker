@@ -19,7 +19,7 @@ const {
 // intercept Module resolution so './types' resolves from the bitcoinjs-lib dir.
 const Module = require('module');
 const path = require('path');
-const localBufPath = path.resolve(__dirname, '..', '..', 'bufferutils.js');
+const localBufPath = path.resolve(__dirname, '..', '..', 'src', 'bufferutils.js');
 const bitcoinjsSrc = path.join(__dirname, '..', '..', 'node_modules', 'bitcoinjs-lib', 'src');
 const origResolve = Module._resolveFilename;
 Module._resolveFilename = function (request, parent, ...rest) {
@@ -28,7 +28,7 @@ Module._resolveFilename = function (request, parent, ...rest) {
   }
   return origResolve.call(this, request, parent, ...rest);
 };
-const localBufferutils = require('../../bufferutils');
+const localBufferutils = require('../../src/bufferutils');
 Module._resolveFilename = origResolve;
 
 describe('bufferutils', function () {

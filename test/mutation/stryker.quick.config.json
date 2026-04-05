@@ -13,7 +13,7 @@
   "mutate": [
     "src/LevelUpDb.js",
     "src/XChainUtxoTracker.js",
-    "bufferutils.js"
+    "src/bufferutils.js"
   ],
   "reporters": ["clear-text", "progress"],
   "concurrency": 4,

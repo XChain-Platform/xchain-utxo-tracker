@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved Stryker mutation testing configs and plugins from repo root into `test/mutation/`: `stryker*.json`, `.mocharc.stryker.yml`, `stryker-plugins/`
 - Updated all `mutate*` npm scripts in `package.json` to reference new `test/mutation/` paths
 - Updated `mochaOptions.config` in all Stryker configs to `test/mutation/.mocharc.stryker.yml`
+- Moved `bufferutils.js` from repo root into `src/`; updated Dockerfile, test imports, Stryker configs, and custom mutant runner references
 
 ## [1.0.4] - 2026-04-05
 
