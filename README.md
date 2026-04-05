@@ -3,76 +3,106 @@
 
 # XChain Platform UTXO Tracker
 
-**XChainUtxoTracker** sorts all inputs and outputs of all blockchain transactions in a database and then serves the balance, utxos, and the oldest transaction associated with an address through an API.
+<p align="center">
+  <img src="https://img.shields.io/badge/version-1.0.4-blue" alt="Version">
+  <img src="https://img.shields.io/badge/tests-618%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/coverage-unit%20%7C%20integration%20%7C%20e2e%20%7C%20fuzz%20%7C%20chaos%20%7C%20mutation%20%7C%20smoke%20%7C%20performance-brightgreen" alt="Coverage">
+  <img src="https://img.shields.io/badge/node-%3E%3D18-green" alt="Node">
+  <img src="https://img.shields.io/badge/license-Dankest%20Community-orange" alt="License">
+</p>
 
----
+UTXO indexing service for the XChain Platform. Continuously polls cryptocurrency nodes (Bitcoin, Litecoin, Dogecoin) via JSON-RPC, decodes every block, indexes all unspent transaction outputs in LevelDB using compact binary encoding, and serves balance and UTXO queries through REST and JSON-RPC APIs. The encoder depends on this service to find spendable inputs when constructing transactions.
 
-## 💻 Installation
+## Features
 
-Clone this repository. Make sure you have Node.js and npm installed on your system.
+- **Full UTXO index** — every unspent output indexed by SHA-256 scriptPubKey hash for fast address lookups
+- **Compact binary encoding** — 11 LevelDB key prefix types stored as raw binary Buffers, reducing DB size ~50% vs hex strings
+- **Truncated txid keys** — 8-byte transaction ID truncations in index keys for further space savings
+- **Active-UTXO-only storage** — only unspent outputs in the live index; spent outputs archived temporarily for reorg recovery
+- **Real-time mempool tracking** — unconfirmed transactions in a separate in-memory LevelDB, updated every 60 seconds
+- **BigInt precision** — all balance calculations use BigInt arithmetic with `satoshiToDecimalString()`, no floating-point
+- **Reorg handling** — 10-block undo history (K/M archive records) with automatic rollback on chain reorganization
+- **Concurrent block prefetch** — up to 10 blocks pre-fetched concurrently via JSON-RPC batch requests with HTTP keep-alive
+- **Batch writes** — LevelDB writes batched in groups of 100 blocks with atomic commit
+- **Two-pass transaction processing** — outputs inserted before inputs within each block, correctly handling intra-block spends
+- **Multi-chain support** — Bitcoin, Litecoin, and Dogecoin on mainnet, testnet, and regtest
+- **AuxPoW block parsing** — Dogecoin and Litecoin HogEx block header stripping
+- **Bootstrap support** — compressed tar archive backup and restore for fast initial sync
+- **REST + JSON-RPC API** — dual interface for UTXO queries, balance lookups, address info, and bootstrap operations
+- **618 tests** — unit, integration, e2e, smoke, fuzz, chaos, performance, and mutation testing
+
+## Documentation
+
+Full UTXO tracker documentation is available in the [xchain-documentation](https://github.com/XChain-platform/xchain-documentation/tree/master/components/utxo-tracker) repository:
+
+| Document | Description |
+|---|---|
+| [README](https://github.com/XChain-platform/xchain-documentation/blob/master/components/utxo-tracker/README.md) | Overview, features, installation, quick start, scripts, dependencies |
+| [Architecture](https://github.com/XChain-platform/xchain-documentation/blob/master/components/utxo-tracker/ARCHITECTURE.md) | Data pipeline position, LevelDB key schema, block processing loop, reorg handling, mempool tracking |
+| [Configuration](https://github.com/XChain-platform/xchain-documentation/blob/master/components/utxo-tracker/CONFIGURATION.md) | Environment variables, internal constants, database paths |
+| [Operations](https://github.com/XChain-platform/xchain-documentation/blob/master/components/utxo-tracker/OPERATIONS.md) | Running, Docker, REST and JSON-RPC API reference, resilience, troubleshooting |
+
+## Quick Start
 
 ```bash
-git clone [https://github.com/XChain-platform/xchain-utxo-tracker.git](https://XChain-platform/xchain-utxo-tracker.git)
-cd XChainUtxoTracker
+git clone https://github.com/XChain-platform/xchain-utxo-tracker.git
+cd xchain-utxo-tracker
 npm install
 ```
-To start the server, use the following command:
+
+Create a `.env` file:
+
+```env
+NETWORK=bitcoin-regtest
+NODE_URL=127.0.0.1
+NODE_PORT=18443
+NODE_USER=rpc
+NODE_PASSWORD=rpc
+UTXO_TRACKER_API_PORT=3000
+```
+
+Start the tracker:
 
 ```bash
 npm run api
 ```
 
----
+## Scripts
 
-## 📖 API
+| Command | Description |
+|---|---|
+| `npm run api` | Start the tracker and API server |
+| `npm test` | Unit tests (~247 tests) |
+| `npm run test:smoke` | Smoke tests (11 tests) |
+| `npm run test:integration` | Integration tests (~131 tests) |
+| `npm run test:e2e` | End-to-end tests (33 tests) |
+| `npm run test:fuzz` | Fuzz tests (12 campaigns, 1000 iterations each) |
+| `npm run test:fuzz:quick` | Quick fuzz (100 iterations) |
+| `npm run test:fuzz:deep` | Deep fuzz (10,000 iterations) |
+| `npm run test:perf` | Performance tests (36 tests) |
+| `npm run test:perf:quick` | Quick performance (small scale) |
+| `npm run test:perf:deep` | Deep performance (large scale, 4 GB heap) |
+| `npm run test:chaos` | Chaos engineering tests (41 tests) |
+| `npm run test:all` | All unit + integration + e2e tests |
+| `npm run mutate` | Mutation testing (Stryker Mutator) |
+| `npm run mutate:quick` | Quick mutation testing |
+| `npm run mutate:p1` | P1 priority mutation testing |
+| `npm run mutate:p2` | P2 priority mutation testing |
+| `npm run mutate:p3` | P3 priority mutation testing |
 
-There are two interfaces for **XChainUtxoTracker** API: **REST** and **JSON-RPC**.
+## Test Suite
 
-### REST Endpoints 
-
-All REST endpoints are designed to be simple and straightforward using **GET** requests.
-
-| Endpoint | Description | Parameters | Response Example |
-| :--- | :--- | :--- | :--- |
-| `GET /utxos/:address` | Gets the UTXOs (Unspent Transaction Outputs) list for a specific address. | `address` (string) | [<br>&emsp;{<br>&emsp;&emsp;"txid":"850c6...3a8bcb1",<br>&emsp;&emsp;"vout":0,<br>&emsp;&emsp;"value":"100000000",<br>&emsp;&emsp;"height":119,<br>&emsp;&emsp;"confirmations":13,<br>&emsp;&emsp;"amount":1,<br>&emsp;&emsp;"scriptPubKey":"76a914...7988ac"<br>&emsp;}<br>]|
-| `GET /oldesttx/:address` | Gets the oldest transaction for an address in the blockchain. | `address` (string) | {<br>&emsp;"txid": "850c6...3a8bcb1",<br>&emsp;"vout": 0,<br>&emsp;"value": "100000000",<br>&emsp;"height": 119,<br>&emsp;"confirmations": 13,<br>&emsp;"amount": 1<br>} |
-| `GET /balance/:address` | Gets the total balance of an address. | `address` (string) | `12.345678` (value is a number, is not in satoshis) |
-| `GET /info/:address` | Gets the confirmed and pending balances and UTXO count of an address. | `address` (string) | <br>{<br>&emsp;"address": "1EXAMPLE..ABC",<br>&emsp;"type": "p2pkh",<br>&emsp;"balances": {<br>&emsp;&emsp;"confirmed": "1.00000000",<br>&emsp;&emsp;"pending": "0.00000000",<br>&emsp;&emsp;"received": "1.00000000"<br>&emsp;},<br>&emsp;"utxos":{<br>&emsp;&emsp;"confirmed": 1,<br>&emsp;&emsp;"pending": 0<br>&emsp;}<br>} |
-
-
-
-
-### JSON-RPC Methods
-
-The JSON-RPC interface allows to do the same requests and some others using **POST** calls
-
-**Endpoint:** `POST /`
-
-**Request example:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "get_balance",
-  "params": {
-    "address": "bc1q..."
-  },
-  "id": 1
-}
-```
-
-| Method | Description | Parameters | Response Example |
-| :--- | :--- | :--- | :--- |
-| `ping` | Useful to check if the server is up. | None | `{ "status": "success" }` |
-| `get_utxos` | Gets the utxos for an address. | `{ "address": "string" }` | `{ "utxos": [ { "txid": "...", "vout": 0, "value": 10000 }, ... ] }` |
-| `get_oldest_tx` | Gets the oldest transaction in the blockchain for an address. | `{ "address": "string" }` | `{ "oldest_tx": { "txid": "...", "blockhash": "...", ... } }` |
-| `get_balance` | Gets the total balance of an address | `{ "address": "string" }` | `{ "balance": 12345678 }` |
-| `get_info` | Gets confirmed and pending balances and UTXO count of an address. | `{ "address": "string" }` | `{ "address": ..., "balances":{"confirmed":..., "pending":...} }` |
-| `getbootstrap` | Starts a task in the server to create a compressed backup of the database. | `{ "filename": "string" }` | `{ "task_id": "uuid" }` |
-| `getbootstrapstatus` | Gets the status of a task. | `{ "taskid": "string" }` | `{ "progress": 50, "filename": "..." }` |
-| `restorebootstrap` | Restores a compressed backup in the server. | `{ "filename": "string" }` | `{ "task_id": "uuid" }` |
-| `getbootstraprestorestatus`| Gets the status of a backup restoration. | `{ "taskid": "string" }` | `{ "progress": 80, "filename": "..." }` |
-| `get_input_from_key_pattern` | Queries raw LevelDB keys matching a prefix pattern. Pattern must be at least 32 characters. | `{ "pattern": "string" }` | `{ "result": [ { "key": "...", "value": "..." }, ... ] }` |
+| Type | Tests | Description |
+|---|---|---|
+| Unit | ~247 | `LevelUpDb.test.js`, `XChainUtxoTracker.test.js`, `BlockchainConnector.test.js`, `api.test.js`, `XChainBlockDecoder.test.js`, `bufferutils.test.js`, `CryptoNetworks.test.js`, `util.test.js`, `boundary.test.js` |
+| Integration | ~131 | `core-indexing.test.js`, `reorg.test.js`, `mempool.test.js`, `api-queries.test.js`, `batch-boundaries.test.js`, `boundary.test.js` |
+| E2E | 33 | `lifecycle.test.js`, `persistence.test.js`, `reorg.test.js`, `api.test.js`, `mempool.test.js` |
+| Smoke | 11 | `smoke.test.js` — module loading, config, API liveness |
+| Fuzz | ~119 | 12 campaigns: blockDecoder, txProcessing, connector, addressValidation, balanceCalc, outputEncoding, leveldbKeys, apiEndpoints, bootstrap, config, reorgHandling, mempool |
+| Performance | 36 | Indexing throughput, query load, mempool stress, DB growth, reorg under load |
+| Chaos | 41 | RPC faults, storage faults, concurrency, state corruption |
+| Mutation | — | Stryker Mutator: P1/P2/P3 tiers + custom Buffer/encoding mutations |
+| **Total** | **618+** | |
 
 ---
 
