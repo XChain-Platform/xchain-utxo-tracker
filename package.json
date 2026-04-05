@@ -1,7 +1,7 @@
 {
   "name": "xchain-utxo-tracker",
   "description": "xchain-utxo-tracker tracks Unspent Transaction Objects (UTXOS) and provides APIs to retrieve UTXO data.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
     "type": "git",
@@ -38,9 +38,13 @@
     "test:fuzz": "mocha --timeout 0 --recursive test/fuzz/**/*.fuzz.js",
     "test:fuzz:quick": "FUZZ_RUNS=100 mocha --timeout 0 --recursive test/fuzz/**/*.fuzz.js",
     "test:fuzz:deep": "FUZZ_RUNS=10000 mocha --timeout 0 --recursive test/fuzz/**/*.fuzz.js",
+    "test:perf": "mocha --timeout 0 --recursive test/performance/**/*.perf.js --exit",
+    "test:perf:quick": "PERF_SCALE=small mocha --timeout 0 --recursive test/performance/**/*.perf.js --exit",
+    "test:perf:deep": "PERF_SCALE=large node --max-old-space-size=4096 ./node_modules/.bin/mocha --timeout 0 --recursive test/performance/**/*.perf.js --exit",
     "test:all": "mocha --timeout 0 --recursive test/**/*.test.js --exit"
   },
   "devDependencies": {
+    "autocannon": "^7.15.0",
     "chai": "^4.5.0",
     "fast-check": "^4.6.0",
     "mocha": "^11.7.5",
