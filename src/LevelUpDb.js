@@ -434,7 +434,7 @@ class LevelUpStore {
 
     async getInput(txHash8, outputIndex){
         try {
-            return await this.db.get(kInput(txHash8, outputIndex))
+            return await this.db.get(kInput(txHash8.substring(0, 16), outputIndex))
         } catch (err) {
             if (err.notFound) return null
             throw err

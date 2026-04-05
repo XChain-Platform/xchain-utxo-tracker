@@ -1,0 +1,213 @@
+'use strict';
+
+const { expect } = require('chai');
+const sinon = require('sinon');
+const {
+  fc, FUZZ_RUNS, TEST_KEYS, SATOSHI,
+  createTestTracker, closeTracker, randHash,
+  makeTx, makeCoinbaseTx, makeCoinbaseInput, makeSpendInput, makeBlock,
+  processAndCommit, processBlocksAndCommit, buildCoinbaseChain
+} = require('../helpers');
+const { satoshiToDecimalString } = require('../../../src/XChainUtxoTracker');
+
+describe('Fuzz: Reorg Handling (P1)', function () {
+
+  // ─── Helper: simulate reorg via verifyReorg() with stubbed connector ───────
+  // This matches the production flow: verifyReorg() compares DB state with node,
+  // rolls back mismatched blocks, then the main loop re-processes from fork point.
+
+  async function setupAndRunReorg(tracker, originalBlocks, forkBlocks) {
+    // Build lookup for what the "node" reports
+    const forkHeight = forkBlocks[0].height;
+    const nodeHashes = {};
+
+    // Blocks before the fork point match the original
+    for (let i = 0; i < forkHeight; i++) {
+      nodeHashes[i] = originalBlocks[i].hash;
+    }
+    // Blocks at and after fork point use the fork
+    for (const fb of forkBlocks) {
+      nodeHashes[fb.height] = fb.hash;
+    }
+
+    // Stub the connector
+    sinon.stub(tracker.connector, 'getBlockHash').callsFake(async (height) => {
+      if (height in nodeHashes) return nodeHashes[height];
+      throw new Error('Block height out of range: ' + height);
+    });
+
+    // verifyReorg runs with transactionArray=null (direct writes)
+    if (tracker.db.transactionArray) {
+      await tracker.db.endTransaction(false);
+    }
+    tracker.db.transactionArray = null;
+    tracker.db.deletedTransactionArray = null;
+
+    await tracker.verifyReorg();
+
+    sinon.restore();
+
+    // Re-process fork blocks
+    for (const block of forkBlocks) {
+      await processAndCommit(tracker, block);
+    }
+  }
+
+  // ─── Reorg height/hash rollback ────────────────────────────────────────────
+
+  describe('reorg height/hash rollback', function () {
+    it('rolls back to correct fork point', async function () {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.integer({ min: 3, max: 8 }),
+          fc.integer({ min: 1, max: 3 }),
+          async (chainLen, reorgDepth) => {
+            const depth = Math.min(reorgDepth, chainLen - 1);
+            if (depth < 1) return;
+
+            const t = await createTestTracker();
+            try {
+              // Build and process original chain
+              const originalBlocks = [];
+              let prevHash = '0'.repeat(64);
+              for (let i = 0; i < chainLen; i++) {
+                const block = makeBlock(i, prevHash, [makeCoinbaseTx(0)]);
+                originalBlocks.push(block);
+                prevHash = block.hash;
+              }
+              for (const block of originalBlocks) {
+                await processAndCommit(t, block);
+              }
+
+              expect(await t.db.getLastBlockHeight()).to.equal(chainLen - 1);
+
+              // Build fork chain
+              const forkStart = chainLen - depth;
+              const forkBlocks = [];
+              prevHash = originalBlocks[forkStart - 1].hash;
+              for (let i = forkStart; i < chainLen; i++) {
+                const block = makeBlock(i, prevHash, [makeCoinbaseTx(1)]);
+                forkBlocks.push(block);
+                prevHash = block.hash;
+              }
+
+              await setupAndRunReorg(t, originalBlocks, forkBlocks);
+
+              // After reorg + reprocess, tip should be at original chain length
+              expect(await t.db.getLastBlockHeight()).to.equal(chainLen - 1);
+
+              // Reorged block records should be gone
+              for (let i = forkStart; i < chainLen; i++) {
+                expect(await t.db.getBlock(originalBlocks[i].hash)).to.be.null;
+              }
+
+              // Fork block records should exist
+              for (const fb of forkBlocks) {
+                const b = await t.db.getBlock(fb.hash);
+                expect(b).to.not.be.null;
+                expect(b.h).to.equal(fb.height);
+              }
+            } finally {
+              sinon.restore();
+              await closeTracker(t);
+            }
+          }
+        ),
+        { numRuns: Math.min(FUZZ_RUNS, 30) }
+      );
+    });
+  });
+
+  // ─── Reorg with spent output recovery ──────────────────────────────────────
+
+  describe('spent output recovery after reorg', function () {
+    it('spent output is recovered when the spending block is reorged away', async function () {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.bigInt({ min: 10000n, max: 10000000000n }),
+          fc.integer({ min: 0, max: 4 }),
+          async (value, addrIdx) => {
+            const t = await createTestTracker();
+            try {
+              const otherIdx = (addrIdx + 1) % 10;
+
+              // Block 0: coinbase to addrIdx
+              const coinbaseTx = makeTx({
+                ins: [makeCoinbaseInput()],
+                outs: [{ value, script: TEST_KEYS[addrIdx].script }]
+              });
+              const block0 = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
+              await processAndCommit(t, block0);
+
+              // Block 1: spend to otherIdx
+              const spendTx = makeTx({
+                ins: [makeSpendInput(coinbaseTx._txid, 0)],
+                outs: [{ value, script: TEST_KEYS[otherIdx].script }]
+              });
+              const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx((addrIdx + 2) % 10), spendTx]);
+              await processAndCommit(t, block1);
+
+              // Verify addrIdx balance is 0 (output was spent)
+              let info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);
+              expect(info.balances.confirmed).to.equal('0.00000000');
+
+              // Reorg: replace block 1 with a block that doesn't spend the output
+              const altBlock1 = makeBlock(1, block0.hash, [makeCoinbaseTx((addrIdx + 3) % 10)]);
+              await setupAndRunReorg(t, [block0, block1], [altBlock1]);
+
+              // addrIdx's output should be recovered from K/M archive
+              info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);
+              expect(info.balances.confirmed).to.equal(satoshiToDecimalString(value));
+            } finally {
+              sinon.restore();
+              await closeTracker(t);
+            }
+          }
+        ),
+        { numRuns: Math.min(FUZZ_RUNS, 30) }
+      );
+    });
+  });
+
+  // ─── Pre-fork blocks are preserved ─────────────────────────────────────────
+
+  describe('pre-fork block preservation', function () {
+    it('blocks before the fork point are preserved after reorg', async function () {
+      const t = await createTestTracker();
+      try {
+        // 5-block chain
+        const blocks = [];
+        let prevHash = '0'.repeat(64);
+        for (let i = 0; i < 5; i++) {
+          const block = makeBlock(i, prevHash, [makeCoinbaseTx(0)]);
+          blocks.push(block);
+          prevHash = block.hash;
+        }
+        for (const block of blocks) {
+          await processAndCommit(t, block);
+        }
+
+        // Reorg last 2 blocks
+        const forkBlocks = [];
+        prevHash = blocks[2].hash;
+        for (let i = 3; i < 5; i++) {
+          const block = makeBlock(i, prevHash, [makeCoinbaseTx(1)]);
+          forkBlocks.push(block);
+          prevHash = block.hash;
+        }
+
+        await setupAndRunReorg(t, blocks, forkBlocks);
+
+        // Blocks 0-2 should be intact
+        for (let i = 0; i <= 2; i++) {
+          const b = await t.db.getBlock(blocks[i].hash);
+          expect(b).to.not.be.null;
+          expect(b.h).to.equal(i);
+        }
+      } finally {
+        sinon.restore();
+        await closeTracker(t);
+      }
+    });
+  });
+});

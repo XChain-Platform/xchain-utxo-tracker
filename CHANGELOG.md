@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-04-05
+
+### Fixed
+- Mempool spend detection — `getInput()` now truncates txid to txHash8 to match key format used by `insertInput()`, fixing broken mempool spend detection in `getBalanceInfo()` and `getUtxosAddress()`
+
+### Added
+- Fuzz testing suite with 12 campaigns (P0–P3) using fast-check, covering block decoding, LevelDB encoding, balance calculation, transaction processing, address validation, reorg handling, mempool operations, connector responses, API endpoints, bootstrap filenames, and configuration parsing
+- npm scripts: `test:fuzz`, `test:fuzz:quick`, `test:fuzz:deep`
+
 ## [1.0.0] - 2026-04-03
 
 ### Added

@@ -49,6 +49,18 @@ const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node nee
 const UNDO_BLOCKS = 10 //This is the number of blocks from which the outputs will be kept saved.
 const PREFETCH_SIZE = 10 //Number of blocks to pre-fetch concurrently while processing the current one
 
+const SATOSHI_BIGINT = 100000000n
+
+// Convert a satoshi value (number, string, or BigInt) to a fixed-8 decimal string
+// using pure BigInt arithmetic — no floating-point involved.
+function satoshiToDecimalString(satoshis) {
+    const val = BigInt(satoshis)
+    const abs = val < 0n ? -val : val
+    const whole = abs / SATOSHI_BIGINT
+    const frac = abs % SATOSHI_BIGINT
+    return (val < 0n ? '-' : '') + whole.toString() + '.' + frac.toString().padStart(8, '0')
+}
+
 class XChainUtxoTracker {
     constructor(network, nodeUrl, nodePort, nodeUser, nodePassword, dbName, auxPow) {
       this.network = CryptoNetworks.getBitcoinJsNetwork(network)
@@ -187,30 +199,30 @@ class XChainUtxoTracker {
         let script = bitcoin.address.toOutputScript(address, this.network)
         let scriptHash = createHash('sha256').update(script).digest('hex')
 
-        let confirmedBalance = 0
-        let pendingBalance = 0
+        let confirmedBalance = 0n
+        let pendingBalance = 0n
         let utxosConfirmed = 0
         let utxosPending = 0
-        let totalReceived = 0
+        let totalReceived = 0n
 
         let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash)
         let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash)
 
         for (let nextOutput of confirmedOutputs) {
             let txid = nextOutput.fullTxid || nextOutput.txid
-            let amount = nextOutput.value / SATOSHI_UNIT
+            let valueBig = BigInt(nextOutput.value)
 
             // Note: with REMOVE_SPENT=true, totalReceived only reflects currently unspent confirmed outputs
-            totalReceived += amount
+            totalReceived += valueBig
 
             let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
             if (mempoolInput != null) {
                 // Confirmed output being spent in the mempool: counts as confirmed but pending out
-                confirmedBalance += amount
-                pendingBalance -= amount
+                confirmedBalance += valueBig
+                pendingBalance -= valueBig
                 utxosConfirmed++
             } else {
-                confirmedBalance += amount
+                confirmedBalance += valueBig
                 utxosConfirmed++
             }
         }
@@ -220,7 +232,7 @@ class XChainUtxoTracker {
 
             let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
             if (mempoolInput == null) {
-                pendingBalance += nextOutput.value / SATOSHI_UNIT
+                pendingBalance += BigInt(nextOutput.value)
                 utxosPending++
             }
         }
@@ -229,9 +241,9 @@ class XChainUtxoTracker {
             "address": address,
             "type": this.getAddressType(address, this.network),
             "balances": {
-                "confirmed": confirmedBalance.toFixed(8),
-                "pending": pendingBalance.toFixed(8),
-                "received": totalReceived.toFixed(8)
+                "confirmed": satoshiToDecimalString(confirmedBalance),
+                "pending": satoshiToDecimalString(pendingBalance),
+                "received": satoshiToDecimalString(totalReceived)
             },
             "utxos": {
                 "confirmed": utxosConfirmed,
@@ -466,7 +478,8 @@ class XChainUtxoTracker {
     async verifyReorg(){
         let thereAreDifferences = true
         let blocksDeleted = []
-    
+        let rollbackDepth = 0
+
         while (thereAreDifferences){
             let lastBlockIndex = await this.db.getLastBlockHeight()
             let lastBlockHash = await this.db.getLastBlockHash()
@@ -514,11 +527,20 @@ class XChainUtxoTracker {
                         await this.removeFromLastBlocks(lastBlockHash)
                         await this.db.setLastBlockHash(lastBlock["ph"])
                         await this.db.setLastBlockHeight(lastBlock["h"]-1)
-                        
+
                         console.log("Removed block "+lastBlockHash+" ("+lastBlock["h"]+")")
                         console.log("Rollback to previous block "+lastBlock["ph"]+" ("+(lastBlock["h"]-1)+")")
-                        
+
                         blocksDeleted.push({"block_index":lastBlockIndex, "block_hash":lastBlockHash})
+
+                        rollbackDepth++
+                        if (rollbackDepth > UNDO_BLOCKS) {
+                            throw new Error(
+                                "Reorg depth (" + rollbackDepth + ") exceeds UNDO_BLOCKS (" + UNDO_BLOCKS + "). " +
+                                "Deleted output archives (K/M records) have been purged for blocks beyond the undo window. " +
+                                "A full re-index is required to restore correct state."
+                            )
+                        }
                     } catch (err){
                         console.log(err)
                         console.log("There was a problem trying to delete a block while verifying a reorg")
@@ -902,3 +924,4 @@ class XChainUtxoTracker {
 }
 
 module.exports = XChainUtxoTracker
+module.exports.satoshiToDecimalString = satoshiToDecimalString

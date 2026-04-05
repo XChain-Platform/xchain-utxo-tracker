@@ -63,15 +63,10 @@ async function startApi(){
     }
     
     async function getBalance(address){
-        let utxos = await tracker.getUtxosAddress(address)
-        let balance = 0
+        let info = await tracker.getBalanceInfo(address)
 
-        for (let nextUtxo of utxos){
-            balance = balance + nextUtxo.amount
-        }
-
-        // Return balance
-        return balance
+        // Return precise confirmed balance (computed via BigInt, no float loss)
+        return parseFloat(info.balances.confirmed)
     }
     
     async function getInfo(address){
