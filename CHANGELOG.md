@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-04-05
+
+### Added
+- Chaos engineering test suite with 31 tests across 10 experiments targeting LevelDB persistence, RPC resilience, state corruption, and concurrency
+- Fault injection helpers: batch write failure, read latency, state anchor corruption, reorg forcing
+- Tests covering: batch write atomicity, disk-full recovery, crash mid-batch, read latency degradation, state anchor self-healing, reorg during uncommitted batch, RPC connection loss, malformed RPC responses, concurrent queries during commit, mempool flood
+- npm script: `test:chaos`
+
 ## [1.0.2] - 2026-04-05
 
 ### Added

@@ -1,7 +1,7 @@
 {
   "name": "xchain-utxo-tracker",
   "description": "xchain-utxo-tracker tracks Unspent Transaction Objects (UTXOS) and provides APIs to retrieve UTXO data.",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
     "type": "git",
@@ -41,6 +41,7 @@
     "test:perf": "mocha --timeout 0 --recursive test/performance/**/*.perf.js --exit",
     "test:perf:quick": "PERF_SCALE=small mocha --timeout 0 --recursive test/performance/**/*.perf.js --exit",
     "test:perf:deep": "PERF_SCALE=large node --max-old-space-size=4096 ./node_modules/.bin/mocha --timeout 0 --recursive test/performance/**/*.perf.js --exit",
+    "test:chaos": "mocha --timeout 0 --recursive test/chaos/**/*.chaos.js",
     "test:all": "mocha --timeout 0 --recursive test/**/*.test.js --exit"
   },
   "devDependencies": {
