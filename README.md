@@ -4,11 +4,14 @@
 # XChain Platform UTXO Tracker
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.4-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.6-blue" alt="Version">
   <img src="https://img.shields.io/badge/tests-618%20passing-brightgreen" alt="Tests">
-  <img src="https://img.shields.io/badge/coverage-unit%20%7C%20integration%20%7C%20e2e%20%7C%20fuzz%20%7C%20chaos%20%7C%20mutation%20%7C%20smoke%20%7C%20performance-brightgreen" alt="Coverage">
   <img src="https://img.shields.io/badge/node-%3E%3D18-green" alt="Node">
   <img src="https://img.shields.io/badge/license-Dankest%20Community-orange" alt="License">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/coverage-unit%20%7C%20integration%20%7C%20e2e%20%7C%20fuzz%20%7C%20chaos%20%7C%20mutation%20%7C%20smoke%20%7C%20performance-brightgreen" alt="Coverage">
 </p>
 
 UTXO indexing service for the XChain Platform. Continuously polls cryptocurrency nodes (Bitcoin, Litecoin, Dogecoin) via JSON-RPC, decodes every block, indexes all unspent transaction outputs in LevelDB using compact binary encoding, and serves balance and UTXO queries through REST and JSON-RPC APIs. The encoder depends on this service to find spendable inputs when constructing transactions.

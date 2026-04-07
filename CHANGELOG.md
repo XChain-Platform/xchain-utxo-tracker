@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-04-06
+
+### Changed
+- Move coverage badge to its own line in README.md for cleaner formatting
+
 ## [1.0.5] - 2026-04-05
 
 ### Changed
