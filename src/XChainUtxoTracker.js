@@ -35,7 +35,7 @@ const bs = require("binary-search")
 const { hrtime } = require('node:process');
 
 const CHECK_BLOCK_DELAY_MS = 1000 //1 second to continously ask for new block when all has been parsed
-const DB_TRANSACTION_BLOCKS_QUANTITY = 100
+const DB_TRANSACTION_BLOCKS_QUANTITY = 200
 const PARSE_MODE_FILES = 0
 const PARSE_MODE_BULK_INSERTS = 1
 const SYNCED_THRESHOLD = 3
@@ -49,19 +49,9 @@ const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node nee
 const UNDO_BLOCKS = 10 //This is the number of blocks from which the outputs will be kept saved.
 const PREFETCH_SIZE = 10 //Number of blocks to pre-fetch concurrently while processing the current one
 
-const SATOSHI_BIGINT = 100000000n
-
-// Convert a satoshi value (number, string, or BigInt) to a fixed-8 decimal string
-// using pure BigInt arithmetic — no floating-point involved.
-function satoshiToDecimalString(satoshis) {
-    const val = BigInt(satoshis)
-    const abs = val < 0n ? -val : val
-    const whole = abs / SATOSHI_BIGINT
-    const frac = abs % SATOSHI_BIGINT
-    return (val < 0n ? '-' : '') + whole.toString() + '.' + frac.toString().padStart(8, '0')
-}
-
 class XChainUtxoTracker {
+    static parseOutBuckets = { hash: 0, ins: 0, sb: 0 }
+
     constructor(network, nodeUrl, nodePort, nodeUser, nodePassword, dbName, auxPow) {
       this.network = CryptoNetworks.getBitcoinJsNetwork(network)
       this.connector = new BlockchainConnector(nodeUrl, nodePort, nodeUser, nodePassword)
@@ -199,30 +189,30 @@ class XChainUtxoTracker {
         let script = bitcoin.address.toOutputScript(address, this.network)
         let scriptHash = createHash('sha256').update(script).digest('hex')
 
-        let confirmedBalance = 0n
-        let pendingBalance = 0n
+        let confirmedBalance = 0
+        let pendingBalance = 0
         let utxosConfirmed = 0
         let utxosPending = 0
-        let totalReceived = 0n
+        let totalReceived = 0
 
         let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash)
         let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash)
 
         for (let nextOutput of confirmedOutputs) {
             let txid = nextOutput.fullTxid || nextOutput.txid
-            let valueBig = BigInt(nextOutput.value)
+            let amount = nextOutput.value / SATOSHI_UNIT
 
             // Note: with REMOVE_SPENT=true, totalReceived only reflects currently unspent confirmed outputs
-            totalReceived += valueBig
+            totalReceived += amount
 
             let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
             if (mempoolInput != null) {
                 // Confirmed output being spent in the mempool: counts as confirmed but pending out
-                confirmedBalance += valueBig
-                pendingBalance -= valueBig
+                confirmedBalance += amount
+                pendingBalance -= amount
                 utxosConfirmed++
             } else {
-                confirmedBalance += valueBig
+                confirmedBalance += amount
                 utxosConfirmed++
             }
         }
@@ -232,7 +222,7 @@ class XChainUtxoTracker {
 
             let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
             if (mempoolInput == null) {
-                pendingBalance += BigInt(nextOutput.value)
+                pendingBalance += nextOutput.value / SATOSHI_UNIT
                 utxosPending++
             }
         }
@@ -241,9 +231,9 @@ class XChainUtxoTracker {
             "address": address,
             "type": this.getAddressType(address, this.network),
             "balances": {
-                "confirmed": satoshiToDecimalString(confirmedBalance),
-                "pending": satoshiToDecimalString(pendingBalance),
-                "received": satoshiToDecimalString(totalReceived)
+                "confirmed": confirmedBalance.toFixed(8),
+                "pending": pendingBalance.toFixed(8),
+                "received": totalReceived.toFixed(8)
             },
             "utxos": {
                 "confirmed": utxosConfirmed,
@@ -419,17 +409,29 @@ class XChainUtxoTracker {
     async parseTxOutputs(db, transaction, blockHash, blockHeight, addHints, removeSpent){
         const nextTxId  = "id" in transaction ? transaction["id"] : transaction.getId()
         const nextTxId8 = nextTxId.substring(0, 16)
+        const _tt = XChainUtxoTracker.parseOutBuckets
 
         if (!removeSpent) {
             await db.insertTransaction({hash: nextTxId, blockHash: blockHash})
         }
 
         await Promise.all(transaction.outs.map(async (nextOutput, txOutputIndex) => {
+            const _h0 = Date.now()
             const scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
+            _tt.hash += Date.now() - _h0
+
+            const _i0 = Date.now()
             await db.insertOutput({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex, value: nextOutput.value, height: blockHeight, fullTxHash: nextTxId})
+            _tt.ins += Date.now() - _i0
+
             if (addHints || removeSpent) {
+                const _i1 = Date.now()
                 await db.insertOutputHint({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex})
+                _tt.ins += Date.now() - _i1
+
+                const _s0 = Date.now()
                 await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId8, blockHeight)
+                _tt.sb += Date.now() - _s0
             }
         }))
 
@@ -478,8 +480,7 @@ class XChainUtxoTracker {
     async verifyReorg(){
         let thereAreDifferences = true
         let blocksDeleted = []
-        let rollbackDepth = 0
-
+    
         while (thereAreDifferences){
             let lastBlockIndex = await this.db.getLastBlockHeight()
             let lastBlockHash = await this.db.getLastBlockHash()
@@ -527,20 +528,11 @@ class XChainUtxoTracker {
                         await this.removeFromLastBlocks(lastBlockHash)
                         await this.db.setLastBlockHash(lastBlock["ph"])
                         await this.db.setLastBlockHeight(lastBlock["h"]-1)
-
+                        
                         console.log("Removed block "+lastBlockHash+" ("+lastBlock["h"]+")")
                         console.log("Rollback to previous block "+lastBlock["ph"]+" ("+(lastBlock["h"]-1)+")")
-
+                        
                         blocksDeleted.push({"block_index":lastBlockIndex, "block_hash":lastBlockHash})
-
-                        rollbackDepth++
-                        if (rollbackDepth > UNDO_BLOCKS) {
-                            throw new Error(
-                                "Reorg depth (" + rollbackDepth + ") exceeds UNDO_BLOCKS (" + UNDO_BLOCKS + "). " +
-                                "Deleted output archives (K/M records) have been purged for blocks beyond the undo window. " +
-                                "A full re-index is required to restore correct state."
-                            )
-                        }
                     } catch (err){
                         console.log(err)
                         console.log("There was a problem trying to delete a block while verifying a reorg")
@@ -574,7 +566,9 @@ class XChainUtxoTracker {
         this.blockchainInfoLastBlock = -1
         let blocksQuantity = 0
         
-        let blockTimestamps = [] // Rolling window of {height, time} for ETA calculation
+        let blockTimestamps = [] // Rolling window of {height, time, txCount} for ETA calculation
+        let _t = { fetch: 0, decode: 0, parse: 0, parseOut: 0, parseIn: 0, commit: 0, cleanup: 0, blocks: 0 }
+        let pendingCommit = null
 
         let blocksToInsert = []
         let transactionsToInsert = []
@@ -727,8 +721,10 @@ class XChainUtxoTracker {
                         continue
                     }
                     
+                    const _tDecode = Date.now()
                     var block = this.xchainBlockDecoder.blockFromHex(nextBlockHex)
                     let previousBlockHash = util.uint8ArrayToHex(block.prevHash.reverse())
+                    _t.decode += Date.now() - _tDecode
 
                     //Check if there is a reorg
                     if (nextBlockHeight > 0){
@@ -768,16 +764,33 @@ class XChainUtxoTracker {
                     //          now in transactionArray so removeOutputWithInput finds them)
                     var transactions = block.transactions
 
+                    const _tParse = Date.now()
+                    const _tParseOut = Date.now()
                     const blockOutputCounts = await Promise.all(
                         transactions.map(tx => this.parseTxOutputs(this.db, tx, nextBlockHash, nextBlockHeight, false, REMOVE_SPENT))
                     )
-                    const blockInputCounts = await Promise.all(
-                        transactions.map(tx => this.parseTxInputs(this.db, tx, nextBlockHash, false, REMOVE_SPENT))
-                    )
+                    _t.parseOut += Date.now() - _tParseOut
+                    // Pass 2: collect all inputs across the block, then batch-remove
+                    const _tParseIn = Date.now()
+                    const removeInputs = []
+                    for (const tx of transactions) {
+                        for (const nextInput of tx.ins) {
+                            const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
+                            if ((nextInput.index === 4294967295) || !standardInput) continue
+                            const prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
+                            removeInputs.push({ prevTxHash: prevTxHash8, prevOutputIndex: nextInput.index, blockHash: nextBlockHash })
+                        }
+                    }
+                    let blockInputTotal = removeInputs.length
+                    if (removeInputs.length > 0) {
+                        await this.db.removeOutputsWithInputsBatch(removeInputs)
+                    }
+                    _t.parseIn += Date.now() - _tParseIn
+                    _t.parse += Date.now() - _tParse
 
                     transactionsCount = transactionsCount + transactions.length
                     outputsCount = outputsCount + blockOutputCounts.reduce((acc, n) => acc + n, 0)
-                    inputsCount  = inputsCount  + blockInputCounts.reduce((acc, n) => acc + n, 0)
+                    inputsCount  = inputsCount  + blockInputTotal
                     
                     //Add the block to the last blocks
                     await this.addToLastBlocks(nextBlockHash)
@@ -788,31 +801,59 @@ class XChainUtxoTracker {
                         await this.db.setLastBlockHeight(nextBlockHeight)
                         await this.db.setLastBlockHash(nextBlockHash)
                         console.log("Inserting data Blocks ("+blocksCount+") Transactions ("+transactionsCount+") Inputs ("+inputsCount+") Outputs("+outputsCount+")")
-                        
+
+                        const _tCommit = Date.now()
                         await this.db.endTransaction()
+                        _t.commit += Date.now() - _tCommit
 
                         // Clean up K/M entries for aged-out blocks now that the batch is committed
+                        const _tCleanup = Date.now()
                         await this.cleanupAgedBlocks()
+                        _t.cleanup += Date.now() - _tCleanup
 
+                        // ── Print timing summary ──
+                        _t.blocks = blocksQuantity + 1
+                        const _total = _t.decode + _t.parse + _t.commit + _t.cleanup
+                        const _pb = XChainUtxoTracker.parseOutBuckets
+                        const _pi = LevelUpStore.parseInBuckets
+                        const _ks = LevelUpStore.knownScripts
+                        const _ksH = LevelUpStore.knownScriptsHits
+                        const _ksM = LevelUpStore.knownScriptsMisses
+                        const _ksRate = _ksH + _ksM > 0 ? ((_ksH / (_ksH + _ksM)) * 100).toFixed(1) : '0.0'
+                        const _mem = process.memoryUsage()
+                        const _heapMB = (_mem.heapUsed / 1048576).toFixed(0)
+                        const _rssMB = (_mem.rss / 1048576).toFixed(0)
+                        const _ocSize = LevelUpStore.outputCache.size
+                        console.log(`⏱ TIMING (${_t.blocks} blocks) total=${_total}ms | decode=${_t.decode}ms | parse=${_t.parse}ms (out=${_t.parseOut}ms [hash=${_pb.hash}ms ins=${_pb.ins}ms sb=${_pb.sb}ms] in=${_t.parseIn}ms [hintRead=${_pi.hintRead}ms outRead=${_pi.outRead}ms stage=${_pi.stage}ms]) | commit=${_t.commit}ms | cleanup=${_t.cleanup}ms | knownScripts=${_ks.size} hit=${_ksH} miss=${_ksM} rate=${_ksRate}% | heap=${_heapMB}MB rss=${_rssMB}MB outCache=${_ocSize}`)
+                        XChainUtxoTracker.parseOutBuckets = { hash: 0, ins: 0, sb: 0 }
+                        LevelUpStore.parseInBuckets = { hintRead: 0, outRead: 0, stage: 0 }
+                        LevelUpStore.knownScriptsHits = 0
+                        LevelUpStore.knownScriptsMisses = 0
+
+                        // Rolling ETA based on tx throughput
+                        blockTimestamps.push({height: nextBlockHeight, time: Date.now(), txCount: transactionsCount})
+                        if (blockTimestamps.length > ETA_WINDOW_BLOCKS) {
+                            blockTimestamps.shift()
+                        }
+
+                        _t = { fetch: 0, decode: 0, parse: 0, parseOut: 0, parseIn: 0, commit: 0, cleanup: 0, blocks: 0 }
                         blocksCount = 0
                         transactionsCount = 0
                         inputsCount = 0
                         outputsCount = 0
 
-                        // Rolling ETA: keep the last ETA_WINDOW_BLOCKS timestamps
-                        blockTimestamps.push({height: nextBlockHeight, time: Date.now()})
-                        if (blockTimestamps.length > ETA_WINDOW_BLOCKS) {
-                            blockTimestamps.shift()
-                        }
-
                         let blocksLeft = this.blockchainInfoLastBlock - nextBlockHeight
                         if (blocksLeft > 0 && blockTimestamps.length >= 2) {
                             let oldest = blockTimestamps[0]
                             let newest = blockTimestamps[blockTimestamps.length - 1]
-                            let msPerBlock = (newest.time - oldest.time) / (newest.height - oldest.height)
-                            let msLeft = blocksLeft * msPerBlock
-                            let windowSize = newest.height - oldest.height + 1
-                            console.log("Estimated time to finish: "+this.millisecondsToTimeString(msLeft)+" (avg over last "+windowSize+" blocks)")
+                            let totalTx = 0
+                            for (let k = 1; k < blockTimestamps.length; k++) totalTx += blockTimestamps[k].txCount
+                            let elapsedMs = newest.time - oldest.time
+                            let msPerTx = elapsedMs / totalTx
+                            let avgTxPerBlock = totalTx / (newest.height - oldest.height)
+                            let msLeft = blocksLeft * avgTxPerBlock * msPerTx
+                            console.log(`⚡ Speed: ${(1000/msPerTx).toFixed(1)} tx/s | avg ${avgTxPerBlock.toFixed(0)} tx/block (last ${newest.height - oldest.height} blocks)`)
+                            console.log("Estimated time to finish: "+this.millisecondsToTimeString(msLeft))
                         }
                         
                         blocksQuantity = -1
@@ -924,4 +965,3 @@ class XChainUtxoTracker {
 }
 
 module.exports = XChainUtxoTracker
-module.exports.satoshiToDecimalString = satoshiToDecimalString

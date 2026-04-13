@@ -47,7 +47,7 @@
 const util = require('./util')
 
 var levelup = require('levelup')
-var leveldown = require('leveldown')
+var leveldown = require('rocksdb')
 var memdown = require('memdown')
 const encode = require('encoding-down')
 const bs = require("binary-search")
@@ -82,7 +82,7 @@ function idxBuf(n) {
 }
 
 function rangeEnd(prefix) {
-    return Buffer.concat([prefix, Buffer.alloc(12, 0xFF)])
+    return Buffer.concat([prefix, Buffer.from([0xFF])])
 }
 
 // Normalize a key to a hex string for use as a JavaScript Map key.
@@ -195,7 +195,24 @@ const EMPTY = Buffer.alloc(0)
 
 // ─── LevelUpStore class ───────────────────────────────────────────────────────
 
+// LRU-ish cache for recently-written output values, keyed by `${txHash8}:${idx}`.
+// UTXO locality: most spends consume outputs created within the last few thousand
+// blocks, so a bounded in-memory cache absorbs a large fraction of Phase 2 reads
+// in removeOutputsWithInputsBatch without touching the DB. Map insertion order
+// gives FIFO eviction; entries are also evicted on spend.
+const OUTPUT_CACHE_MAX = 2_000_000
+
+const KNOWN_SCRIPTS_MAX = 2_000_000
+
 class LevelUpStore {
+    static parseInBuckets = { hintRead: 0, outRead: 0, stage: 0 }
+    static outputCache = new Map()
+    static outputCacheHits = 0
+    static outputCacheMisses = 0
+    static knownScripts = new Set()
+    static knownScriptsHits = 0
+    static knownScriptsMisses = 0
+
     constructor(dbName, inMemory = false) {
         this.dbName = dbName
         this.db = null
@@ -217,7 +234,10 @@ class LevelUpStore {
             if (this.inMemory){
                 this.db = levelup(memdown())
             } else {
-                this.db = levelup(leveldown("/data/"+this.dbName))
+                this.db = levelup(leveldown("/data/"+this.dbName, {
+                    maxBackgroundCompactions: 1,
+                    maxBackgroundFlushes: 1
+                }))
             }
             return this.db
         } catch (err){
@@ -434,7 +454,7 @@ class LevelUpStore {
 
     async getInput(txHash8, outputIndex){
         try {
-            return await this.db.get(kInput(txHash8.substring(0, 16), outputIndex))
+            return await this.db.get(kInput(txHash8, outputIndex))
         } catch (err) {
             if (err.notFound) return null
             throw err
@@ -518,10 +538,23 @@ class LevelUpStore {
     // ─── Output (O prefix) ───────────────────────────────────────────────────
 
     async insertOutput(output) {
+        const oVal = encodeOutput(output.value, output.height, output.fullTxHash || null)
+
+        // Populate the recent-output cache so Phase 2 of removeOutputsWithInputsBatch
+        // can absorb spends of this output without a DB read.
+        const cacheKey = output.txHash + ":" + output.outputIndex
+        const cache = LevelUpStore.outputCache
+        cache.set(cacheKey, oVal)
+        if (cache.size > OUTPUT_CACHE_MAX) {
+            // Recreate the Map to avoid V8 tombstone accumulation from
+            // constant add+delete patterns, which causes steady degradation.
+            LevelUpStore.outputCache = new Map()
+        }
+
         return await this.addTransaction(
             "put",
             kOutput(output.scriptPubKey, output.txHash, output.outputIndex),
-            encodeOutput(output.value, output.height, output.fullTxHash || null)
+            oVal
         )
     }
 
@@ -577,6 +610,123 @@ class LevelUpStore {
         await this.addTransaction("del", oKey)
         await this.addTransaction("del", hKey)
         return true
+    }
+
+    // Batch version of removeOutputWithInput — collects all inputs for a block,
+    // resolves hints and outputs with 2 getMany calls instead of N individual db.get().
+    async removeOutputsWithInputsBatch(inputs) {
+        if (inputs.length === 0) return 0
+
+        const resolved = new Array(inputs.length)
+        const hintDbKeys = []
+        const hintDbIndices = []
+
+        // ── Phase 1: Resolve all hint keys (scriptPubKey lookup) ──
+        const _tHint = Date.now()
+        for (let i = 0; i < inputs.length; i++) {
+            const inp = inputs[i]
+            const hKey = kOutHint(inp.prevTxHash, inp.prevOutputIndex)
+            resolved[i] = { hKey }
+
+            // Try in-memory (same-block spend)
+            const inMem = this.getTransactionValue(hKey)
+            if (inMem != null) {
+                resolved[i].scriptPubKeyBuf = inMem
+                resolved[i].inMem = true
+                continue
+            }
+
+            // Queue for batch DB read
+            hintDbKeys.push(hKey)
+            hintDbIndices.push(i)
+        }
+
+        // Batch DB read for hint misses
+        if (hintDbKeys.length > 0) {
+            const hintValues = await this.db.getMany(hintDbKeys)
+            for (let j = 0; j < hintDbKeys.length; j++) {
+                const i = hintDbIndices[j]
+                if (hintValues[j] == null) {
+                    console.log("Warning: Missing outputHintKey for input " + JSON.stringify(inputs[i]) + " - output may have been indexed before REMOVE_SPENT was enabled")
+                    resolved[i] = null
+                    continue
+                }
+                resolved[i].scriptPubKeyBuf = hintValues[j]
+            }
+        }
+        LevelUpStore.parseInBuckets.hintRead += Date.now() - _tHint
+
+        // ── Phase 2: Resolve all output values ──
+        // First check the in-memory output cache (recently-written outputs).
+        // Most spends hit recently-created UTXOs (locality), so this absorbs
+        // a large fraction of the lookups without touching the DB.
+        const _tOut = Date.now()
+        const outputDbKeys = []
+        const outputDbIndices = []
+        const cache = LevelUpStore.outputCache
+
+        for (let i = 0; i < inputs.length; i++) {
+            if (!resolved[i] || !resolved[i].scriptPubKeyBuf) continue
+            if (resolved[i].inMem) continue
+
+            const inp = inputs[i]
+            const r = resolved[i]
+            r.oKey = Buffer.concat([pb(P_OUTPUT), r.scriptPubKeyBuf, h2b(inp.prevTxHash), idxBuf(inp.prevOutputIndex)])
+
+            // Cache lookup
+            const cacheKey = inp.prevTxHash + ":" + inp.prevOutputIndex
+            const cached = cache.get(cacheKey)
+            if (cached !== undefined) {
+                r.oVal = cached
+                cache.delete(cacheKey)   // spent — drop from cache
+                LevelUpStore.outputCacheHits++
+                continue
+            }
+            LevelUpStore.outputCacheMisses++
+
+            outputDbKeys.push(r.oKey)
+            outputDbIndices.push(i)
+        }
+
+        // Batch DB read for cache misses
+        if (outputDbKeys.length > 0) {
+            const outputValues = await this.db.getMany(outputDbKeys)
+            for (let j = 0; j < outputDbKeys.length; j++) {
+                resolved[outputDbIndices[j]].oVal = outputValues[j]
+            }
+        }
+        LevelUpStore.parseInBuckets.outRead += Date.now() - _tOut
+
+        // ── Phase 3: Stage all deletes ──
+        const _tStage = Date.now()
+        for (let i = 0; i < inputs.length; i++) {
+            if (!resolved[i]) continue
+            const inp = inputs[i]
+            const r = resolved[i]
+
+            if (r.inMem) {
+                const inMemOKey = Buffer.concat([pb(P_OUTPUT), r.scriptPubKeyBuf, h2b(inp.prevTxHash), idxBuf(inp.prevOutputIndex)])
+                this.removeTransaction(inMemOKey, inp.blockHash)
+                this.removeTransaction(r.hKey, inp.blockHash)
+                continue
+            }
+
+            if (r.oVal == null) {
+                await this.addTransaction("del", r.oKey)
+                await this.addTransaction("del", r.hKey)
+                continue
+            }
+
+            const mKey = kHintDel(inp.blockHash, inp.prevTxHash, inp.prevOutputIndex)
+            const kKey = Buffer.concat([pb(P_OUT_DEL), h2b(inp.blockHash), r.scriptPubKeyBuf, h2b(inp.prevTxHash), idxBuf(inp.prevOutputIndex)])
+            await this.addTransaction("put", mKey, r.scriptPubKeyBuf)
+            await this.addTransaction("put", kKey, r.oVal)
+            await this.addTransaction("del", r.oKey)
+            await this.addTransaction("del", r.hKey)
+        }
+        LevelUpStore.parseInBuckets.stage += Date.now() - _tStage
+
+        return inputs.length
     }
 
     async deleteOutputsByHint(txid){
@@ -697,24 +847,41 @@ class LevelUpStore {
         // Mempool transactions have no confirmed block — S/Z prefix tracking is meaningless
         if (!blockHash) return true
 
+        // Recreate the Set to avoid V8 tombstone accumulation from constant add+delete.
+        // Covers all three add paths below with a single check per call.
+        if (LevelUpStore.knownScripts.size > KNOWN_SCRIPTS_MAX) {
+            LevelUpStore.knownScripts = new Set()
+        }
+
+        // Tier 0: known to exist from a previous batch — pure in-memory, no DB hit
+        if (LevelUpStore.knownScripts.has(outputScript)) {
+            LevelUpStore.knownScriptsHits++
+            return true
+        }
+        LevelUpStore.knownScriptsMisses++
+
         const sKey = kScriptBlk(outputScript)
 
-        // Check the in-memory batch first — avoids a real LevelDB read for any
-        // script already staged in the current 500-block batch window
+        // Tier 1: in current batch — avoids a real DB read
         if (this.getTransactionValue(sKey) !== null) {
+            LevelUpStore.knownScripts.add(outputScript)
             return true
         }
 
+        // Tier 2: DB lookup
         try {
             await this.db.get(sKey)
+            LevelUpStore.knownScripts.add(outputScript)
             return true  // already exists
         } catch (err) {
             if (!err.notFound) throw err
         }
 
+        // New script — insert and remember
         await this.addTransaction("put", sKey,
             encodeScriptBlk(blockHash, blockHeight, txHash))
         await this.addTransaction("put", kBlkScript(blockHash, outputScript), EMPTY)
+        LevelUpStore.knownScripts.add(outputScript)
 
         return true
     }

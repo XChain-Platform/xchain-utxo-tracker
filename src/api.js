@@ -63,10 +63,15 @@ async function startApi(){
     }
     
     async function getBalance(address){
-        let info = await tracker.getBalanceInfo(address)
+        let utxos = await tracker.getUtxosAddress(address)
+        let balance = 0
 
-        // Return precise confirmed balance (computed via BigInt, no float loss)
-        return parseFloat(info.balances.confirmed)
+        for (let nextUtxo of utxos){
+            balance = balance + nextUtxo.amount
+        }
+
+        // Return balance
+        return balance
     }
     
     async function getInfo(address){
@@ -447,4 +452,4 @@ function deleteFilesInDirectorySync(directoryPath) {
     }
 }
 
-if (require.main === module) startApi()
+startApi()
