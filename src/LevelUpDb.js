@@ -150,11 +150,24 @@ function kScriptBlk(scriptHex) {
     buf.write(scriptHex, 1, 'hex')
     return buf
 }
+function kScriptBlkFromBuf(scriptBuf) {
+    const buf = Buffer.allocUnsafe(33)
+    buf[0] = P_SCRIPT_BLK
+    scriptBuf.copy(buf, 1, 0, 32)
+    return buf
+}
 function kBlkScript(blockHashHex, scriptHex) {
     const buf = Buffer.allocUnsafe(65)
     buf[0] = P_BLK_SCRIPT
     buf.write(blockHashHex, 1, 'hex')
     buf.write(scriptHex, 33, 'hex')
+    return buf
+}
+function kBlkScriptFromBuf(blockHashHex, scriptBuf) {
+    const buf = Buffer.allocUnsafe(65)
+    buf[0] = P_BLK_SCRIPT
+    buf.write(blockHashHex, 1, 'hex')
+    scriptBuf.copy(buf, 33, 0, 32)
     return buf
 }
 function kOutDel(blockHashHex, scriptHex, txHash8Hex, idx) {
@@ -611,6 +624,7 @@ class LevelUpStore {
 
     // ─── Output (O prefix) ───────────────────────────────────────────────────
 
+    // output.scriptPubKey may be a Buffer (hot path) or a hex string (mempool / legacy callers).
     async insertOutput(output) {
         const oVal = encodeOutput(output.value, output.height, output.fullTxHash || null)
 
@@ -629,20 +643,23 @@ class LevelUpStore {
             LevelUpStore.outputCache = new Map()
         }
 
-        return await this.addTransaction(
-            "put",
-            kOutput(output.scriptPubKey, output.txHash, output.outputIndex),
-            oVal
-        )
+        const oKey = Buffer.isBuffer(output.scriptPubKey)
+            ? kOutputFromBuf(output.scriptPubKey, output.txHash, output.outputIndex)
+            : kOutput(output.scriptPubKey, output.txHash, output.outputIndex)
+        return await this.addTransaction("put", oKey, oVal)
     }
 
     // ─── Output hint (H prefix) ──────────────────────────────────────────────
 
+    // output.scriptPubKey may be a Buffer (hot path) or a hex string.
     async insertOutputHint(output){
+        const hintVal = Buffer.isBuffer(output.scriptPubKey)
+            ? output.scriptPubKey
+            : encodeOutHint(output.scriptPubKey)
         return await this.addTransaction(
             "put",
             kOutHint(output.txHash, output.outputIndex),
-            encodeOutHint(output.scriptPubKey)
+            hintVal
         )
     }
 
@@ -919,6 +936,7 @@ class LevelUpStore {
 
     // ─── Output script block (S / Z prefix) ──────────────────────────────────
 
+    // outputScript may be a Buffer (hot path) or a hex string (mempool / legacy callers).
     async insertOutputScriptBlock(outputScript, blockHash, txHash, blockHeight){
         // Mempool transactions have no confirmed block — S/Z prefix tracking is meaningless
         if (!blockHash) return true
@@ -929,25 +947,31 @@ class LevelUpStore {
             LevelUpStore.knownScripts = new Set()
         }
 
+        // Normalize the Set key to a latin1-encoded 32-char string when the input
+        // is a Buffer. latin1 is half the size of hex and avoids the nibble
+        // encoding cost — used only as the in-memory dedup key, never for DB ops.
+        const isBuf = Buffer.isBuffer(outputScript)
+        const scriptKey = isBuf ? outputScript.toString('latin1') : outputScript
+
         // Tier 0: known to exist from a previous batch — pure in-memory, no DB hit
-        if (LevelUpStore.knownScripts.has(outputScript)) {
+        if (LevelUpStore.knownScripts.has(scriptKey)) {
             LevelUpStore.knownScriptsHits++
             return true
         }
         LevelUpStore.knownScriptsMisses++
 
-        const sKey = kScriptBlk(outputScript)
+        const sKey = isBuf ? kScriptBlkFromBuf(outputScript) : kScriptBlk(outputScript)
 
         // Tier 1: in current batch — avoids a real DB read
         if (this.getTransactionValue(sKey) !== null) {
-            LevelUpStore.knownScripts.add(outputScript)
+            LevelUpStore.knownScripts.add(scriptKey)
             return true
         }
 
         // Tier 2: DB lookup
         try {
             await this.db.get(sKey)
-            LevelUpStore.knownScripts.add(outputScript)
+            LevelUpStore.knownScripts.add(scriptKey)
             return true  // already exists
         } catch (err) {
             if (!err.notFound) throw err
@@ -956,8 +980,9 @@ class LevelUpStore {
         // New script — insert and remember
         await this.addTransaction("put", sKey,
             encodeScriptBlk(blockHash, blockHeight, txHash))
-        await this.addTransaction("put", kBlkScript(blockHash, outputScript), EMPTY)
-        LevelUpStore.knownScripts.add(outputScript)
+        const zKey = isBuf ? kBlkScriptFromBuf(blockHash, outputScript) : kBlkScript(blockHash, outputScript)
+        await this.addTransaction("put", zKey, EMPTY)
+        LevelUpStore.knownScripts.add(scriptKey)
 
         return true
     }

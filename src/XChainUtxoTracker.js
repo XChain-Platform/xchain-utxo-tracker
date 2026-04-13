@@ -417,7 +417,10 @@ class XChainUtxoTracker {
 
         await Promise.all(transaction.outs.map(async (nextOutput, txOutputIndex) => {
             const _h0 = Date.now()
-            const scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
+            // Keep the hash as a Buffer — insertOutput / insertOutputHint /
+            // insertOutputScriptBlock all accept Buffers and use buf.copy()
+            // instead of decoding a hex string back into bytes.
+            const scriptHash = createHash('sha256').update(nextOutput.script).digest()
             _tt.hash += Date.now() - _h0
 
             const _i0 = Date.now()
