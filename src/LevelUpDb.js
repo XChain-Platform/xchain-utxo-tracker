@@ -92,39 +92,108 @@ function toMapKey(key) {
 }
 
 // ─── Key constructors ─────────────────────────────────────────────────────────
+// Each constructor allocates a single Buffer and writes fields directly via
+// buf.write(hex, offset, 'hex') — avoids the 3–5 temporary Buffers that
+// Buffer.concat + h2b + pb + idxBuf produced previously. At ~5M key builds per
+// batch flush this is the largest single contributor to GC pressure.
 
 function kBlock(blockHashHex) {
-    return Buffer.concat([pb(P_BLOCK), h2b(blockHashHex)])
+    const buf = Buffer.allocUnsafe(33)
+    buf[0] = P_BLOCK
+    buf.write(blockHashHex, 1, 'hex')
+    return buf
 }
 function kTx(txHash8Hex) {
-    return Buffer.concat([pb(P_TX), h2b(txHash8Hex)])
+    const buf = Buffer.allocUnsafe(9)
+    buf[0] = P_TX
+    buf.write(txHash8Hex, 1, 'hex')
+    return buf
 }
 function kInput(prevTxHash8Hex, idx) {
-    return Buffer.concat([pb(P_INPUT), h2b(prevTxHash8Hex), idxBuf(idx)])
+    const buf = Buffer.allocUnsafe(13)
+    buf[0] = P_INPUT
+    buf.write(prevTxHash8Hex, 1, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 9)
+    return buf
 }
 function kOutput(scriptHex, txHash8Hex, idx) {
-    return Buffer.concat([pb(P_OUTPUT), h2b(scriptHex), h2b(txHash8Hex), idxBuf(idx)])
+    const buf = Buffer.allocUnsafe(45)
+    buf[0] = P_OUTPUT
+    buf.write(scriptHex, 1, 'hex')
+    buf.write(txHash8Hex, 33, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 41)
+    return buf
 }
 function kOutHint(txHash8Hex, idx) {
-    return Buffer.concat([pb(P_OUT_HINT), h2b(txHash8Hex), idxBuf(idx)])
+    const buf = Buffer.allocUnsafe(13)
+    buf[0] = P_OUT_HINT
+    buf.write(txHash8Hex, 1, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 9)
+    return buf
 }
 function kInHint(txHash8Hex, prevTxHash8Hex, idx) {
-    return Buffer.concat([pb(P_IN_HINT), h2b(txHash8Hex), h2b(prevTxHash8Hex), idxBuf(idx)])
+    const buf = Buffer.allocUnsafe(21)
+    buf[0] = P_IN_HINT
+    buf.write(txHash8Hex, 1, 'hex')
+    buf.write(prevTxHash8Hex, 9, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 17)
+    return buf
 }
 function kScriptBlk(scriptHex) {
-    return Buffer.concat([pb(P_SCRIPT_BLK), h2b(scriptHex)])
+    const buf = Buffer.allocUnsafe(33)
+    buf[0] = P_SCRIPT_BLK
+    buf.write(scriptHex, 1, 'hex')
+    return buf
 }
 function kBlkScript(blockHashHex, scriptHex) {
-    return Buffer.concat([pb(P_BLK_SCRIPT), h2b(blockHashHex), h2b(scriptHex)])
+    const buf = Buffer.allocUnsafe(65)
+    buf[0] = P_BLK_SCRIPT
+    buf.write(blockHashHex, 1, 'hex')
+    buf.write(scriptHex, 33, 'hex')
+    return buf
 }
 function kOutDel(blockHashHex, scriptHex, txHash8Hex, idx) {
-    return Buffer.concat([pb(P_OUT_DEL), h2b(blockHashHex), h2b(scriptHex), h2b(txHash8Hex), idxBuf(idx)])
+    const buf = Buffer.allocUnsafe(77)
+    buf[0] = P_OUT_DEL
+    buf.write(blockHashHex, 1, 'hex')
+    buf.write(scriptHex, 33, 'hex')
+    buf.write(txHash8Hex, 65, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 73)
+    return buf
 }
 function kHintDel(blockHashHex, txHash8Hex, idx) {
-    return Buffer.concat([pb(P_HINT_DEL), h2b(blockHashHex), h2b(txHash8Hex), idxBuf(idx)])
+    const buf = Buffer.allocUnsafe(45)
+    buf[0] = P_HINT_DEL
+    buf.write(blockHashHex, 1, 'hex')
+    buf.write(txHash8Hex, 33, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 41)
+    return buf
 }
 function kStoredBlk(blockHashHex) {
-    return Buffer.concat([pb(P_STORED_BLK), h2b(blockHashHex)])
+    const buf = Buffer.allocUnsafe(33)
+    buf[0] = P_STORED_BLK
+    buf.write(blockHashHex, 1, 'hex')
+    return buf
+}
+// Build an O-prefixed output key from an already-binary scriptPubKey buffer
+// (used in the input-removal path where the script is fetched from the H index).
+function kOutputFromBuf(scriptPubKeyBuf, txHash8Hex, idx) {
+    const buf = Buffer.allocUnsafe(45)
+    buf[0] = P_OUTPUT
+    scriptPubKeyBuf.copy(buf, 1, 0, 32)
+    buf.write(txHash8Hex, 33, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 41)
+    return buf
+}
+// Build a K-prefixed deleted-output key from a binary scriptPubKey buffer.
+function kOutDelFromBuf(blockHashHex, scriptPubKeyBuf, txHash8Hex, idx) {
+    const buf = Buffer.allocUnsafe(77)
+    buf[0] = P_OUT_DEL
+    buf.write(blockHashHex, 1, 'hex')
+    scriptPubKeyBuf.copy(buf, 33, 0, 32)
+    buf.write(txHash8Hex, 65, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 73)
+    return buf
 }
 
 // ─── Value encoders / decoders ────────────────────────────────────────────────
@@ -580,15 +649,13 @@ class LevelUpStore {
 
         try {
             scriptPubKeyBuf = await this.db.get(hKey)                               // 32-byte Buffer
-            oKey = Buffer.concat([pb(P_OUTPUT), scriptPubKeyBuf,
-                                  h2b(input.prevTxHash), idxBuf(input.prevOutputIndex)])
+            oKey = kOutputFromBuf(scriptPubKeyBuf, input.prevTxHash, input.prevOutputIndex)
             oVal = await this.db.get(oKey)
         } catch (err) {
             // Output not yet committed — check in-memory transaction map
             const inMemScript = this.getTransactionValue(hKey)
             if (inMemScript != null){
-                const inMemOKey = Buffer.concat([pb(P_OUTPUT), inMemScript,
-                                                 h2b(input.prevTxHash), idxBuf(input.prevOutputIndex)])
+                const inMemOKey = kOutputFromBuf(inMemScript, input.prevTxHash, input.prevOutputIndex)
                 if (!this.removeTransaction(inMemOKey, input.blockHash)){
                     throw Error("Missing output match for input "+JSON.stringify(input))
                 }
@@ -601,8 +668,7 @@ class LevelUpStore {
             return true
         }
 
-        const kKey = Buffer.concat([pb(P_OUT_DEL), h2b(input.blockHash), scriptPubKeyBuf,
-                                    h2b(input.prevTxHash), idxBuf(input.prevOutputIndex)])
+        const kKey = kOutDelFromBuf(input.blockHash, scriptPubKeyBuf, input.prevTxHash, input.prevOutputIndex)
 
         // Stage for deferred deletion — will be purged after batch commit
         await this.addTransaction("put", mKey, scriptPubKeyBuf)
@@ -671,7 +737,7 @@ class LevelUpStore {
 
             const inp = inputs[i]
             const r = resolved[i]
-            r.oKey = Buffer.concat([pb(P_OUTPUT), r.scriptPubKeyBuf, h2b(inp.prevTxHash), idxBuf(inp.prevOutputIndex)])
+            r.oKey = kOutputFromBuf(r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
 
             // Cache lookup
             const cacheKey = inp.prevTxHash + ":" + inp.prevOutputIndex
@@ -705,7 +771,7 @@ class LevelUpStore {
             const r = resolved[i]
 
             if (r.inMem) {
-                const inMemOKey = Buffer.concat([pb(P_OUTPUT), r.scriptPubKeyBuf, h2b(inp.prevTxHash), idxBuf(inp.prevOutputIndex)])
+                const inMemOKey = kOutputFromBuf(r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
                 this.removeTransaction(inMemOKey, inp.blockHash)
                 this.removeTransaction(r.hKey, inp.blockHash)
                 continue
@@ -718,7 +784,7 @@ class LevelUpStore {
             }
 
             const mKey = kHintDel(inp.blockHash, inp.prevTxHash, inp.prevOutputIndex)
-            const kKey = Buffer.concat([pb(P_OUT_DEL), h2b(inp.blockHash), r.scriptPubKeyBuf, h2b(inp.prevTxHash), idxBuf(inp.prevOutputIndex)])
+            const kKey = kOutDelFromBuf(inp.blockHash, r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
             await this.addTransaction("put", mKey, r.scriptPubKeyBuf)
             await this.addTransaction("put", kKey, r.oVal)
             await this.addTransaction("del", r.oKey)
