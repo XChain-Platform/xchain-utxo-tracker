@@ -833,9 +833,13 @@ class XChainUtxoTracker {
                         LevelUpStore.knownScriptsHits = 0
                         LevelUpStore.knownScriptsMisses = 0
 
-                        // Rolling ETA based on tx throughput
+                        // Rolling ETA based on tx throughput — window is a span of
+                        // ETA_WINDOW_BLOCKS blocks, not a count of samples. Each sample
+                        // covers DB_TRANSACTION_BLOCKS_QUANTITY blocks, so a count-based
+                        // trim would keep ~200× more history than intended.
                         blockTimestamps.push({height: nextBlockHeight, time: Date.now(), txCount: transactionsCount})
-                        if (blockTimestamps.length > ETA_WINDOW_BLOCKS) {
+                        while (blockTimestamps.length >= 2 &&
+                               (nextBlockHeight - blockTimestamps[0].height) > ETA_WINDOW_BLOCKS) {
                             blockTimestamps.shift()
                         }
 
