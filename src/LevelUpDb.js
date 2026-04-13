@@ -85,10 +85,15 @@ function rangeEnd(prefix) {
     return Buffer.concat([prefix, Buffer.from([0xFF])])
 }
 
-// Normalize a key to a hex string for use as a JavaScript Map key.
+// Normalize a key to a string for use as a JavaScript Map key.
 // DB operations always use the original Buffer/string.
+//
+// Uses 'latin1' instead of 'hex': each byte maps to one char (vs 2 for hex),
+// and the conversion is a plain byte-reinterpret rather than nibble-to-char,
+// so both the allocation size and encoding cost are roughly halved. V8
+// internalizes these the same way it internalizes hex strings.
 function toMapKey(key) {
-    return Buffer.isBuffer(key) ? key.toString('hex') : key
+    return Buffer.isBuffer(key) ? key.toString('latin1') : key
 }
 
 // ─── Key constructors ─────────────────────────────────────────────────────────
@@ -611,7 +616,11 @@ class LevelUpStore {
 
         // Populate the recent-output cache so Phase 2 of removeOutputsWithInputsBatch
         // can absorb spends of this output without a DB read.
-        const cacheKey = output.txHash + ":" + output.outputIndex
+        // Pack outputIndex into 2 BMP chars (high/low 16 bits) instead of
+        // ":" + String(n) — avoids the NumberPrototypeToString hot spot from the
+        // profile while covering the full 32-bit range.
+        const _oi = output.outputIndex
+        const cacheKey = output.txHash + String.fromCharCode((_oi >>> 16) & 0xFFFF, _oi & 0xFFFF)
         const cache = LevelUpStore.outputCache
         cache.set(cacheKey, oVal)
         if (cache.size > OUTPUT_CACHE_MAX) {
@@ -739,8 +748,9 @@ class LevelUpStore {
             const r = resolved[i]
             r.oKey = kOutputFromBuf(r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
 
-            // Cache lookup
-            const cacheKey = inp.prevTxHash + ":" + inp.prevOutputIndex
+            // Cache lookup — must match the fromCharCode encoding used in insertOutput
+            const _pi = inp.prevOutputIndex
+            const cacheKey = inp.prevTxHash + String.fromCharCode((_pi >>> 16) & 0xFFFF, _pi & 0xFFFF)
             const cached = cache.get(cacheKey)
             if (cached !== undefined) {
                 r.oVal = cached
