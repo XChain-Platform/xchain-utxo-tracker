@@ -1,0 +1,296 @@
+#!/usr/bin/env node
+
+/*********************************************************************
+ *
+ * Copyright © 2025 Dankest, LLC
+ * Based on XChain Platform by Dankest, LLC – https://dankest.llc
+ *
+ * Licensed under the Dankest Community License (Apache License 2.0 + Additional Terms).
+ * You may not use this file except in compliance with that License.
+ *
+ * A copy of the License is available at:
+ *     https://dankest.llc/license
+ *
+ * This software is provided "AS IS", without warranties or conditions of any kind.
+ *
+ **********************************************************************
+ *
+ * XChain UTXO Tracker - Bulk Sync DB Validator
+ *
+ * Compares two LevelUpDb (rocksdb-backed) directories key-by-key via a
+ * streaming merge-walk. Reports total keys, matches, value diffs, keys
+ * only in truth, keys only in candidate — broken down by prefix byte.
+ * Prints the first N diffs verbatim for inspection.
+ *
+ * Both DBs must be closed (not in use by another process).
+ *
+ ********************************************************************/
+
+const levelup  = require('levelup')
+
+const DEFAULT_LIMIT   = 20
+const DEFAULT_BACKEND = 'rocksdb'
+
+function loadBackend(name) {
+    if (name !== 'rocksdb' && name !== 'leveldown') {
+        throw new Error(`Unknown backend "${name}" — must be rocksdb or leveldown`)
+    }
+    try {
+        return require(name)
+    } catch (err) {
+        throw new Error(`Failed to load backend "${name}": ${err.message}`)
+    }
+}
+
+function parseArgs(argv) {
+    const args = {
+        limit: DEFAULT_LIMIT,
+        truthBackend: DEFAULT_BACKEND,
+        candidateBackend: DEFAULT_BACKEND
+    }
+    for (let i = 2; i < argv.length; i++) {
+        const arg = argv[i]
+        switch (arg) {
+            case '--truth':             args.truth = argv[++i]; break
+            case '--candidate':         args.candidate = argv[++i]; break
+            case '--truth-backend':     args.truthBackend = argv[++i]; break
+            case '--candidate-backend': args.candidateBackend = argv[++i]; break
+            case '--backend':
+                args.truthBackend = args.candidateBackend = argv[++i]
+                break
+            case '--limit':             args.limit = parseInt(argv[++i], 10); break
+            case '--prefix':            args.prefix = argv[++i]; break
+            case '--help':
+            case '-h':
+                printHelp()
+                process.exit(0)
+            default:
+                throw new Error('Unknown argument: ' + arg)
+        }
+    }
+    return args
+}
+
+function printHelp() {
+    console.log(`Usage: node src/bulk-sync/validate-db.js [options]
+
+Options:
+  --truth <path>              Ground-truth DB directory (required)
+  --candidate <path>          Candidate DB directory (required)
+  --truth-backend <name>      rocksdb | leveldown (default ${DEFAULT_BACKEND})
+  --candidate-backend <name>  rocksdb | leveldown (default ${DEFAULT_BACKEND})
+  --backend <name>            Shortcut for both backends
+  --limit <n>                 Max diffs to print verbatim (default ${DEFAULT_LIMIT})
+  --prefix <hex>              Filter to keys starting with this hex byte (e.g. 42 for 'B')
+
+Examples:
+  node src/bulk-sync/validate-db.js --truth /data/a --candidate /data/b --backend leveldown
+  node src/bulk-sync/validate-db.js --truth /data/truth --candidate /data/cand \\
+        --truth-backend leveldown --candidate-backend rocksdb
+`)
+}
+
+function validateArgs(args) {
+    if (!args.truth)     throw new Error('--truth is required')
+    if (!args.candidate) throw new Error('--candidate is required')
+    if (!Number.isFinite(args.limit) || args.limit < 0) {
+        throw new Error('--limit must be a non-negative integer')
+    }
+    if (args.prefix != null) {
+        if (!/^[0-9a-fA-F]{2}$/.test(args.prefix)) {
+            throw new Error('--prefix must be a 2-char hex byte (e.g. 42)')
+        }
+        args.prefixByte = parseInt(args.prefix, 16)
+    }
+}
+
+function openDb(path, backendName) {
+    const backend = loadBackend(backendName)
+    return new Promise((resolve, reject) => {
+        const db = levelup(backend(path), err => {
+            if (err) reject(err)
+            else resolve(db)
+        })
+    })
+}
+
+function makeIterator(db, options) {
+    const it = db.iterator(options)
+    return {
+        next: () => new Promise((resolve, reject) => {
+            it.next((err, key, value) => {
+                if (err) reject(err)
+                else if (key === undefined) resolve(null)
+                else resolve({ key, value })
+            })
+        }),
+        end: () => new Promise((resolve, reject) => {
+            it.end(err => err ? reject(err) : resolve())
+        })
+    }
+}
+
+function prefixLabel(buf) {
+    if (!buf || buf.length === 0) return '<empty>'
+    const b = buf[0]
+    if (b >= 0x20 && b <= 0x7e) return String.fromCharCode(b) + ` (0x${b.toString(16).padStart(2, '0')})`
+    return `0x${b.toString(16).padStart(2, '0')}`
+}
+
+function prefixKey(buf) {
+    if (!buf || buf.length === 0) return '<empty>'
+    return buf[0].toString(16).padStart(2, '0')
+}
+
+function bump(obj, key, field) {
+    if (!obj[key]) obj[key] = { matches: 0, diffs: 0, missing: 0, extra: 0 }
+    obj[key][field]++
+}
+
+function fmtKey(buf) {
+    if (buf.length <= 48) return buf.toString('hex')
+    return buf.slice(0, 48).toString('hex') + `…(+${buf.length - 48}B)`
+}
+
+function fmtVal(buf) {
+    if (!buf) return '<null>'
+    if (buf.length <= 48) return buf.toString('hex')
+    return buf.slice(0, 48).toString('hex') + `…(+${buf.length - 48}B)`
+}
+
+async function main() {
+    const args = parseArgs(process.argv)
+    validateArgs(args)
+
+    console.log(`[validate-db] truth     = ${args.truth} (${args.truthBackend})`)
+    console.log(`[validate-db] candidate = ${args.candidate} (${args.candidateBackend})`)
+    if (args.prefix != null) console.log(`[validate-db] prefix filter = 0x${args.prefix}`)
+
+    const truthDb = await openDb(args.truth,     args.truthBackend)
+    const candDb  = await openDb(args.candidate, args.candidateBackend)
+
+    let itOpts = { keyAsBuffer: true, valueAsBuffer: true }
+    if (args.prefixByte != null) {
+        itOpts.gte = Buffer.from([args.prefixByte])
+        itOpts.lt  = Buffer.from([args.prefixByte + 1])
+    }
+
+    const itA = makeIterator(truthDb, itOpts)
+    const itB = makeIterator(candDb,  itOpts)
+
+    const startedAt = Date.now()
+    const stats = {}
+    const diffs = []
+    let a = await itA.next()
+    let b = await itB.next()
+
+    while (a !== null || b !== null) {
+        if (a === null) {
+            bump(stats, prefixKey(b.key), 'extra')
+            if (diffs.length < args.limit) {
+                diffs.push({ type: 'extra', key: Buffer.from(b.key), value: Buffer.from(b.value) })
+            }
+            b = await itB.next()
+            continue
+        }
+        if (b === null) {
+            bump(stats, prefixKey(a.key), 'missing')
+            if (diffs.length < args.limit) {
+                diffs.push({ type: 'missing', key: Buffer.from(a.key), value: Buffer.from(a.value) })
+            }
+            a = await itA.next()
+            continue
+        }
+
+        const cmp = Buffer.compare(a.key, b.key)
+        if (cmp === 0) {
+            const p = prefixKey(a.key)
+            if (Buffer.compare(a.value, b.value) === 0) {
+                bump(stats, p, 'matches')
+            } else {
+                bump(stats, p, 'diffs')
+                if (diffs.length < args.limit) {
+                    diffs.push({
+                        type: 'diff',
+                        key: Buffer.from(a.key),
+                        truthValue: Buffer.from(a.value),
+                        candValue:  Buffer.from(b.value)
+                    })
+                }
+            }
+            a = await itA.next()
+            b = await itB.next()
+        } else if (cmp < 0) {
+            bump(stats, prefixKey(a.key), 'missing')
+            if (diffs.length < args.limit) {
+                diffs.push({ type: 'missing', key: Buffer.from(a.key), value: Buffer.from(a.value) })
+            }
+            a = await itA.next()
+        } else {
+            bump(stats, prefixKey(b.key), 'extra')
+            if (diffs.length < args.limit) {
+                diffs.push({ type: 'extra', key: Buffer.from(b.key), value: Buffer.from(b.value) })
+            }
+            b = await itB.next()
+        }
+    }
+
+    await itA.end()
+    await itB.end()
+    await truthDb.close()
+    await candDb.close()
+
+    // ── Report ────────────────────────────────────────────────────────────
+    const elapsed = Date.now() - startedAt
+    const prefixes = Object.keys(stats).sort()
+
+    let tMatches = 0, tDiffs = 0, tMissing = 0, tExtra = 0
+    console.log('')
+    console.log('Per-prefix breakdown:')
+    console.log('  prefix       matches      diffs    missing      extra')
+    for (const p of prefixes) {
+        const s = stats[p]
+        tMatches += s.matches
+        tDiffs   += s.diffs
+        tMissing += s.missing
+        tExtra   += s.extra
+        const label = prefixLabel(Buffer.from([parseInt(p, 16)])).padEnd(10)
+        console.log(`  ${label} ${String(s.matches).padStart(10)} ${String(s.diffs).padStart(10)} ${String(s.missing).padStart(10)} ${String(s.extra).padStart(10)}`)
+    }
+    console.log('  ' + '-'.repeat(55))
+    console.log(`  ${'TOTAL'.padEnd(10)} ${String(tMatches).padStart(10)} ${String(tDiffs).padStart(10)} ${String(tMissing).padStart(10)} ${String(tExtra).padStart(10)}`)
+
+    if (diffs.length > 0) {
+        console.log('')
+        console.log(`First ${diffs.length} differences:`)
+        for (const d of diffs) {
+            if (d.type === 'diff') {
+                console.log(`  [diff]    key=${fmtKey(d.key)}`)
+                console.log(`            truth=${fmtVal(d.truthValue)}`)
+                console.log(`            cand =${fmtVal(d.candValue)}`)
+            } else if (d.type === 'missing') {
+                console.log(`  [missing] key=${fmtKey(d.key)} value=${fmtVal(d.value)}`)
+            } else if (d.type === 'extra') {
+                console.log(`  [extra]   key=${fmtKey(d.key)} value=${fmtVal(d.value)}`)
+            }
+        }
+    }
+
+    console.log('')
+    const totalKeys = tMatches + tDiffs + tMissing + tExtra
+    console.log(`[validate-db] ${totalKeys} keys compared in ${(elapsed / 1000).toFixed(1)}s`)
+    const ok = tDiffs === 0 && tMissing === 0 && tExtra === 0
+    if (ok) {
+        console.log('[validate-db] RESULT: OK — databases are identical')
+        process.exit(0)
+    } else {
+        console.log(`[validate-db] RESULT: MISMATCH — ${tDiffs} diffs, ${tMissing} missing, ${tExtra} extra`)
+        process.exit(2)
+    }
+}
+
+main().catch(err => {
+    console.error('[validate-db] FATAL:', err.message)
+    if (err.stack) console.error(err.stack)
+    process.exit(1)
+})
