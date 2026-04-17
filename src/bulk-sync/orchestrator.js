@@ -142,11 +142,22 @@ function runChild(scriptPath, args, env) {
  * first file and stripping it from subsequent files. Downstream readers
  * (RecordReader, MetaReader, deriveKeys) expect a single header.
  *
+ * After concatenation, patches the output header so its record_count (offset
+ * 20, u64 LE) equals the sum of record_count across inputs, and its
+ * lastHeight (offset 16, u32 LE) equals the max across inputs. Without this
+ * MetaReader rejects the concatenated file when it contains records from
+ * more than one input.
+ *
  * Returns total bytes written (including the one header).
  */
 function concatFilesWithHeader(inputPaths, outputPath, headerSize) {
     if (inputPaths.length === 0) throw new Error('concatFilesWithHeader: no input files')
-    const fd = fs.openSync(outputPath, 'w')
+
+    const hdrBuf = Buffer.alloc(headerSize)
+    let totalRecordCount = 0n
+    let maxLastHeight = 0
+
+    const fd = fs.openSync(outputPath, 'w+')
     const BUF_SIZE = 256 * 1024
     const buf = Buffer.alloc(BUF_SIZE)
     let totalBytes = 0
@@ -154,9 +165,23 @@ function concatFilesWithHeader(inputPaths, outputPath, headerSize) {
         for (let i = 0; i < inputPaths.length; i++) {
             const stat = fs.statSync(inputPaths[i])
             const fdIn = fs.openSync(inputPaths[i], 'r')
-            // First file: copy entirely. Others: skip header.
-            let pos = (i === 0) ? 0 : headerSize
             try {
+                // Read this input's header to aggregate record_count + lastHeight.
+                if (stat.size < headerSize) {
+                    throw new Error(`${inputPaths[i]} is smaller than headerSize ${headerSize}`)
+                }
+                let hRead = 0
+                while (hRead < headerSize) {
+                    const n = fs.readSync(fdIn, hdrBuf, hRead, headerSize - hRead, hRead)
+                    if (n === 0) throw new Error(`short header read in ${inputPaths[i]}`)
+                    hRead += n
+                }
+                totalRecordCount += hdrBuf.readBigUInt64LE(20)
+                const lastH = hdrBuf.readUInt32LE(16)
+                if (lastH > maxLastHeight) maxLastHeight = lastH
+
+                // First file: copy entirely. Others: skip header.
+                let pos = (i === 0) ? 0 : headerSize
                 while (pos < stat.size) {
                     const toRead = Math.min(BUF_SIZE, stat.size - pos)
                     const n = fs.readSync(fdIn, buf, 0, toRead, pos)
@@ -169,6 +194,14 @@ function concatFilesWithHeader(inputPaths, outputPath, headerSize) {
                 fs.closeSync(fdIn)
             }
         }
+
+        // Patch aggregated record_count (offset 20, u64 LE) and lastHeight
+        // (offset 16, u32 LE) into the output header.
+        const patch = Buffer.alloc(8)
+        patch.writeUInt32LE(maxLastHeight, 0)
+        fs.writeSync(fd, patch, 0, 4, 16)
+        patch.writeBigUInt64LE(totalRecordCount, 0)
+        fs.writeSync(fd, patch, 0, 8, 20)
     } finally {
         fs.closeSync(fd)
     }
