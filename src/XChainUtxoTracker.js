@@ -415,7 +415,12 @@ class XChainUtxoTracker {
             await db.insertTransaction({hash: nextTxId, blockHash: blockHash})
         }
 
-        await Promise.all(transaction.outs.map(async (nextOutput, txOutputIndex) => {
+        // Sequential in vout order so that insertOutputScriptBlock writes the
+        // S-record for the first (smallest vout) occurrence of a scriptHash —
+        // matching bulk-sync's block-tx-vout-ordered dedup. Concurrent Promise.all
+        // here raced, producing non-deterministic S-record winners.
+        for (let txOutputIndex = 0; txOutputIndex < transaction.outs.length; txOutputIndex++) {
+            const nextOutput = transaction.outs[txOutputIndex]
             const _h0 = Date.now()
             // Keep the hash as a Buffer — insertOutput / insertOutputHint /
             // insertOutputScriptBlock all accept Buffers and use buf.copy()
@@ -436,7 +441,7 @@ class XChainUtxoTracker {
                 await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId8, blockHeight)
                 _tt.sb += Date.now() - _s0
             }
-        }))
+        }
 
         return transaction.outs.length
     }
@@ -769,9 +774,15 @@ class XChainUtxoTracker {
 
                     const _tParse = Date.now()
                     const _tParseOut = Date.now()
-                    const blockOutputCounts = await Promise.all(
-                        transactions.map(tx => this.parseTxOutputs(this.db, tx, nextBlockHash, nextBlockHeight, false, REMOVE_SPENT))
-                    )
+                    // Sequential in tx-index order so that S-record writes across
+                    // txs in the same block land in deterministic (tx-index, vout)
+                    // order — matching bulk-sync.
+                    const blockOutputCounts = new Array(transactions.length)
+                    for (let txIdx = 0; txIdx < transactions.length; txIdx++) {
+                        blockOutputCounts[txIdx] = await this.parseTxOutputs(
+                            this.db, transactions[txIdx], nextBlockHash, nextBlockHeight, false, REMOVE_SPENT
+                        )
+                    }
                     _t.parseOut += Date.now() - _tParseOut
                     // Pass 2: collect all inputs across the block, then batch-remove
                     const _tParseIn = Date.now()
