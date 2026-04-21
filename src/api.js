@@ -31,6 +31,7 @@ const bodyParser = require('body-parser');
 const helmet = require('helmet');
 const cors = require('cors');
 const XChainUtxoTracker  = require('./XChainUtxoTracker');
+const BlockchainConnector = require('./BlockchainConnector');
 const jsonRouter = require('express-json-rpc-router')
 const { randomUUID } = require('crypto')
 const path = require('path')
@@ -43,6 +44,15 @@ const NODE_PASSWORD =  process.env.NODE_PASSWORD
 const UTXO_TRACKER_API_PORT = process.env.UTXO_TRACKER_API_PORT
 const DB_NAME =  "xchain-utxo-tracker"
 const AUX_POW = process.env.AUX_POW
+
+// Bulk-sync pre-flight (activates on empty DB). See runBulkSyncIfEmpty below.
+const BULK_SYNC_WORKERS      = process.env.BULK_SYNC_WORKERS      || '6'
+const BULK_SYNC_CHUNK_SIZE   = process.env.BULK_SYNC_CHUNK_SIZE   || '10000'
+const BULK_SYNC_RAM_BUDGET   = process.env.BULK_SYNC_RAM_BUDGET   || '4096'
+const BULK_SYNC_TIP_SAFETY   = process.env.BULK_SYNC_TIP_SAFETY   || '10'
+const BULK_SYNC_BATCH_SIZE   = process.env.BULK_SYNC_BATCH_SIZE   || '10000'
+const BULK_SYNC_WORK_DIR     = process.env.BULK_SYNC_WORK_DIR     || path.join('/data', `${DB_NAME}-bulk-sync-work`)
+const BULK_SYNC_NODE_POLL_MS = 30000
 
 var tasks = {}
 
@@ -452,4 +462,84 @@ function deleteFilesInDirectorySync(directoryPath) {
     }
 }
 
-startApi()
+async function isDbEmpty() {
+    const store = new LevelUpStore(DB_NAME)
+    try {
+        await store.createDatabase()
+        const h = await store.getLastBlockHeight()
+        return h < 0
+    } finally {
+        try { await store.close() } catch (_) {}
+    }
+}
+
+async function waitForNodeSynced() {
+    const connector = new BlockchainConnector(NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD)
+    console.log('[bulk-sync] waiting for coin node to finish IBD...')
+    for (;;) {
+        try {
+            const info = await connector.getBlockchainInfo()
+            const lag = info.headers - info.blocks
+            if (lag <= 5) {
+                console.log(`[bulk-sync] node synced: blocks=${info.blocks} headers=${info.headers}`)
+                return
+            }
+            console.log(`[bulk-sync] node lag=${lag} (blocks=${info.blocks}/headers=${info.headers})`)
+        } catch (err) {
+            console.log(`[bulk-sync] node not reachable yet: ${err.message}`)
+        }
+        await new Promise(r => setTimeout(r, BULK_SYNC_NODE_POLL_MS))
+    }
+}
+
+function runBulkSyncOrchestrator() {
+    const dbPath   = path.join('/data', DB_NAME)
+    const orchPath = path.join(__dirname, 'bulk-sync', 'orchestrator.js')
+
+    const args = [
+        orchPath,
+        '--network',    NETWORK,
+        '--from',       '0',
+        '--tip-safety', BULK_SYNC_TIP_SAFETY,
+        '--chunk-size', BULK_SYNC_CHUNK_SIZE,
+        '--workers',    BULK_SYNC_WORKERS,
+        '--out',        BULK_SYNC_WORK_DIR,
+        '--db',         dbPath,
+        '--backend',    'rocksdb',
+        '--ram-budget', BULK_SYNC_RAM_BUDGET,
+        '--batch-size', BULK_SYNC_BATCH_SIZE,
+    ]
+    console.log('[bulk-sync] spawning orchestrator:', ['node', ...args].join(' '))
+
+    return new Promise((resolve, reject) => {
+        const child = spawn('node', args, { stdio: 'inherit', env: process.env })
+        child.on('exit', (code) => {
+            if (code === 0) resolve()
+            else reject(new Error(`orchestrator exited with code ${code}`))
+        })
+        child.on('error', reject)
+    })
+}
+
+async function runBulkSyncIfEmpty() {
+    if (!(await isDbEmpty())) {
+        return
+    }
+    console.log(`[bulk-sync] DB '${DB_NAME}' is empty — triggering bulk-sync pipeline`)
+    await waitForNodeSynced()
+    await runBulkSyncOrchestrator()
+    try {
+        fs.rmSync(BULK_SYNC_WORK_DIR, { recursive: true, force: true })
+        console.log(`[bulk-sync] work dir ${BULK_SYNC_WORK_DIR} removed after successful load`)
+    } catch (err) {
+        console.warn(`[bulk-sync] cleanup warning: ${err.message}`)
+    }
+}
+
+runBulkSyncIfEmpty()
+    .then(() => startApi())
+    .catch(err => {
+        console.error('[fatal]', err.message)
+        if (err.stack) console.error(err.stack)
+        process.exit(1)
+    })
