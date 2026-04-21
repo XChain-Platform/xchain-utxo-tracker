@@ -51,7 +51,7 @@ const HEADER_SIZE         = 64
 const FILE_VERSION        = 1
 const DEFAULT_CHUNK_SIZE  = 10000
 const DEFAULT_TIP_SAFETY  = 10
-const RPC_BATCH_SIZE      = 100
+const RPC_BATCH_SIZE      = 25
 const MAX_BLOCK_SIZE      = 32 * 1024 * 1024
 
 const CHAIN_CODES   = { bitcoin: 1, litecoin: 2, dogecoin: 3 }
