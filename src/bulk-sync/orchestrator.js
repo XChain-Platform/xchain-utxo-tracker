@@ -259,28 +259,30 @@ async function phaseParse(args, dirs, xdmpFiles) {
 }
 
 async function phaseMerge(args, dirs) {
-    log('MERGE', 'concatenating per-worker files')
-
-    // Find all per-worker output files
-    const outputFiles = findFiles(dirs.parsed, 'outputs-', '.dat')
-    const spendFiles  = findFiles(dirs.parsed, 'spends-', '.dat')
-    const metaFiles   = findFiles(dirs.parsed, 'meta-', '.dat')
-
-    log('MERGE', `found ${outputFiles.length} output files, ${spendFiles.length} spend files, ${metaFiles.length} meta files`)
-
-    // Concatenate: keep header from first file, strip headers from subsequent files.
-    // This preserves the 64-byte header that downstream readers (RecordReader,
-    // MetaReader, deriveKeys) expect.
     const allOutputsPath = path.join(dirs.merge, 'all-outputs.dat')
     const allSpendsPath  = path.join(dirs.merge, 'all-spends.dat')
+    const allMetaPath    = path.join(dirs.merge, 'all-meta.dat')
 
-    const outBytes = concatFilesWithHeader(outputFiles, allOutputsPath, HEADER_SIZE)
-    const spdBytes = concatFilesWithHeader(spendFiles, allSpendsPath, HEADER_SIZE)
-    log('MERGE', `concatenated: outputs=${(outBytes / 1024 / 1024).toFixed(1)}MB, spends=${(spdBytes / 1024 / 1024).toFixed(1)}MB`)
+    // Skip concat if prior crash (or prior run) already produced the three concatenated files.
+    if (fs.existsSync(allOutputsPath) && fs.existsSync(allSpendsPath) && fs.existsSync(allMetaPath)) {
+        const outMB = (fs.statSync(allOutputsPath).size / 1024 / 1024).toFixed(1)
+        const spdMB = (fs.statSync(allSpendsPath).size / 1024 / 1024).toFixed(1)
+        log('MERGE', `concat skipped (reusing: outputs=${outMB}MB, spends=${spdMB}MB)`)
+    } else {
+        log('MERGE', 'concatenating per-worker files')
 
-    // Meta: concat with first file's header preserved (MetaReader expects it)
-    const allMetaPath = path.join(dirs.merge, 'all-meta.dat')
-    concatFilesWithHeader(metaFiles, allMetaPath, HEADER_SIZE)
+        const outputFiles = findFiles(dirs.parsed, 'outputs-', '.dat')
+        const spendFiles  = findFiles(dirs.parsed, 'spends-', '.dat')
+        const metaFiles   = findFiles(dirs.parsed, 'meta-', '.dat')
+
+        log('MERGE', `found ${outputFiles.length} output files, ${spendFiles.length} spend files, ${metaFiles.length} meta files`)
+
+        const outBytes = concatFilesWithHeader(outputFiles, allOutputsPath, HEADER_SIZE)
+        const spdBytes = concatFilesWithHeader(spendFiles, allSpendsPath, HEADER_SIZE)
+        log('MERGE', `concatenated: outputs=${(outBytes / 1024 / 1024).toFixed(1)}MB, spends=${(spdBytes / 1024 / 1024).toFixed(1)}MB`)
+
+        concatFilesWithHeader(metaFiles, allMetaPath, HEADER_SIZE)
+    }
 
     // Sort outputs by (txHash8 + vout)
     log('MERGE', 'sorting outputs by txHash8+vout')

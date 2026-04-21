@@ -151,9 +151,12 @@ async function externalSort(opts) {
             const wantBytes      = Math.min(remainingBytes, bigBuf.length)
             const wantRecords    = wantBytes / recordSize
 
+            // Cap per-syscall read to avoid int32 overflow in Node's fs.readSync length param.
+            const SAFE_READ_CHUNK = 1 << 30
             let readSoFar = 0
             while (readSoFar < wantBytes) {
-                const n = fs.readSync(fdIn, bigBuf, readSoFar, wantBytes - readSoFar, position + readSoFar)
+                const reqLen = Math.min(wantBytes - readSoFar, SAFE_READ_CHUNK)
+                const n = fs.readSync(fdIn, bigBuf, readSoFar, reqLen, position + readSoFar)
                 if (n === 0) throw new Error(`short read at position ${position + readSoFar}`)
                 readSoFar += n
             }
