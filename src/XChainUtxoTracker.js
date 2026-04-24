@@ -284,55 +284,14 @@ class XChainUtxoTracker {
         return results
     }
     
-    async getOldestTransaction(address){
-        let script = bitcoin.address.toOutputScript(address, this.network)
-        let scriptHash = createHash('sha256').update(script).digest('hex')
+    async getFirstSeen(address){
+        const script = bitcoin.address.toOutputScript(address, this.network)
+        const scriptHash = createHash('sha256').update(script).digest('hex')
 
-        if (REMOVE_SPENT){
-            // With REMOVE_SPENT=true, the S prefix stores the first block where this script appeared.
-            // Transaction records (T prefix) are not written, so we read the full txid directly from S.
-            let oldestOutputDb = await this.db.getOutputScriptBlock(scriptHash)
-            if (!oldestOutputDb) return null
+        const record = await this.db.getOutputScriptBlock(scriptHash)
+        if (!record) return null
 
-            return {
-                txid: oldestOutputDb.txid,
-                height: oldestOutputDb.h,
-                confirmations: this.blockchainInfoLastBlock - oldestOutputDb.h + 1,
-                vout: 0,
-                amount: null,
-                scriptPubKey: util.uint8ArrayToHex(script)
-            }
-        }
-
-        let outputs = await this.db.getOutputsScriptPubKey(scriptHash)
-        let oldestOutput = null
-
-        let nextOutputIndex = 0
-        while (nextOutputIndex < outputs.length){
-            let nextOutput = outputs[nextOutputIndex]
-
-            let nextOutputTransactions = await this.db.getTransactions(nextOutput.txid)
-
-            if (nextOutputTransactions.length > 0){
-                let nextOutputTransaction = nextOutputTransactions[0]
-                let nextOutputBlock = await this.db.getBlock(nextOutputTransaction.block_hash)
-
-                nextOutput.txid = nextOutputTransaction.txid.substr(1)
-                nextOutput.height = nextOutputBlock.h
-                nextOutput.confirmations = this.blockchainInfoLastBlock - nextOutputBlock.h + 1
-                nextOutput.amount = nextOutput.value/SATOSHI_UNIT
-
-                if ((oldestOutput == null) || (nextOutput.height < oldestOutput.height)){
-                    oldestOutput = nextOutput
-                }
-            } else {
-                throw new Error("There's no transaction for an output")
-            }
-
-            nextOutputIndex = nextOutputIndex + 1
-        }
-
-        return oldestOutput
+        return { height: record.h }
     }
     
     async parseTransaction(db, transaction, blockHash, blockHeight = -1, addHints = false, removeSpent = false){
@@ -393,7 +352,7 @@ class XChainUtxoTracker {
 
             if (addHints || removeSpent){
                 await db.insertOutputHint({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex})
-                await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId8, blockHeight)
+                await db.insertOutputScriptBlock(scriptHash, blockHash, blockHeight)
             }
         }))
 
@@ -438,7 +397,7 @@ class XChainUtxoTracker {
                 _tt.ins += Date.now() - _i1
 
                 const _s0 = Date.now()
-                await db.insertOutputScriptBlock(scriptHash, blockHash, nextTxId8, blockHeight)
+                await db.insertOutputScriptBlock(scriptHash, blockHash, blockHeight)
                 _tt.sb += Date.now() - _s0
             }
         }

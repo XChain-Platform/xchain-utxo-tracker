@@ -66,10 +66,8 @@ async function startApi(){
         return utxos
     }
 
-    async function getOldestTransaction(address){
-        let oldestTx = await tracker.getOldestTransaction(address)
-
-        return oldestTx
+    async function getFirstSeen(address){
+        return await tracker.getFirstSeen(address)
     }
     
     async function getBalance(address){
@@ -108,10 +106,10 @@ async function startApi(){
         res.send(utxos);
     })
 
-    app.get('/oldesttx/:address', async (req, res) => {
+    app.get('/firstseen/:address', async (req, res) => {
         const address = req.params.address;
-        const oldestTx = await getOldestTransaction(address);
-        res.send(oldestTx);
+        const firstSeen = await getFirstSeen(address);
+        res.send(firstSeen);
     })
 
     app.get('/balance/:address', async (req, res) => {
@@ -140,12 +138,9 @@ async function startApi(){
             // Return utxos
             return { utxos: utxos}
         },
-        // Function to retrieve the oldest tx of an address
-        async get_oldest_tx({address}) {
-            let oldestTx = await getOldestTransaction(address)
-
-            // Return oldest tx
-            return { oldest_tx: oldestTx}
+        // Function to retrieve the height of the block where an address was first seen
+        async get_first_seen({address}) {
+            return await getFirstSeen(address)
         },
         
         async get_balance({address}) {
@@ -157,10 +152,7 @@ async function startApi(){
         
         // Function to retrieve the confirmed, pending balances of an address
         async get_info({address}) {
-            let info = await getInfo(address)
-
-            // Return oldest tx
-            return info
+            return await getInfo(address)
         },
         
         async get_input_from_key_pattern({pattern}) {

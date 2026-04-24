@@ -19,8 +19,8 @@ function createTestApp(mockTracker) {
   async function getUtxos(address) {
     return mockTracker.getUtxosAddress(address);
   }
-  async function getOldestTransaction(address) {
-    return mockTracker.getOldestTransaction(address);
+  async function getFirstSeen(address) {
+    return mockTracker.getFirstSeen(address);
   }
   async function getBalance(address) {
     const utxos = await mockTracker.getUtxosAddress(address);
@@ -41,9 +41,9 @@ function createTestApp(mockTracker) {
     }
   });
 
-  app.get('/oldesttx/:address', async (req, res) => {
+  app.get('/firstseen/:address', async (req, res) => {
     try {
-      const result = await getOldestTransaction(req.params.address);
+      const result = await getFirstSeen(req.params.address);
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -79,9 +79,8 @@ function createTestApp(mockTracker) {
       const utxos = await getUtxos(address);
       return { utxos };
     },
-    async get_oldest_tx({ address }) {
-      const oldest = await getOldestTransaction(address);
-      return { oldest_tx: oldest };
+    async get_first_seen({ address }) {
+      return await getFirstSeen(address);
     },
     async get_balance({ address }) {
       const balance = await getBalance(address);
@@ -112,7 +111,7 @@ describe('API', function () {
   beforeEach(function () {
     mockTracker = {
       getUtxosAddress: sinon.stub(),
-      getOldestTransaction: sinon.stub(),
+      getFirstSeen: sinon.stub(),
       getBalanceInfo: sinon.stub(),
       db: {
         getValuesFromKeyPattern: sinon.stub()
@@ -177,18 +176,18 @@ describe('API', function () {
     });
   });
 
-  describe('GET /oldesttx/:address', function () {
-    it('returns oldest transaction info', async function () {
-      const oldest = { txid: 'abc123', height: 100, confirmations: 500 };
-      mockTracker.getOldestTransaction.resolves(oldest);
+  describe('GET /firstseen/:address', function () {
+    it('returns first-seen height', async function () {
+      const firstSeen = { height: 100 };
+      mockTracker.getFirstSeen.resolves(firstSeen);
 
-      const res = await supertest(app).get('/oldesttx/addr1').expect(200);
-      expect(res.body).to.deep.equal(oldest);
+      const res = await supertest(app).get('/firstseen/addr1').expect(200);
+      expect(res.body).to.deep.equal(firstSeen);
     });
 
     it('returns null for unknown address', async function () {
-      mockTracker.getOldestTransaction.resolves(null);
-      const res = await supertest(app).get('/oldesttx/unknown').expect(200);
+      mockTracker.getFirstSeen.resolves(null);
+      const res = await supertest(app).get('/firstseen/unknown').expect(200);
       expect(res.body).to.be.null;
     });
   });
@@ -230,10 +229,10 @@ describe('API', function () {
       expect(res.body.result.address).to.equal('a');
     });
 
-    it('get_oldest_tx returns oldest', async function () {
-      mockTracker.getOldestTransaction.resolves({ txid: 'old', height: 1 });
-      const res = await rpcRequest('get_oldest_tx', { address: 'a' }).expect(200);
-      expect(res.body.result.oldest_tx.txid).to.equal('old');
+    it('get_first_seen returns height', async function () {
+      mockTracker.getFirstSeen.resolves({ height: 1 });
+      const res = await rpcRequest('get_first_seen', { address: 'a' }).expect(200);
+      expect(res.body.result.height).to.equal(1);
     });
 
     it('get_input_from_key_pattern rejects short patterns', async function () {

@@ -196,12 +196,7 @@ async function main() {
     {
         const off = findS(SCRIPT_X)
         assert.ok(off >= 0, 'S must contain fully-spent scriptX (option A)')
-        assert.strictEqual(S.subarray(off + 33, off + 65).compare(H0), 0, 'S[X] first-block=H0')
-        assert.strictEqual(S.readUInt32BE(off + 65),                  0, 'S[X] height=0')
-        // Live code stores only first 8B of txid, remaining 24B zeros.
-        assert.strictEqual(S.subarray(off + 69, off + 77).compare(T0_FULL.subarray(0, 8)), 0, 'S[X] txHash8')
-        const zeros = Buffer.alloc(24)
-        assert.strictEqual(S.subarray(off + 77, off + 101).compare(zeros), 0, 'S[X] trailing zeros')
+        assert.strictEqual(S.readUInt32BE(off + 33), 0, 'S[X] height=0')
     }
     assert.ok(findS(SCRIPT_Y) >= 0, 'S must contain scriptY')
     assert.ok(findS(SCRIPT_Z) >= 0, 'S must contain scriptZ')

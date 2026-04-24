@@ -39,7 +39,7 @@
  *   I: [txHash8(8)]                                                   =  8 B
  *   O: [value(8)][height(4)][fullTxHash(32)]                         = 44 B
  *   H: [scriptPubKey(32)]                                             = 32 B
- *   S: [blockHash(32)][height(4)][txHash(32)]                        = 68 B
+ *   S: [height(4)]                                                    =  4 B
  *
  ********************************************************************/
 
@@ -262,20 +262,14 @@ function decodeOutput(buf) {
 // H value: [scriptPubKey(32)] = 32 bytes
 function encodeOutHint(scriptHex) { return h2b(scriptHex) }
 
-// S value: [blockHash(32)][height(4)][txHash(32)] = 68 bytes
-function encodeScriptBlk(blockHashHex, height, txHashHex) {
-    const buf = Buffer.alloc(68)
-    h2b(blockHashHex).copy(buf, 0)
-    buf.writeUInt32BE(height, 32)
-    h2b(txHashHex).copy(buf, 36)
+// S value: [height(4)] = 4 bytes
+function encodeScriptBlk(height) {
+    const buf = Buffer.alloc(4)
+    buf.writeUInt32BE(height, 0)
     return buf
 }
 function decodeScriptBlk(buf) {
-    return {
-        b:    b2h(buf.slice(0, 32)),
-        h:    buf.readUInt32BE(32),
-        txid: b2h(buf.slice(36, 68))
-    }
+    return { h: buf.readUInt32BE(0) }
 }
 
 const EMPTY = Buffer.alloc(0)
@@ -937,7 +931,7 @@ class LevelUpStore {
     // ─── Output script block (S / Z prefix) ──────────────────────────────────
 
     // outputScript may be a Buffer (hot path) or a hex string (mempool / legacy callers).
-    async insertOutputScriptBlock(outputScript, blockHash, txHash, blockHeight){
+    async insertOutputScriptBlock(outputScript, blockHash, blockHeight){
         // Mempool transactions have no confirmed block — S/Z prefix tracking is meaningless
         if (!blockHash) return true
 
@@ -978,8 +972,7 @@ class LevelUpStore {
         }
 
         // New script — insert and remember
-        await this.addTransaction("put", sKey,
-            encodeScriptBlk(blockHash, blockHeight, txHash))
+        await this.addTransaction("put", sKey, encodeScriptBlk(blockHeight))
         const zKey = isBuf ? kBlkScriptFromBuf(blockHash, outputScript) : kBlkScript(blockHash, outputScript)
         await this.addTransaction("put", zKey, EMPTY)
         LevelUpStore.knownScripts.add(scriptKey)

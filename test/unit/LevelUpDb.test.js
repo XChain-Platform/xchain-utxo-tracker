@@ -401,19 +401,13 @@ describe('LevelUpDb', function () {
     it('records first appearance and retrieves it', async function () {
       const scriptHash = randHash();
       const blockHash = randHash();
-      // S value encoding: [blockHash(32)][height(4)][txHash(32)] — txHash slot is 32 bytes.
-      // When a short (8-byte) hex is passed, only the first 8 bytes are written; rest stays zero.
-      // Use a full 32-byte txHash so the round-trip matches exactly.
-      const txHash = randHash();
 
-      await db.insertOutputScriptBlock(scriptHash, blockHash, txHash, 100);
+      await db.insertOutputScriptBlock(scriptHash, blockHash, 100);
       await db.endTransaction(true);
 
       const result = await db.getOutputScriptBlock(scriptHash);
       expect(result).to.not.be.null;
-      expect(result.b).to.equal(blockHash);
       expect(result.h).to.equal(100);
-      expect(result.txid).to.equal(txHash);
     });
 
     it('does not overwrite first appearance', async function () {
@@ -421,12 +415,11 @@ describe('LevelUpDb', function () {
       const firstBlock = randHash();
       const secondBlock = randHash();
 
-      await db.insertOutputScriptBlock(scriptHash, firstBlock, randHash8(), 50);
-      await db.insertOutputScriptBlock(scriptHash, secondBlock, randHash8(), 100);
+      await db.insertOutputScriptBlock(scriptHash, firstBlock, 50);
+      await db.insertOutputScriptBlock(scriptHash, secondBlock, 100);
       await db.endTransaction(true);
 
       const result = await db.getOutputScriptBlock(scriptHash);
-      expect(result.b).to.equal(firstBlock);
       expect(result.h).to.equal(50);
     });
 
@@ -436,7 +429,7 @@ describe('LevelUpDb', function () {
 
     it('skips insertion when blockHash is falsy (mempool)', async function () {
       const scriptHash = randHash();
-      await db.insertOutputScriptBlock(scriptHash, null, randHash8(), -1);
+      await db.insertOutputScriptBlock(scriptHash, null, -1);
       await db.endTransaction(true);
       expect(await db.getOutputScriptBlock(scriptHash)).to.be.null;
     });
@@ -445,7 +438,7 @@ describe('LevelUpDb', function () {
       const scriptHash = randHash();
       const blockHash = randHash();
 
-      await db.insertOutputScriptBlock(scriptHash, blockHash, randHash8(), 10);
+      await db.insertOutputScriptBlock(scriptHash, blockHash, 10);
       await db.endTransaction(true);
 
       // Verify exists

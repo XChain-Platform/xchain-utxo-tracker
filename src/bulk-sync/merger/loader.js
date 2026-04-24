@@ -88,11 +88,11 @@ async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize) {
  * @param {string}  opts.dbPath       DB directory path
  * @param {string}  opts.backend      'rocksdb' | 'leveldown'
  * @param {number}  opts.batchSize    records per batch (default 10000)
- * @param {boolean} opts.removeSpent  skip I/J prefixes. Matches
+ * @param {boolean} opts.removeSpent  skip T/I/J prefixes. Matches
  *                                     XChainUtxoTracker.REMOVE_SPENT — when
- *                                     true, live code never persists I/J so
- *                                     loading them wastes ~130 GB of disk
- *                                     for records nobody reads. Default false.
+ *                                     true, live code never persists T/I/J so
+ *                                     loading them wastes disk for records
+ *                                     nobody reads. Default false.
  * @param {Function} opts.onProgress  ({phase, ...})
  */
 async function loadKeys(opts) {
@@ -109,7 +109,7 @@ async function loadKeys(opts) {
     await db.open()
 
     const prefixes = removeSpent
-        ? PREFIX_FILES.filter(p => p !== 'I' && p !== 'J')
+        ? PREFIX_FILES.filter(p => p !== 'T' && p !== 'I' && p !== 'J')
         : PREFIX_FILES
 
     const stats = {}

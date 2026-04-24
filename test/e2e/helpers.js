@@ -402,10 +402,10 @@ function createApiApp(tracker) {
     }
   });
 
-  app.get('/oldesttx/:address', async (req, res) => {
+  app.get('/firstseen/:address', async (req, res) => {
     try {
-      const oldest = await tracker.getOldestTransaction(req.params.address);
-      res.json(oldest);
+      const firstSeen = await tracker.getFirstSeen(req.params.address);
+      res.json(firstSeen);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -431,8 +431,8 @@ function createApiApp(tracker) {
       for (const u of utxos) balance += u.amount;
       return { balance };
     },
-    async get_oldest_tx({ address }) {
-      return { oldest_tx: await tracker.getOldestTransaction(address) };
+    async get_first_seen({ address }) {
+      return await tracker.getFirstSeen(address);
     },
     async get_info({ address }) {
       return await tracker.getBalanceInfo(address);

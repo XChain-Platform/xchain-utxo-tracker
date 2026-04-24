@@ -293,19 +293,18 @@ describe('E2E: Lifecycle — start() Loop', function () {
     });
   });
 
-  // ─── E2E-A7: Oldest Transaction ────────────────────────────────────────
+  // ─── E2E-A7: First Seen ────────────────────────────────────────────────
 
-  describe('A7: oldest transaction tracking', function () {
-    it('returns the first block transaction for an address', async function () {
+  describe('A7: first-seen tracking', function () {
+    it('returns the first block height for an address', async function () {
       const blocks = buildCoinbaseChain(5, 0);
       const state = stubBlockchain(tracker, blocks);
 
       tracker.start();
       await waitForSynced(tracker);
 
-      const oldest = await tracker.getOldestTransaction(TEST_KEYS[0].address);
-      expect(oldest).to.not.be.null;
-      expect(oldest.height).to.equal(0);
+      const firstSeen = await tracker.getFirstSeen(TEST_KEYS[0].address);
+      expect(firstSeen).to.deep.equal({ height: 0 });
     });
 
     it('returns null for address with no history', async function () {
@@ -315,8 +314,8 @@ describe('E2E: Lifecycle — start() Loop', function () {
       tracker.start();
       await waitForSynced(tracker);
 
-      const oldest = await tracker.getOldestTransaction(TEST_KEYS[5].address);
-      expect(oldest).to.be.null;
+      const firstSeen = await tracker.getFirstSeen(TEST_KEYS[5].address);
+      expect(firstSeen).to.be.null;
     });
   });
 });

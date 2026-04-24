@@ -177,19 +177,17 @@ describe('Fuzz: Address Validation (P1)', function () {
     });
   });
 
-  // ─── getOldestTransaction with fuzzed addresses ────────────────────────────
+  // ─── getFirstSeen with fuzzed addresses ────────────────────────────────────
 
-  describe('getOldestTransaction with fuzzed addresses', function () {
-    it('returns null or valid object for valid addresses', async function () {
+  describe('getFirstSeen with fuzzed addresses', function () {
+    it('returns null or {height} for valid addresses', async function () {
       await fc.assert(
         fc.asyncProperty(
           arbValidAddress(),
           async (addr) => {
-            const result = await tracker.getOldestTransaction(addr);
-            // Either null (no txs) or an object with expected fields
+            const result = await tracker.getFirstSeen(addr);
             if (result !== null) {
-              expect(result).to.have.property('txid');
-              expect(result).to.have.property('height');
+              expect(result).to.have.property('height').that.is.a('number');
             }
           }
         ),

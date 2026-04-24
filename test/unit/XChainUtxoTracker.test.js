@@ -461,10 +461,10 @@ describe('XChainUtxoTracker', function () {
     });
   });
 
-  // ─── getOldestTransaction ──────────────────────────────────────────────
+  // ─── getFirstSeen ──────────────────────────────────────────────────────
 
-  describe('getOldestTransaction', function () {
-    it('returns oldest tx from S-prefix (REMOVE_SPENT mode)', async function () {
+  describe('getFirstSeen', function () {
+    it('returns first-seen block height from S-prefix', async function () {
       const bitcoin = require('bitcoinjs-lib');
       const { createHash } = require('crypto');
       const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
@@ -472,26 +472,19 @@ describe('XChainUtxoTracker', function () {
       const scriptHash = createHash('sha256').update(script).digest('hex');
 
       const blockHash = randHash();
-      // S value encoding stores txHash as 32 bytes. Use an 8-byte value padded
-      // with zeros (matching what parseTxOutputs stores: nextTxId8 = 16-char hex).
-      const txHash8 = randHash8();
-      // The decoded txid will include trailing zeros for the remaining 24 bytes
-      const expectedTxid = txHash8 + '0'.repeat(48);
 
-      await db.insertOutputScriptBlock(scriptHash, blockHash, txHash8, 42);
+      await db.insertOutputScriptBlock(scriptHash, blockHash, 42);
       await db.endTransaction(true);
 
-      const oldest = await tracker.getOldestTransaction(address);
-      expect(oldest).to.not.be.null;
-      expect(oldest.txid).to.equal(expectedTxid);
-      expect(oldest.height).to.equal(42);
-      expect(oldest.confirmations).to.equal(1000 - 42 + 1);
+      const firstSeen = await tracker.getFirstSeen(address);
+      expect(firstSeen).to.not.be.null;
+      expect(firstSeen).to.deep.equal({ height: 42 });
     });
 
     it('returns null for unknown address', async function () {
       const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
-      const oldest = await tracker.getOldestTransaction(address);
-      expect(oldest).to.be.null;
+      const firstSeen = await tracker.getFirstSeen(address);
+      expect(firstSeen).to.be.null;
     });
   });
 

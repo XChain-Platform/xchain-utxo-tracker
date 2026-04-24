@@ -43,10 +43,10 @@ function createTestApiApp(tracker) {
     }
   });
 
-  app.get('/oldesttx/:address', async (req, res) => {
+  app.get('/firstseen/:address', async (req, res) => {
     try {
-      const oldest = await tracker.getOldestTransaction(req.params.address);
-      res.json(oldest);
+      const firstSeen = await tracker.getFirstSeen(req.params.address);
+      res.json(firstSeen);
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -161,14 +161,14 @@ describe('Fuzz: API Endpoints (P3)', function () {
       );
     });
 
-    it('GET /oldesttx/:address always returns valid HTTP response', async function () {
+    it('GET /firstseen/:address always returns valid HTTP response', async function () {
       await fc.assert(
         fc.asyncProperty(
           arbAddress(),
           async (addr) => {
             const encodedAddr = encodeURIComponent(addr);
             if (!encodedAddr) return;
-            const res = await request.get('/oldesttx/' + encodedAddr);
+            const res = await request.get('/firstseen/' + encodedAddr);
             expect(res.status).to.be.oneOf([200, 500]);
           }
         ),

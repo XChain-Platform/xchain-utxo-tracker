@@ -59,7 +59,7 @@ describe('E2E: API Correctness', function () {
       const utxosRes = await request.get('/utxos/' + TEST_KEYS[0].address).expect(200);
       const balanceRes = await request.get('/balance/' + TEST_KEYS[0].address).expect(200);
       const infoRes = await request.get('/info/' + TEST_KEYS[0].address).expect(200);
-      const oldestRes = await request.get('/oldesttx/' + TEST_KEYS[0].address).expect(200);
+      const firstSeenRes = await request.get('/firstseen/' + TEST_KEYS[0].address).expect(200);
 
       // Consistency checks
       const utxos = utxosRes.body;
@@ -81,12 +81,11 @@ describe('E2E: API Correctness', function () {
       expect(info.address).to.equal(TEST_KEYS[0].address);
       expect(info.type).to.equal('p2pkh');
 
-      // Oldest tx height <= all UTXO heights
-      const oldest = oldestRes.body;
-      expect(oldest).to.not.be.null;
-      expect(oldest.height).to.equal(0);
+      // First-seen height <= all UTXO heights
+      const firstSeen = firstSeenRes.body;
+      expect(firstSeen).to.deep.equal({ height: 0 });
       for (const u of utxos) {
-        expect(u.height).to.be.at.least(oldest.height);
+        expect(u.height).to.be.at.least(firstSeen.height);
       }
     });
   });
@@ -108,19 +107,19 @@ describe('E2E: API Correctness', function () {
       const restUtxos = await request.get('/utxos/' + addr).expect(200);
       const restBalance = await request.get('/balance/' + addr).expect(200);
       const restInfo = await request.get('/info/' + addr).expect(200);
-      const restOldest = await request.get('/oldesttx/' + addr).expect(200);
+      const restFirstSeen = await request.get('/firstseen/' + addr).expect(200);
 
       // JSON-RPC calls
       const rpcUtxos = await rpcCall('get_utxos', { address: addr });
       const rpcBalance = await rpcCall('get_balance', { address: addr });
       const rpcInfo = await rpcCall('get_info', { address: addr });
-      const rpcOldest = await rpcCall('get_oldest_tx', { address: addr });
+      const rpcFirstSeen = await rpcCall('get_first_seen', { address: addr });
 
       // Compare
       expect(rpcUtxos.body.result.utxos).to.deep.equal(restUtxos.body);
       expect(rpcBalance.body.result.balance).to.equal(restBalance.body);
       expect(rpcInfo.body.result.balances).to.deep.equal(restInfo.body.balances);
-      expect(rpcOldest.body.result.oldest_tx.height).to.equal(restOldest.body.height);
+      expect(rpcFirstSeen.body.result.height).to.equal(restFirstSeen.body.height);
     });
 
     it('ping returns success', async function () {

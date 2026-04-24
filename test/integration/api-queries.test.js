@@ -37,9 +37,9 @@ describe('Integration: API Queries', function () {
       res.json(balance);
     });
 
-    app.get('/oldesttx/:address', async (req, res) => {
-      const oldest = await tracker.getOldestTransaction(req.params.address);
-      res.json(oldest);
+    app.get('/firstseen/:address', async (req, res) => {
+      const firstSeen = await tracker.getFirstSeen(req.params.address);
+      res.json(firstSeen);
     });
 
     app.get('/info/:address', async (req, res) => {
@@ -58,8 +58,8 @@ describe('Integration: API Queries', function () {
         for (const u of utxos) { balance += u.amount; }
         return { balance };
       },
-      async get_oldest_tx({ address }) {
-        return { oldest_tx: await tracker.getOldestTransaction(address) };
+      async get_first_seen({ address }) {
+        return await tracker.getFirstSeen(address);
       },
       async get_info({ address }) {
         return await tracker.getBalanceInfo(address);
@@ -99,11 +99,10 @@ describe('Integration: API Queries', function () {
       expect(res.body).to.equal(60); // 10+20+30
     });
 
-    it('GET /oldesttx/:address returns oldest transaction', async function () {
+    it('GET /firstseen/:address returns first-seen height', async function () {
       await seedData();
-      const res = await request.get('/oldesttx/' + TEST_KEYS[0].address).expect(200);
-      expect(res.body).to.not.be.null;
-      expect(res.body.height).to.equal(0);
+      const res = await request.get('/firstseen/' + TEST_KEYS[0].address).expect(200);
+      expect(res.body).to.deep.equal({ height: 0 });
     });
 
     it('GET /info/:address returns full balance info', async function () {
@@ -142,11 +141,10 @@ describe('Integration: API Queries', function () {
       expect(res.body.result.balance).to.equal(60);
     });
 
-    it('get_oldest_tx returns oldest transaction', async function () {
+    it('get_first_seen returns height', async function () {
       await seedData();
-      const res = await rpcCall('get_oldest_tx', { address: TEST_KEYS[0].address });
-      expect(res.body.result.oldest_tx).to.not.be.null;
-      expect(res.body.result.oldest_tx.height).to.equal(0);
+      const res = await rpcCall('get_first_seen', { address: TEST_KEYS[0].address });
+      expect(res.body.result).to.deep.equal({ height: 0 });
     });
 
     it('get_info returns full balance info', async function () {

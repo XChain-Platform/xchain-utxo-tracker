@@ -128,7 +128,7 @@ describe('Integration: Core Indexing', function () {
       expect(info1.utxos.confirmed).to.equal(1);
     });
 
-    it('getOldestTransaction returns correct txid for recipient', async function () {
+    it('getFirstSeen returns first-seen block for recipient', async function () {
       const coinbaseTx = makeCoinbaseTx(0, 50 * SATOSHI);
       const block0 = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
 
@@ -140,9 +140,8 @@ describe('Integration: Core Indexing', function () {
 
       await processBlocksAndCommit(tracker, [block0, block1]);
 
-      const oldest = await tracker.getOldestTransaction(TEST_KEYS[1].address);
-      expect(oldest).to.not.be.null;
-      expect(oldest.height).to.equal(1);
+      const firstSeen = await tracker.getFirstSeen(TEST_KEYS[1].address);
+      expect(firstSeen).to.deep.equal({ height: 1 });
     });
   });
 
@@ -240,15 +239,14 @@ describe('Integration: Core Indexing', function () {
       expect(info.utxos.confirmed).to.equal(3);
     });
 
-    it('getOldestTransaction returns the first block tx', async function () {
+    it('getFirstSeen returns the first block height', async function () {
       const block0 = makeBlock(0, '0'.repeat(64), [makeCoinbaseTx(0, 10 * SATOSHI)]);
       const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(0, 20 * SATOSHI)]);
 
       await processBlocksAndCommit(tracker, [block0, block1]);
 
-      const oldest = await tracker.getOldestTransaction(TEST_KEYS[0].address);
-      expect(oldest).to.not.be.null;
-      expect(oldest.height).to.equal(0);
+      const firstSeen = await tracker.getFirstSeen(TEST_KEYS[0].address);
+      expect(firstSeen).to.deep.equal({ height: 0 });
     });
   });
 

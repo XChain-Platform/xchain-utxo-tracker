@@ -71,7 +71,7 @@ const LAYOUT = {
     H: { keySize: 13, valSize: 32, recordSize:  45 },
     J: { keySize: 21, valSize:  0, recordSize:  21 },
     N: { keySize: 33, valSize:  0, recordSize:  33 },
-    S: { keySize: 33, valSize: 68, recordSize: 101 },
+    S: { keySize: 33, valSize:  4, recordSize:  37 },
     Z: { keySize: 65, valSize:  0, recordSize:  65 },
 }
 
@@ -133,7 +133,7 @@ async function sortByKey(inputPath, outputPath, recordSize, keySize, tmpDir, ram
  * @param {string}  opts.tmpDir            temp scratch
  * @param {number}  opts.ramBudgetBytes    sort RAM cap (default 1 GiB)
  * @param {number}  opts.undoBlocks        size of N-prefix window (default 10)
- * @param {boolean} opts.removeSpent       skip I/J emission (Phase 8+9). Matches
+ * @param {boolean} opts.removeSpent       skip T/I/J emission. Matches
  *                                          XChainUtxoTracker.REMOVE_SPENT — when
  *                                          true, live code never writes I/J
  *                                          records so bulk-sync shouldn't either.
@@ -170,7 +170,7 @@ async function deriveKeys(opts) {
     const nRawPath = path.join(tmpDir, 'N-raw.dat')
 
     const bRaw = new FlatWriter(bRawPath, LAYOUT.B.recordSize)
-    const tRaw = new FlatWriter(tRawPath, LAYOUT.T.recordSize)
+    const tRaw = removeSpent ? null : new FlatWriter(tRawPath, LAYOUT.T.recordSize)
 
     // Sliding window of the last `undoBlocks` block hashes as Buffers.
     const nWindow = []
@@ -189,13 +189,15 @@ async function deriveKeys(opts) {
             })
 
             // T: one per inlined txHash8 → val = blockHash (32B)
-            for (let i = 0; i < blk.txHash8List.length; i++) {
-                const th = blk.txHash8List[i]
-                tRaw.write((buf, off) => {
-                    buf[off] = P_TX
-                    th.copy(buf, off + 1, 0, 8)
-                    blk.blockHash.copy(buf, off + 9, 0, 32)
-                })
+            if (tRaw) {
+                for (let i = 0; i < blk.txHash8List.length; i++) {
+                    const th = blk.txHash8List[i]
+                    tRaw.write((buf, off) => {
+                        buf[off] = P_TX
+                        th.copy(buf, off + 1, 0, 8)
+                        blk.blockHash.copy(buf, off + 9, 0, 32)
+                    })
+                }
             }
 
             // N window: keep only the last `undoBlocks` block hashes.
@@ -208,7 +210,7 @@ async function deriveKeys(opts) {
     } finally {
         meta.close()
         bRaw.close()
-        tRaw.close()
+        if (tRaw) tRaw.close()
     }
 
     // Write N raw (at most `undoBlocks` entries).
@@ -224,14 +226,16 @@ async function deriveKeys(opts) {
     }
 
     stats.blocks = bRaw.count
-    stats.T      = tRaw.count
+    stats.T      = tRaw ? tRaw.count : 0
     stats.N      = nWindow.length
     stats.B      = bRaw.count
     onProgress({ phase: 'meta-done', ...stats })
 
     // ─── Phase 2: sort B, T, N by key ────────────────────────────────────────
     await sortByKey(bRawPath, path.join(outDir, 'B.dat'), LAYOUT.B.recordSize, LAYOUT.B.keySize, path.join(tmpDir, 'sort-B'), ramBudgetBytes)
-    await sortByKey(tRawPath, path.join(outDir, 'T.dat'), LAYOUT.T.recordSize, LAYOUT.T.keySize, path.join(tmpDir, 'sort-T'), ramBudgetBytes)
+    if (tRaw) {
+        await sortByKey(tRawPath, path.join(outDir, 'T.dat'), LAYOUT.T.recordSize, LAYOUT.T.keySize, path.join(tmpDir, 'sort-T'), ramBudgetBytes)
+    }
     await sortByKey(nRawPath, path.join(outDir, 'N.dat'), LAYOUT.N.recordSize, LAYOUT.N.keySize, path.join(tmpDir, 'sort-N'), ramBudgetBytes)
     try { fs.unlinkSync(bRawPath) } catch (_) {}
     try { fs.unlinkSync(tRawPath) } catch (_) {}
@@ -368,20 +372,14 @@ async function deriveKeys(opts) {
             lastScript = Buffer.from(scriptHash)
             uniqueScripts++
 
-            const blockHash  = rec.subarray(36, 68)
-            const heightBE   = rec.subarray(68, 72)
-            const fullTxHash = rec.subarray(72, 104)
+            const blockHash = rec.subarray(36, 68)
+            const heightBE  = rec.subarray(68, 72)
 
-            // S record: 'S' + scriptHash(32) | blockHash(32) + heightBE(4) + txHash8(8) + zeros(24)
-            // Live code (LevelUpDb.insertOutputScriptBlock) passes the 8-byte
-            // truncated txid into encodeScriptBlk, so the final 24 bytes of the
-            // value stay zero. Match that exactly.
-            const sBuf = Buffer.alloc(LAYOUT.S.recordSize) // alloc (zeroed) — we need the trailing 24B to be zero
+            // S record: 'S' + scriptHash(32) | heightBE(4) = 37 bytes
+            const sBuf = Buffer.alloc(LAYOUT.S.recordSize)
             sBuf[0] = P_SCRIPT_BLK
             scriptHash.copy(sBuf, 1, 0, 32)
-            blockHash .copy(sBuf, 33, 0, 32)
-            heightBE  .copy(sBuf, 65, 0, 4)
-            fullTxHash.copy(sBuf, 69, 0, 8) // first 8 bytes only
+            heightBE  .copy(sBuf, 33, 0, 4)
             sOut.writeRecord(sBuf)
 
             // Z record: 'Z' + blockHash(32) + scriptHash(32) | (empty)
