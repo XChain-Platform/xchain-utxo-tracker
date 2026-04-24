@@ -88,12 +88,18 @@ async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize) {
  * @param {string}  opts.dbPath       DB directory path
  * @param {string}  opts.backend      'rocksdb' | 'leveldown'
  * @param {number}  opts.batchSize    records per batch (default 10000)
+ * @param {boolean} opts.removeSpent  skip I/J prefixes. Matches
+ *                                     XChainUtxoTracker.REMOVE_SPENT — when
+ *                                     true, live code never persists I/J so
+ *                                     loading them wastes ~130 GB of disk
+ *                                     for records nobody reads. Default false.
  * @param {Function} opts.onProgress  ({phase, ...})
  */
 async function loadKeys(opts) {
     const { keysDir, dbPath, backend } = opts
-    const batchSize  = opts.batchSize  || 10000
-    const onProgress = opts.onProgress || noop
+    const batchSize   = opts.batchSize  || 10000
+    const removeSpent = Boolean(opts.removeSpent)
+    const onProgress  = opts.onProgress || noop
 
     if (!keysDir || !dbPath || !backend) {
         throw new Error('loadKeys: keysDir, dbPath, backend are required')
@@ -102,11 +108,15 @@ async function loadKeys(opts) {
     const db = openDb(dbPath, backend)
     await db.open()
 
+    const prefixes = removeSpent
+        ? PREFIX_FILES.filter(p => p !== 'I' && p !== 'J')
+        : PREFIX_FILES
+
     const stats = {}
     const startedAt = Date.now()
 
     try {
-        for (const pfx of PREFIX_FILES) {
+        for (const pfx of prefixes) {
             const { keySize, recordSize } = LAYOUT[pfx]
             const filePath = path.join(keysDir, pfx + '.dat')
             if (!fs.existsSync(filePath)) {

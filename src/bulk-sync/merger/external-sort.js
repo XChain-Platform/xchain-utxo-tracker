@@ -128,8 +128,21 @@ async function externalSort(opts) {
     }
     const totalRecords = dataBytes / recordSize
 
-    // Records per run capped by RAM budget.
-    const recordsPerRun = Math.max(1, Math.floor(ramBudgetBytes / recordSize))
+    // Records per run capped by RAM budget AND by V8's FixedArray limit.
+    // `indices` is a plain Array of SMIs; V8 tops out around 2^27 elements
+    // for the fast-elements backing store, and Array.prototype.sort with a
+    // comparator allocates a temp buffer of similar size. 2^26 (~67M) is a
+    // comfortable cap that keeps sort stable without hitting "invalid table
+    // size" OOM during resize. This matters most for small records (e.g.
+    // 20B spends with a 4 GiB ramBudget → 214M records, which blows up V8).
+    const MAX_RECORDS_PER_RUN = 1 << 26
+    const recordsPerRun = Math.max(
+        1,
+        Math.min(
+            Math.floor(ramBudgetBytes / recordSize),
+            MAX_RECORDS_PER_RUN,
+        ),
+    )
 
     onProgress({
         phase: 'start',

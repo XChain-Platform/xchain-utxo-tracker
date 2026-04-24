@@ -46,25 +46,31 @@ function parseArgs(argv) {
         workers:    null,      // null = auto (number of dump chunks)
         ramBudget:  1024,      // MB for external sort
         batchSize:  10000,     // loader batch size
-        skipDump:   false,
-        skipParse:  false,
+        skipDump:    false,
+        skipParse:   false,
+        // Default matches XChainUtxoTracker.REMOVE_SPENT = true. Skipping
+        // I/J cuts ~130 GB of disk and ~30-60 min on mainnet because the
+        // live tracker never persists those records anyway.
+        removeSpent: true,
     }
     for (let i = 2; i < argv.length; i++) {
         const arg = argv[i]
         switch (arg) {
-            case '--network':    args.network   = argv[++i]; break
-            case '--from':       args.from      = parseInt(argv[++i], 10); break
-            case '--to':         args.to        = parseInt(argv[++i], 10); break
-            case '--tip-safety': args.tipSafety = parseInt(argv[++i], 10); break
-            case '--chunk-size': args.chunkSize = parseInt(argv[++i], 10); break
-            case '--out':        args.out       = argv[++i]; break
-            case '--db':         args.db        = argv[++i]; break
-            case '--backend':    args.backend   = argv[++i]; break
-            case '--workers':    args.workers   = parseInt(argv[++i], 10); break
-            case '--ram-budget': args.ramBudget = parseInt(argv[++i], 10); break
-            case '--batch-size': args.batchSize = parseInt(argv[++i], 10); break
-            case '--skip-dump':  args.skipDump  = true; break
-            case '--skip-parse': args.skipParse = true; break
+            case '--network':         args.network     = argv[++i]; break
+            case '--from':            args.from        = parseInt(argv[++i], 10); break
+            case '--to':              args.to          = parseInt(argv[++i], 10); break
+            case '--tip-safety':      args.tipSafety   = parseInt(argv[++i], 10); break
+            case '--chunk-size':      args.chunkSize   = parseInt(argv[++i], 10); break
+            case '--out':             args.out         = argv[++i]; break
+            case '--db':              args.db          = argv[++i]; break
+            case '--backend':         args.backend     = argv[++i]; break
+            case '--workers':         args.workers     = parseInt(argv[++i], 10); break
+            case '--ram-budget':      args.ramBudget   = parseInt(argv[++i], 10); break
+            case '--batch-size':      args.batchSize   = parseInt(argv[++i], 10); break
+            case '--skip-dump':       args.skipDump    = true; break
+            case '--skip-parse':      args.skipParse   = true; break
+            case '--remove-spent':    args.removeSpent = true; break
+            case '--no-remove-spent': args.removeSpent = false; break
             default:
                 if (arg === '--help' || arg === '-h') {
                     printUsage()
@@ -99,6 +105,8 @@ Options:
   --batch-size <n>      loader batch size (default 10000)
   --skip-dump           skip dump phase (reuse existing .xdmp files)
   --skip-parse          skip dump+parse phases (reuse existing .dat files)
+  --no-remove-spent     force emission of I/J prefixes (default: skip them
+                        to match XChainUtxoTracker.REMOVE_SPENT=true)
 
 Environment:
   NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD — coin node RPC
@@ -284,44 +292,61 @@ async function phaseMerge(args, dirs) {
         concatFilesWithHeader(metaFiles, allMetaPath, HEADER_SIZE)
     }
 
-    // Sort outputs by (txHash8 + vout)
-    log('MERGE', 'sorting outputs by txHash8+vout')
-    const sortedOutputsPath = path.join(dirs.merge, 'outputs-sorted.dat')
     const ramBudgetBytes = args.ramBudget * 1024 * 1024
-    const outSortResult = await externalSort({
-        inputPath:   allOutputsPath,
-        outputPath:  sortedOutputsPath,
-        recordSize:  OUTPUTS_RECORD_SIZE,
-        keySize:     OUTPUTS_KEY_SIZE,
-        tmpDir:      dirs.sortTmp,
-        headerSize:  HEADER_SIZE,
-        ramBudgetBytes,
-        onProgress(ev) {
-            if (ev.phase === 'sort-done' || ev.phase === 'merge-done') {
-                log('MERGE', `  sort outputs: ${ev.phase} — ${JSON.stringify(ev)}`)
+
+    // Expected sorted file size = input size minus its header (externalSort
+    // strips the header from its output). Used as the resume guard.
+    function expectedSortedSize(inputPath) {
+        return fs.statSync(inputPath).size - HEADER_SIZE
+    }
+
+    // Sort outputs by (txHash8 + vout)
+    const sortedOutputsPath = path.join(dirs.merge, 'outputs-sorted.dat')
+    const expOutSize = expectedSortedSize(allOutputsPath)
+    if (fs.existsSync(sortedOutputsPath) && fs.statSync(sortedOutputsPath).size === expOutSize) {
+        log('MERGE', `sort-outputs skipped (reusing ${(expOutSize / 1024 / 1024).toFixed(1)}MB)`)
+    } else {
+        log('MERGE', 'sorting outputs by txHash8+vout')
+        const outSortResult = await externalSort({
+            inputPath:   allOutputsPath,
+            outputPath:  sortedOutputsPath,
+            recordSize:  OUTPUTS_RECORD_SIZE,
+            keySize:     OUTPUTS_KEY_SIZE,
+            tmpDir:      dirs.sortTmp,
+            headerSize:  HEADER_SIZE,
+            ramBudgetBytes,
+            onProgress(ev) {
+                if (ev.phase === 'sort-done' || ev.phase === 'merge-done') {
+                    log('MERGE', `  sort outputs: ${ev.phase} — ${JSON.stringify(ev)}`)
+                }
             }
-        }
-    })
-    log('MERGE', `outputs sorted: ${outSortResult.recordsSorted} records`)
+        })
+        log('MERGE', `outputs sorted: ${outSortResult.recordsSorted} records`)
+    }
 
     // Sort spends by (prevTxHash8 + prevVout)
-    log('MERGE', 'sorting spends by prevTxHash8+prevVout')
     const sortedSpendsPath = path.join(dirs.merge, 'spends-sorted.dat')
-    const spdSortResult = await externalSort({
-        inputPath:   allSpendsPath,
-        outputPath:  sortedSpendsPath,
-        recordSize:  SPENDS_RECORD_SIZE,
-        keySize:     SPENDS_KEY_SIZE,
-        tmpDir:      dirs.sortTmp,
-        headerSize:  HEADER_SIZE,
-        ramBudgetBytes,
-        onProgress(ev) {
-            if (ev.phase === 'sort-done' || ev.phase === 'merge-done') {
-                log('MERGE', `  sort spends: ${ev.phase} — ${JSON.stringify(ev)}`)
+    const expSpdSize = expectedSortedSize(allSpendsPath)
+    if (fs.existsSync(sortedSpendsPath) && fs.statSync(sortedSpendsPath).size === expSpdSize) {
+        log('MERGE', `sort-spends skipped (reusing ${(expSpdSize / 1024 / 1024).toFixed(1)}MB)`)
+    } else {
+        log('MERGE', 'sorting spends by prevTxHash8+prevVout')
+        const spdSortResult = await externalSort({
+            inputPath:   allSpendsPath,
+            outputPath:  sortedSpendsPath,
+            recordSize:  SPENDS_RECORD_SIZE,
+            keySize:     SPENDS_KEY_SIZE,
+            tmpDir:      dirs.sortTmp,
+            headerSize:  HEADER_SIZE,
+            ramBudgetBytes,
+            onProgress(ev) {
+                if (ev.phase === 'sort-done' || ev.phase === 'merge-done') {
+                    log('MERGE', `  sort spends: ${ev.phase} — ${JSON.stringify(ev)}`)
+                }
             }
-        }
-    })
-    log('MERGE', `spends sorted: ${spdSortResult.recordsSorted} records`)
+        })
+        log('MERGE', `spends sorted: ${spdSortResult.recordsSorted} records`)
+    }
 
     // Anti-join: outputs - spends = live UTXOs
     log('MERGE', 'anti-join: outputs - spends = live UTXOs')
@@ -351,6 +376,7 @@ async function phaseMerge(args, dirs) {
         outDir:           dirs.keys,
         tmpDir:           dirs.deriveTmp,
         ramBudgetBytes,
+        removeSpent:      args.removeSpent,
         onProgress(ev) {
             if (ev.phase && ev.phase.includes('done')) {
                 log('MERGE', `  derive: ${ev.phase}`)
@@ -365,10 +391,11 @@ async function phaseMerge(args, dirs) {
 async function phaseLoad(args, dirs) {
     log('LOAD', `loading keys into ${args.db} (${args.backend})`)
     const result = await loadKeys({
-        keysDir:    dirs.keys,
-        dbPath:     args.db,
-        backend:    args.backend,
-        batchSize:  args.batchSize,
+        keysDir:     dirs.keys,
+        dbPath:      args.db,
+        backend:     args.backend,
+        batchSize:   args.batchSize,
+        removeSpent: args.removeSpent,
         onProgress(ev) {
             if (ev.phase === 'prefix-done') {
                 log('LOAD', `  ${ev.prefix}: ${ev.count} records (${ev.elapsed_ms}ms)`)
@@ -400,7 +427,7 @@ async function main() {
 
     const t0 = Date.now()
 
-    log('ORCHESTRATOR', `network=${args.network} from=${args.from} backend=${args.backend}`)
+    log('ORCHESTRATOR', `network=${args.network} from=${args.from} backend=${args.backend} removeSpent=${args.removeSpent}`)
     log('ORCHESTRATOR', `out=${args.out} db=${args.db}`)
 
     // Phase 1: Dump
