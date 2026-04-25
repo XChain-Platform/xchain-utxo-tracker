@@ -264,6 +264,11 @@ async function phaseParse(args, dirs, xdmpFiles) {
     }
 
     log('PARSE', 'all workers done')
+
+    // Dumps are consumed only by parse — keeping them through MERGE risks
+    // ENOSPC because the sort phase needs hundreds of GB of scratch space.
+    log('PARSE', `removing ${dirs.dumps} to free disk for merge`)
+    fs.rmSync(dirs.dumps, { recursive: true, force: true })
 }
 
 async function phaseMerge(args, dirs) {

@@ -501,6 +501,14 @@ function runBulkSyncOrchestrator() {
         '--ram-budget', BULK_SYNC_RAM_BUDGET,
         '--batch-size', BULK_SYNC_BATCH_SIZE,
     ]
+
+    // Resume support: if parsed/ already has worker output, skip dump+parse.
+    const parsedDir = path.join(BULK_SYNC_WORK_DIR, 'parsed')
+    if (fs.existsSync(parsedDir) && fs.readdirSync(parsedDir).some(f => f.endsWith('.dat'))) {
+        console.log('[bulk-sync] detected existing parsed/ — adding --skip-parse')
+        args.push('--skip-parse')
+    }
+
     console.log('[bulk-sync] spawning orchestrator:', ['node', ...args].join(' '))
 
     return new Promise((resolve, reject) => {
