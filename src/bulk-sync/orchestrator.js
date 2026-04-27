@@ -31,6 +31,59 @@ const SPENDS_KEY_SIZE  = 12   // prevTxHash8(8) + prevVout(4)
 
 const BULK_SYNC_DIR = __dirname
 
+// --------------- cleanup manager ---------------
+
+/**
+ * Tracks files that have been fully consumed by the pipeline and unlinks
+ * them on demand when free disk space drops below a threshold. Keeping the
+ * files when there's room preserves resume points (phaseMerge's existsSync
+ * guards); deleting them under pressure prevents ENOSPC during the next
+ * sort/scratch spike.
+ */
+class CleanupManager {
+    constructor(workDir, thresholdMb) {
+        this.workDir       = workDir
+        this.thresholdBytes = (thresholdMb | 0) * 1024 * 1024
+        this.queue         = []
+    }
+
+    freeBytes() {
+        try {
+            const s = fs.statfsSync(this.workDir)
+            return Number(s.bavail) * Number(s.bsize)
+        } catch (_) {
+            return Number.POSITIVE_INFINITY
+        }
+    }
+
+    enqueue(filePath, label) {
+        if (!filePath) return
+        if (!fs.existsSync(filePath)) return
+        this.queue.push({ filePath, label: label || path.basename(filePath) })
+    }
+
+    maybeFree(reason) {
+        if (this.thresholdBytes <= 0) return
+        const before = this.freeBytes()
+        if (before >= this.thresholdBytes) return
+        log('CLEANUP', `disk low (${(before / 1e9).toFixed(1)}GB free, threshold ${(this.thresholdBytes / 1e9).toFixed(1)}GB) — ${reason}`)
+        let freedBytes = 0
+        while (this.queue.length > 0 && this.freeBytes() < this.thresholdBytes) {
+            const { filePath, label } = this.queue.shift()
+            try {
+                const sz = fs.statSync(filePath).size
+                fs.unlinkSync(filePath)
+                freedBytes += sz
+                log('CLEANUP', `  unlinked ${label} (${(sz / 1e9).toFixed(1)}GB)`)
+            } catch (err) {
+                log('CLEANUP', `  failed to unlink ${label}: ${err.message}`)
+            }
+        }
+        const after = this.freeBytes()
+        log('CLEANUP', `  done: freed ${(freedBytes / 1e9).toFixed(1)}GB, now ${(after / 1e9).toFixed(1)}GB free, queue=${this.queue.length}`)
+    }
+}
+
 // --------------- arg parsing ---------------
 
 function parseArgs(argv) {
@@ -46,6 +99,11 @@ function parseArgs(argv) {
         workers:    null,      // null = auto (number of dump chunks)
         ramBudget:  1024,      // MB for external sort
         batchSize:  10000,     // loader batch size
+        // Free consumed merge/ files when free disk drops below this many MB.
+        // 0 disables cleanup (preserves all resume points). Default 100 GB:
+        // generous enough that runs with comfortable disk keep their resume
+        // files, but trips before the next sort can ENOSPC on a tight disk.
+        cleanupThresholdMb: 100 * 1024,
         skipDump:    false,
         skipParse:   false,
         // Default matches XChainUtxoTracker.REMOVE_SPENT = true. Skipping
@@ -67,6 +125,7 @@ function parseArgs(argv) {
             case '--workers':         args.workers     = parseInt(argv[++i], 10); break
             case '--ram-budget':      args.ramBudget   = parseInt(argv[++i], 10); break
             case '--batch-size':      args.batchSize   = parseInt(argv[++i], 10); break
+            case '--cleanup-threshold-mb': args.cleanupThresholdMb = parseInt(argv[++i], 10); break
             case '--skip-dump':       args.skipDump    = true; break
             case '--skip-parse':      args.skipParse   = true; break
             case '--remove-spent':    args.removeSpent = true; break
@@ -103,6 +162,9 @@ Options:
   --workers <n>         parallel parse workers (default: number of chunks)
   --ram-budget <MB>     RAM for external sort (default 1024)
   --batch-size <n>      loader batch size (default 10000)
+  --cleanup-threshold-mb <MB>
+                        free consumed merge/ files when free disk drops below
+                        this threshold (default 102400 = 100 GB; 0 disables)
   --skip-dump           skip dump phase (reuse existing .xdmp files)
   --skip-parse          skip dump+parse phases (reuse existing .dat files)
   --no-remove-spent     force emission of I/J prefixes (default: skip them
@@ -271,7 +333,7 @@ async function phaseParse(args, dirs, xdmpFiles) {
     fs.rmSync(dirs.dumps, { recursive: true, force: true })
 }
 
-async function phaseMerge(args, dirs) {
+async function phaseMerge(args, dirs, cleanup) {
     const allOutputsPath = path.join(dirs.merge, 'all-outputs.dat')
     const allSpendsPath  = path.join(dirs.merge, 'all-spends.dat')
     const allMetaPath    = path.join(dirs.merge, 'all-meta.dat')
@@ -353,6 +415,10 @@ async function phaseMerge(args, dirs) {
         log('MERGE', `spends sorted: ${spdSortResult.recordsSorted} records`)
     }
 
+    // all-spends.dat is no longer read after spends-sorted.dat is built.
+    cleanup.enqueue(allSpendsPath, 'merge/all-spends.dat')
+    cleanup.maybeFree('after sort-spends')
+
     // Anti-join: outputs - spends = live UTXOs
     log('MERGE', 'anti-join: outputs - spends = live UTXOs')
     const liveUtxosPath = path.join(dirs.merge, 'live-utxos.dat')
@@ -371,6 +437,10 @@ async function phaseMerge(args, dirs) {
     })
     log('MERGE', `live UTXOs: ${joinResult.emitted}`)
 
+    // outputs-sorted.dat is only read by the anti-join above.
+    cleanup.enqueue(sortedOutputsPath, 'merge/outputs-sorted.dat')
+    cleanup.maybeFree('after anti-join')
+
     // Derive LevelDB keys
     log('MERGE', 'deriving LevelDB keys')
     const keysResult = await deriveKeys({
@@ -385,6 +455,27 @@ async function phaseMerge(args, dirs) {
         onProgress(ev) {
             if (ev.phase && ev.phase.includes('done')) {
                 log('MERGE', `  derive: ${ev.phase}`)
+            }
+            // Each phase consumes a specific input — once it's done, the
+            // input is dead weight on disk. Enqueue + maybe-free trades
+            // resume capability for ENOSPC safety on tight disks.
+            if (ev.phase === 'meta-done') {
+                cleanup.enqueue(allMetaPath, 'merge/all-meta.dat')
+                cleanup.maybeFree('after derive meta-done')
+            } else if (ev.phase === 'live-done') {
+                cleanup.enqueue(liveUtxosPath, 'merge/live-utxos.dat')
+                cleanup.maybeFree('after derive live-done')
+            } else if (ev.phase === 'script-cand-raw-done') {
+                cleanup.enqueue(allOutputsPath, 'merge/all-outputs.dat')
+                // spends-sorted.dat is only consumed by the I/J phase,
+                // which is skipped when removeSpent=true.
+                if (args.removeSpent) {
+                    cleanup.enqueue(sortedSpendsPath, 'merge/spends-sorted.dat')
+                }
+                cleanup.maybeFree('after derive script-cand-raw-done')
+            } else if (ev.phase === 'spends-done') {
+                cleanup.enqueue(sortedSpendsPath, 'merge/spends-sorted.dat')
+                cleanup.maybeFree('after derive spends-done')
             }
         }
     })
@@ -434,6 +525,9 @@ async function main() {
 
     log('ORCHESTRATOR', `network=${args.network} from=${args.from} backend=${args.backend} removeSpent=${args.removeSpent}`)
     log('ORCHESTRATOR', `out=${args.out} db=${args.db}`)
+    log('ORCHESTRATOR', `cleanup-threshold=${args.cleanupThresholdMb}MB ${args.cleanupThresholdMb > 0 ? '(enabled)' : '(disabled)'}`)
+
+    const cleanup = new CleanupManager(args.out, args.cleanupThresholdMb)
 
     // Phase 1: Dump
     let xdmpFiles
@@ -452,7 +546,7 @@ async function main() {
     }
 
     // Phase 3: Merge
-    const mergeResult = await phaseMerge(args, dirs)
+    const mergeResult = await phaseMerge(args, dirs, cleanup)
 
     // Phase 4: Load
     const loadResult = await phaseLoad(args, dirs)
