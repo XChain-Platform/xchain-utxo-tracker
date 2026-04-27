@@ -316,8 +316,8 @@ class LevelUpStore {
                 this.db = levelup(memdown())
             } else {
                 this.db = levelup(leveldown("/data/"+this.dbName, {
-                    maxBackgroundCompactions: 1,
-                    maxBackgroundFlushes: 1
+                    maxBackgroundCompactions: 8,
+                    maxBackgroundFlushes: 4
                 }))
             }
             return this.db
