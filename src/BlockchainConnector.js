@@ -210,8 +210,8 @@ class BlockchainConnector {
                         resolve(response.data.result);
                         break
                     } else {
-                        console.log(response.error)
-                        reject('Error getting raw transaction');
+                        // Tx no longer in mempool (mined/evicted between getRawMempool and this call) — caller filters nulls
+                        resolve(null);
                         break
                     }
                 } catch (error){
