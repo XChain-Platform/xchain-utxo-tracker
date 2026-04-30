@@ -182,7 +182,9 @@ async function dumpChunk(connector, args, chunkStart, chunkEnd, chainTipAtDump) 
             const heights  = []
             for (let h = cursor; h <= batchEnd; h++) heights.push(h)
 
-            const blocks = await connector.getBlocksBatch(heights)
+            const blocks = args.chain === 'dogecoin'
+                ? await connector.getBlocksBatchWithoutAuxPow(heights)
+                : await connector.getBlocksBatch(heights)
 
             for (const { height, hash, hex } of blocks) {
                 const blockBytes = Buffer.from(hex, 'hex')
