@@ -527,6 +527,20 @@ async function runBulkSyncIfEmpty() {
     }
     console.log(`[bulk-sync] DB '${DB_NAME}' is empty — triggering bulk-sync pipeline`)
     await waitForNodeSynced()
+
+    // bulk-sync requires at least tipSafety+1 blocks. On fresh regtest stacks
+    // (or any chain that hasn't reached coinbase maturity yet) the node reports
+    // headers==blocks==0 — waitForNodeSynced returns immediately, then dump.js
+    // FATALs with "computed dump end (tip=0 - safety=10) is before --from=0".
+    // Skip the pipeline and let the normal incremental tracker handle it.
+    const connector = new BlockchainConnector(NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD)
+    const info      = await connector.getBlockchainInfo()
+    const minBlocks = parseInt(BULK_SYNC_TIP_SAFETY, 10) + 1
+    if (info.blocks < minBlocks) {
+        console.log(`[bulk-sync] chain too short (${info.blocks} blocks < ${minBlocks} required) — skipping bulk-sync, incremental sync will index from block 0`)
+        return
+    }
+
     await runBulkSyncOrchestrator()
     try {
         fs.rmSync(BULK_SYNC_WORK_DIR, { recursive: true, force: true })
