@@ -130,7 +130,21 @@ async function startApi(){
         async ping() {
             return {status:"success"};
         },
-        
+
+        // Sync-status probe: tracker tip vs node tip. Used by e2e tests and
+        // ops tooling to diagnose lag when an address's funding tx looks lost.
+        async get_sync_status() {
+            let trackerHeight = -1;
+            try { trackerHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
+            const nodeHeight = (typeof tracker.blockchainInfoLastBlock === 'number')
+                ? tracker.blockchainInfoLastBlock : -1;
+            return {
+                tracker_height: trackerHeight,
+                node_height:    nodeHeight,
+                lag:            (nodeHeight >= 0 && trackerHeight >= 0) ? (nodeHeight - trackerHeight) : null
+            };
+        },
+
         // Function to create transactions hex for a given data and encoding type
         async get_utxos({address}) {
             let utxos = await getUtxos(address)
