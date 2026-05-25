@@ -210,6 +210,42 @@ describe('LevelUpDb', function () {
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
       expect(outputs[0].fullTxid).to.equal(fullTxHash);
     });
+
+    // Regression: rangeEnd previously appended a single 0xFF byte. For any
+    // output whose txHash8 started with 0xFF, the range scan in
+    // getOutputsScriptPubKey treated the actual key (longer, byte[33]=0xFF)
+    // as greater than the upper bound — silently skipping it. Fixed by
+    // appending 12 bytes of 0xFF in commit 6385686. This guards against
+    // accidental re-reverts during perf refactors of LevelUpDb.js.
+    it('returns outputs whose txHash8 starts with 0xFF (rangeEnd regression)', async function () {
+      const scriptHash = randHash();
+      const txFF = 'ff' + randHash8().substring(2); // first byte 0xFF
+      const txNonFF = '00' + randHash8().substring(2); // first byte 0x00
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txFF, outputIndex: 0, value: BigInt(123), height: 1 });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txNonFF, outputIndex: 0, value: BigInt(456), height: 2 });
+      await db.endTransaction(true);
+
+      const outputs = await db.getOutputsScriptPubKey(scriptHash);
+      const txids = outputs.map(o => o.txid).sort();
+      expect(txids).to.include(txFF);
+      expect(txids).to.include(txNonFF);
+      expect(outputs).to.have.length(2);
+    });
+
+    // Stronger variant: the txHash8 is ALL 0xFF bytes, exercising the worst
+    // case for the rangeEnd upper bound. With a 1-byte 0xFF suffix this
+    // returned []; with 12 bytes it returns the entry.
+    it('returns outputs whose txHash8 is all 0xFF', async function () {
+      const scriptHash = randHash();
+      const txAllFF = 'ffffffffffffffff';
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txAllFF, outputIndex: 7, value: BigInt(789), height: 3 });
+      await db.endTransaction(true);
+
+      const outputs = await db.getOutputsScriptPubKey(scriptHash);
+      expect(outputs).to.have.length(1);
+      expect(outputs[0].txid).to.equal(txAllFF);
+      expect(outputs[0].vout).to.equal(7);
+    });
   });
 
   // ─── Output hint (H prefix) ───────���──────────────────────────────────────
@@ -528,6 +564,21 @@ describe('LevelUpDb', function () {
     it('returns empty for non-matching pattern', async function () {
       const results = await db.getValuesFromKeyPattern(randHash());
       expect(results).to.be.empty;
+    });
+
+    // Same rangeEnd regression as the O-prefix tests above, exercised
+    // through the generic key-pattern path that the API surfaces via
+    // get_input_from_key_pattern. Catches future re-reverts even if the
+    // O-specific tests above are removed or refactored.
+    it('scans across keys whose suffix-byte-after-prefix is 0xFF', async function () {
+      const scriptHash = randHash();
+      const txFF = 'ff' + randHash8().substring(2);
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txFF, outputIndex: 0, value: BigInt(100), height: 1 });
+      await db.endTransaction(true);
+
+      const results = await db.getValuesFromKeyPattern('4f' + scriptHash);
+      expect(results).to.have.length(1);
+      expect(results[0].key.toLowerCase()).to.match(new RegExp('^4f' + scriptHash + txFF + '00000000$'));
     });
   });
 
