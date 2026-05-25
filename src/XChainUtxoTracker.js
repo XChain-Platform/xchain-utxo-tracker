@@ -889,6 +889,11 @@ class XChainUtxoTracker {
                 
             } catch (error){
                 console.log("There were problems getting the mempool, trying again later.")
+                // Reset the busy flag — without this, a single transient
+                // getRawMempool failure permanently locks out further mempool
+                // updates for the lifetime of the process (next setInterval
+                // tick sees mempoolBusy=true and bails).
+                this.mempoolBusy = false
                 return
             }
             
@@ -940,7 +945,14 @@ class XChainUtxoTracker {
                 }
                     
                 i = i + MEMPOOL_BATCH_SIZE
-                await this.sleep(10000)
+                // Only throttle between batches — the inter-batch sleep is for
+                // CPU/IO breathing room when a giant mempool needs many passes.
+                // If we just finished the final batch (or only batch), don't
+                // sleep — single-batch updates (typical for regtest and most
+                // mainnet conditions) shouldn't pay a 10s tail latency.
+                if (i < rawMempool.length) {
+                    await this.sleep(10000)
+                }
             }
             
             await this.mempoolDb.endTransaction()
