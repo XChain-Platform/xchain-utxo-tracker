@@ -617,6 +617,69 @@ describe('LevelUpDb', function () {
       const out2 = await db.getOutputsScriptPubKey(scriptHash2);
       expect(out2).to.have.length(1);
     });
+
+    // Regression for the binary-search polarity bug fixed in commit 095bee7.
+    // The prior comparator was inverted AND the not-found check was `== -1`
+    // (instead of `< 0`), causing ~40% of not-in-list needles to be
+    // misclassified as "found and kept" — leaking stale mempool entries
+    // through the cleanup path. Pin the txHash bytes so the lex ordering is
+    // deterministic instead of relying on random hashes (which gave the
+    // original test ~60% pass-by-luck).
+    it('deletes the lex-smaller tx when only the lex-larger one is kept (polarity regression)', async function () {
+      // tx_lo sorts before tx_hi lexicographically (chosen with '00..' / 'ff..' prefixes)
+      const tx_lo = '00' + randHash().substring(2);
+      const tx_hi = 'ff' + randHash().substring(2);
+      const tx_lo_8 = tx_lo.substring(0, 16);
+      const tx_hi_8 = tx_hi.substring(0, 16);
+      const scriptHash_lo = randHash();
+      const scriptHash_hi = randHash();
+
+      await db.insertTransaction({ hash: tx_lo, blockHash: randHash() });
+      await db.insertTransaction({ hash: tx_hi, blockHash: randHash() });
+      await db.insertOutput({ scriptPubKey: scriptHash_lo, txHash: tx_lo_8, outputIndex: 0, value: BigInt(1), height: -1 });
+      await db.insertOutputHint({ scriptPubKey: scriptHash_lo, txHash: tx_lo_8, outputIndex: 0 });
+      await db.insertOutput({ scriptPubKey: scriptHash_hi, txHash: tx_hi_8, outputIndex: 0, value: BigInt(2), height: -1 });
+      await db.insertOutputHint({ scriptPubKey: scriptHash_hi, txHash: tx_hi_8, outputIndex: 0 });
+      await db.endTransaction(true);
+
+      // Keep only tx_hi → tx_lo should be deleted. Pre-fix this returned
+      // bs index -2 for tx_lo (insertion at index 1), the `== -1` check
+      // failed, and tx_lo was incorrectly kept.
+      await db.beginTransaction();
+      const result = await db.deleteAndCompareTxsNotInList([tx_hi].sort());
+      await db.endTransaction(true);
+
+      expect(result.transactionsDeleted).to.equal(1);
+      expect(await db.getOutputsScriptPubKey(scriptHash_lo)).to.be.empty;
+      expect(await db.getOutputsScriptPubKey(scriptHash_hi)).to.have.length(1);
+    });
+
+    // Mirror of the above with the keep-list at lex-low side instead — covers
+    // the other branch direction in binary-search.
+    it('deletes the lex-larger tx when only the lex-smaller one is kept', async function () {
+      const tx_lo = '00' + randHash().substring(2);
+      const tx_hi = 'ff' + randHash().substring(2);
+      const tx_lo_8 = tx_lo.substring(0, 16);
+      const tx_hi_8 = tx_hi.substring(0, 16);
+      const scriptHash_lo = randHash();
+      const scriptHash_hi = randHash();
+
+      await db.insertTransaction({ hash: tx_lo, blockHash: randHash() });
+      await db.insertTransaction({ hash: tx_hi, blockHash: randHash() });
+      await db.insertOutput({ scriptPubKey: scriptHash_lo, txHash: tx_lo_8, outputIndex: 0, value: BigInt(1), height: -1 });
+      await db.insertOutputHint({ scriptPubKey: scriptHash_lo, txHash: tx_lo_8, outputIndex: 0 });
+      await db.insertOutput({ scriptPubKey: scriptHash_hi, txHash: tx_hi_8, outputIndex: 0, value: BigInt(2), height: -1 });
+      await db.insertOutputHint({ scriptPubKey: scriptHash_hi, txHash: tx_hi_8, outputIndex: 0 });
+      await db.endTransaction(true);
+
+      await db.beginTransaction();
+      const result = await db.deleteAndCompareTxsNotInList([tx_lo].sort());
+      await db.endTransaction(true);
+
+      expect(result.transactionsDeleted).to.equal(1);
+      expect(await db.getOutputsScriptPubKey(scriptHash_hi)).to.be.empty;
+      expect(await db.getOutputsScriptPubKey(scriptHash_lo)).to.have.length(1);
+    });
   });
 
   // ─── recoverDeletedOutputsHints ───────��────────────────────────────���──────
