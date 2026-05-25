@@ -145,6 +145,45 @@ async function startApi(){
             };
         },
 
+        // Quiescence probe: returns ready=true iff every previously-broadcast
+        // tx is mined-and-indexed AND the tracker has no in-flight batch.
+        // Test framework barrier — callers can poll this between e2e tests so
+        // the next test starts from a fully-settled stack instead of inheriting
+        // hidden state (unflushed batch, mempool backlog) that caused
+        // ordering-dependent flakes.
+        //
+        // Conditions:
+        //   1. node-side mempool is empty (no unmined txs the tracker is
+        //      blind to until the next MEMPOOL_INTERVAL poll)
+        //   2. node tip == tracker's last-committed height (setLastBlockHeight
+        //      only commits via endTransaction, so this naturally returns
+        //      false during a mid-batch state)
+        async is_quiescent() {
+            let mempoolSize = -1;
+            let trackerHeight = -1;
+            let nodeHeight = -1;
+            try {
+                const mempool = await tracker.connector.getRawMempool();
+                mempoolSize = Array.isArray(mempool) ? mempool.length
+                            : (mempool && typeof mempool === 'object') ? Object.keys(mempool).length
+                            : 0;
+            } catch (e) { /* leave -1; caller treats as not-ready */ }
+            try { trackerHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
+            try {
+                const info = await tracker.connector.getBlockchainInfo();
+                nodeHeight = (info && typeof info.blocks === 'number') ? info.blocks : -1;
+            } catch (e) {}
+            const heightAligned = (nodeHeight >= 0 && trackerHeight >= 0 && nodeHeight === trackerHeight);
+            const mempoolEmpty  = (mempoolSize === 0);
+            return {
+                ready:         heightAligned && mempoolEmpty,
+                mempool_size:  mempoolSize,
+                tracker_height: trackerHeight,
+                node_height:   nodeHeight,
+                lag:           (nodeHeight >= 0 && trackerHeight >= 0) ? (nodeHeight - trackerHeight) : null
+            };
+        },
+
         // Function to create transactions hex for a given data and encoding type
         async get_utxos({address}) {
             let utxos = await getUtxos(address)
