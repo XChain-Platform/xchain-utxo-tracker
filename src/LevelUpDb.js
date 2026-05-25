@@ -1157,11 +1157,19 @@ class LevelUpStore {
 
         for await (const data of dbStream) {
             const txid = b2h(data.key.slice(1))   // 16-char hex (txHash8)
+            // binary-search convention: comparator(element, needle) returns
+            // negative when element < needle (search to the right). The prior
+            // form `needle.localeCompare(element_first16)` had the sign
+            // INVERTED, and the result check `== -1` only matched the
+            // not-found-at-insertion-index-0 case. Together this caused
+            // ~half of all not-found needles to be misclassified as found
+            // (returning -2 for insertion at index 1). Use `< 0` for any
+            // not-found return and an element-vs-needle comparator.
             const txidIndex = bs(txidList, txid, function(element, needle) {
-                return needle.localeCompare(element.substring(0, 16))
+                return element.substring(0, 16).localeCompare(needle)
             })
 
-            if (txidIndex == -1) {
+            if (txidIndex < 0) {
                 await this.deleteTransaction(txid)
                 deletedTxs.push(txid)
             } else {
