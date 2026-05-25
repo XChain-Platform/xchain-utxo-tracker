@@ -131,17 +131,35 @@ async function startApi(){
             return {status:"success"};
         },
 
+        // ── Readiness contract ─────────────────────────────────────────
+        // The tracker's height fields all report the LAST COMMITTED state,
+        // not in-flight processing. This matters because the tracker buffers
+        // up to DB_TRANSACTION_BLOCKS_QUANTITY blocks before flushing via
+        // endTransaction(). During a mid-batch state, in-memory has the new
+        // UTXOs but disk doesn't — and getLastBlockHeight() reads from disk.
+        // So getLastBlockHeight() returning N is a hard guarantee that every
+        // output in blocks 0..N is queryable via get_utxos / get_balance.
+        // is_quiescent() builds on this: it returns ready=true only when the
+        // committed height matches the node tip AND the node's mempool is
+        // empty, giving callers a barrier they can wait on without needing
+        // to know any of the tracker's batching internals.
+        // ───────────────────────────────────────────────────────────────
+
         // Sync-status probe: tracker tip vs node tip. Used by e2e tests and
         // ops tooling to diagnose lag when an address's funding tx looks lost.
+        // `tracker_height` and `committed_height` are aliases — both report
+        // the last committed block. `committed_height` is the canonical name
+        // going forward; `tracker_height` retained for existing callers.
         async get_sync_status() {
-            let trackerHeight = -1;
-            try { trackerHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
+            let committedHeight = -1;
+            try { committedHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
             const nodeHeight = (typeof tracker.blockchainInfoLastBlock === 'number')
                 ? tracker.blockchainInfoLastBlock : -1;
             return {
-                tracker_height: trackerHeight,
-                node_height:    nodeHeight,
-                lag:            (nodeHeight >= 0 && trackerHeight >= 0) ? (nodeHeight - trackerHeight) : null
+                committed_height: committedHeight,
+                tracker_height:   committedHeight,
+                node_height:      nodeHeight,
+                lag:              (nodeHeight >= 0 && committedHeight >= 0) ? (nodeHeight - committedHeight) : null
             };
         },
 
@@ -176,11 +194,12 @@ async function startApi(){
             const heightAligned = (nodeHeight >= 0 && trackerHeight >= 0 && nodeHeight === trackerHeight);
             const mempoolEmpty  = (mempoolSize === 0);
             return {
-                ready:         heightAligned && mempoolEmpty,
-                mempool_size:  mempoolSize,
-                tracker_height: trackerHeight,
-                node_height:   nodeHeight,
-                lag:           (nodeHeight >= 0 && trackerHeight >= 0) ? (nodeHeight - trackerHeight) : null
+                ready:            heightAligned && mempoolEmpty,
+                mempool_size:     mempoolSize,
+                committed_height: trackerHeight,
+                tracker_height:   trackerHeight,
+                node_height:      nodeHeight,
+                lag:              (nodeHeight >= 0 && trackerHeight >= 0) ? (nodeHeight - trackerHeight) : null
             };
         },
 

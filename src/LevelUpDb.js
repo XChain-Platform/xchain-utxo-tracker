@@ -410,6 +410,13 @@ class LevelUpStore {
         }
     }
 
+    // Records the block-tip in the same in-flight batch as the UTXO inserts
+    // produced while processing this block. Because endTransaction() flushes
+    // the whole batch atomically via db.batch(), the on-disk last-block-height
+    // and all of the block's outputs become queryable together — never out of
+    // order. This is the load-bearing guarantee that get_sync_status and
+    // is_quiescent rely on: callers can treat a returned committed_height as
+    // "every output in blocks 0..N is queryable right now".
     async setLastBlockHeight(height){
         await this.addTransaction("put", PREFIX_LAST_BLOCK_HEIGHT, height.toString(16))
         return true
