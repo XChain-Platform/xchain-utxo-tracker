@@ -46,6 +46,12 @@
 // Load required libraries
 const util = require('./util')
 
+// Debug-only tracing for the missing-O-record investigation. Gated behind
+// TRACE_UTXO=1 to keep prod cost at zero. Emits one line per insertOutput,
+// one per staged O deletion in removeOutputsWithInputsBatch, and a summary
+// per endTransaction. Logs go to stdout (docker logs).
+const DEBUG_TRACE = process.env.TRACE_UTXO === '1' || process.env.TRACE_UTXO === 'true'
+
 var levelup = require('levelup')
 var leveldown = require('rocksdb')
 var memdown = require('memdown')
@@ -82,7 +88,14 @@ function idxBuf(n) {
 }
 
 function rangeEnd(prefix) {
-    return Buffer.concat([prefix, Buffer.from([0xFF])])
+    // 12 bytes of 0xFF covers the longest possible suffix after the longest
+    // prefix used in any range scan (e.g. O-prefix scans use a 33-byte prefix
+    // [O byte + scriptHash], leaving a 12-byte suffix [txHash8 + idx]).
+    // A single 0xFF byte fails when the actual next byte is also 0xFF, since
+    // LevelDB's lexicographic compare treats the longer key as greater than
+    // the shorter upper bound. Regression of commit 39696e8 — was silently
+    // reverted by commit a2774ac.
+    return Buffer.concat([prefix, Buffer.alloc(12, 0xFF)])
 }
 
 // Normalize a key to a string for use as a JavaScript Map key.
@@ -388,6 +401,17 @@ class LevelUpStore {
         try {
             if (batch){
                 let transactionArrayFromMap = Array.from(this.transactionArray.values())
+                if (DEBUG_TRACE) {
+                    let puts = 0, dels = 0, oPut = 0, oDel = 0
+                    for (const item of transactionArrayFromMap) {
+                        if (item.type === 'put') puts++; else if (item.type === 'del') dels++
+                        // O-prefix is 0x4F; first byte of binary key tells us which prefix
+                        if (Buffer.isBuffer(item.key) && item.key[0] === 0x4F) {
+                            if (item.type === 'put') oPut++; else if (item.type === 'del') oDel++
+                        }
+                    }
+                    console.log(`TRACE endTransaction db=${this.dbName} total=${transactionArrayFromMap.length} puts=${puts} dels=${dels} oPuts=${oPut} oDels=${oDel}`)
+                }
                 await this.db.batch(transactionArrayFromMap)
             }
             this.transactionArray = null
@@ -647,6 +671,10 @@ class LevelUpStore {
         const oKey = Buffer.isBuffer(output.scriptPubKey)
             ? kOutputFromBuf(output.scriptPubKey, output.txHash, output.outputIndex)
             : kOutput(output.scriptPubKey, output.txHash, output.outputIndex)
+        if (DEBUG_TRACE) {
+            const shHex = Buffer.isBuffer(output.scriptPubKey) ? output.scriptPubKey.toString('hex') : output.scriptPubKey
+            console.log(`TRACE insertOutput db=${this.dbName} sh=${shHex} tx8=${output.txHash} idx=${output.outputIndex} val=${output.value} h=${output.height}`)
+        }
         return await this.addTransaction("put", oKey, oVal)
     }
 
@@ -800,12 +828,18 @@ class LevelUpStore {
 
             if (r.inMem) {
                 const inMemOKey = kOutputFromBuf(r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
+                if (DEBUG_TRACE) {
+                    console.log(`TRACE delOutput db=${this.dbName} path=inMem sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+                }
                 this.removeTransaction(inMemOKey, inp.blockHash)
                 this.removeTransaction(r.hKey, inp.blockHash)
                 continue
             }
 
             if (r.oVal == null) {
+                if (DEBUG_TRACE) {
+                    console.log(`TRACE delOutput db=${this.dbName} path=noOval sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+                }
                 await this.addTransaction("del", r.oKey)
                 await this.addTransaction("del", r.hKey)
                 continue
@@ -813,6 +847,9 @@ class LevelUpStore {
 
             const mKey = kHintDel(inp.blockHash, inp.prevTxHash, inp.prevOutputIndex)
             const kKey = kOutDelFromBuf(inp.blockHash, r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
+            if (DEBUG_TRACE) {
+                console.log(`TRACE delOutput db=${this.dbName} path=archive sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+            }
             await this.addTransaction("put", mKey, r.scriptPubKeyBuf)
             await this.addTransaction("put", kKey, r.oVal)
             await this.addTransaction("del", r.oKey)
