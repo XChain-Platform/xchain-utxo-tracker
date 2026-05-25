@@ -764,7 +764,25 @@ class XChainUtxoTracker {
                     transactionsCount = transactionsCount + transactions.length
                     outputsCount = outputsCount + blockOutputCounts.reduce((acc, n) => acc + n, 0)
                     inputsCount  = inputsCount  + blockInputTotal
-                    
+
+                    // Eagerly remove mempool-DB entries for txs that have now
+                    // been confirmed in this block. Without this, the mempool
+                    // DB can hold stale records for up to MEMPOOL_INTERVAL (60s)
+                    // after a tx is mined — get_utxos would return those stale
+                    // outputs alongside the confirmed ones, the encoder would
+                    // sort by value and pick the (now-spent) stale UTXO as the
+                    // first input, and the broadcast would fail with
+                    // node error -25 "Missing inputs". The block-time cleanup
+                    // is a no-op for txs the mempool poll never saw (most of
+                    // them in regtest, where blocks mine faster than the 60s
+                    // mempool refresh tick).
+                    for (const tx of transactions) {
+                        const txid = "id" in tx ? tx["id"] : tx.getId()
+                        await this.mempoolDb.deleteOutputsByHint(txid)
+                        await this.mempoolDb.deleteInputsByHint(txid)
+                        await this.mempoolDb.deleteTransaction(txid)
+                    }
+
                     //Add the block to the last blocks
                     await this.addToLastBlocks(nextBlockHash)
                     
