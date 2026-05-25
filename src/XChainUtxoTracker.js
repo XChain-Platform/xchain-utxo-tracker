@@ -877,9 +877,15 @@ class XChainUtxoTracker {
                 
                 for (let nextUnorderedItemIndex in rawMempoolUnordered){
                     let nextUnorderedItem = rawMempoolUnordered[nextUnorderedItemIndex]
-                    
-                    let newIndex = bs(rawMempool, nextUnorderedItem, function(element, needle) { return needle.localeCompare(element) })
-                    
+
+                    // binary-search convention: comparator(element, needle)
+                    // returns negative when element < needle (search right).
+                    // Pairs with deleteAndCompareTxsNotInList downstream, which
+                    // uses the same convention after the fix in commit 095bee7;
+                    // both must use the SAME polarity for the sorted list to
+                    // round-trip correctly.
+                    let newIndex = bs(rawMempool, nextUnorderedItem, function(element, needle) { return element.localeCompare(needle) })
+
                     if (newIndex < 0){
                         rawMempool.splice(-newIndex-1, 0, nextUnorderedItem)
                     }
