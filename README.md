@@ -53,6 +53,16 @@ cd xchain-utxo-tracker
 npm install
 ```
 
+> **GCC 13+ host installs:** the bundled `rocksdb@5.2.1` C++ headers don't
+> explicitly `#include <cstdint>`, which newer GCC requires. If `npm install`
+> fails with `'uint64_t' does not name a type`, prefix the install with
+> `CXXFLAGS="-include cstdint"`:
+> ```bash
+> CXXFLAGS="-include cstdint" npm install
+> ```
+> The Docker image (`node:22-bookworm`, GCC 12) builds cleanly without the
+> flag, so this is dev-host-only.
+
 Create a `.env` file:
 
 ```env
