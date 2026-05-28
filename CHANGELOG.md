@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-05-28
+
+### Fixed
+- Mempool ingest corrupted the previous-transaction hash stored in UTXO spend-hint (J) records. `parseTransaction` and `parseTxInputs` reversed each input's hash buffer in place once per consumer (spend lookup, input insert, and hint insert), so a second consumer received doubly-reversed wire-order bytes instead of big-endian display order. When a mempool transaction was later evicted without being mined, the hint-driven cleanup built a non-existent spend key from those corrupted bytes and left the real UTXO record permanently stale — hiding a valid confirmed UTXO from balance and UTXO queries for the lifetime of the process. The hash is now reversed on a copy of the buffer, so the shared source bytes are never mutated and every consumer receives identical big-endian display-order bytes. This also keeps a transaction object reusable across the mempool-ingest and block-confirmation passes without its spend lookup breaking.
+
 ## [1.0.7] - 2026-05-28
 
 ### Removed

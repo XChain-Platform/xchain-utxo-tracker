@@ -322,12 +322,23 @@ class XChainUtxoTracker {
                 return 0
             }
 
+            // Reverse the wire-order (little-endian) hash to big-endian display
+            // order on a COPY of the buffer. .reverse() mutates in place, and
+            // nextInput.hash is shared: the same decoded tx can be parsed again
+            // on a later path (e.g. mempool ingest, then block confirmation).
+            // Mutating it here would (a) double-reverse within this call,
+            // corrupting the hint record's prevTxHash, and (b) leave the buffer
+            // flipped for the downstream re-parse, breaking its spend lookup.
+            // Buffer.from() copies, so the source bytes stay untouched and the
+            // same hex feeds insertInput, the hint, and the removeSpent lookup.
+            const prevTxHashHex = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse())
+
             if (removeSpent){
-                let prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
+                let prevTxHash8 = prevTxHashHex.substring(0, 16)
                 await db.removeOutputWithInput({prevTxHash:prevTxHash8, prevOutputIndex:nextInput.index, blockHash:blockHash})
             } else {
                 await db.insertInput({
-                    prevTxHash:util.uint8ArrayToHex(nextInput.hash.reverse()),
+                    prevTxHash:prevTxHashHex,
                     prevOutputIndex:nextInput.index,
                     txHash:nextTxId8
                 })
@@ -335,7 +346,7 @@ class XChainUtxoTracker {
 
             if (addHints){
                 await db.insertInputHint({
-                    prevTxHash:util.uint8ArrayToHex(nextInput.hash.reverse()),
+                    prevTxHash:prevTxHashHex,
                     prevOutputIndex:nextInput.index,
                     txHash:nextTxId8
                 })
@@ -419,12 +430,23 @@ class XChainUtxoTracker {
                 return 0
             }
 
+            // Reverse the wire-order (little-endian) hash to big-endian display
+            // order on a COPY of the buffer. .reverse() mutates in place, and
+            // nextInput.hash is shared: the same decoded tx can be parsed again
+            // on a later path (e.g. mempool ingest, then block confirmation).
+            // Mutating it here would (a) double-reverse within this call,
+            // corrupting the hint record's prevTxHash, and (b) leave the buffer
+            // flipped for the downstream re-parse, breaking its spend lookup.
+            // Buffer.from() copies, so the source bytes stay untouched and the
+            // same hex feeds insertInput, the hint, and the removeSpent lookup.
+            const prevTxHashHex = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse())
+
             if (removeSpent) {
-                const prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
+                const prevTxHash8 = prevTxHashHex.substring(0, 16)
                 await db.removeOutputWithInput({prevTxHash: prevTxHash8, prevOutputIndex: nextInput.index, blockHash: blockHash})
             } else {
                 await db.insertInput({
-                    prevTxHash: util.uint8ArrayToHex(nextInput.hash.reverse()),
+                    prevTxHash: prevTxHashHex,
                     prevOutputIndex: nextInput.index,
                     txHash: nextTxId8
                 })
@@ -432,7 +454,7 @@ class XChainUtxoTracker {
 
             if (addHints) {
                 await db.insertInputHint({
-                    prevTxHash: util.uint8ArrayToHex(nextInput.hash.reverse()),
+                    prevTxHash: prevTxHashHex,
                     prevOutputIndex: nextInput.index,
                     txHash: nextTxId8
                 })
