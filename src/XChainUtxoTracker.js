@@ -36,6 +36,13 @@ const { hrtime } = require('node:process');
 
 const CHECK_BLOCK_DELAY_MS = 1000 //1 second to continously ask for new block when all has been parsed
 const DB_TRANSACTION_BLOCKS_QUANTITY = 200
+// Heap-pressure flush guard: modern BTC blocks (~4k tx avg, 10k+ in dense
+// windows) accumulate ~17–90 MB of staged Buffer writes per block in
+// `transactionArray`. A full 200-block batch can push V8 heap past the
+// 4 GB --max-old-space-size cap mid-parse and abort the process. Flush
+// early when heap exceeds this threshold so the block-count constant
+// acts as an upper bound rather than the sole trigger.
+const HEAP_FLUSH_THRESHOLD_MB = 2048
 const PARSE_MODE_FILES = 0
 const PARSE_MODE_BULK_INSERTS = 1
 const SYNCED_THRESHOLD = 3
@@ -808,8 +815,18 @@ class XChainUtxoTracker {
                     //Add the block to the last blocks
                     await this.addToLastBlocks(nextBlockHash)
                     
-                    //If there are enough processed blocks, then add them to the database
-                    if ((blocksQuantity == DB_TRANSACTION_BLOCKS_QUANTITY-1) || (nextBlockHeight == this.blockchainInfoLastBlock)){
+                    //If there are enough processed blocks, then add them to the database.
+                    //Three triggers: batch full, at chain tip, or heap under pressure.
+                    //Heap-pressure flush keeps the block-count constant working as an
+                    //upper bound while preventing V8 OOM on dense chain windows where a
+                    //full 200-block batch would push staged Buffers past the heap cap.
+                    const _earlyFlushHeapMB = process.memoryUsage().heapUsed / 1048576
+                    const _flushReason =
+                        (nextBlockHeight == this.blockchainInfoLastBlock)             ? 'tip' :
+                        (blocksQuantity == DB_TRANSACTION_BLOCKS_QUANTITY-1)          ? 'batch-full' :
+                        (_earlyFlushHeapMB > HEAP_FLUSH_THRESHOLD_MB)                 ? 'heap-pressure' :
+                        null
+                    if (_flushReason){
                         console.log("Indexing block "+(nextBlockHeight)+"("+nextBlockHash+")")
                         await this.db.setLastBlockHeight(nextBlockHeight)
                         await this.db.setLastBlockHash(nextBlockHash)
@@ -837,7 +854,7 @@ class XChainUtxoTracker {
                         const _heapMB = (_mem.heapUsed / 1048576).toFixed(0)
                         const _rssMB = (_mem.rss / 1048576).toFixed(0)
                         const _ocSize = LevelUpStore.outputCache.size
-                        console.log(`⏱ TIMING (${_t.blocks} blocks) total=${_total}ms | decode=${_t.decode}ms | parse=${_t.parse}ms (out=${_t.parseOut}ms [hash=${_pb.hash}ms ins=${_pb.ins}ms sb=${_pb.sb}ms] in=${_t.parseIn}ms [hintRead=${_pi.hintRead}ms outRead=${_pi.outRead}ms stage=${_pi.stage}ms]) | commit=${_t.commit}ms | cleanup=${_t.cleanup}ms | knownScripts=${_ks.size} hit=${_ksH} miss=${_ksM} rate=${_ksRate}% | heap=${_heapMB}MB rss=${_rssMB}MB outCache=${_ocSize}`)
+                        console.log(`⏱ TIMING (${_t.blocks} blocks) flush=${_flushReason} total=${_total}ms | decode=${_t.decode}ms | parse=${_t.parse}ms (out=${_t.parseOut}ms [hash=${_pb.hash}ms ins=${_pb.ins}ms sb=${_pb.sb}ms] in=${_t.parseIn}ms [hintRead=${_pi.hintRead}ms outRead=${_pi.outRead}ms stage=${_pi.stage}ms]) | commit=${_t.commit}ms | cleanup=${_t.cleanup}ms | knownScripts=${_ks.size} hit=${_ksH} miss=${_ksM} rate=${_ksRate}% | heap=${_heapMB}MB heapPre=${_earlyFlushHeapMB.toFixed(0)}MB rss=${_rssMB}MB outCache=${_ocSize}`)
                         XChainUtxoTracker.parseOutBuckets = { hash: 0, ins: 0, sb: 0 }
                         LevelUpStore.parseInBuckets = { hintRead: 0, outRead: 0, stage: 0 }
                         LevelUpStore.knownScriptsHits = 0
