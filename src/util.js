@@ -37,8 +37,8 @@ module.exports = {
 
     // Throw an error and log to console
     throwError: function(error){
-        console.log(error);
-        throw new Error(error);
+        console.error('throwError:', error);
+        throw error;
     },
 
     // Get a SHA256 hash of a given data object

@@ -32,7 +32,7 @@ class BlockchainConnector {
 
         // Reuse TCP connections across all RPC calls and authenticate once per instance
         this.client = axios.create({
-            timeout: 30000,
+            timeout: parseInt(process.env.NODE_RPC_TIMEOUT ?? '30000', 10),
             httpAgent: new http.Agent({ keepAlive: true, maxSockets: 25 }),
             auth: { username: rpcUser, password: rpcPassword }
         })

@@ -55,6 +55,10 @@ const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node nee
 const UNDO_BLOCKS = 10 //This is the number of blocks from which the outputs will be kept saved.
 const PREFETCH_SIZE = 10 //Number of blocks to pre-fetch concurrently while processing the current one
 
+// Single-byte key used to persist pendingKMCleanup across restarts.
+// 0x50 ('P') is unused by LevelUpDb's key schema (B/T/I/O/H/J/S/Z/K/M/N).
+const P_PENDING_CLEANUP_KEY = Buffer.from([0x50])
+
 class XChainUtxoTracker {
     static parseOutBuckets = { hash: 0, ins: 0, sb: 0 }
 
@@ -112,6 +116,10 @@ class XChainUtxoTracker {
             await this.db.processDeletedOutputs(blockHash, false)
             await this.db.removeLastStoredBlock(blockHash)
         }
+
+        // Remove the crash-recovery marker atomically with the cleanup writes so
+        // a crash here causes a harmless idempotent re-run on the next restart.
+        await this.db.addTransaction("del", P_PENDING_CLEANUP_KEY)
 
         await this.db.endTransaction()
         this.pendingKMCleanup = []
@@ -508,7 +516,7 @@ class XChainUtxoTracker {
                 try {
                     blockHashFromNode = await this.connector.getBlockHash(lastBlockIndex)
                 } catch (err){
-                    console.log("There was a problem trying to get a block hash from the node. Trying again...")
+                    console.error('Error fetching block hash from node: ' + err.message, err)
                     await this.sleep(3000)
                     continue
                 }
@@ -561,6 +569,18 @@ class XChainUtxoTracker {
         let lastProcessedBlockIndex = await this.db.getLastBlockHeight()
         let lastProcessedBlockHash = await this.db.getLastBlockHash()
         this.lastBlocks = await this.db.getLastStoredBlocks()
+
+        // Recover any K/M cleanup work that was staged but not completed before a prior crash.
+        try {
+            const pVal = await this.db.db.get(P_PENDING_CLEANUP_KEY)
+            this.pendingKMCleanup = JSON.parse(pVal.toString())
+            if (this.pendingKMCleanup.length > 0) {
+                console.log(`Recovering ${this.pendingKMCleanup.length} pending K/M cleanup block(s) from prior crash`)
+            }
+        } catch (err) {
+            if (!err.notFound) throw err
+        }
+
         let lastBlockchainInfo = null
         this.blockchainInfoLastBlock = -1
         let blocksQuantity = 0
@@ -650,7 +670,7 @@ class XChainUtxoTracker {
 
                         this.blockchainInfoLastBlock = lastBlockchainInfo["blocks"]
                     } catch (e){
-                        console.log("Error trying to get network info from the node. Trying again...")
+                        console.error('Error fetching blockchain info from node: ' + e.message, e)
                         await this.sleep(3000)
                         continue
                     }
@@ -716,7 +736,7 @@ class XChainUtxoTracker {
                         nextBlockHex = fetched.hex
                     } catch (e){
                         prefetchQueue = []
-                        console.log("Error trying to get next block from the node. Trying again...")
+                        console.error('Error fetching block at height ' + nextBlockHeight + ': ' + e.message, e)
                         await this.sleep(3000)
                         continue
                     }
@@ -836,6 +856,13 @@ class XChainUtxoTracker {
                         await this.db.setLastBlockHash(nextBlockHash)
                         console.log("Inserting data Blocks ("+blocksCount+") Transactions ("+transactionsCount+") Inputs ("+inputsCount+") Outputs("+outputsCount+")")
 
+                        // Atomically record which blocks need K/M cleanup so a crash between
+                        // endTransaction and cleanupAgedBlocks is recoverable on restart.
+                        if (this.pendingKMCleanup.length > 0) {
+                            await this.db.addTransaction("put", P_PENDING_CLEANUP_KEY,
+                                Buffer.from(JSON.stringify(this.pendingKMCleanup)))
+                        }
+
                         const _tCommit = Date.now()
                         await this.db.endTransaction()
                         _t.commit += Date.now() - _tCommit
@@ -937,7 +964,7 @@ class XChainUtxoTracker {
                 
                 
             } catch (error){
-                console.log("There were problems getting the mempool, trying again later.")
+                console.error('Error updating mempool: ' + error.message, error)
                 // Reset the busy flag — without this, a single transient
                 // getRawMempool failure permanently locks out further mempool
                 // updates for the lifetime of the process (next setInterval
