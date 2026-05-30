@@ -9,7 +9,7 @@ RUN mkdir /data/
 COPY ./package.json /XChainUtxoTracker/package.json
 COPY ./package-lock.json /XChainUtxoTracker/package-lock.json
 WORKDIR /XChainUtxoTracker
-RUN npm ci
+RUN npm ci --omit=dev
 
 COPY ./src /XChainUtxoTracker/src
 COPY ./src/bufferutils.js /XChainUtxoTracker/node_modules/bitcoinjs-lib/src/bufferutils.js
