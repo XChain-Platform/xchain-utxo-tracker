@@ -58,7 +58,7 @@ class Database {
 	
 	this.debugTime = {}
 	
-	setInterval(this.keepAlive.bind(this), 10000);
+	setInterval(this.keepAlive.bind(this), parseInt(process.env.UTXO_DB_KEEPALIVE_INTERVAL) || 10000);
   }
   
   async sleep(ms) {

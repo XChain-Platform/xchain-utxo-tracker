@@ -153,14 +153,26 @@ async function startApi(){
         async get_sync_status() {
             let committedHeight = -1;
             try { committedHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
-            const rawTip = tracker.latestKnownChainTip ?? tracker.blockchainInfoLastBlock;
-            const nodeHeight = (typeof rawTip === 'number') ? rawTip : -1;
-            return {
+
+            let nodeHeight = -1;
+            let nodeHeightStale = false;
+            try {
+                const info = await tracker.connector.getBlockchainInfo();
+                nodeHeight = info['blocks'];
+            } catch (e) {
+                const rawTip = tracker.latestKnownChainTip ?? tracker.blockchainInfoLastBlock;
+                nodeHeight = (typeof rawTip === 'number') ? rawTip : -1;
+                nodeHeightStale = true;
+            }
+
+            const result = {
                 committed_height: committedHeight,
                 tracker_height:   committedHeight,
                 node_height:      nodeHeight,
                 lag:              (nodeHeight >= 0 && committedHeight >= 0) ? (nodeHeight - committedHeight) : null
             };
+            if (nodeHeightStale) result.node_height_stale = true;
+            return result;
         },
 
         // Quiescence probe: returns ready=true iff every previously-broadcast
