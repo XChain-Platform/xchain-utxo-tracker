@@ -543,7 +543,7 @@ class XChainUtxoTracker {
                     } catch (err){
                         try { await this.db.endTransaction(false) } catch (_) {}
                         console.log(err)
-                        console.log("There was a problem trying to delete a block while verifying a reorg")
+                        console.log("There was a problem trying to delete a block while verifying a reorg", err)
                         if (++retryCount >= 10) throw new Error('verifyReorg: deleteBlockByIndex failed after 10 attempts, aborting')
                         await this.sleep(3000); continue
                     }
@@ -1000,7 +1000,7 @@ class XChainUtxoTracker {
                     
                 } catch (err){
                     console.log(err)
-                    console.log("There was an error trying to get raw transactions from the mempool. Trying again...")
+                    console.log("There was an error trying to get raw transactions from the mempool. Trying again...", err)
                     await this.sleep(1000)
                     continue
                 }

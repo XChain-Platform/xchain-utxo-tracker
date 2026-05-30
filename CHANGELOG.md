@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Two `catch` blocks in `src/XChainUtxoTracker.js` (the reorg block-delete retry and the mempool raw-transaction fetch retry) now append the caught error to their fixed-message `console.log` call, so the failure detail is attached to the message line rather than logged separately or not at all.
+
 ## [1.0.10] - 2026-05-29
 
 ### Changed
