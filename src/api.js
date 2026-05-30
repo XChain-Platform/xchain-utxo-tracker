@@ -153,8 +153,8 @@ async function startApi(){
         async get_sync_status() {
             let committedHeight = -1;
             try { committedHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
-            const nodeHeight = (typeof tracker.blockchainInfoLastBlock === 'number')
-                ? tracker.blockchainInfoLastBlock : -1;
+            const rawTip = tracker.latestKnownChainTip ?? tracker.blockchainInfoLastBlock;
+            const nodeHeight = (typeof rawTip === 'number') ? rawTip : -1;
             return {
                 committed_height: committedHeight,
                 tracker_height:   committedHeight,

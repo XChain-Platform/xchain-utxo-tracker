@@ -74,6 +74,7 @@ class XChainUtxoTracker {
       this.synced = false
       
       this.blockchainInfoLastBlock = -1
+      this.latestKnownChainTip = null
       this.mempoolInterval = null
       this.mempoolBusy = false
       
@@ -632,12 +633,13 @@ class XChainUtxoTracker {
                 if (!lastBlockchainInfo || (lastProcessedBlockIndex >= this.blockchainInfoLastBlock)){
                     try {
                         lastBlockchainInfo = await this.connector.getBlockchainInfo()
-                        
+                        this.latestKnownChainTip = lastBlockchainInfo["blocks"]
+
                         if (lastBlockchainInfo["verificationprogress"] < MIN_VERIFICATION_PROGRESS_TO_PARSE){
                             if (!nodeSyncedProblem){
                                 console.log("The node is not synced. Waiting for it to synchronize...")
                             }
-                            
+
                             lastBlockchainInfo = null
                             nodeSyncedProblem = true
                             await this.sleep(3000)
@@ -645,7 +647,7 @@ class XChainUtxoTracker {
                         } else {
                             nodeSyncedProblem = false
                         }
-                        
+
                         this.blockchainInfoLastBlock = lastBlockchainInfo["blocks"]
                     } catch (e){
                         console.log("Error trying to get network info from the node. Trying again...")
