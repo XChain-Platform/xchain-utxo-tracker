@@ -23,7 +23,7 @@
     "helmet": "^7.1.0",
     "leveldown": "^6.1.1",
     "levelup": "^5.1.1",
-    "mariadb": "^3.2.3",
+    "mariadb": "~3.4.5",
     "memdown": "^6.1.1",
     "rocksdb": "^5.2.1",
     "tiny-secp256k1": "^2.2.3"
