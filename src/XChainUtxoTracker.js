@@ -475,7 +475,8 @@ class XChainUtxoTracker {
     async verifyReorg(){
         let thereAreDifferences = true
         let blocksDeleted = []
-    
+        let retryCount = 0
+
         while (thereAreDifferences){
             let lastBlockIndex = await this.db.getLastBlockHeight()
             let lastBlockHash = await this.db.getLastBlockHash()
@@ -531,6 +532,8 @@ class XChainUtxoTracker {
                     } catch (err){
                         console.log(err)
                         console.log("There was a problem trying to delete a block while verifying a reorg")
+                        if (++retryCount >= 10) throw new Error('verifyReorg: deleteBlockByIndex failed after 10 attempts, aborting')
+                        await this.sleep(3000); continue
                     }
                 } else {
                     thereAreDifferences = false
