@@ -525,6 +525,7 @@ class XChainUtxoTracker {
                 
                 if (lastBlockHash != blockHashFromNode){
                     try {
+                        await this.db.beginTransaction()
                         if (REMOVE_SPENT){
                             await this.db.removeOutputScriptsInBlock(lastBlockHash)
                             await this.db.processDeletedOutputs(lastBlockHash, true)
@@ -533,12 +534,14 @@ class XChainUtxoTracker {
                         await this.removeFromLastBlocks(lastBlockHash)
                         await this.db.setLastBlockHash(lastBlock["ph"])
                         await this.db.setLastBlockHeight(lastBlock["h"]-1)
-                        
+                        await this.db.endTransaction()
+
                         console.log("Removed block "+lastBlockHash+" ("+lastBlock["h"]+")")
                         console.log("Rollback to previous block "+lastBlock["ph"]+" ("+(lastBlock["h"]-1)+")")
-                        
+
                         blocksDeleted.push({"block_index":lastBlockIndex, "block_hash":lastBlockHash})
                     } catch (err){
+                        try { await this.db.endTransaction(false) } catch (_) {}
                         console.log(err)
                         console.log("There was a problem trying to delete a block while verifying a reorg")
                         if (++retryCount >= 10) throw new Error('verifyReorg: deleteBlockByIndex failed after 10 attempts, aborting')
