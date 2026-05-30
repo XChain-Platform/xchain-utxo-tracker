@@ -1,7 +1,7 @@
 {
   "name": "xchain-utxo-tracker",
   "description": "xchain-utxo-tracker tracks Unspent Transaction Objects (UTXOS) and provides APIs to retrieve UTXO data.",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "license": "SEE LICENSE IN LICENSE.md",
   "repository": {
     "type": "git",

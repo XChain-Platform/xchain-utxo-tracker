@@ -7,8 +7,9 @@ RUN apt-get update && \
 RUN mkdir /XChainUtxoTracker/
 RUN mkdir /data/
 COPY ./package.json /XChainUtxoTracker/package.json
+COPY ./package-lock.json /XChainUtxoTracker/package-lock.json
 WORKDIR /XChainUtxoTracker
-RUN npm install
+RUN npm ci
 
 COPY ./src /XChainUtxoTracker/src
 COPY ./src/bufferutils.js /XChainUtxoTracker/node_modules/bitcoinjs-lib/src/bufferutils.js
