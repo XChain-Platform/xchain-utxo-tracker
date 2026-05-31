@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Two `catch` blocks in `src/XChainUtxoTracker.js` (the reorg block-delete retry and the mempool raw-transaction fetch retry) now append the caught error to their fixed-message `console.log` call, so the failure detail is attached to the message line rather than logged separately or not at all.
 
+### Fixed
+- `src/XChainBlockDecoder.js` — `blockFromBuffer` now strips the Litecoin MWEB marker+flag from a block's final transaction when the flag is the combined segwit+MWEB value `0x09`, not only the pure-MWEB `0x08`. The single-transaction decode path (`txFromHex`) already handled both flag values, but the block-level last-transaction check matched only `0x08`; a Litecoin block whose final (HogEx) transaction carried `0x09` would have been handed unstripped marker bytes and thrown a `Transaction.fromBuffer` parse error, stalling UTXO indexing. HogEx extension transactions are observed to use `0x08` in practice, so this is a defensive consistency fix with no behavioural change on current data.
+
 ## [1.0.10] - 2026-05-29
 
 ### Changed

@@ -26,6 +26,7 @@ const bufferutils_js_1 = require('bitcoinjs-lib/src/bufferutils');
 const transaction_js_1 = require('bitcoinjs-lib/src/transaction');
 
 const LITECOIN_HOGEX_FLAG = 0x08
+const LITECOIN_MWEB_SEGWIT_FLAG = 0x09
 
 class XChainBlockDecoder {
     
@@ -111,11 +112,11 @@ class XChainBlockDecoder {
                         let marker = nextTxBuffer.readUInt8(4);
                         let flag = nextTxBuffer.readUInt8(5);
                         
-                        if ((txVersion == 0x02) && (marker == 0x00) && (flag == LITECOIN_HOGEX_FLAG)){
+                        if ((txVersion == 0x02) && (marker == 0x00) && (flag == LITECOIN_HOGEX_FLAG || flag == LITECOIN_MWEB_SEGWIT_FLAG)){
                             let removeOffsetStart = bufferReader.offset + 4 //4 bytes for txVersion
                             let removeOffsetEnd = removeOffsetStart + 2 //2 bytes for marker + flag
                         
-                            //Remove the flag 0x08, so bitcoinjs-lib parse this tx as a normal transaction
+                            //Remove the marker+flag (0x08 pure-MWEB, or 0x09 segwit+MWEB), so bitcoinjs-lib parses this tx as a normal transaction
                             let bufferReaderBeforeFlag = bufferReader.buffer.slice(0, removeOffsetStart)
                             let bufferReaderAfterFlag = bufferReader.buffer.slice(removeOffsetEnd)
                             bufferReader.buffer = Buffer.concat([bufferReaderBeforeFlag, bufferReaderAfterFlag])
