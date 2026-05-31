@@ -45,8 +45,10 @@ describe('CryptoNetworks', function () {
     it('returns Dogecoin regtest params', function () {
       const net = CryptoNetworks.getBitcoinJsNetwork('dogecoin-regtest');
       expect(net).to.exist;
-      expect(net.pubKeyHash).to.equal(0x71);
-      expect(net.wif).to.equal(0xf1);
+      // Dogecoin v1.14.x regtest reuses Bitcoin-testnet prefixes (0x6f / 0xef),
+      // NOT Dogecoin-testnet prefixes (0x71 / 0xf1). See src/CryptoNetworks.js.
+      expect(net.pubKeyHash).to.equal(0x6f);
+      expect(net.wif).to.equal(0xef);
     });
 
     it('returns Litecoin mainnet params', function () {
