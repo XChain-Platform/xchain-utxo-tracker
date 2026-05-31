@@ -39,6 +39,7 @@ class Database {
 		database: dbName,
 		connectionLimit: 10,
 		connectTimeout: 0,
+		queryTimeout: parseInt(process.env.DB_QUERY_TIMEOUT) || 30000,
 		port: port,
 		permitLocalInfile: 'true'
 	}

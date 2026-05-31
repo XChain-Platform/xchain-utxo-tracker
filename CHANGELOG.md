@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `src/db.js` — the MariaDB connection pool now sets `queryTimeout: parseInt(process.env.DB_QUERY_TIMEOUT) || 30000`. The pool already disabled the connect timeout (`connectTimeout: 0`) and had no query timeout either, so a slow or lock-blocked statement had no upper bound and could hang a pooled connection indefinitely with no timeout-based recovery. A query now aborts after the configured timeout (30s default, overridable via `DB_QUERY_TIMEOUT`) instead of hanging. Matches the pattern already used by `xchain-hub`.
+
 ### Changed
 - Two `catch` blocks in `src/XChainUtxoTracker.js` (the reorg block-delete retry and the mempool raw-transaction fetch retry) now append the caught error to their fixed-message `console.log` call, so the failure detail is attached to the message line rather than logged separately or not at all.
 
