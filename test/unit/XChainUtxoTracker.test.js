@@ -403,7 +403,7 @@ describe('XChainUtxoTracker', function () {
       expect(utxos[0].txid).to.equal(fullTxHash);
       expect(utxos[0].vout).to.equal(2);
       expect(utxos[0].confirmations).to.equal(1000 - 900 + 1);
-      expect(utxos[0].amount).to.equal(3); // 300000000 / 100000000
+      expect(utxos[0].amount).to.equal('3.00000000'); // 300000000 sat, exact BigInt decimal string
     });
 
     it('excludes confirmed UTXOs spent in mempool', async function () {

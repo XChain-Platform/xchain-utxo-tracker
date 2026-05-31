@@ -31,6 +31,7 @@
   "scripts": {
     "api": "node --max-old-space-size=4096 ./src/api.js",
     "test": "mocha --timeout 0 --recursive test/unit/**/*.test.js",
+    "ci": "mocha 'test/unit/**/*.test.js' --timeout 10000 --recursive --exit",
     "test:smoke": "mocha --timeout 10000 test/smoke/smoke.test.js",
     "test:integration": "mocha --timeout 0 --recursive test/integration/**/*.test.js",
     "test:e2e": "mocha --timeout 0 --recursive test/e2e/**/*.test.js --exit",

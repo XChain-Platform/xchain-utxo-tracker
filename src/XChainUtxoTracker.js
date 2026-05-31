@@ -46,6 +46,18 @@ const PARSE_MODE_FILES = 0
 const PARSE_MODE_BULK_INSERTS = 1
 const SYNCED_THRESHOLD = 3
 const SATOSHI_UNIT = 100000000.0
+const SATOSHI_BIGINT = 100000000n
+
+// Exact satoshi -> decimal-string conversion. Plain float division (value / 1e8)
+// loses precision once a total exceeds Number.MAX_SAFE_INTEGER (e.g. DOGE balances
+// above ~90M), so all balance/amount formatting goes through this BigInt path.
+function satoshiToDecimalString(satoshis) {
+    const val = BigInt(satoshis)
+    const abs = val < 0n ? -val : val
+    const whole = abs / SATOSHI_BIGINT
+    const frac = abs % SATOSHI_BIGINT
+    return (val < 0n ? '-' : '') + whole.toString() + '.' + frac.toString().padStart(8, '0')
+}
 const MEMPOOL_INTERVAL = 60000
 const MEMPOOL_BATCH_SIZE = 1000
 const REMOVE_SPENT = true
@@ -204,18 +216,18 @@ class XChainUtxoTracker {
         let script = bitcoin.address.toOutputScript(address, this.network)
         let scriptHash = createHash('sha256').update(script).digest('hex')
 
-        let confirmedBalance = 0
-        let pendingBalance = 0
+        let confirmedBalance = 0n
+        let pendingBalance = 0n
         let utxosConfirmed = 0
         let utxosPending = 0
-        let totalReceived = 0
+        let totalReceived = 0n
 
         let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash)
         let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash)
 
         for (let nextOutput of confirmedOutputs) {
             let txid = nextOutput.fullTxid || nextOutput.txid
-            let amount = nextOutput.value / SATOSHI_UNIT
+            let amount = BigInt(nextOutput.value)
 
             // Note: with REMOVE_SPENT=true, totalReceived only reflects currently unspent confirmed outputs
             totalReceived += amount
@@ -237,7 +249,7 @@ class XChainUtxoTracker {
 
             let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
             if (mempoolInput == null) {
-                pendingBalance += nextOutput.value / SATOSHI_UNIT
+                pendingBalance += BigInt(nextOutput.value)
                 utxosPending++
             }
         }
@@ -246,9 +258,9 @@ class XChainUtxoTracker {
             "address": address,
             "type": this.getAddressType(address, this.network),
             "balances": {
-                "confirmed": confirmedBalance.toFixed(8),
-                "pending": pendingBalance.toFixed(8),
-                "received": totalReceived.toFixed(8)
+                "confirmed": satoshiToDecimalString(confirmedBalance),
+                "pending": satoshiToDecimalString(pendingBalance),
+                "received": satoshiToDecimalString(totalReceived)
             },
             "utxos": {
                 "confirmed": utxosConfirmed,
@@ -276,7 +288,7 @@ class XChainUtxoTracker {
 
             nextOutput.txid = txid
             nextOutput.confirmations = this.blockchainInfoLastBlock - nextOutput.height + 1
-            nextOutput.amount = nextOutput.value / SATOSHI_UNIT
+            nextOutput.amount = satoshiToDecimalString(nextOutput.value)
             nextOutput.scriptPubKey = scriptPubKeyHex
             results.push(nextOutput)
         }
@@ -291,7 +303,7 @@ class XChainUtxoTracker {
             nextOutput.txid = txid
             nextOutput.height = null
             nextOutput.confirmations = 0
-            nextOutput.amount = nextOutput.value / SATOSHI_UNIT
+            nextOutput.amount = satoshiToDecimalString(nextOutput.value)
             nextOutput.scriptPubKey = scriptPubKeyHex
             results.push(nextOutput)
         }
@@ -1051,3 +1063,4 @@ class XChainUtxoTracker {
 }
 
 module.exports = XChainUtxoTracker
+module.exports.satoshiToDecimalString = satoshiToDecimalString
