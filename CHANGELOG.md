@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `.env.example` — added a configuration template enumerating every environment variable the tracker reads (coin/network, coin-node RPC, API port, bulk-sync tuning), with safe regtest/placeholder defaults and inline comments, so operators have a single reference for configuring the service instead of reading the source.
 - `src/db.js` — the MariaDB connection pool now sets `queryTimeout: parseInt(process.env.DB_QUERY_TIMEOUT) || 30000`. The pool already disabled the connect timeout (`connectTimeout: 0`) and had no query timeout either, so a slow or lock-blocked statement had no upper bound and could hang a pooled connection indefinitely with no timeout-based recovery. A query now aborts after the configured timeout (30s default, overridable via `DB_QUERY_TIMEOUT`) instead of hanging. Matches the pattern already used by `xchain-hub`.
 
 ### Changed
