@@ -640,11 +640,8 @@ class LevelUpStore {
     }
 
     async deleteInputsByHints(txids){
-        let inputsDeleted = 0
-        for (const txid of txids){
-            inputsDeleted += await this.deleteInputsByHint(txid)
-        }
-        return inputsDeleted
+        const counts = await Promise.all(txids.map(txid => this.deleteInputsByHint(txid)))
+        return counts.reduce((sum, n) => sum + n, 0)
     }
 
     // ─── Output (O prefix) ───────────────────────────────────────────────────
@@ -890,11 +887,8 @@ class LevelUpStore {
     }
 
     async deleteOutputsByHints(txids){
-        let outputsDeleted = 0
-        for (const txid of txids){
-            outputsDeleted += await this.deleteOutputsByHint(txid)
-        }
-        return outputsDeleted
+        const counts = await Promise.all(txids.map(txid => this.deleteOutputsByHint(txid)))
+        return counts.reduce((sum, n) => sum + n, 0)
     }
 
     // ─── Deleted output recovery (K / M prefix) ──────────────────────────────
@@ -1177,8 +1171,10 @@ class LevelUpStore {
             }
         }
 
-        const outputsDeleted = await this.deleteOutputsByHints(deletedTxs)
-        const inputsDeleted  = await this.deleteInputsByHints(deletedTxs)
+        const [inputsDeleted, outputsDeleted] = await Promise.all([
+            this.deleteInputsByHints(deletedTxs),
+            this.deleteOutputsByHints(deletedTxs),
+        ])
 
         return { transactionsDeleted: deletedTxs.length, outputsDeleted, inputsDeleted }
     }
