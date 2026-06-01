@@ -594,14 +594,14 @@ class XChainUtxoTracker {
         this.lastBlocks = await this.db.getLastStoredBlocks()
 
         // Recover any K/M cleanup work that was staged but not completed before a prior crash.
-        try {
-            const pVal = await this.db.db.get(P_PENDING_CLEANUP_KEY)
+        // abstract-level .get returns undefined on a missing key (no throw); real
+        // I/O errors still propagate.
+        const pVal = await this.db.db.get(P_PENDING_CLEANUP_KEY)
+        if (pVal !== undefined) {
             this.pendingKMCleanup = JSON.parse(pVal.toString())
             if (this.pendingKMCleanup.length > 0) {
                 console.log(`Recovering ${this.pendingKMCleanup.length} pending K/M cleanup block(s) from prior crash`)
             }
-        } catch (err) {
-            if (!err.notFound) throw err
         }
 
         let lastBlockchainInfo = null
@@ -651,9 +651,11 @@ class XChainUtxoTracker {
             if (heights.length === 0) return
 
             if (this.auxPow) {
-                // AuxPoW requires custom header stripping — fetch individually
-                heights.forEach(h => {
-                    const p = fetchBlock(h)
+                // AuxPoW: one batch HTTP request each for getblockhash + getblockheader + getblock,
+                // stripping the AuxPoW header bytes per block (getBlocksBatchWithoutAuxPow)
+                const batchPromise = this.connector.getBlocksBatchWithoutAuxPow(heights)
+                heights.forEach((h, i) => {
+                    const p = batchPromise.then(results => ({ hash: results[i].hash, hex: results[i].hex }))
                     p.catch(() => {}) // suppress unhandled rejection if entry is cleared from queue before being awaited
                     prefetchQueue.push({ height: h, promise: p })
                 })
