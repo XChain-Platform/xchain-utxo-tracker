@@ -168,28 +168,6 @@ class BlockchainConnector {
         }
     }
 
-    async getMempoolEntry(txid){
-        try {
-            const data = {
-                jsonrpc: '2.0',
-                method: 'getmempoolentry',
-                params: [txid],
-                id: 1
-            }
-
-            const response = await this.client.post(this.url, data)
-
-            if (response.data.result) {
-                return response.data.result;
-            } else {
-                throw new Error('Error getting mempool entry');
-            }
-        } catch (error){
-            console.error('Error:', error.message);
-            throw error;
-        }
-    }
-
     async getRawTransaction(txid){
         return new Promise(async (resolve, reject) => {
             let maxTries = 10

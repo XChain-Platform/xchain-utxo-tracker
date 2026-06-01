@@ -234,17 +234,6 @@ describe('BlockchainConnector', function () {
     });
   });
 
-  // ─── getMempoolEntry ──────────────────────────────────────────────────────
-
-  describe('getMempoolEntry', function () {
-    it('returns entry for valid txid', async function () {
-      const entry = { fees: { base: 0.0001 }, size: 225 };
-      clientStub.resolves({ data: { result: entry } });
-      const result = await connector.getMempoolEntry('tx123');
-      expect(result).to.deep.equal(entry);
-    });
-  });
-
   // ─── getRawTransaction ────────────────────────────────────────────────────
 
   describe('getRawTransaction', function () {

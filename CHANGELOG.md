@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- `src/BlockchainConnector.js` — removed the unused `getMempoolEntry(txid)` method (wrapping the `getmempoolentry` JSON-RPC call) along with its dedicated unit test. The tracker's indexing flow never called it; an unexercised RPC wrapper risked silently drifting out of sync with coin-node response shapes (e.g. Bitcoin Core's `fee` → `fees.base` field rename) for any future consumer. Removing it shrinks the connector surface to what the service actually uses.
+
 ### Added
 - `.env.example` — added a configuration template enumerating every environment variable the tracker reads (coin/network, coin-node RPC, API port, bulk-sync tuning), with safe regtest/placeholder defaults and inline comments, so operators have a single reference for configuring the service instead of reading the source.
 - `src/db.js` — the MariaDB connection pool now sets `queryTimeout: parseInt(process.env.DB_QUERY_TIMEOUT) || 30000`. The pool already disabled the connect timeout (`connectTimeout: 0`) and had no query timeout either, so a slow or lock-blocked statement had no upper bound and could hang a pooled connection indefinitely with no timeout-based recovery. A query now aborts after the configured timeout (30s default, overridable via `DB_QUERY_TIMEOUT`) instead of hanging. Matches the pattern already used by `xchain-hub`.
