@@ -391,6 +391,7 @@ class XChainUtxoTracker {
             if (addHints || removeSpent){
                 await db.insertOutputHint({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex})
                 await db.insertOutputScriptBlock(scriptHash, blockHash, blockHeight)
+                await db.insertOutputBlock({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, blockHash})
             }
         }))
 
@@ -437,6 +438,8 @@ class XChainUtxoTracker {
                 const _s0 = Date.now()
                 await db.insertOutputScriptBlock(scriptHash, blockHash, blockHeight)
                 _tt.sb += Date.now() - _s0
+
+                await db.insertOutputBlock({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex, blockHash})
             }
         }
 
@@ -541,6 +544,11 @@ class XChainUtxoTracker {
                         if (REMOVE_SPENT){
                             await this.db.removeOutputScriptsInBlock(lastBlockHash)
                             await this.db.processDeletedOutputs(lastBlockHash, true)
+                            // Purge outputs created in the rolled-back block that were
+                            // never spent — processDeletedOutputs only restores outputs
+                            // spent in it. Runs last so any output both created and spent
+                            // in this block (just re-staged above) is removed, not revived.
+                            await this.db.removeCreatedOutputsInBlock(lastBlockHash)
                         }
                         await this.db.deleteBlock(lastBlockHash)
                         await this.removeFromLastBlocks(lastBlockHash)

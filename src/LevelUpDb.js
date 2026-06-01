@@ -32,6 +32,7 @@
  *   K: [0x4B][blockHash(32)][scriptPubKey(32)][txHash8(8)][idx(4)]   = 77 B
  *   M: [0x4D][blockHash(32)][txHash8(8)][outputIndex(4)]             = 45 B
  *   N: [0x4E][blockHash(32)]                                          = 33 B
+ *   W: [0x57][blockHash(32)][txHash8(8)][outputIndex(4)]             = 45 B
  *
  * Value layouts:
  *   B: [height(4)][timestamp(4)][previousHash(32)]                   = 40 B
@@ -40,6 +41,7 @@
  *   O: [value(8)][height(4)][fullTxHash(32)]                         = 44 B
  *   H: [scriptPubKey(32)]                                             = 32 B
  *   S: [height(4)]                                                    =  4 B
+ *   W: [scriptPubKey(32)]                                             = 32 B
  *
  ********************************************************************/
 
@@ -74,6 +76,7 @@ const P_BLK_SCRIPT = 0x5A  // 'Z'
 const P_OUT_DEL    = 0x4B  // 'K'
 const P_HINT_DEL   = 0x4D  // 'M'
 const P_STORED_BLK = 0x4E  // 'N'
+const P_OUT_BLK    = 0x57  // 'W' — creation-block reverse index for outputs
 
 // ─── Binary helpers ───────────────────────────────────────────────────────────
 
@@ -204,6 +207,18 @@ function kStoredBlk(blockHashHex) {
     const buf = Buffer.allocUnsafe(33)
     buf[0] = P_STORED_BLK
     buf.write(blockHashHex, 1, 'hex')
+    return buf
+}
+// W key: creation-block reverse index. Keyed by the block an output was created
+// in, so a rolled-back block can enumerate (and delete) the O/H entries it
+// produced. Mirrors the K layout but keyed on the creation block rather than the
+// spend block. Value is the 32-byte scriptPubKey needed to rebuild the O key.
+function kOutBlk(blockHashHex, txHash8Hex, idx) {
+    const buf = Buffer.allocUnsafe(45)
+    buf[0] = P_OUT_BLK
+    buf.write(blockHashHex, 1, 'hex')
+    buf.write(txHash8Hex, 33, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 41)
     return buf
 }
 // Build an O-prefixed output key from an already-binary scriptPubKey buffer
@@ -689,6 +704,28 @@ class LevelUpStore {
         )
     }
 
+    // ─── Output creation-block reverse index (W prefix) ──────────────────────
+
+    // Records which block created this output so a reorg can find and delete the
+    // O/H entries for outputs born in a rolled-back block but never spent (which
+    // K/M spend-recovery alone cannot reach). Confirmed outputs only — mempool
+    // outputs (no blockHash) are skipped, like the S/Z script-block index.
+    // Note: this only heals reorgs going forward — outputs created before this
+    // index existed have no W entry, so a node that reorged in the past must be
+    // re-indexed to clear any pre-existing phantom UTXOs.
+    // output.scriptPubKey may be a Buffer (hot path) or a hex string.
+    async insertOutputBlock(output){
+        if (!output.blockHash) return true
+        const wVal = Buffer.isBuffer(output.scriptPubKey)
+            ? output.scriptPubKey
+            : encodeOutHint(output.scriptPubKey)
+        return await this.addTransaction(
+            "put",
+            kOutBlk(output.blockHash, output.txHash, output.outputIndex),
+            wVal
+        )
+    }
+
     // ─── Output + hint removal (REMOVE_SPENT path) ───────────────────────────
 
     async removeOutputWithInput(input) {
@@ -1044,6 +1081,43 @@ class LevelUpStore {
             // Z key: [Z(1)][blockHash(32)][scriptPubKey(32)]
             const scriptBuf = data.key.slice(33)
             await this.addTransaction("del", Buffer.concat([pb(P_SCRIPT_BLK), scriptBuf]))
+            await this.addTransaction("del", data.key)
+        }
+    }
+
+    // Delete the O/H entries for every output CREATED in the given block, using
+    // the W creation-block reverse index. Called during a reorg to purge outputs
+    // born in a rolled-back block that were never spent — K/M recovery only
+    // restores outputs spent in the rolled-back block, so without this they would
+    // linger as phantom UTXOs and inflate balances permanently. Must run after
+    // processDeletedOutputs(recover=true): if an output was both created and spent
+    // in this block, recovery re-stages its O/H put and this del then overrides it.
+    async removeCreatedOutputsInBlock(blockHash){
+        const prefixBuf = Buffer.concat([pb(P_OUT_BLK), h2b(blockHash)])
+
+        const options = {
+            gte: prefixBuf,
+            lte: rangeEnd(prefixBuf),
+            keys: true,
+            values: true
+        }
+
+        const stream = this.db.createReadStream(options)
+
+        for await (const data of stream) {
+            // W key:   [W(1)][blockHash(32)][txHash8(8)][outputIndex(4)]
+            // W value: [scriptPubKey(32)]
+            const txHash8Buf = data.key.slice(33, 41)
+            const idxBuf     = data.key.slice(41, 45)
+            const scriptBuf  = data.value
+
+            // O key: [O(1)][scriptPubKey(32)][txHash8(8)][outputIndex(4)]
+            const oKey = Buffer.concat([pb(P_OUTPUT), scriptBuf, txHash8Buf, idxBuf])
+            // H key: [H(1)][txHash8(8)][outputIndex(4)]
+            const hKey = Buffer.concat([pb(P_OUT_HINT), txHash8Buf, idxBuf])
+
+            await this.addTransaction("del", oKey)
+            await this.addTransaction("del", hKey)
             await this.addTransaction("del", data.key)
         }
     }

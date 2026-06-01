@@ -191,6 +191,12 @@ describe('Integration: Chain Reorganization', function () {
       const infoAfter0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(infoAfter0.balances.confirmed).to.equal('50.00000000');
       expect(infoAfter0.utxos.confirmed).to.equal(1);
+
+      // addr1's 49 BTC output was CREATED in the rolled-back block and never
+      // spent — it must not survive as a phantom UTXO (W-index cleanup).
+      const infoAfter1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
+      expect(infoAfter1.balances.confirmed).to.equal('0.00000000');
+      expect(infoAfter1.utxos.confirmed).to.equal(0);
     });
   });
 
