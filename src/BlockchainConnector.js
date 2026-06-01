@@ -104,7 +104,7 @@ class BlockchainConnector {
                 const data = {
                     jsonrpc: '2.0',
                     method: 'getblockheader',
-                    params: [blockhash, !hexFormat],
+                    params: [blockhash, hexFormat ? 0 : 1],
                     id: 1,
                 }
 
@@ -242,7 +242,7 @@ class BlockchainConnector {
             const data = {
                 jsonrpc: '2.0',
                 method: 'getblock',
-                params: [blockhash, !hexFormat],
+                params: [blockhash, hexFormat ? 0 : 1],
                 id: 1,
             }
 
@@ -284,7 +284,7 @@ class BlockchainConnector {
         const blockBatch = hashes.map((hash, i) => ({
             jsonrpc: '2.0',
             method: 'getblock',
-            params: [hash, false],  // false = hex format
+            params: [hash, 0],  // 0 = hex format
             id: i
         }))
         const blockResponse = await this.client.post(this.url, blockBatch)
@@ -321,7 +321,7 @@ class BlockchainConnector {
         const headerBatch = hashes.map((hash, i) => ({
             jsonrpc: '2.0',
             method: 'getblockheader',
-            params: [hash, false],  // false = hex format
+            params: [hash, 0],  // 0 = hex format
             id: i
         }))
         const headerResponse = await this.client.post(this.url, headerBatch)
@@ -334,7 +334,7 @@ class BlockchainConnector {
         const blockBatch = hashes.map((hash, i) => ({
             jsonrpc: '2.0',
             method: 'getblock',
-            params: [hash, false],
+            params: [hash, 0],  // 0 = hex format
             id: i
         }))
         const blockResponse = await this.client.post(this.url, blockBatch)
