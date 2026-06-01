@@ -844,11 +844,37 @@ class XChainUtxoTracker {
                     // is a no-op for txs the mempool poll never saw (most of
                     // them in regtest, where blocks mine faster than the 60s
                     // mempool refresh tick).
-                    for (const tx of transactions) {
-                        const txid = "id" in tx ? tx["id"] : tx.getId()
-                        await this.mempoolDb.deleteOutputsByHint(txid)
-                        await this.mempoolDb.deleteInputsByHint(txid)
-                        await this.mempoolDb.deleteTransaction(txid)
+                    // Commit the whole block's mempool-cleanup deletions as one
+                    // atomic batch. deleteOutputsByHint/deleteInputsByHint use
+                    // per-entry `for await` read streams that yield to the event
+                    // loop, so without a wrapping transaction a concurrent
+                    // updateMempool() could split these deletions across its
+                    // batch and direct writes, briefly exposing a half-removed
+                    // (output gone, hint not yet) view to balance queries.
+                    //
+                    // beginTransaction()/endTransaction() share a single
+                    // transactionArray slot with updateMempool(), so we must not
+                    // open a second transaction while a mempool update owns it —
+                    // doing so would orphan its batch and crash its endTransaction
+                    // on a nulled array. mempoolBusy is the existing mutex: wait
+                    // for any in-flight update to release it, then claim it for
+                    // the cleanup. updateMempool() already tolerates a busy tick
+                    // by skipping and retrying on the next interval.
+                    while (this.mempoolBusy){
+                        await this.sleep(50)
+                    }
+                    this.mempoolBusy = true
+                    try {
+                        await this.mempoolDb.beginTransaction()
+                        for (const tx of transactions) {
+                            const txid = "id" in tx ? tx["id"] : tx.getId()
+                            await this.mempoolDb.deleteOutputsByHint(txid)
+                            await this.mempoolDb.deleteInputsByHint(txid)
+                            await this.mempoolDb.deleteTransaction(txid)
+                        }
+                        await this.mempoolDb.endTransaction()
+                    } finally {
+                        this.mempoolBusy = false
                     }
 
                     //Add the block to the last blocks
