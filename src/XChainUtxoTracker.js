@@ -566,6 +566,26 @@ class XChainUtxoTracker {
                 console.log("Last block hash from node is "+blockHashFromNode)
                 
                 if (lastBlockHash != blockHashFromNode){
+                    // Depth guard: spent-output recovery records (K/M entries) are
+                    // retained only for the most recent UNDO_BLOCKS blocks —
+                    // cleanupAgedBlocks() purges them once a block ages out of that
+                    // window. Once we have already rolled back UNDO_BLOCKS blocks, the
+                    // next block's recovery records are gone, so processDeletedOutputs(
+                    // hash, true) would silently restore nothing and leave the UTXO
+                    // index permanently under-counted for any address with outputs spent
+                    // in those blocks. A loud abort is strictly safer than a silently
+                    // corrupt index: stop here and require an operator-driven resync.
+                    if (blocksDeleted.length >= UNDO_BLOCKS){
+                        const msg = "verifyReorg: reorg depth exceeds the recovery window "
+                            + "(UNDO_BLOCKS=" + UNDO_BLOCKS + "). Already rolled back "
+                            + blocksDeleted.length + " blocks; spent-output recovery records "
+                            + "for block height " + lastBlockIndex + " and below have already "
+                            + "been purged, so continuing would silently leave the UTXO index "
+                            + "under-counted. Aborting. Recovery: perform a full resync from a "
+                            + "known-good snapshot."
+                        console.error(msg)
+                        throw new Error(msg)
+                    }
                     try {
                         await this.db.beginTransaction()
                         if (REMOVE_SPENT){
