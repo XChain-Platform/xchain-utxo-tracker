@@ -60,6 +60,10 @@ function satoshiToDecimalString(satoshis) {
 }
 const MEMPOOL_INTERVAL = 60000
 const MEMPOOL_BATCH_SIZE = 1000
+// Max consecutive getRawTransactions failures before we abandon this mempool
+// pass. The node going down mid-pass would otherwise spin this retry loop
+// forever, never reaching the outer finally that clears the busy flag.
+const MEMPOOL_MAX_TX_FETCH_RETRIES = 5
 const REMOVE_SPENT = true
 const ETA_WINDOW_BLOCKS = 1000 //Rolling window size for ETA calculation
 const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node need to have to start parsing
@@ -1073,15 +1077,30 @@ class XChainUtxoTracker {
                 let deletedOutputsCount = deletedInfo.outputsDeleted
 
                 let i = 0
+                let consecutiveTxFetchFailures = 0
                 while(i<rawMempool.length){
                     let nextRawMempoolChunk = rawMempool.slice(i, i+MEMPOOL_BATCH_SIZE)
 
                     let nextTxsHex = []
                     try {
                         nextTxsHex = await this.connector.getRawTransactions(nextRawMempoolChunk)
+                        // Successful fetch — clear the failure streak so a future
+                        // transient blip starts counting from zero again.
+                        consecutiveTxFetchFailures = 0
 
                     } catch (err){
                         console.log(err)
+                        consecutiveTxFetchFailures = consecutiveTxFetchFailures + 1
+                        // If the node stays down, retrying forever here would keep
+                        // execution inside the outer try and never reach the finally
+                        // that resets mempoolBusy — locking out all future mempool
+                        // updates and block sync until a process restart. Bail out
+                        // after a bounded number of consecutive failures so the
+                        // finally fires and the next interval tick can recover.
+                        if (consecutiveTxFetchFailures >= MEMPOOL_MAX_TX_FETCH_RETRIES){
+                            console.warn("Giving up on this mempool pass after "+consecutiveTxFetchFailures+" consecutive getRawTransactions failures; will retry on the next interval.", err)
+                            break
+                        }
                         console.log("There was an error trying to get raw transactions from the mempool. Trying again...", err)
                         await this.sleep(1000)
                         continue
