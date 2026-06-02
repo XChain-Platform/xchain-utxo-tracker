@@ -224,7 +224,11 @@ class BlockchainConnector {
                 id: 1,
             }
 
-            const response = await this.client.post(this.url, data)
+            // Route through postWithRetry (10 ECONNABORTED retries) to match getBlockHeader.
+            // getBlockWithoutAuxPow chains getBlockHeader -> getBlock on the Dogecoin AuxPoW
+            // path; without retry here a transient timeout in this leg discards an already-
+            // successful header fetch and forces the caller to redo the whole operation.
+            const response = await this.postWithRetry(data)
 
             if (response.data.result) {
                 return response.data.result;

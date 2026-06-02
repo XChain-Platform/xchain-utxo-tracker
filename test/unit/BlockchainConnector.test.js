@@ -120,9 +120,10 @@ describe('BlockchainConnector', function () {
       const hex = await connector.getBlock('abc123');
       expect(hex).to.be.a('string');
 
-      // hexFormat=true → pass false to getblock to get hex
+      // hexFormat=true → pass verbosity 0 to getblock for hex (getblock takes an
+      // integer verbosity: 0=hex, 1=json — unlike getblockheader's boolean verbose)
       const payload = clientStub.firstCall.args[1];
-      expect(payload.params[1]).to.equal(false);
+      expect(payload.params[1]).to.equal(0);
     });
 
     it('returns object when hexFormat=false', async function () {
@@ -130,6 +131,30 @@ describe('BlockchainConnector', function () {
       clientStub.resolves({ data: { result: blockObj } });
       const result = await connector.getBlock('abc', false);
       expect(result).to.deep.equal(blockObj);
+    });
+
+    it('retries on ECONNABORTED timeout (matches getBlockHeader)', async function () {
+      sinon.stub(connector, 'sleep').resolves();
+      const timeoutErr = new Error('timeout');
+      timeoutErr.code = 'ECONNABORTED';
+
+      clientStub.onCall(0).rejects(timeoutErr);
+      clientStub.onCall(1).rejects(timeoutErr);
+      clientStub.onCall(2).resolves({ data: { result: 'blockhex' } });
+
+      const result = await connector.getBlock('abc');
+      expect(result).to.equal('blockhex');
+      expect(clientStub.callCount).to.equal(3);
+    });
+
+    it('throws immediately on non-timeout error', async function () {
+      clientStub.rejects(new Error('connection refused'));
+      try {
+        await connector.getBlock('abc');
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(clientStub.callCount).to.equal(1);
+      }
     });
   });
 
