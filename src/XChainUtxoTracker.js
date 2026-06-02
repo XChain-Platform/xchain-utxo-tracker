@@ -638,6 +638,11 @@ class XChainUtxoTracker {
                         console.log("Removed block "+lastBlockHash+" ("+lastBlock["h"]+")")
                         console.log("Rollback to previous block "+lastBlock["ph"]+" ("+(lastBlock["h"]-1)+")")
 
+                        // Per-block retry budget: reset after each successful rollback so the
+                        // 10-attempt limit applies per block, not cumulatively across the whole
+                        // reorg run. Otherwise a multi-block reorg with one transient failure per
+                        // block could exhaust the budget and abort, leaving orphan blocks behind.
+                        retryCount = 0
                         blocksDeleted.push({"block_index":lastBlockIndex, "block_hash":lastBlockHash})
                     } catch (err){
                         try { await this.db.endTransaction(false) } catch (_) {}
