@@ -253,8 +253,10 @@ describe('BlockchainConnector', function () {
         await connector.getRawTransaction('txid123');
         expect.fail('should have rejected');
       } catch (err) {
-        // After 10 tries it rejects with null
+        // After 10 tries it rejects with an Error carrying the txid for context
         expect(clientStub.callCount).to.equal(10);
+        expect(err).to.be.an.instanceof(Error);
+        expect(err.message).to.contain('txid123');
       }
     });
 

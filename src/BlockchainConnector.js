@@ -198,7 +198,7 @@ class BlockchainConnector {
             }
 
             if (tries >= maxTries){
-                reject(null)
+                reject(new Error('getRawTransaction: exhausted retries for ' + txid))
             }
         })
     }
