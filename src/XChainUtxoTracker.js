@@ -1029,68 +1029,79 @@ class XChainUtxoTracker {
             let outputsCount = 0
             
             
-            await this.mempoolDb.beginTransaction()
-            //This deletes the txs that are in the database but not longer in the mempool. Also, it removes
-            //the transactions that already exist in the database, leaving rawMempool only with the new transactions from the mempool
-            let deletedInfo = await this.mempoolDb.deleteAndCompareTxsNotInList(rawMempool) 
-            
-            let deletedTransactionsCount = deletedInfo.transactionsDeleted
-            let deletedInputsCount = deletedInfo.inputsDeleted
-            let deletedOutputsCount = deletedInfo.outputsDeleted
-            
-            let i = 0
-            while(i<rawMempool.length){
-                let nextRawMempoolChunk = rawMempool.slice(i, i+MEMPOOL_BATCH_SIZE)
-                
-                let nextTxsHex = []
-                try {
-                    nextTxsHex = await this.connector.getRawTransactions(nextRawMempoolChunk)
-                    
-                } catch (err){
-                    console.log(err)
-                    console.log("There was an error trying to get raw transactions from the mempool. Trying again...", err)
-                    await this.sleep(1000)
-                    continue
-                }
-                
-                for (let nextTxHexIndex in nextTxsHex){
-                    let nextTxHex = nextTxsHex[nextTxHexIndex]
-                    
-                    if (nextTxHex != null){
-                        let nextTx = this.xchainBlockDecoder.txFromHex(nextTxHex)
+            try {
+                await this.mempoolDb.beginTransaction()
+                //This deletes the txs that are in the database but not longer in the mempool. Also, it removes
+                //the transactions that already exist in the database, leaving rawMempool only with the new transactions from the mempool
+                let deletedInfo = await this.mempoolDb.deleteAndCompareTxsNotInList(rawMempool)
 
-                        let countInfo = await this.parseTransaction(this.mempoolDb, nextTx, null, -1, true)
-                        
-                        if (transactionsCount % MEMPOOL_BATCH_SIZE == 0){
-                            console.log(""+transactionsCount+" parsed txs of "+rawMempool.length)
+                let deletedTransactionsCount = deletedInfo.transactionsDeleted
+                let deletedInputsCount = deletedInfo.inputsDeleted
+                let deletedOutputsCount = deletedInfo.outputsDeleted
+
+                let i = 0
+                while(i<rawMempool.length){
+                    let nextRawMempoolChunk = rawMempool.slice(i, i+MEMPOOL_BATCH_SIZE)
+
+                    let nextTxsHex = []
+                    try {
+                        nextTxsHex = await this.connector.getRawTransactions(nextRawMempoolChunk)
+
+                    } catch (err){
+                        console.log(err)
+                        console.log("There was an error trying to get raw transactions from the mempool. Trying again...", err)
+                        await this.sleep(1000)
+                        continue
+                    }
+
+                    for (let nextTxHexIndex in nextTxsHex){
+                        let nextTxHex = nextTxsHex[nextTxHexIndex]
+
+                        if (nextTxHex != null){
+                            let nextTx = this.xchainBlockDecoder.txFromHex(nextTxHex)
+
+                            let countInfo = await this.parseTransaction(this.mempoolDb, nextTx, null, -1, true)
+
+                            if (transactionsCount % MEMPOOL_BATCH_SIZE == 0){
+                                console.log(""+transactionsCount+" parsed txs of "+rawMempool.length)
+                            }
+
+                            transactionsCount = transactionsCount + 1
+                            inputsCount = inputsCount + countInfo["inputsCount"]
+                            outputsCount = outputsCount + countInfo["outputsCount"]
                         }
-                        
-                        transactionsCount = transactionsCount + 1
-                        inputsCount = inputsCount + countInfo["inputsCount"]
-                        outputsCount = outputsCount + countInfo["outputsCount"]
+                    }
+
+                    i = i + MEMPOOL_BATCH_SIZE
+                    // Only throttle between batches — the inter-batch sleep is for
+                    // CPU/IO breathing room when a giant mempool needs many passes.
+                    // If we just finished the final batch (or only batch), don't
+                    // sleep — single-batch updates (typical for regtest and most
+                    // mainnet conditions) shouldn't pay a 10s tail latency.
+                    if (i < rawMempool.length) {
+                        await this.sleep(10000)
                     }
                 }
-                    
-                i = i + MEMPOOL_BATCH_SIZE
-                // Only throttle between batches — the inter-batch sleep is for
-                // CPU/IO breathing room when a giant mempool needs many passes.
-                // If we just finished the final batch (or only batch), don't
-                // sleep — single-batch updates (typical for regtest and most
-                // mainnet conditions) shouldn't pay a 10s tail latency.
-                if (i < rawMempool.length) {
-                    await this.sleep(10000)
-                }
+
+                await this.mempoolDb.endTransaction()
+                let mempoolEndTime = Date.now()
+                let timeString = this.millisecondsToTimeString(mempoolEndTime-mempoolStartTime)
+
+                console.log("Mempool updated!"
+                    +" Transactions ("+transactionsCount+" more, "+deletedTransactionsCount+" less)"
+                    +" Inputs ("+inputsCount+" more, "+deletedInputsCount+" less) "
+                    +" Outputs("+outputsCount+" more, "+deletedOutputsCount+" less) ["+timeString+"]")
+            } catch (error){
+                // Any failure in the parse/commit path — txFromHex on malformed
+                // hex, a parseTransaction error, or a DB I/O fault — must not
+                // leave mempoolBusy stuck true; otherwise every subsequent
+                // setInterval tick bails with "Mempool is still busy" and the
+                // mempool silently stagnates for the lifetime of the process.
+                console.error('Error during mempool update: ' + error.message, error)
+                try { await this.mempoolDb.endTransaction(false) } catch (_) {}
+            } finally {
+                this.mempoolBusy = false
             }
-            
-            await this.mempoolDb.endTransaction()
-            this.mempoolBusy = false
-            let mempoolEndTime = Date.now()
-            let timeString = this.millisecondsToTimeString(mempoolEndTime-mempoolStartTime)
-            
-            console.log("Mempool updated!"
-                +" Transactions ("+transactionsCount+" more, "+deletedTransactionsCount+" less)"
-                +" Inputs ("+inputsCount+" more, "+deletedInputsCount+" less) "
-                +" Outputs("+outputsCount+" more, "+deletedOutputsCount+" less) ["+timeString+"]")
         } else {
             console.log("Mempool is still busy")
         }
