@@ -173,6 +173,12 @@ class XChainUtxoTracker {
     async stopParsing(){
         return new Promise(async(resolve, reject) => {
             this.keepParsing = false
+
+            if (this.mempoolInterval) {
+                clearInterval(this.mempoolInterval)
+                this.mempoolInterval = null
+            }
+
             let triesCount = 10
         
             while((!this.parsingStopped) && (triesCount > 0)){
@@ -981,6 +987,10 @@ class XChainUtxoTracker {
                 }
             } else {
                 console.log("Stopping the parsing...")
+                if (this.mempoolInterval) {
+                    clearInterval(this.mempoolInterval)
+                    this.mempoolInterval = null
+                }
                 await this.db.close()
                 this.parsingStopped = true
                 break

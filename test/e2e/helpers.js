@@ -451,23 +451,6 @@ function createApiApp(tracker) {
   return { app, request: supertest(app) };
 }
 
-// ─── Cleanup ─────────────────────────────────────────────────────────────────
-
-async function stopTracker(tracker) {
-  try {
-    if (tracker.mempoolInterval) {
-      clearInterval(tracker.mempoolInterval);
-      tracker.mempoolInterval = null;
-    }
-    await tracker.stopParsing();
-  } catch (e) {
-    // Force stop if graceful fails
-    tracker.keepParsing = false;
-    tracker.parsingStopped = true;
-  }
-  // DB is closed by stopParsing/start() loop exit
-}
-
 module.exports = {
   NETWORK,
   SATOSHI,
@@ -493,6 +476,5 @@ module.exports = {
   waitForSynced,
   createE2ETracker,
   patchLevelUpStoreInMemory,
-  createApiApp,
-  stopTracker
+  createApiApp
 };

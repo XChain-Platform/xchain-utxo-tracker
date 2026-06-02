@@ -8,8 +8,7 @@ const {
   makeBlock, buildCoinbaseChain,
   stubBlockchain, addBlockToState, addMempoolTx, removeMempoolTx, clearMempool,
   sleep, waitForHeight, waitForSynced,
-  createE2ETracker, patchLevelUpStoreInMemory,
-  stopTracker
+  createE2ETracker, patchLevelUpStoreInMemory
 } = require('./helpers');
 
 describe('E2E: Mempool Lifecycle', function () {
@@ -23,7 +22,7 @@ describe('E2E: Mempool Lifecycle', function () {
 
   afterEach(async function () {
     sinon.restore();
-    await stopTracker(tracker);
+    await tracker.stopParsing();
     restoreLevelUp();
   });
 

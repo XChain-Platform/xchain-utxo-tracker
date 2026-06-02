@@ -9,8 +9,7 @@ const {
   stubBlockchain, addBlockToState, addMempoolTx,
   sleep, waitForHeight, waitForSynced,
   createE2ETracker, patchLevelUpStoreInMemory,
-  createApiApp,
-  stopTracker
+  createApiApp
 } = require('./helpers');
 
 describe('E2E: API Correctness', function () {
@@ -26,7 +25,7 @@ describe('E2E: API Correctness', function () {
 
   afterEach(async function () {
     sinon.restore();
-    await stopTracker(tracker);
+    await tracker.stopParsing();
     restoreLevelUp();
   });
 

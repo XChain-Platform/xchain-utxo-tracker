@@ -15,8 +15,7 @@ const {
   makeBlock, buildCoinbaseChain,
   stubBlockchain,
   sleep, waitForHeight, waitForSynced,
-  createE2ETracker,
-  stopTracker
+  createE2ETracker
 } = require('./helpers');
 
 describe('E2E: Persistence — Disk-Backed LevelDB', function () {
@@ -87,7 +86,7 @@ describe('E2E: Persistence — Disk-Backed LevelDB', function () {
       expect(infoBefore.balances.confirmed).to.equal('50.00000000');
 
       // Stop the tracker (closes DB)
-      await stopTracker(tracker1);
+      await tracker1.stopParsing();
       sinon.restore();
 
       // Second run: create new tracker with SAME dbName, re-open disk DB
@@ -109,7 +108,7 @@ describe('E2E: Persistence — Disk-Backed LevelDB', function () {
       expect(infoAfter.balances.confirmed).to.equal('50.00000000');
       expect(infoAfter.utxos.confirmed).to.equal(5);
 
-      await stopTracker(tracker2);
+      await tracker2.stopParsing();
     });
 
     it('resumes indexing from where it left off', async function () {
@@ -124,7 +123,7 @@ describe('E2E: Persistence — Disk-Backed LevelDB', function () {
       await waitForSynced(tracker1);
       expect(await tracker1.db.getLastBlockHeight()).to.equal(2);
 
-      await stopTracker(tracker1);
+      await tracker1.stopParsing();
       sinon.restore();
 
       // Build extended chain (5 blocks total)
@@ -152,7 +151,7 @@ describe('E2E: Persistence — Disk-Backed LevelDB', function () {
       expect(info.balances.confirmed).to.equal('50.00000000');
       expect(info.utxos.confirmed).to.equal(5);
 
-      await stopTracker(tracker2);
+      await tracker2.stopParsing();
     });
   });
 
@@ -178,7 +177,7 @@ describe('E2E: Persistence — Disk-Backed LevelDB', function () {
       expect(utxos[0].value).to.equal('546');
 
       // Verify data survives restart
-      await stopTracker(tracker1);
+      await tracker1.stopParsing();
       sinon.restore();
 
       const tracker2 = new XChainUtxoTracker(
@@ -193,7 +192,7 @@ describe('E2E: Persistence — Disk-Backed LevelDB', function () {
       const infoAfter = await tracker2.getBalanceInfo(TEST_KEYS[0].address);
       expect(infoAfter.balances.confirmed).to.equal('0.00000546');
 
-      await stopTracker(tracker2);
+      await tracker2.stopParsing();
     });
   });
 
@@ -220,7 +219,7 @@ describe('E2E: Persistence — Disk-Backed LevelDB', function () {
       expect(info.balances.confirmed).to.equal('21000000.00000000');
 
       // Verify survives restart
-      await stopTracker(tracker1);
+      await tracker1.stopParsing();
       sinon.restore();
 
       const tracker2 = new XChainUtxoTracker(
@@ -235,7 +234,7 @@ describe('E2E: Persistence — Disk-Backed LevelDB', function () {
       const infoAfter = await tracker2.getBalanceInfo(TEST_KEYS[0].address);
       expect(infoAfter.balances.confirmed).to.equal('21000000.00000000');
 
-      await stopTracker(tracker2);
+      await tracker2.stopParsing();
     });
   });
 
@@ -259,7 +258,7 @@ describe('E2E: Persistence — Disk-Backed LevelDB', function () {
       expect(info.balances.confirmed).to.equal('20.00000000');
       expect(info.utxos.confirmed).to.equal(20);
 
-      await stopTracker(tracker1);
+      await tracker1.stopParsing();
     });
   });
 });
