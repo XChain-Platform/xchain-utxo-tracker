@@ -237,6 +237,32 @@ class BlockchainConnector {
         }
     }
 
+    // POST a (batched) JSON-RPC payload, retrying on transient connection timeouts.
+    // Mirrors the ECONNABORTED retry loop in getBlockHeader: up to 10 attempts with a
+    // short backoff. The batch methods route every .post() through here so a single
+    // transient timeout doesn't throw away the whole batch window — without this, one
+    // flaky request evicts all prefetched heights and forces slow single-block refetching.
+    async postWithRetry(data) {
+        let tries = 10
+
+        while (tries > 0) {
+            try {
+                return await this.client.post(this.url, data)
+            } catch (error) {
+                if (error.code === 'ECONNABORTED') {
+                    tries = tries - 1
+                    console.log("Getting timeout on a batch RPC call, trying again...")
+                    await this.sleep(500)
+                } else {
+                    console.error('Error:', error)
+                    throw error
+                }
+            }
+        }
+
+        throw new Error("There were problems with a batch RPC call after retries. ")
+    }
+
     // Fetch multiple blocks in two batched JSON-RPC requests instead of 2×N individual ones:
     //   Request 1: batch getblockhash for all heights  → N hashes
     //   Request 2: batch getblock for all hashes       → N block hexes
@@ -251,7 +277,7 @@ class BlockchainConnector {
             params: [h],
             id: i
         }))
-        const hashResponse = await this.client.post(this.url, hashBatch)
+        const hashResponse = await this.postWithRetry(hashBatch)
         const hashResults  = hashResponse.data.sort((a, b) => a.id - b.id)
         const hashes = hashResults.map(r => {
             if (!r.result) throw new Error('Error getting block hash in batch for id ' + r.id)
@@ -265,7 +291,7 @@ class BlockchainConnector {
             params: [hash, 0],  // 0 = hex format
             id: i
         }))
-        const blockResponse = await this.client.post(this.url, blockBatch)
+        const blockResponse = await this.postWithRetry(blockBatch)
         const blockResults  = blockResponse.data.sort((a, b) => a.id - b.id)
 
         return heights.map((h, i) => ({
@@ -289,7 +315,7 @@ class BlockchainConnector {
             params: [h],
             id: i
         }))
-        const hashResponse = await this.client.post(this.url, hashBatch)
+        const hashResponse = await this.postWithRetry(hashBatch)
         const hashes = hashResponse.data.sort((a, b) => a.id - b.id).map(r => {
             if (!r.result) throw new Error('Error getting block hash in batch for id ' + r.id)
             return r.result
@@ -302,7 +328,7 @@ class BlockchainConnector {
             params: [hash, false],  // false = hex format (Dogecoin 1.14 getblockheader expects a boolean verbose, not an integer verbosity)
             id: i
         }))
-        const headerResponse = await this.client.post(this.url, headerBatch)
+        const headerResponse = await this.postWithRetry(headerBatch)
         const headers = headerResponse.data.sort((a, b) => a.id - b.id).map(r => {
             if (!r.result) throw new Error('Error getting block header in batch for id ' + r.id)
             return r.result
@@ -315,7 +341,7 @@ class BlockchainConnector {
             params: [hash, 0],  // 0 = hex format
             id: i
         }))
-        const blockResponse = await this.client.post(this.url, blockBatch)
+        const blockResponse = await this.postWithRetry(blockBatch)
         const blocks = blockResponse.data.sort((a, b) => a.id - b.id).map(r => {
             if (!r.result) throw new Error('Error getting block in batch for id ' + r.id)
             return r.result
