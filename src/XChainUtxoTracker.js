@@ -60,6 +60,12 @@ function satoshiToDecimalString(satoshis) {
 }
 const MEMPOOL_INTERVAL = 60000
 const MEMPOOL_BATCH_SIZE = 1000
+// Breathing room between mempool batches (CPU/IO). Kept small so the cumulative
+// inter-batch sleep stays well under MEMPOOL_INTERVAL even for large mempools
+// (e.g. 50k txs => 49 sleeps => ~73.5s of sleep at 1500ms, vs ~490s at 10s),
+// which previously kept mempoolBusy locked across every interval tick and left
+// pending-balance queries stale for the whole multi-batch window.
+const MEMPOOL_INTER_BATCH_SLEEP = 1500
 // Max consecutive getRawTransactions failures before we abandon this mempool
 // pass. The node going down mid-pass would otherwise spin this retry loop
 // forever, never reaching the outer finally that clears the busy flag.
@@ -1122,6 +1128,17 @@ class XChainUtxoTracker {
                 let deletedInputsCount = deletedInfo.inputsDeleted
                 let deletedOutputsCount = deletedInfo.outputsDeleted
 
+                // Multi-batch passes are throttled by an inter-batch sleep; on a
+                // large mempool the cumulative sleep dominates the wall-clock cost
+                // of reconverging the in-memory mempool snapshot. Surface an estimate
+                // up front so operators can correlate stale pending-balance windows
+                // with mempool depth during fee spikes.
+                if (rawMempool.length > MEMPOOL_BATCH_SIZE){
+                    let batchCount = Math.ceil(rawMempool.length / MEMPOOL_BATCH_SIZE)
+                    let estimatedSeconds = ((batchCount - 1) * MEMPOOL_INTER_BATCH_SLEEP) / 1000
+                    console.log("Mempool update: "+batchCount+" batches required, estimated minimum reconvergence "+estimatedSeconds+"s")
+                }
+
                 let i = 0
                 let consecutiveTxFetchFailures = 0
                 while(i<rawMempool.length){
@@ -1175,9 +1192,9 @@ class XChainUtxoTracker {
                     // CPU/IO breathing room when a giant mempool needs many passes.
                     // If we just finished the final batch (or only batch), don't
                     // sleep — single-batch updates (typical for regtest and most
-                    // mainnet conditions) shouldn't pay a 10s tail latency.
+                    // mainnet conditions) shouldn't pay a tail latency.
                     if (i < rawMempool.length) {
-                        await this.sleep(10000)
+                        await this.sleep(MEMPOOL_INTER_BATCH_SLEEP)
                     }
                 }
 
