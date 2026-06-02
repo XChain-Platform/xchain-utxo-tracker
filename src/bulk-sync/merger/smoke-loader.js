@@ -1,11 +1,8 @@
 'use strict'
 
 // Ad-hoc smoke test for loader.js. Builds a tiny keysDir, loads it into
-// a fresh levelup(leveldown) DB, reads back via db.get() and asserts that
-// keys/values round-trip byte-for-byte.
-//
-// Runs against leveldown only (rocksdb is not installed everywhere).
-// `--backend rocksdb` via env flag if needed.
+// a fresh classic-level (LevelDB) DB, reads back via db.get() and asserts
+// that keys/values round-trip byte-for-byte.
 
 const fs     = require('fs')
 const os     = require('os')
@@ -15,10 +12,8 @@ const assert = require('assert')
 const { loadKeys } = require('./loader.js')
 const { LAYOUT }   = require('./derive-keys.js')
 
-const BACKEND = process.env.LOADER_BACKEND || 'leveldown'
-
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-loader-'))
-console.log('[smoke/loader] tmp dir:', TMP, 'backend:', BACKEND)
+console.log('[smoke/loader] tmp dir:', TMP)
 
 function buildFile(filePath, records) {
     const buf = Buffer.concat(records)
@@ -114,9 +109,10 @@ async function main() {
     // H: scriptY hint on T0:1
     buildFile(path.join(keysDir, 'H.dat'), [rec(kH(T0_8, 1), SY)])
 
-    // S: scriptX @ H0 h=0 T0, scriptY @ H0 h=0 T0
-    const sValX = Buffer.alloc(68); H0.copy(sValX, 0); sValX.writeUInt32BE(0, 32); T0_FULL.copy(sValX, 36)
-    const sValY = Buffer.alloc(68); H0.copy(sValY, 0); sValY.writeUInt32BE(0, 32); T0_FULL.copy(sValY, 36)
+    // S: scriptX h=0, scriptY h=0. S value is the 4-byte first-seen block
+    // height (LAYOUT.S.valSize === 4), matching LevelUpDb.encodeScriptBlk.
+    const sValX = Buffer.alloc(4); sValX.writeUInt32BE(0, 0)
+    const sValY = Buffer.alloc(4); sValY.writeUInt32BE(0, 0)
     const sRecs = [[kS(SX), sValX], [kS(SY), sValY]]
         .sort((a, b) => Buffer.compare(a[0], b[0]))
         .map(([k, v]) => rec(k, v))
@@ -135,7 +131,7 @@ async function main() {
     }))
 
     // Load into DB
-    const res = await loadKeys({ keysDir, dbPath, backend: BACKEND, batchSize: 100 })
+    const res = await loadKeys({ keysDir, dbPath, batchSize: 100 })
     assert.strictEqual(res.stats.B, 2)
     assert.strictEqual(res.stats.T, 2)
     assert.strictEqual(res.stats.I, 1)
@@ -149,9 +145,8 @@ async function main() {
     console.log('[smoke/loader] load counts OK — elapsed', res.elapsed_ms, 'ms')
 
     // Read back some keys and verify byte-exact value.
-    const levelup = require('levelup')
-    const down    = require(BACKEND)
-    const db = levelup(down(dbPath))
+    const { ClassicLevel } = require('classic-level')
+    const db = new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' })
     await db.open()
 
     try {
@@ -170,9 +165,9 @@ async function main() {
         const got_N = await db.get(kN(H1))
         assert.strictEqual(Buffer.from(got_N).length, 0, 'N[H1] empty value')
 
-        const got_LH = await db.get('LAST_BLOCK_HEIGHT')
+        const got_LH = await db.get(Buffer.from('LAST_BLOCK_HEIGHT'))
         assert.strictEqual(got_LH.toString(), '1', 'LAST_BLOCK_HEIGHT')
-        const got_LB = await db.get('LAST_BLOCK_HASH')
+        const got_LB = await db.get(Buffer.from('LAST_BLOCK_HASH'))
         assert.strictEqual(got_LB.toString(), H1.toString('hex'), 'LAST_BLOCK_HASH')
 
         console.log('[smoke/loader] round-trip byte-exact OK')

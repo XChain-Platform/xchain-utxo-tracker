@@ -47,21 +47,17 @@ Full UTXO tracker documentation is available in the [xchain-documentation](https
 
 ## Quick Start
 
+Requires **Node.js ≥ 22**.
+
 ```bash
 git clone https://github.com/XChain-platform/xchain-utxo-tracker.git
 cd xchain-utxo-tracker
 npm install
 ```
 
-> **GCC 13+ host installs:** the bundled `rocksdb@5.2.1` C++ headers don't
-> explicitly `#include <cstdint>`, which newer GCC requires. If `npm install`
-> fails with `'uint64_t' does not name a type`, prefix the install with
-> `CXXFLAGS="-include cstdint"`:
-> ```bash
-> CXXFLAGS="-include cstdint" npm install
-> ```
-> The Docker image (`node:22-bookworm`, GCC 12) builds cleanly without the
-> flag, so this is dev-host-only.
+> Storage is LevelDB-backed via [`classic-level`](https://github.com/Level/classic-level),
+> which ships prebuilt binaries for Node 22 — `npm install` needs no compiler
+> toolchain or build flags.
 
 Create a `.env` file:
 

@@ -34,49 +34,53 @@ function injectBatchWriteFailure(levelUpStore, error) {
 }
 
 /**
- * Wraps db.db.get and db.db.createReadStream with delays.
- * get() is used for point lookups; createReadStream() for range scans
+ * Wraps the underlying LevelDB get() and iterator() with delays.
+ * get() is used for point lookups; iterator() for range scans
  * (getOutputsScriptPubKey, getBalanceInfo, etc.).
  * Returns { restore() }.
  */
 function injectReadLatency(levelUpStore, delayMs) {
   const originalGet = levelUpStore.db.get.bind(levelUpStore.db);
-  const originalStream = levelUpStore.db.createReadStream.bind(levelUpStore.db);
+  const originalIterator = levelUpStore.db.iterator.bind(levelUpStore.db);
 
   levelUpStore.db.get = async function (key, opts) {
     await sleep(delayMs);
     return originalGet(key, opts);
   };
 
-  levelUpStore.db.createReadStream = function (opts) {
-    const { PassThrough } = require('stream');
-    const pt = new PassThrough({ objectMode: true });
-    setTimeout(() => {
-      const real = originalStream(opts);
-      real.pipe(pt);
-      real.on('error', (err) => pt.destroy(err));
-    }, delayMs);
-    return pt;
+  // abstract-level iterators are consumed via `for await (const [k,v] of it)`,
+  // which drives it.next(). Delay the first next() to simulate scan latency.
+  levelUpStore.db.iterator = function (opts) {
+    const it = originalIterator(opts);
+    const originalNext = it.next.bind(it);
+    let delayed = false;
+    it.next = async function (...args) {
+      if (!delayed) { delayed = true; await sleep(delayMs); }
+      return originalNext(...args);
+    };
+    return it;
   };
 
   return {
     restore() {
       levelUpStore.db.get = originalGet;
-      levelUpStore.db.createReadStream = originalStream;
+      levelUpStore.db.iterator = originalIterator;
     }
   };
 }
 
 /**
  * Directly overwrites LAST_BLOCK_HEIGHT and/or LAST_BLOCK_HASH via the
- * underlying levelup instance, bypassing transactionArray.
+ * underlying LevelDB instance, bypassing transactionArray. The DB is opened
+ * with buffer encodings, so keys/values are written as their byte Buffers
+ * (matches LevelUpDb's metadata schema).
  */
 async function corruptStateAnchor(levelUpStore, { height, hash } = {}) {
   if (height !== undefined) {
-    await levelUpStore.db.put('LAST_BLOCK_HEIGHT', height.toString(16));
+    await levelUpStore.db.put(Buffer.from('LAST_BLOCK_HEIGHT'), Buffer.from(height.toString(16)));
   }
   if (hash !== undefined) {
-    await levelUpStore.db.put('LAST_BLOCK_HASH', hash);
+    await levelUpStore.db.put(Buffer.from('LAST_BLOCK_HASH'), Buffer.from(hash));
   }
 }
 
@@ -84,8 +88,8 @@ async function corruptStateAnchor(levelUpStore, { height, hash } = {}) {
  * Deletes LAST_BLOCK_HEIGHT and/or LAST_BLOCK_HASH from the store.
  */
 async function deleteStateAnchors(levelUpStore) {
-  try { await levelUpStore.db.del('LAST_BLOCK_HEIGHT'); } catch (e) {}
-  try { await levelUpStore.db.del('LAST_BLOCK_HASH'); } catch (e) {}
+  try { await levelUpStore.db.del(Buffer.from('LAST_BLOCK_HEIGHT')); } catch (e) {}
+  try { await levelUpStore.db.del(Buffer.from('LAST_BLOCK_HASH')); } catch (e) {}
 }
 
 // ─── Reorg Helpers ──────────────────────────────────────────────────────────

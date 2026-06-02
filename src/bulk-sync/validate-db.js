@@ -17,8 +17,8 @@
  *
  * XChain UTXO Tracker - Bulk Sync DB Validator
  *
- * Compares two LevelUpDb (rocksdb-backed) directories key-by-key via a
- * streaming merge-walk. Reports total keys, matches, value diffs, keys
+ * Compares two LevelUpDb (classic-level / LevelDB) directories key-by-key via
+ * a streaming merge-walk. Reports total keys, matches, value diffs, keys
  * only in truth, keys only in candidate — broken down by prefix byte.
  * Prints the first N diffs verbatim for inspection.
  *
@@ -26,38 +26,24 @@
  *
  ********************************************************************/
 
-const levelup  = require('levelup')
+const { ClassicLevel } = require('classic-level')
 
 const DEFAULT_LIMIT   = 20
-const DEFAULT_BACKEND = 'rocksdb'
-
-function loadBackend(name) {
-    if (name !== 'rocksdb' && name !== 'leveldown') {
-        throw new Error(`Unknown backend "${name}" — must be rocksdb or leveldown`)
-    }
-    try {
-        return require(name)
-    } catch (err) {
-        throw new Error(`Failed to load backend "${name}": ${err.message}`)
-    }
-}
 
 function parseArgs(argv) {
     const args = {
-        limit: DEFAULT_LIMIT,
-        truthBackend: DEFAULT_BACKEND,
-        candidateBackend: DEFAULT_BACKEND
+        limit: DEFAULT_LIMIT
     }
     for (let i = 2; i < argv.length; i++) {
         const arg = argv[i]
         switch (arg) {
             case '--truth':             args.truth = argv[++i]; break
             case '--candidate':         args.candidate = argv[++i]; break
-            case '--truth-backend':     args.truthBackend = argv[++i]; break
-            case '--candidate-backend': args.candidateBackend = argv[++i]; break
-            case '--backend':
-                args.truthBackend = args.candidateBackend = argv[++i]
-                break
+            // Legacy backend flags — the only backend now is classic-level.
+            // Accepted (and ignored) so older invocations don't error out.
+            case '--truth-backend':
+            case '--candidate-backend':
+            case '--backend':           i++; break
             case '--limit':             args.limit = parseInt(argv[++i], 10); break
             case '--prefix':            args.prefix = argv[++i]; break
             case '--help':
@@ -77,16 +63,14 @@ function printHelp() {
 Options:
   --truth <path>              Ground-truth DB directory (required)
   --candidate <path>          Candidate DB directory (required)
-  --truth-backend <name>      rocksdb | leveldown (default ${DEFAULT_BACKEND})
-  --candidate-backend <name>  rocksdb | leveldown (default ${DEFAULT_BACKEND})
-  --backend <name>            Shortcut for both backends
   --limit <n>                 Max diffs to print verbatim (default ${DEFAULT_LIMIT})
   --prefix <hex>              Filter to keys starting with this hex byte (e.g. 42 for 'B')
 
+Both DBs are classic-level (LevelDB) directories and must be closed.
+
 Examples:
-  node src/bulk-sync/validate-db.js --truth /data/a --candidate /data/b --backend leveldown
-  node src/bulk-sync/validate-db.js --truth /data/truth --candidate /data/cand \\
-        --truth-backend leveldown --candidate-backend rocksdb
+  node src/bulk-sync/validate-db.js --truth /data/a --candidate /data/b
+  node src/bulk-sync/validate-db.js --truth /data/truth --candidate /data/cand --prefix 4F
 `)
 }
 
@@ -104,29 +88,25 @@ function validateArgs(args) {
     }
 }
 
-function openDb(path, backendName) {
-    const backend = loadBackend(backendName)
-    return new Promise((resolve, reject) => {
-        const db = levelup(backend(path), err => {
-            if (err) reject(err)
-            else resolve(db)
-        })
-    })
+async function openDb(path) {
+    const db = new ClassicLevel(path, { keyEncoding: 'buffer', valueEncoding: 'buffer' })
+    await db.open()
+    return db
 }
 
+// Pull-based adapter over an abstract-level iterator so the two-way merge-walk
+// below can advance each side independently. abstract-level's `it.next()`
+// resolves to a [key, value] tuple or undefined at end-of-stream.
 function makeIterator(db, options) {
     const it = db.iterator(options)
     return {
-        next: () => new Promise((resolve, reject) => {
-            it.next((err, key, value) => {
-                if (err) reject(err)
-                else if (key === undefined) resolve(null)
-                else resolve({ key, value })
-            })
-        }),
-        end: () => new Promise((resolve, reject) => {
-            it.end(err => err ? reject(err) : resolve())
-        })
+        next: async () => {
+            const entry = await it.next()
+            if (entry === undefined) return null
+            const [key, value] = entry
+            return { key, value }
+        },
+        end: () => it.close()
     }
 }
 
@@ -162,14 +142,14 @@ async function main() {
     const args = parseArgs(process.argv)
     validateArgs(args)
 
-    console.log(`[validate-db] truth     = ${args.truth} (${args.truthBackend})`)
-    console.log(`[validate-db] candidate = ${args.candidate} (${args.candidateBackend})`)
+    console.log(`[validate-db] truth     = ${args.truth}`)
+    console.log(`[validate-db] candidate = ${args.candidate}`)
     if (args.prefix != null) console.log(`[validate-db] prefix filter = 0x${args.prefix}`)
 
-    const truthDb = await openDb(args.truth,     args.truthBackend)
-    const candDb  = await openDb(args.candidate, args.candidateBackend)
+    const truthDb = await openDb(args.truth)
+    const candDb  = await openDb(args.candidate)
 
-    let itOpts = { keyAsBuffer: true, valueAsBuffer: true }
+    let itOpts = { keyEncoding: 'buffer', valueEncoding: 'buffer' }
     if (args.prefixByte != null) {
         itOpts.gte = Buffer.from([args.prefixByte])
         itOpts.lt  = Buffer.from([args.prefixByte + 1])

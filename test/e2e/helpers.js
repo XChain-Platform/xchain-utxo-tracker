@@ -350,24 +350,24 @@ function createE2ETracker() {
 }
 
 /**
- * Patch the LevelUpStore module so that ANY new instance uses memdown (in-memory)
- * regardless of the inMemory constructor param. This lets us test the start() loop
- * (which creates its own DBs) without needing disk access.
+ * Patch the LevelUpStore module so that ANY new instance uses memory-level
+ * (in-memory) regardless of the inMemory constructor param. This lets us test
+ * the start() loop (which creates its own DBs) without needing disk access.
  *
  * Returns a restore function.
  */
 function patchLevelUpStoreInMemory() {
   const origCreateDatabase = LevelUpStore.prototype.createDatabase;
-  const memdown = require('memdown');
-  const levelup = require('levelup');
+  const { MemoryLevel } = require('memory-level');
 
   LevelUpStore.prototype.createDatabase = async function () {
     try {
-      this.db = levelup(memdown());
+      this.db = new MemoryLevel({ keyEncoding: 'buffer', valueEncoding: 'buffer' });
       this.inMemory = true;
+      await this.db.open();
       return this.db;
     } catch (err) {
-      throw new Error("Couldn't open/create levelup database");
+      throw new Error("Couldn't open/create LevelDB database");
     }
   };
 

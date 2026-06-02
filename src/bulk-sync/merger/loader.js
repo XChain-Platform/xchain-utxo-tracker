@@ -12,16 +12,16 @@
  * XChain UTXO Tracker - Bulk Sync Loader
  *
  * Streams the per-prefix fixed-record files produced by derive-keys.js
- * into a levelup-backed DB (rocksdb or leveldown) via db.batch() writes.
+ * into a classic-level (LevelDB) DB via db.batch() writes.
  *
  * Each .dat file is a flat concatenation of (key || value) records of a
  * fixed size; we chunk them into batches of `batchSize` records and issue
  * one put-batch per chunk.
  *
- * LAST_* markers are written as string-encoded entries to match
- * LevelUpDb's schema: key = 'LAST_BLOCK_HEIGHT'/'LAST_BLOCK_HASH' (string),
- * value = hex-string / hash-string. These keys are NOT in any .dat file —
- * they are read from L.json.
+ * LAST_* markers are written as Buffer-encoded entries to match
+ * LevelUpDb's schema: key = 'LAST_BLOCK_HEIGHT'/'LAST_BLOCK_HASH' (UTF-8
+ * bytes), value = hex-string / hash-string bytes. These keys are NOT in any
+ * .dat file — they are read from L.json.
  *
  ********************************************************************/
 
@@ -32,28 +32,17 @@ const { LAYOUT }       = require('./derive-keys.js')
 const { RecordReader } = require('./streaming-join.js')
 
 // File name → prefix letter. Load order doesn't affect correctness for
-// levelup (keys end up sorted internally). We go alphabetical which is
+// LevelDB (keys end up sorted internally). We go alphabetical which is
 // also ascending prefix-byte order.
 const PREFIX_FILES = ['B', 'H', 'I', 'J', 'N', 'O', 'S', 'T', 'Z']
 
 function noop() {}
 
-function openDb(dbPath, backend) {
-    const levelup = require('levelup')
-    let backendCtor
-    if (backend === 'leveldown') {
-        backendCtor = require('leveldown')
-    } else if (backend === 'rocksdb') {
-        backendCtor = require('rocksdb')
-    } else {
-        throw new Error(`loader: unknown backend '${backend}' (expected leveldown or rocksdb)`)
-    }
-    // Match LevelUpDb.js: no explicit encoding opts. Pass Buffer keys/values
-    // verbatim via db.batch().
-    return levelup(backendCtor(dbPath, {
-        maxBackgroundCompactions: 1,
-        maxBackgroundFlushes: 1,
-    }))
+function openDb(dbPath) {
+    const { ClassicLevel } = require('classic-level')
+    // Match LevelUpDb.js: open with buffer encodings so Buffer keys/values
+    // pass through db.batch() verbatim.
+    return new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' })
 }
 
 async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize) {
@@ -85,8 +74,7 @@ async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize) {
 /**
  * @param {Object}  opts
  * @param {string}  opts.keysDir      directory with B.dat..Z.dat + L.json
- * @param {string}  opts.dbPath       DB directory path
- * @param {string}  opts.backend      'rocksdb' | 'leveldown'
+ * @param {string}  opts.dbPath       DB directory path (classic-level / LevelDB)
  * @param {number}  opts.batchSize    records per batch (default 10000)
  * @param {boolean} opts.removeSpent  skip T/I/J prefixes. Matches
  *                                     XChainUtxoTracker.REMOVE_SPENT — when
@@ -96,16 +84,16 @@ async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize) {
  * @param {Function} opts.onProgress  ({phase, ...})
  */
 async function loadKeys(opts) {
-    const { keysDir, dbPath, backend } = opts
+    const { keysDir, dbPath } = opts
     const batchSize   = opts.batchSize  || 10000
     const removeSpent = Boolean(opts.removeSpent)
     const onProgress  = opts.onProgress || noop
 
-    if (!keysDir || !dbPath || !backend) {
-        throw new Error('loadKeys: keysDir, dbPath, backend are required')
+    if (!keysDir || !dbPath) {
+        throw new Error('loadKeys: keysDir, dbPath are required')
     }
 
-    const db = openDb(dbPath, backend)
+    const db = openDb(dbPath)
     await db.open()
 
     const prefixes = removeSpent
@@ -140,9 +128,11 @@ async function loadKeys(opts) {
         if (!('LAST_BLOCK_HEIGHT' in L) || !('LAST_BLOCK_HASH' in L)) {
             throw new Error('loadKeys: L.json missing LAST_BLOCK_HEIGHT / LAST_BLOCK_HASH')
         }
+        // DB is opened with buffer encodings — store the string metadata keys
+        // and values as their UTF-8 byte Buffers (matches LevelUpDb.js).
         await db.batch([
-            { type: 'put', key: 'LAST_BLOCK_HEIGHT', value: L.LAST_BLOCK_HEIGHT },
-            { type: 'put', key: 'LAST_BLOCK_HASH',   value: L.LAST_BLOCK_HASH   },
+            { type: 'put', key: Buffer.from('LAST_BLOCK_HEIGHT'), value: Buffer.from(L.LAST_BLOCK_HEIGHT) },
+            { type: 'put', key: Buffer.from('LAST_BLOCK_HASH'),   value: Buffer.from(L.LAST_BLOCK_HASH)   },
         ])
         stats.L = 2
     } finally {

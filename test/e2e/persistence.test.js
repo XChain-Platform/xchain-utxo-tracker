@@ -5,8 +5,8 @@ const sinon = require('sinon');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
-const levelup = require('levelup');
-const leveldown = require('leveldown');
+const { ClassicLevel } = require('classic-level');
+const { MemoryLevel } = require('memory-level');
 const LevelUpStore = require('../../src/LevelUpDb');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 const {
@@ -48,18 +48,18 @@ describe('E2E: Persistence — Disk-Backed LevelDB', function () {
    * The main DB goes to disk; the mempool DB stays in-memory.
    */
   function patchLevelUpStoreDisk() {
-    const memdown = require('memdown');
     LevelUpStore.prototype.createDatabase = async function () {
       try {
         if (this.inMemory) {
-          this.db = levelup(memdown());
+          this.db = new MemoryLevel({ keyEncoding: 'buffer', valueEncoding: 'buffer' });
         } else {
           const dbPath = path.join(tmpDir, this.dbName);
-          this.db = levelup(leveldown(dbPath));
+          this.db = new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' });
         }
+        await this.db.open();
         return this.db;
       } catch (err) {
-        throw new Error("Couldn't open/create levelup database");
+        throw new Error("Couldn't open/create LevelDB database");
       }
     };
   }

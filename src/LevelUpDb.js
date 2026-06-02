@@ -54,15 +54,15 @@ const util = require('./util')
 // per endTransaction. Logs go to stdout (docker logs).
 const DEBUG_TRACE = process.env.TRACE_UTXO === '1' || process.env.TRACE_UTXO === 'true'
 
-var levelup = require('levelup')
-var leveldown = require('rocksdb')
-var memdown = require('memdown')
-const encode = require('encoding-down')
+const { ClassicLevel } = require('classic-level')
+const { MemoryLevel } = require('memory-level')
 const bs = require("binary-search")
 
-// String-keyed entries (not binary, kept as-is)
-const PREFIX_LAST_BLOCK_HEIGHT = "LAST_BLOCK_HEIGHT"
-const PREFIX_LAST_BLOCK_HASH   = "LAST_BLOCK_HASH"
+// String-keyed metadata entries. The DB is opened with keyEncoding:'buffer',
+// so these are stored as their UTF-8 byte Buffers (lexicographically after the
+// single-byte binary prefixes, which never collide with these ASCII keys).
+const PREFIX_LAST_BLOCK_HEIGHT = Buffer.from("LAST_BLOCK_HEIGHT")
+const PREFIX_LAST_BLOCK_HASH   = Buffer.from("LAST_BLOCK_HASH")
 
 // Single-byte prefix values
 const P_BLOCK      = 0x42  // 'B'
@@ -341,16 +341,16 @@ class LevelUpStore {
     async createDatabase() {
         try {
             if (this.inMemory){
-                this.db = levelup(memdown())
+                this.db = new MemoryLevel({ keyEncoding: 'buffer', valueEncoding: 'buffer' })
             } else {
-                this.db = levelup(leveldown("/data/"+this.dbName, {
-                    maxBackgroundCompactions: 8,
-                    maxBackgroundFlushes: 4
-                }))
+                this.db = new ClassicLevel("/data/"+this.dbName, { keyEncoding: 'buffer', valueEncoding: 'buffer' })
             }
+            // abstract-level opens lazily on first op; open explicitly so any
+            // open/create error surfaces here rather than on the first read.
+            await this.db.open()
             return this.db
         } catch (err){
-            throw new Error("Couldn't open/create levelup database")
+            throw new Error("Couldn't open/create LevelDB database")
         }
     }
 
@@ -434,19 +434,16 @@ class LevelUpStore {
         } catch (err){
             console.log("There were errors trying to insert data in a batch")
             console.log(err)
-            throw new Error("Error in levelup batch inserting")
+            throw new Error("Error in LevelDB batch inserting")
         }
     }
 
     // ─── Block height / hash ─────────────────────────────────────────────────
 
     async getLastBlockHeight(){
-        try {
-            let value = await this.db.get(PREFIX_LAST_BLOCK_HEIGHT)
-            return parseInt(value.toString(), 16)
-        } catch (err) {
-            return -1
-        }
+        const value = await this.db.get(PREFIX_LAST_BLOCK_HEIGHT)
+        if (value === undefined) return -1
+        return parseInt(value.toString(), 16)
     }
 
     // Records the block-tip in the same in-flight batch as the UTXO inserts
@@ -457,20 +454,20 @@ class LevelUpStore {
     // is_quiescent rely on: callers can treat a returned committed_height as
     // "every output in blocks 0..N is queryable right now".
     async setLastBlockHeight(height){
-        await this.addTransaction("put", PREFIX_LAST_BLOCK_HEIGHT, height.toString(16))
+        // valueEncoding is 'buffer' — store the hex string as its UTF-8 bytes.
+        await this.addTransaction("put", PREFIX_LAST_BLOCK_HEIGHT, Buffer.from(height.toString(16)))
         return true
     }
 
     async getLastBlockHash(){
-        try {
-            return (await this.db.get(PREFIX_LAST_BLOCK_HASH)).toString()
-        } catch (err) {
-            return null
-        }
+        const value = await this.db.get(PREFIX_LAST_BLOCK_HASH)
+        if (value === undefined) return null
+        return value.toString()
     }
 
     async setLastBlockHash(hash){
-        return await this.addTransaction("put", PREFIX_LAST_BLOCK_HASH, hash)
+        // valueEncoding is 'buffer' — store the hash string as its UTF-8 bytes.
+        return await this.addTransaction("put", PREFIX_LAST_BLOCK_HASH, Buffer.from(hash))
     }
 
     // ─── Stored block list (N prefix) ────────────────────────────────────────
@@ -507,13 +504,9 @@ class LevelUpStore {
     }
 
     async getBlock(blockHash){
-        try {
-            const buf = await this.db.get(kBlock(blockHash))
-            return decodeBlock(buf)
-        } catch (err) {
-            if (err.notFound) return null
-            throw err
-        }
+        const buf = await this.db.get(kBlock(blockHash))
+        if (buf === undefined) return null
+        return decodeBlock(buf)
     }
 
     // ─── Transaction (T prefix) ──────────────────────────────────────────────
@@ -533,40 +526,31 @@ class LevelUpStore {
     // Returns entries as { txid: "T"+txHash8Hex, block_hash: hex }
     // Caller strips the leading "T" with .substr(1) to get txHash8Hex.
     async getTransactions(txHashPrefix){
-        return new Promise((resolve, reject) => {
-            const transactions = []
-            const prefix = Buffer.concat([pb(P_TX), h2b(txHashPrefix)])
-            const options = {
-                gte: prefix,
-                lte: rangeEnd(prefix),
-                keys: true,
-                values: true
-            }
+        const transactions = []
+        const prefix = Buffer.concat([pb(P_TX), h2b(txHashPrefix)])
+        const options = {
+            gte: prefix,
+            lte: rangeEnd(prefix),
+            keys: true,
+            values: true
+        }
 
-            const stream = this.db.createReadStream(options)
-
-            stream.on('data', function(data) {
-                const txHash8Hex = b2h(data.key.slice(1))
-                const blockHashHex = decodeTx(data.value).bh
-                transactions.push({
-                    txid: 'T' + txHash8Hex,
-                    block_hash: blockHashHex
-                })
+        for await (const [key, value] of this.db.iterator(options)) {
+            const txHash8Hex = b2h(key.slice(1))
+            const blockHashHex = decodeTx(value).bh
+            transactions.push({
+                txid: 'T' + txHash8Hex,
+                block_hash: blockHashHex
             })
+        }
 
-            stream.on('error', reject)
-            stream.on('end', function() { resolve(transactions) })
-        })
+        return transactions
     }
 
     async getTransaction(txHashWithPrefix){
         // Accepts full key as hex string (prefix included) for backward compatibility
-        try {
-            return await this.db.get(h2b(txHashWithPrefix))
-        } catch (err){
-            if (err.notFound) return null
-            throw err
-        }
+        const value = await this.db.get(h2b(txHashWithPrefix))
+        return value === undefined ? null : value
     }
 
     // ─── Input (I prefix) ────────────────────────────────────────────────────
@@ -580,12 +564,8 @@ class LevelUpStore {
     }
 
     async getInput(txHash8, outputIndex){
-        try {
-            return await this.db.get(kInput(txHash8, outputIndex))
-        } catch (err) {
-            if (err.notFound) return null
-            throw err
-        }
+        const value = await this.db.get(kInput(txHash8, outputIndex))
+        return value === undefined ? null : value
     }
 
     async deleteInputs(txids){
@@ -599,13 +579,12 @@ class LevelUpStore {
         }
 
         const txids8 = txids.map(t => (Buffer.isBuffer(t) ? b2h(t) : t))
-        const dbStream = this.db.createReadStream(options)
         let inputsCount = 0
 
-        for await (const data of dbStream) {
-            const txHash = decodeInputVal(data.value).th
+        for await (const [key, value] of this.db.iterator(options)) {
+            const txHash = decodeInputVal(value).th
             if (!txids8.includes(txHash)) {
-                await this.addTransaction("del", data.key, null)
+                await this.addTransaction("del", key, null)
                 inputsCount++
             }
         }
@@ -635,19 +614,18 @@ class LevelUpStore {
         }
 
         let inputsCount = 0
-        const dbStream = this.db.createReadStream(options)
 
-        for await (const data of dbStream) {
+        for await (const [key] of this.db.iterator(options)) {
             // J key layout: [J(1)][txHash8(8)][prevTxHash8(8)][outputIndex(4)]
-            const prevTxHash8Buf = data.key.slice(9, 17)
-            const idxBuf         = data.key.slice(17, 21)
+            const prevTxHash8Buf = key.slice(9, 17)
+            const idxBuf         = key.slice(17, 21)
 
             await this.addTransaction(
                 "del",
                 Buffer.concat([pb(P_INPUT), prevTxHash8Buf, idxBuf]),
                 null
             )
-            await this.addTransaction("del", data.key, null)
+            await this.addTransaction("del", key, null)
             inputsCount++
         }
 
@@ -732,15 +710,19 @@ class LevelUpStore {
         const hKey = kOutHint(input.prevTxHash, input.prevOutputIndex)
         const mKey = kHintDel(input.blockHash, input.prevTxHash, input.prevOutputIndex)
 
-        let scriptPubKeyBuf = null
-        let oVal = null
+        // abstract-level .get returns undefined on a missing key (it does NOT
+        // throw). Real I/O errors still reject the promise and propagate up —
+        // we deliberately do NOT swallow them here, unlike the previous
+        // catch-all which treated every error as "not committed yet".
+        const scriptPubKeyBuf = await this.db.get(hKey)                            // 32-byte Buffer or undefined
+        let oVal = undefined
         let oKey = null
-
-        try {
-            scriptPubKeyBuf = await this.db.get(hKey)                               // 32-byte Buffer
+        if (scriptPubKeyBuf !== undefined) {
             oKey = kOutputFromBuf(scriptPubKeyBuf, input.prevTxHash, input.prevOutputIndex)
             oVal = await this.db.get(oKey)
-        } catch (err) {
+        }
+
+        if (scriptPubKeyBuf === undefined || oVal === undefined) {
             // Output not yet committed — check in-memory transaction map
             const inMemScript = this.getTransactionValue(hKey)
             if (inMemScript != null){
@@ -907,16 +889,15 @@ class LevelUpStore {
         }
 
         let outputsCount = 0
-        const dbStream = this.db.createReadStream(options)
 
-        for await (const data of dbStream) {
+        for await (const [key, value] of this.db.iterator(options)) {
             // H key layout: [H(1)][txHash8(8)][outputIndex(4)]
-            const idxPart = data.key.slice(9, 13)   // 4-byte output index
-            const scriptPubKeyBuf = data.value       // 32-byte Buffer
+            const idxPart = key.slice(9, 13)   // 4-byte output index
+            const scriptPubKeyBuf = value       // 32-byte Buffer
 
             const oKey = Buffer.concat([pb(P_OUTPUT), scriptPubKeyBuf, txHash8Buf, idxPart])
             await this.addTransaction("del", oKey, null)
-            await this.addTransaction("del", data.key, null)
+            await this.addTransaction("del", key, null)
             outputsCount++
         }
 
@@ -967,19 +948,17 @@ class LevelUpStore {
             values: true
         }
 
-        const stream = this.db.createReadStream(options)
-
-        for await (const data of stream) {
+        for await (const [key, value] of this.db.iterator(options)) {
             if (recover){
                 // Strip the prefix+blockHash to get the original key suffix,
                 // then prepend the correct single-byte prefix to reconstruct it.
-                const suffix = data.key.slice(33)  // skip [prefix(1)][blockHash(32)]
+                const suffix = key.slice(33)  // skip [prefix(1)][blockHash(32)]
                 const restorePrefix = processOutputHints ? P_OUT_HINT : P_OUTPUT
                 const restoreKey = Buffer.concat([pb(restorePrefix), suffix])
-                await this.addTransaction("put", restoreKey, data.value)
+                await this.addTransaction("put", restoreKey, value)
             }
 
-            await this.addTransaction("del", data.key)
+            await this.addTransaction("del", key)
         }
     }
 
@@ -993,13 +972,11 @@ class LevelUpStore {
             values: true
         }
 
-        const stream = this.db.createReadStream(options)
-
-        for await (const data of stream) {
-            const suffix  = data.key.slice(33)  // skip [M(1)][blockHash(32)]
+        for await (const [key, value] of this.db.iterator(options)) {
+            const suffix  = key.slice(33)  // skip [M(1)][blockHash(32)]
             const hKey = Buffer.concat([pb(P_OUT_HINT), suffix])
-            await this.addTransaction("put", hKey, data.value)
-            await this.addTransaction("del", data.key)
+            await this.addTransaction("put", hKey, value)
+            await this.addTransaction("del", key)
         }
     }
 
@@ -1037,13 +1014,12 @@ class LevelUpStore {
             return true
         }
 
-        // Tier 2: DB lookup
-        try {
-            await this.db.get(sKey)
+        // Tier 2: DB lookup. abstract-level .get returns undefined on a miss;
+        // a defined value means the script-block entry already exists. Real
+        // I/O errors propagate.
+        if (await this.db.get(sKey) !== undefined) {
             LevelUpStore.knownScripts.add(scriptKey)
             return true  // already exists
-        } catch (err) {
-            if (!err.notFound) throw err
         }
 
         // New script — insert and remember
@@ -1056,13 +1032,9 @@ class LevelUpStore {
     }
 
     async getOutputScriptBlock(outputScript){
-        try {
-            const buf = await this.db.get(kScriptBlk(outputScript))
-            return decodeScriptBlk(buf)
-        } catch (err) {
-            if (err.notFound) return null
-            throw err
-        }
+        const buf = await this.db.get(kScriptBlk(outputScript))
+        if (buf === undefined) return null
+        return decodeScriptBlk(buf)
     }
 
     async removeOutputScriptsInBlock(blockHash){
@@ -1075,13 +1047,11 @@ class LevelUpStore {
             values: true
         }
 
-        const stream = this.db.createReadStream(options)
-
-        for await (const data of stream) {
+        for await (const [key] of this.db.iterator(options)) {
             // Z key: [Z(1)][blockHash(32)][scriptPubKey(32)]
-            const scriptBuf = data.key.slice(33)
+            const scriptBuf = key.slice(33)
             await this.addTransaction("del", Buffer.concat([pb(P_SCRIPT_BLK), scriptBuf]))
-            await this.addTransaction("del", data.key)
+            await this.addTransaction("del", key)
         }
     }
 
@@ -1102,14 +1072,12 @@ class LevelUpStore {
             values: true
         }
 
-        const stream = this.db.createReadStream(options)
-
-        for await (const data of stream) {
+        for await (const [key, value] of this.db.iterator(options)) {
             // W key:   [W(1)][blockHash(32)][txHash8(8)][outputIndex(4)]
             // W value: [scriptPubKey(32)]
-            const txHash8Buf = data.key.slice(33, 41)
-            const idxBuf     = data.key.slice(41, 45)
-            const scriptBuf  = data.value
+            const txHash8Buf = key.slice(33, 41)
+            const idxBuf     = key.slice(41, 45)
+            const scriptBuf  = value
 
             // O key: [O(1)][scriptPubKey(32)][txHash8(8)][outputIndex(4)]
             const oKey = Buffer.concat([pb(P_OUTPUT), scriptBuf, txHash8Buf, idxBuf])
@@ -1118,97 +1086,83 @@ class LevelUpStore {
 
             await this.addTransaction("del", oKey)
             await this.addTransaction("del", hKey)
-            await this.addTransaction("del", data.key)
+            await this.addTransaction("del", key)
         }
     }
 
     // ─── Queries ─────────────────────────────────────────────────────────────
 
     async getOutputsScriptPubKey(scriptPubKey){
-        return new Promise((resolve, reject) => {
-            const outputs = []
-            const prefix  = Buffer.concat([pb(P_OUTPUT), h2b(scriptPubKey)])
-            const options = {
-                gte: prefix,
-                lte: rangeEnd(prefix),
-                keys: true,
-                values: true
-            }
+        const outputs = []
+        const prefix  = Buffer.concat([pb(P_OUTPUT), h2b(scriptPubKey)])
+        const options = {
+            gte: prefix,
+            lte: rangeEnd(prefix),
+            keys: true,
+            values: true
+        }
 
-            const stream = this.db.createReadStream(options)
+        for await (const [key, value] of this.db.iterator(options)) {
+            // O key: [O(1)][scriptPubKey(32)][txHash8(8)][outputIndex(4)]
+            const txHash8Hex = b2h(key.slice(33, 41))
+            const n          = key.readUInt32BE(41)
+            const decoded    = decodeOutput(value)
 
-            stream.on('data', function(data) {
-                // O key: [O(1)][scriptPubKey(32)][txHash8(8)][outputIndex(4)]
-                const txHash8Hex = b2h(data.key.slice(33, 41))
-                const n          = data.key.readUInt32BE(41)
-                const decoded    = decodeOutput(data.value)
-
-                outputs.push({
-                    txid:     txHash8Hex,
-                    fullTxid: decoded.t || null,
-                    vout:     n,
-                    value:    decoded.v,
-                    height:   decoded.h
-                })
+            outputs.push({
+                txid:     txHash8Hex,
+                fullTxid: decoded.t || null,
+                vout:     n,
+                value:    decoded.v,
+                height:   decoded.h
             })
+        }
 
-            stream.on('error', reject)
-            stream.on('end', function() { resolve(outputs) })
-        })
+        return outputs
     }
 
     async getLastBlock(){
-        return new Promise((resolve, reject) => {
-            const options = {
-                gte: pb(P_BLOCK),
-                lte: rangeEnd(pb(P_BLOCK)),
-                keys: true,
-                values: true
-            }
+        const options = {
+            gte: pb(P_BLOCK),
+            lte: rangeEnd(pb(P_BLOCK)),
+            keys: true,
+            values: true
+        }
 
-            let maxBlockHeight = null
-            let maxBlockObj    = null
-            const stream = this.db.createReadStream(options)
+        let maxBlockHeight = null
+        let maxBlockObj    = null
 
-            stream.on('data', function(data) {
-                const blockHash = b2h(data.key.slice(1))
-                const decoded   = decodeBlock(data.value)
+        for await (const [key, value] of this.db.iterator(options)) {
+            const blockHash = b2h(key.slice(1))
+            const decoded   = decodeBlock(value)
 
-                if (maxBlockHeight === null || decoded.h > maxBlockHeight){
-                    maxBlockHeight = decoded.h
-                    maxBlockObj = {
-                        hash:         blockHash,
-                        height:       decoded.h,
-                        timestamp:    decoded.t,
-                        previousHash: decoded.ph
-                    }
+            if (maxBlockHeight === null || decoded.h > maxBlockHeight){
+                maxBlockHeight = decoded.h
+                maxBlockObj = {
+                    hash:         blockHash,
+                    height:       decoded.h,
+                    timestamp:    decoded.t,
+                    previousHash: decoded.ph
                 }
-            })
+            }
+        }
 
-            stream.on('error', reject)
-            stream.on('end', function() { resolve(maxBlockObj) })
-        })
+        return maxBlockObj
     }
 
     async getLastStoredBlocks(){
-        return new Promise((resolve, reject) => {
-            const result  = []
-            const options = {
-                gte: pb(P_STORED_BLK),
-                lte: rangeEnd(pb(P_STORED_BLK)),
-                keys: true,
-                values: true
-            }
+        const result  = []
+        const options = {
+            gte: pb(P_STORED_BLK),
+            lte: rangeEnd(pb(P_STORED_BLK)),
+            keys: true,
+            values: false
+        }
 
-            const stream = this.db.createReadStream(options)
+        for await (const [key] of this.db.iterator(options)) {
+            result.push(b2h(key.slice(1)))
+        }
 
-            stream.on('data', function(data) {
-                result.push(b2h(data.key.slice(1)))
-            })
-
-            stream.on('error', reject)
-            stream.on('end', function() { resolve(result) })
-        })
+        return result
     }
 
     // ─── Mempool helpers ─────────────────────────────────────────────────────
@@ -1218,13 +1172,12 @@ class LevelUpStore {
         const options = {
             gte: pb(P_TX),
             lte: rangeEnd(pb(P_TX)),
-            keys: true
+            keys: true,
+            values: false
         }
 
-        const dbStream = this.db.createReadStream(options)
-
-        for await (const data of dbStream) {
-            const txid = b2h(data.key.slice(1))   // 16-char hex (txHash8)
+        for await (const [key] of this.db.iterator(options)) {
+            const txid = b2h(key.slice(1))   // 16-char hex (txHash8)
             // binary-search convention: comparator(element, needle) returns
             // negative when element < needle (search to the right). The prior
             // form `needle.localeCompare(element_first16)` had the sign
@@ -1257,33 +1210,29 @@ class LevelUpStore {
     // pattern: hex string representing the binary key prefix
 
     async getValuesFromKeyPattern(pattern){
-        return new Promise((resolve, reject) => {
-            const patternBuf = Buffer.isBuffer(pattern) ? pattern : h2b(pattern)
-            const values = []
-            const options = {
-                gte: patternBuf,
-                lte: rangeEnd(patternBuf),
-                keys: true,
-                values: true
-            }
+        const patternBuf = Buffer.isBuffer(pattern) ? pattern : h2b(pattern)
+        const values = []
+        const options = {
+            gte: patternBuf,
+            lte: rangeEnd(patternBuf),
+            keys: true,
+            values: true
+        }
 
-            const stream = this.db.createReadStream(options)
-
-            stream.on('data', function(data) {
+        try {
+            for await (const [key, value] of this.db.iterator(options)) {
                 values.push({
-                    key:   b2h(data.key),
-                    value: b2h(data.value)
+                    key:   b2h(key),
+                    value: b2h(value)
                 })
-            })
+            }
+        } catch (err) {
+            console.log("Error getting values from patterns")
+            console.log(err)
+            throw err
+        }
 
-            stream.on('error', function(err) {
-                console.log("Error getting values from patterns")
-                console.log(err)
-                reject(err)
-            })
-
-            stream.on('end', function() { resolve(values) })
-        })
+        return values
     }
 }
 

@@ -581,7 +581,6 @@ function runBulkSyncOrchestrator() {
         '--workers',    BULK_SYNC_WORKERS,
         '--out',        BULK_SYNC_WORK_DIR,
         '--db',         dbPath,
-        '--backend',    'rocksdb',
         '--ram-budget', BULK_SYNC_RAM_BUDGET,
         '--batch-size', BULK_SYNC_BATCH_SIZE,
     ]

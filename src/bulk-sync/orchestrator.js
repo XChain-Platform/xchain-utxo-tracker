@@ -8,7 +8,7 @@
  *
  * Usage:
  *   node orchestrator.js --network bitcoin-regtest --out /tmp/bulk-sync \
- *       --db /tmp/candidate-db --backend rocksdb [options]
+ *       --db /tmp/candidate-db [options]
  *
  * Requires NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD env vars
  * (passed through to dump.js).
@@ -94,8 +94,7 @@ function parseArgs(argv) {
         tipSafety:  10,
         chunkSize:  10000,
         out:        null,      // working directory for all artifacts
-        db:         null,      // final DB path
-        backend:    'rocksdb',
+        db:         null,      // final DB path (classic-level / LevelDB)
         workers:    null,      // null = auto (number of dump chunks)
         ramBudget:  1024,      // MB for external sort
         batchSize:  10000,     // loader batch size
@@ -121,7 +120,9 @@ function parseArgs(argv) {
             case '--chunk-size':      args.chunkSize   = parseInt(argv[++i], 10); break
             case '--out':             args.out         = argv[++i]; break
             case '--db':              args.db          = argv[++i]; break
-            case '--backend':         args.backend     = argv[++i]; break
+            // Legacy backend flag — the only backend now is classic-level.
+            // Accepted (and ignored) so older invocations don't error out.
+            case '--backend':         i++; break
             case '--workers':         args.workers     = parseInt(argv[++i], 10); break
             case '--ram-budget':      args.ramBudget   = parseInt(argv[++i], 10); break
             case '--batch-size':      args.batchSize   = parseInt(argv[++i], 10); break
@@ -158,7 +159,6 @@ Options:
   --to <height>         last block (default: tip - tip-safety)
   --tip-safety <n>      blocks before tip to stop (default 10)
   --chunk-size <n>      blocks per .xdmp file (default 10000)
-  --backend <name>      rocksdb | leveldown (default rocksdb)
   --workers <n>         parallel parse workers (default: number of chunks)
   --ram-budget <MB>     RAM for external sort (default 1024)
   --batch-size <n>      loader batch size (default 10000)
@@ -485,11 +485,10 @@ async function phaseMerge(args, dirs, cleanup) {
 }
 
 async function phaseLoad(args, dirs) {
-    log('LOAD', `loading keys into ${args.db} (${args.backend})`)
+    log('LOAD', `loading keys into ${args.db}`)
     const result = await loadKeys({
         keysDir:     dirs.keys,
         dbPath:      args.db,
-        backend:     args.backend,
         batchSize:   args.batchSize,
         removeSpent: args.removeSpent,
         onProgress(ev) {
@@ -523,7 +522,7 @@ async function main() {
 
     const t0 = Date.now()
 
-    log('ORCHESTRATOR', `network=${args.network} from=${args.from} backend=${args.backend} removeSpent=${args.removeSpent}`)
+    log('ORCHESTRATOR', `network=${args.network} from=${args.from} removeSpent=${args.removeSpent}`)
     log('ORCHESTRATOR', `out=${args.out} db=${args.db}`)
     log('ORCHESTRATOR', `cleanup-threshold=${args.cleanupThresholdMb}MB ${args.cleanupThresholdMb > 0 ? '(enabled)' : '(disabled)'}`)
 
@@ -553,7 +552,7 @@ async function main() {
 
     const elapsed = Date.now() - t0
     log('ORCHESTRATOR', `pipeline complete in ${fmtDuration(elapsed)}`)
-    log('ORCHESTRATOR', `DB at ${args.db} (${args.backend}) — ready for validate-db`)
+    log('ORCHESTRATOR', `DB at ${args.db} — ready for validate-db`)
 }
 
 main().catch(err => {

@@ -1,7 +1,8 @@
 'use strict'
 
 // CLI wrapper for loader.js
-// Usage: node run-loader.js --keys <dir> --out <db-path> --backend <rocksdb|leveldown>
+// Usage: node run-loader.js --keys <dir> --out <db-path>
+// (DB is classic-level / LevelDB.)
 
 const { loadKeys } = require('./merger/loader.js')
 
@@ -14,17 +15,15 @@ function getArg(name) {
 
 const keysDir = getArg('--keys')
 const dbPath  = getArg('--out')
-const backend = getArg('--backend') || 'rocksdb'
 
 if (!keysDir || !dbPath) {
-    console.error('Usage: node run-loader.js --keys <dir> --out <db-path> [--backend rocksdb|leveldown]')
+    console.error('Usage: node run-loader.js --keys <dir> --out <db-path>')
     process.exit(1)
 }
 
 loadKeys({
     keysDir,
     dbPath,
-    backend,
     onProgress(ev) {
         if (ev.phase === 'prefix-done') {
             console.log(`  ${ev.prefix}: ${ev.count} records (${ev.elapsed_ms}ms)`)

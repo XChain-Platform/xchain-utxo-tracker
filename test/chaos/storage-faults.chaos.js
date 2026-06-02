@@ -51,7 +51,7 @@ describe('Chaos: Storage Faults', function () {
         await tracker.db.endTransaction();
       } catch (err) {
         threw = true;
-        expect(err.message).to.include('Error in levelup batch inserting');
+        expect(err.message).to.include('Error in LevelDB batch inserting');
       }
       expect(threw).to.be.true;
 
@@ -306,7 +306,7 @@ describe('Chaos: Storage Faults', function () {
       }
       const baselineMs = baselineTotal / 3;
 
-      // Inject 50ms latency per read operation (get + createReadStream)
+      // Inject 50ms latency per read operation (get + iterator)
       const fault = injectReadLatency(tracker.db, 50);
 
       const { ms: delayedMs } = await measureMs(
@@ -316,7 +316,7 @@ describe('Chaos: Storage Faults', function () {
       fault.restore();
 
       // Delayed query should be at least 50ms slower than baseline
-      // (at minimum one createReadStream call is delayed by 50ms)
+      // (at minimum one iterator scan is delayed by 50ms)
       expect(delayedMs).to.be.greaterThan(baselineMs + 30);
     });
 

@@ -33,16 +33,14 @@
  *
  ********************************************************************/
 
-const levelup = require('levelup')
+const { ClassicLevel } = require('classic-level')
 
 const DEFAULT_SAMPLES = 500
-const DEFAULT_BACKEND = 'rocksdb'
 const MISMATCHES_PER_PREFIX = 3
 
 function parseArgs(argv) {
     const args = {
         samples:  DEFAULT_SAMPLES,
-        backend:  DEFAULT_BACKEND,
         prefixes: null,   // null = auto-detect from candidate
         seed:     null,
     }
@@ -52,7 +50,9 @@ function parseArgs(argv) {
             case '--truth':     args.truth     = argv[++i]; break
             case '--candidate': args.candidate = argv[++i]; break
             case '--samples':   args.samples   = parseInt(argv[++i], 10); break
-            case '--backend':   args.backend   = argv[++i]; break
+            // Legacy backend flag — the only backend now is classic-level.
+            // Accepted (and ignored) so older invocations don't error out.
+            case '--backend':   i++; break
             case '--prefixes':  args.prefixes  = argv[++i]; break
             case '--seed':      args.seed      = parseInt(argv[++i], 10); break
             case '-h':
@@ -63,9 +63,6 @@ function parseArgs(argv) {
     if (!args.truth)                 throw new Error('--truth is required')
     if (!args.candidate)             throw new Error('--candidate is required')
     if (!(args.samples > 0))         throw new Error('--samples must be > 0')
-    if (args.backend !== 'rocksdb' && args.backend !== 'leveldown') {
-        throw new Error('--backend must be rocksdb or leveldown')
-    }
     return args
 }
 
@@ -76,9 +73,10 @@ Required:
   --truth <dir>       path to ground-truth DB (must be closed / not in use)
   --candidate <dir>   path to candidate DB    (must be closed / not in use)
 
+Both DBs are classic-level (LevelDB) directories and must be closed.
+
 Options:
   --samples <n>       random samples per prefix (default ${DEFAULT_SAMPLES})
-  --backend <name>    rocksdb | leveldown (default ${DEFAULT_BACKEND})
   --prefixes <hex>    comma-separated hex bytes to sample (default: auto)
                       e.g. "42,54,53" for prefixes B, T, S
   --seed <n>          PRNG seed for reproducible sampling
@@ -90,19 +88,10 @@ Exit codes:
 `)
 }
 
-function loadBackend(name) {
-    try {
-        return require(name)
-    } catch (err) {
-        throw new Error(`Failed to load backend "${name}": ${err.message}`)
-    }
-}
-
-function openDb(path, backendName) {
-    const backend = loadBackend(backendName)
-    return new Promise((resolve, reject) => {
-        const db = levelup(backend(path), err => err ? reject(err) : resolve(db))
-    })
+async function openDb(path) {
+    const db = new ClassicLevel(path, { keyEncoding: 'buffer', valueEncoding: 'buffer' })
+    await db.open()
+    return db
 }
 
 function makeRng(seed) {
@@ -119,22 +108,14 @@ function makeRng(seed) {
 async function* iterate(db, itOpts) {
     const it = db.iterator(itOpts)
     try {
-        while (true) {
-            const entry = await new Promise((resolve, reject) => {
-                it.next((err, key, value) => {
-                    if (err) reject(err)
-                    else if (key === undefined) resolve(null)
-                    else resolve({
-                        key:   Buffer.from(key),
-                        value: value ? Buffer.from(value) : null,
-                    })
-                })
-            })
-            if (!entry) break
-            yield entry
+        for await (const [key, value] of it) {
+            yield {
+                key:   Buffer.from(key),
+                value: value != null ? Buffer.from(value) : null,
+            }
         }
     } finally {
-        await new Promise((resolve, reject) => it.end(err => err ? reject(err) : resolve()))
+        await it.close()
     }
 }
 
@@ -167,7 +148,7 @@ function fmtHex(buf, max = 48) {
 
 async function detectPrefixes(db) {
     const seen = new Set()
-    for await (const e of iterate(db, { keyAsBuffer: true, values: false })) {
+    for await (const e of iterate(db, { keyEncoding: 'buffer', values: false })) {
         if (e.key.length > 0) seen.add(e.key[0])
     }
     return [...seen].sort((a, b) => a - b)
@@ -179,12 +160,11 @@ async function main() {
 
     console.log(`[spot-check] truth     = ${args.truth}`)
     console.log(`[spot-check] candidate = ${args.candidate}`)
-    console.log(`[spot-check] backend   = ${args.backend}`)
     console.log(`[spot-check] samples   = ${args.samples} per prefix`)
     console.log(`[spot-check] seed      = ${seed}`)
 
-    const truthDb = await openDb(args.truth,     args.backend)
-    const candDb  = await openDb(args.candidate, args.backend)
+    const truthDb = await openDb(args.truth)
+    const candDb  = await openDb(args.candidate)
 
     let prefixBytes
     if (args.prefixes) {
@@ -207,8 +187,8 @@ async function main() {
 
     for (const p of prefixBytes) {
         const itOpts = {
-            keyAsBuffer:   true,
-            valueAsBuffer: true,
+            keyEncoding:   'buffer',
+            valueEncoding: 'buffer',
             gte:           Buffer.from([p]),
             lt:            Buffer.from([p + 1]),
         }
@@ -218,13 +198,9 @@ async function main() {
         let hits = 0, exact = 0, mismatch = 0, miss = 0
         const mismatches = []
         for (const { key, value } of reservoir) {
-            let truthValue = null
-            try {
-                truthValue = await truthDb.get(key)
-            } catch (err) {
-                if (err.notFound) { miss++; continue }
-                throw err
-            }
+            // abstract-level .get returns undefined on a miss (no throw).
+            const truthValue = await truthDb.get(key)
+            if (truthValue === undefined) { miss++; continue }
             hits++
             const tBuf = Buffer.isBuffer(truthValue) ? truthValue : Buffer.from(truthValue)
             if (Buffer.compare(value, tBuf) === 0) {
