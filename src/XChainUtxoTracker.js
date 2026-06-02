@@ -68,7 +68,32 @@ const REMOVE_SPENT = true
 const ETA_WINDOW_BLOCKS = 1000 //Rolling window size for ETA calculation
 const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node need to have to start parsing
 
-const UNDO_BLOCKS = 10 //This is the number of blocks from which the outputs will be kept saved.
+// Per-chain reorg recovery window (Tier B, 2026-06-02): how many recent blocks of
+// spent-output recovery records (K/M entries) are retained, and therefore the
+// deepest reorg the tracker can auto-recover from before a manual resync is
+// required. Sized larger on the faster / lower-hashpower chains so the window
+// stays comfortably above that chain's cross-chain confirmation gate (an ordinary
+// reorg inside the trust window is auto-recovered, never a manual resync). On
+// 1-minute DOGE blocks the old flat value of 10 was only ~10 minutes of headroom.
+const DEFAULT_UNDO_BLOCKS = { BTC: 12, LTC: 48, DOGE: 120 }
+const FALLBACK_UNDO_BLOCKS = 12
+
+// Map a network string ('dogecoin-mainnet', 'litecoin-testnet', ...) to its coin.
+function coinFromNetwork(network){
+    const n = String(network || '').toLowerCase()
+    if (n.startsWith('bitcoin'))  return 'BTC'
+    if (n.startsWith('litecoin')) return 'LTC'
+    if (n.startsWith('dogecoin')) return 'DOGE'
+    return null
+}
+
+// Resolve the recovery window: env XCHAIN_UNDO_BLOCKS_<COIN> → Tier-B per-chain
+// default → fallback (mirrors the `process.env.X || default` style in api.js).
+function resolveUndoBlocks(network){
+    const coin = coinFromNetwork(network)
+    const envKey = coin ? ('XCHAIN_UNDO_BLOCKS_' + coin) : ''
+    return parseInt(process.env[envKey], 10) || DEFAULT_UNDO_BLOCKS[coin] || FALLBACK_UNDO_BLOCKS
+}
 const PREFETCH_SIZE = 10 //Number of blocks to pre-fetch concurrently while processing the current one
 
 // Single-byte key used to persist pendingKMCleanup across restarts.
@@ -99,6 +124,7 @@ class XChainUtxoTracker {
       this.mempoolBusy = false
       
       this.auxPow = auxPow
+      this.undoBlocks = resolveUndoBlocks(network)
       this.lastBlocks = []
       
       this.keepParsing = true
@@ -109,7 +135,7 @@ class XChainUtxoTracker {
         this.lastBlocks.push(blockHash)
         this.db.addLastStoredBlock(blockHash)
 
-        while (this.lastBlocks.length > UNDO_BLOCKS){
+        while (this.lastBlocks.length > this.undoBlocks){
             let nextBlockHash = this.lastBlocks.shift()
 
             // Discard in-memory deletions for outputs created & spent within the same batch.
@@ -575,9 +601,9 @@ class XChainUtxoTracker {
                     // index permanently under-counted for any address with outputs spent
                     // in those blocks. A loud abort is strictly safer than a silently
                     // corrupt index: stop here and require an operator-driven resync.
-                    if (blocksDeleted.length >= UNDO_BLOCKS){
+                    if (blocksDeleted.length >= this.undoBlocks){
                         const msg = "verifyReorg: reorg depth exceeds the recovery window "
-                            + "(UNDO_BLOCKS=" + UNDO_BLOCKS + "). Already rolled back "
+                            + "(UNDO_BLOCKS=" + this.undoBlocks + "). Already rolled back "
                             + blocksDeleted.length + " blocks; spent-output recovery records "
                             + "for block height " + lastBlockIndex + " and below have already "
                             + "been purged, so continuing would silently leave the UTXO index "
