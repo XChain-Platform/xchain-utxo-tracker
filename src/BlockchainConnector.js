@@ -104,7 +104,7 @@ class BlockchainConnector {
                 const data = {
                     jsonrpc: '2.0',
                     method: 'getblockheader',
-                    params: [blockhash, hexFormat ? 0 : 1],
+                    params: [blockhash, !hexFormat],  // getblockheader verbose is a boolean (false=hex, true=json); Dogecoin 1.14 rejects integer verbosity
                     id: 1,
                 }
 
@@ -299,7 +299,7 @@ class BlockchainConnector {
         const headerBatch = hashes.map((hash, i) => ({
             jsonrpc: '2.0',
             method: 'getblockheader',
-            params: [hash, 0],  // 0 = hex format
+            params: [hash, false],  // false = hex format (Dogecoin 1.14 getblockheader expects a boolean verbose, not an integer verbosity)
             id: i
         }))
         const headerResponse = await this.client.post(this.url, headerBatch)
