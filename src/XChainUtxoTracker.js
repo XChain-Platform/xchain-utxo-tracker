@@ -145,7 +145,24 @@ class XChainUtxoTracker {
             throw new Error("Can't delete a block from the 'last blocks' if it's not the last one")
         }
     }
-    
+
+    // getLastStoredBlocks() returns the stored-block hashes in blockHash
+    // (lexicographic) order, but the reorg path (removeFromLastBlocks) requires
+    // lastBlocks to be in ascending HEIGHT order with the chain tip last.
+    // Without sorting, a reorg throws "Can't delete a block from the 'last
+    // blocks'…" and wedges the sync loop. Each block's height comes from its
+    // B-prefix record; this is at most UNDO_BLOCKS (10) lookups.
+    async loadLastBlocksSortedByHeight(){
+        const storedHashes = await this.db.getLastStoredBlocks()
+        const withHeight = []
+        for (const hash of storedHashes){
+            const blk = await this.db.getBlock(hash)
+            withHeight.push({ hash, height: blk ? blk.h : -1 })
+        }
+        withHeight.sort((a, b) => a.height - b.height)
+        return withHeight.map(b => b.hash)
+    }
+
     async sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
@@ -597,7 +614,10 @@ class XChainUtxoTracker {
         
         let lastProcessedBlockIndex = await this.db.getLastBlockHeight()
         let lastProcessedBlockHash = await this.db.getLastBlockHash()
-        this.lastBlocks = await this.db.getLastStoredBlocks()
+
+        // Load in ascending height order (tip last) so a reorg right after a
+        // restart doesn't trip removeFromLastBlocks. See helper for detail.
+        this.lastBlocks = await this.loadLastBlocksSortedByHeight()
 
         // Recover any K/M cleanup work that was staged but not completed before a prior crash.
         // abstract-level .get returns undefined on a missing key (no throw); real
@@ -783,7 +803,10 @@ class XChainUtxoTracker {
                         if (previousBlockHash != lastProcessedBlockHash){
                             prefetchQueue = []
                             await this.db.endTransaction(false)
-                            this.lastBlocks = await this.db.getLastStoredBlocks()
+                            // Reload in ascending height order (tip last); the raw
+                            // getLastStoredBlocks() order is lexicographic by hash,
+                            // which makes verifyReorg's removeFromLastBlocks throw.
+                            this.lastBlocks = await this.loadLastBlocksSortedByHeight()
                             console.log("A reorg has been detected. Cleaning blocks...")
                             await this.verifyReorg()
                             lastProcessedBlockIndex = await this.db.getLastBlockHeight()
