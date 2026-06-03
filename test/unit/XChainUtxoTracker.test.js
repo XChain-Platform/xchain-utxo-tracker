@@ -414,20 +414,23 @@ describe('XChainUtxoTracker', function () {
       const scriptHash = createHash('sha256').update(script).digest('hex');
 
       const txHash8 = randHash8();
+      // A valid full txid whose first 8 bytes match the O-record key prefix, so
+      // the mempool-spend lookup (which truncates to 8 bytes) still matches.
+      const fullTxHash = txHash8 + '0'.repeat(48);
 
-      // Insert output WITHOUT fullTxHash so txid falls back to 16-char prefix
       await db.insertOutput({
         scriptPubKey: scriptHash,
         txHash: txHash8,
         outputIndex: 0,
         value: BigInt('100000000'),
-        height: 500
+        height: 500,
+        fullTxHash
       });
       await db.endTransaction(true);
 
-      // Mempool spends this output — insertInput truncates to 16 chars
+      // Mempool spends this output — insertInput keys on the 8-byte prefix
       await mempoolDb.insertInput({
-        prevTxHash: txHash8 + '0'.repeat(48),
+        prevTxHash: fullTxHash,
         prevOutputIndex: 0,
         txHash: randHash8()
       });
@@ -435,6 +438,37 @@ describe('XChainUtxoTracker', function () {
 
       const utxos = await tracker.getUtxosAddress(address);
       expect(utxos).to.be.empty;
+    });
+
+    it('throws on a pre-migration record missing its fullTxHash', async function () {
+      const bitcoin = require('bitcoinjs-lib');
+      const { createHash } = require('crypto');
+      const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
+      const script = bitcoin.address.toOutputScript(address, tracker.network);
+      const scriptHash = createHash('sha256').update(script).digest('hex');
+
+      // Output written WITHOUT a fullTxHash — the zero-hash sentinel decodes to
+      // fullTxid: null, so the resolved txid is only the 16-char key prefix.
+      // Such records predate the O-record fullTxHash field and cannot spend
+      // validly; getUtxosAddress must reject them rather than emit a truncated id.
+      await db.insertOutput({
+        scriptPubKey: scriptHash,
+        txHash: randHash8(),
+        outputIndex: 0,
+        value: BigInt('100000000'),
+        height: 500
+      });
+      await db.endTransaction(true);
+
+      let threw = null;
+      try {
+        await tracker.getUtxosAddress(address);
+      } catch (e) {
+        threw = e;
+      }
+      expect(threw).to.not.be.null;
+      expect(threw.message).to.match(/fullTxHash/);
+      expect(threw.message).to.match(/re-index/i);
     });
 
     it('includes mempool UTXOs', async function () {

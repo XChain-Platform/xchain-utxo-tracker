@@ -275,6 +275,12 @@ function encodeOutput(value, height, fullTxHashHex) {
     const buf = Buffer.alloc(44)
     buf.writeBigUInt64BE(BigInt(value), 0)
     buf.writeInt32BE(height != null ? height : -1, 8)
+    // A falsy fullTxHashHex leaves bytes 12..44 as the alloc-zeroed 0x00…00,
+    // i.e. ZERO_HASH. decodeOutput maps that sentinel back to t: null, which
+    // callers (getUtxosAddress) treat as "no full txid available". All current
+    // insertion paths supply fullTxHash, so a zero hash on read means the record
+    // predates this field — such a LevelDB must be re-indexed before use, since
+    // the 8-byte O-key prefix is not a spendable txid.
     if (fullTxHashHex) h2b(fullTxHashHex).copy(buf, 12)
     return buf
 }
@@ -283,6 +289,7 @@ function decodeOutput(buf) {
     return {
         v: buf.readBigUInt64BE(0).toString(),
         h: buf.readInt32BE(8),
+        // ZERO_HASH is the "no full txid" sentinel (see encodeOutput).
         t: fullTxHash === ZERO_HASH ? null : fullTxHash
     }
 }

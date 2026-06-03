@@ -341,6 +341,20 @@ class XChainUtxoTracker {
         for (let nextOutput of confirmedOutputs) {
             let txid = nextOutput.fullTxid || nextOutput.txid
 
+            // A valid txid is the full 32-byte hash (64 hex chars). When fullTxid
+            // is null the fallback yields the 8-byte O-key prefix (16 hex chars) —
+            // which happens only for O-records written before the full hash was
+            // added to the O-record format. Such a record can never produce a
+            // valid spend, so fail loudly here rather than letting the truncated
+            // id silently corrupt a downstream PSBT. Re-index this LevelDB.
+            if (txid.length !== 64) {
+                throw new Error(
+                    `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
+                    ` This record predates the O-record fullTxHash field — re-index this LevelDB before use.` +
+                    ` UTXO key: ${nextOutput.txid}`
+                )
+            }
+
             // Skip confirmed outputs being spent in the mempool
             let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
             if (mempoolInput != null) continue
@@ -354,6 +368,16 @@ class XChainUtxoTracker {
 
         for (let nextOutput of mempoolOutputs) {
             let txid = nextOutput.fullTxid || nextOutput.txid
+
+            // See the confirmed-output loop above: a 16-char fallback means the
+            // O-record predates the fullTxHash field and can never spend validly.
+            if (txid.length !== 64) {
+                throw new Error(
+                    `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
+                    ` This record predates the O-record fullTxHash field — re-index this LevelDB before use.` +
+                    ` UTXO key: ${nextOutput.txid}`
+                )
+            }
 
             // Skip mempool outputs that are also spent by another mempool tx
             let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)

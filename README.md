@@ -76,6 +76,24 @@ Start the tracker:
 npm run api
 ```
 
+## Upgrading
+
+> [!IMPORTANT]
+> **Pre-migration LevelDB snapshots must be re-indexed.**
+> The on-disk output (`O`) record format was extended to carry the full 32-byte
+> transaction hash. Records written before that field was added store a zero hash
+> instead, which decodes to a missing txid. The tracker cannot derive a valid,
+> spendable transaction id from such a record — only the 8-byte key prefix is
+> available, and a 16-character prefix is not a usable txid.
+>
+> If your LevelDB was first populated by a version of the tracker that predates
+> the full-hash output format, wipe the data directory and re-sync from the coin
+> node before serving address/UTXO queries with the current version. Without a
+> re-index, any UTXO drawn from a pre-migration record raises an explicit
+> "missing a fullTxHash … re-index this LevelDB" error on the first spend attempt
+> rather than silently producing an invalid transaction. A fresh sync, or any DB
+> already synced under the current format, needs no action.
+
 ## Scripts
 
 | Command | Description |
