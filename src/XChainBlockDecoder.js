@@ -112,7 +112,7 @@ class XChainBlockDecoder {
                         let marker = nextTxBuffer.readUInt8(4);
                         let flag = nextTxBuffer.readUInt8(5);
                         
-                        if ((txVersion == 0x02) && (marker == 0x00) && (flag == LITECOIN_HOGEX_FLAG || flag == LITECOIN_MWEB_SEGWIT_FLAG)){
+                        if ((txVersion == 0x01 || txVersion == 0x02) && (marker == 0x00) && (flag == LITECOIN_HOGEX_FLAG || flag == LITECOIN_MWEB_SEGWIT_FLAG)){
                             let removeOffsetStart = bufferReader.offset + 4 //4 bytes for txVersion
                             let removeOffsetEnd = removeOffsetStart + 2 //2 bytes for marker + flag
                         
