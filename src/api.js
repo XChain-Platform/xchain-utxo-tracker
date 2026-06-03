@@ -179,11 +179,16 @@ async function startApi(){
                 nodeHeightStale = true;
             }
 
+            const lag = (nodeHeight >= 0 && committedHeight >= 0) ? (nodeHeight - committedHeight) : null;
             const result = {
                 committed_height: committedHeight,
                 tracker_height:   committedHeight,
                 node_height:      nodeHeight,
-                lag:              (nodeHeight >= 0 && committedHeight >= 0) ? (nodeHeight - committedHeight) : null
+                lag:              lag,
+                // Authoritative sync verdict computed against the tracker's own
+                // SYNCED_THRESHOLD so callers don't replicate the threshold.
+                // null lag (nothing indexed yet) is never "synced".
+                synced:           lag !== null && lag <= XChainUtxoTracker.SYNCED_THRESHOLD
             };
             if (nodeHeightStale) result.node_height_stale = true;
             return result;
