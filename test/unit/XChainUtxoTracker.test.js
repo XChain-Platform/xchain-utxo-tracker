@@ -39,8 +39,8 @@ function makeCoinbaseInput() {
 
 function makeSpendInput(prevTxIdHex, prevVout = 0) {
   // In bitcoinjs-lib, input.hash is in internal byte order (reversed from display txid).
-  // The tracker code does nextInput.hash.reverse() to get the display txid.
-  // So we store the reversed bytes so that .reverse() gives back the original hex.
+  // The tracker code does Buffer.from(nextInput.hash).reverse() to get the display txid.
+  // So we store the reversed bytes (wire order) so that reversal gives back the original hex.
   const hashBuf = Buffer.from(prevTxIdHex, 'hex').reverse();
   return {
     hash: hashBuf,

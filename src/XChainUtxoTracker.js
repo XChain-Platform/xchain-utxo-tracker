@@ -855,7 +855,7 @@ class XChainUtxoTracker {
                     
                     const _tDecode = Date.now()
                     var block = this.xchainBlockDecoder.blockFromHex(nextBlockHex)
-                    let previousBlockHash = util.uint8ArrayToHex(block.prevHash.reverse())
+                    let previousBlockHash = util.uint8ArrayToHex(Buffer.from(block.prevHash).reverse())
                     _t.decode += Date.now() - _tDecode
 
                     //Check if there is a reorg
@@ -918,7 +918,7 @@ class XChainUtxoTracker {
                         for (const nextInput of tx.ins) {
                             const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
                             if ((nextInput.index === 4294967295) || !standardInput) continue
-                            const prevTxHash8 = util.uint8ArrayToHex(nextInput.hash.reverse()).substring(0, 16)
+                            const prevTxHash8 = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse()).substring(0, 16)
                             removeInputs.push({ prevTxHash: prevTxHash8, prevOutputIndex: nextInput.index, blockHash: nextBlockHash })
                         }
                     }

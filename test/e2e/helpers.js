@@ -73,7 +73,7 @@ function makeCoinbaseInput() {
 
 function makeSpendInput(prevTxIdHex, prevVout = 0) {
   // bitcoinjs-lib stores input.hash in internal byte order (reversed from display).
-  // The tracker does nextInput.hash.reverse() to get display txid.
+  // The tracker does Buffer.from(nextInput.hash).reverse() to get the display txid.
   const hashBuf = Buffer.from(prevTxIdHex, 'hex').reverse();
   return {
     hash: hashBuf,
@@ -104,7 +104,7 @@ function makeCoinbaseTx(addressIndex, valueSats = 50 * SATOSHI) {
 /**
  * Build a mock block object that matches the shape returned by XChainBlockDecoder.blockFromHex().
  * The critical detail: prevHash must be a Buffer in *internal* byte order (reversed from display hex).
- * The start() loop does: util.uint8ArrayToHex(block.prevHash.reverse()) to get display hex.
+ * The start() loop does: util.uint8ArrayToHex(Buffer.from(block.prevHash).reverse()) to get display hex.
  */
 function makeBlock(height, previousHashHex, transactions, hash) {
   const blockHash = hash || randHash();
