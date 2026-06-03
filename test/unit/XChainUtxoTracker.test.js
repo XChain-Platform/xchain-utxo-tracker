@@ -533,14 +533,16 @@ describe('XChainUtxoTracker', function () {
     });
 
     it('addToLastBlocks queues cleanup when exceeding UNDO_BLOCKS', async function () {
-      // Add 12 blocks (UNDO_BLOCKS = 10)
+      // Derive from the tracker's resolved window (Tier-B per-chain, 2026-06-02:
+      // bitcoin-regtest → 12) so this stays correct if the default changes again.
+      const undo = tracker.undoBlocks;
       await db.beginTransaction();
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < undo + 2; i++) {
         await tracker.addToLastBlocks(randHash());
       }
       await db.endTransaction(true);
 
-      expect(tracker.lastBlocks).to.have.length(10);
+      expect(tracker.lastBlocks).to.have.length(undo);
       expect(tracker.pendingKMCleanup).to.have.length(2);
     });
   });
