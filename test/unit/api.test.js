@@ -35,6 +35,7 @@ function createTestApp(mockTracker) {
   app.get('/utxos/:address', async (req, res) => {
     try {
       const utxos = await getUtxos(req.params.address);
+      res.set('X-Mempool-Ready', String(mockTracker.isSynced()));
       res.json(utxos);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -53,6 +54,7 @@ function createTestApp(mockTracker) {
   app.get('/balance/:address', async (req, res) => {
     try {
       const balance = await getBalance(req.params.address);
+      res.set('X-Mempool-Ready', String(mockTracker.isSynced()));
       res.json(balance);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -62,6 +64,9 @@ function createTestApp(mockTracker) {
   app.get('/info/:address', async (req, res) => {
     try {
       const info = await getInfo(req.params.address);
+      const mempoolReady = mockTracker.isSynced();
+      res.set('X-Mempool-Ready', String(mempoolReady));
+      if (info && typeof info === 'object') info.mempool_ready = mempoolReady;
       res.json(info);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -113,6 +118,7 @@ describe('API', function () {
       getUtxosAddress: sinon.stub(),
       getFirstSeen: sinon.stub(),
       getBalanceInfo: sinon.stub(),
+      isSynced: sinon.stub().returns(true),
       db: {
         getValuesFromKeyPattern: sinon.stub()
       }
@@ -172,7 +178,60 @@ describe('API', function () {
       mockTracker.getBalanceInfo.resolves(info);
 
       const res = await supertest(app).get('/info/addr1').expect(200);
-      expect(res.body).to.deep.equal(info);
+      // Additive mempool_ready field; all original fields preserved.
+      expect(res.body).to.include({ address: 'addr1', type: 'p2pkh' });
+      expect(res.body.balances).to.deep.equal(info.balances);
+      expect(res.body.utxos).to.deep.equal(info.utxos);
+      expect(res.body.mempool_ready).to.equal(true);
+    });
+  });
+
+  // ─── Mempool readiness signal ───────────────────────────────────────────
+  // After a restart the in-memory mempool is empty until the first
+  // updateMempool() scan completes; these endpoints expose isSynced() so
+  // callers can tell a reconverging zero from a genuine zero.
+
+  describe('mempool readiness signal', function () {
+    it('sets X-Mempool-Ready: true on all three address endpoints when synced', async function () {
+      mockTracker.isSynced.returns(true);
+      mockTracker.getUtxosAddress.resolves([]);
+      mockTracker.getBalanceInfo.resolves({ address: 'a', balances: {}, utxos: {} });
+
+      const utxosRes = await supertest(app).get('/utxos/a').expect(200);
+      const balanceRes = await supertest(app).get('/balance/a').expect(200);
+      const infoRes = await supertest(app).get('/info/a').expect(200);
+
+      expect(utxosRes.headers['x-mempool-ready']).to.equal('true');
+      expect(balanceRes.headers['x-mempool-ready']).to.equal('true');
+      expect(infoRes.headers['x-mempool-ready']).to.equal('true');
+      expect(infoRes.body.mempool_ready).to.equal(true);
+    });
+
+    it('reports false while the tracker is still reconverging', async function () {
+      mockTracker.isSynced.returns(false);
+      mockTracker.getUtxosAddress.resolves([]);
+      mockTracker.getBalanceInfo.resolves({ address: 'a', balances: {}, utxos: {} });
+
+      const utxosRes = await supertest(app).get('/utxos/a').expect(200);
+      const balanceRes = await supertest(app).get('/balance/a').expect(200);
+      const infoRes = await supertest(app).get('/info/a').expect(200);
+
+      expect(utxosRes.headers['x-mempool-ready']).to.equal('false');
+      expect(balanceRes.headers['x-mempool-ready']).to.equal('false');
+      expect(infoRes.headers['x-mempool-ready']).to.equal('false');
+      expect(infoRes.body.mempool_ready).to.equal(false);
+    });
+
+    it('evaluates readiness per request (not cached at startup)', async function () {
+      mockTracker.getUtxosAddress.resolves([]);
+
+      mockTracker.isSynced.returns(false);
+      let res = await supertest(app).get('/utxos/a').expect(200);
+      expect(res.headers['x-mempool-ready']).to.equal('false');
+
+      mockTracker.isSynced.returns(true);
+      res = await supertest(app).get('/utxos/a').expect(200);
+      expect(res.headers['x-mempool-ready']).to.equal('true');
     });
   });
 

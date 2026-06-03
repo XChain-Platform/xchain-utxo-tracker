@@ -103,6 +103,10 @@ async function startApi(){
     app.get('/utxos/:address', async (req, res) => {
         const address = req.params.address;
         const utxos = await getUtxos(address);
+        // Signal mempool readiness so callers can distinguish a genuinely empty
+        // result from one served before the in-memory mempool has reconverged
+        // after a restart. Body shape (a bare array) is left unchanged.
+        res.set('X-Mempool-Ready', String(tracker.isSynced()));
         res.send(utxos);
     })
 
@@ -115,12 +119,22 @@ async function startApi(){
     app.get('/balance/:address', async (req, res) => {
         const address = req.params.address;
         const balance = await getBalance(address);
+        // See /utxos above: expose mempool readiness via header without altering
+        // the existing bare-number body.
+        res.set('X-Mempool-Ready', String(tracker.isSynced()));
         res.send(balance);
     })
 
     app.get('/info/:address', async (req, res) => {
         const address = req.params.address;
         const info = await getInfo(address);
+        // info is a JSON object, so expose readiness both in-body (additive
+        // field) and via header. A false value means the in-memory mempool is
+        // still reconverging after a restart and `balances.pending` may be
+        // understated — callers should not treat pending=0 as authoritative yet.
+        const mempoolReady = tracker.isSynced();
+        res.set('X-Mempool-Ready', String(mempoolReady));
+        if (info && typeof info === 'object') info.mempool_ready = mempoolReady;
         res.send(info);
     })
 
