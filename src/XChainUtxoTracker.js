@@ -864,6 +864,18 @@ class XChainUtxoTracker {
                         if (previousBlockHash != lastProcessedBlockHash){
                             prefetchQueue = []
                             await this.db.endTransaction(false)
+                            // The rolled-back batch discarded the P-key write that
+                            // records aged-out blocks awaiting K/M cleanup, but those
+                            // blocks are too old to reorg and still need cleaning.
+                            // Persist the list with a standalone put on the underlying
+                            // store — deliberately outside the transaction just rolled
+                            // back — so the startup recovery path runs cleanupAgedBlocks()
+                            // for them on the next restart instead of stranding the
+                            // entries on disk.
+                            if (this.pendingKMCleanup.length > 0) {
+                                await this.db.db.put(P_PENDING_CLEANUP_KEY,
+                                    Buffer.from(JSON.stringify(this.pendingKMCleanup)))
+                            }
                             // Reload in ascending height order (tip last); the raw
                             // getLastStoredBlocks() order is lexicographic by hash,
                             // which makes verifyReorg's removeFromLastBlocks throw.
