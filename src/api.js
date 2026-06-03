@@ -43,7 +43,7 @@ const NODE_USER =  process.env.NODE_USER
 const NODE_PASSWORD =  process.env.NODE_PASSWORD
 const UTXO_TRACKER_API_PORT = process.env.UTXO_TRACKER_API_PORT
 const DB_NAME =  "xchain-utxo-tracker"
-const AUX_POW = process.env.AUX_POW
+const AUX_POW = process.env.AUX_POW === 'true' || process.env.AUX_POW === '1'
 
 // Bulk-sync pre-flight (activates on empty DB). See runBulkSyncIfEmpty below.
 const BULK_SYNC_WORKERS      = process.env.BULK_SYNC_WORKERS      || '6'

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `src/api.js` — `AUX_POW` is now parsed as an explicit boolean (`process.env.AUX_POW === 'true' || process.env.AUX_POW === '1'`) instead of being passed through as the raw environment string. The value flows into `XChainUtxoTracker` and is consumed in bare truthy checks, so any non-empty string — including `AUX_POW=false`, `AUX_POW=0`, or `AUX_POW=no` — previously evaluated as truthy and *enabled* AuxPoW mode, the opposite of operator intent. Setting `AUX_POW=false` now correctly disables it on every chain.
+
 ### Removed
 - `src/BlockchainConnector.js` — removed the unused `getMempoolEntry(txid)` method (wrapping the `getmempoolentry` JSON-RPC call) along with its dedicated unit test. The tracker's indexing flow never called it; an unexercised RPC wrapper risked silently drifting out of sync with coin-node response shapes (e.g. Bitcoin Core's `fee` → `fees.base` field rename) for any future consumer. Removing it shrinks the connector surface to what the service actually uses.
 
