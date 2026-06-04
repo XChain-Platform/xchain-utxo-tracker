@@ -350,7 +350,12 @@ class LevelUpStore {
             if (this.inMemory){
                 this.db = new MemoryLevel({ keyEncoding: 'buffer', valueEncoding: 'buffer' })
             } else {
-                this.db = new ClassicLevel("/data/"+this.dbName, { keyEncoding: 'buffer', valueEncoding: 'buffer' })
+                // A large block cache keeps hot UTXO index blocks resident: on big
+                // mainnet DBs sat on spinning disks, the 8 MB default turns every cold
+                // lookup into a random seek and IO-bounds catch-up. Tunable via env.
+                this.db = new ClassicLevel("/data/"+this.dbName, { keyEncoding: 'buffer', valueEncoding: 'buffer',
+                    cacheSize: parseInt(process.env.LEVELDB_CACHE_BYTES ?? String(4 * 1024 * 1024 * 1024), 10),
+                    writeBufferSize: parseInt(process.env.LEVELDB_WRITE_BUFFER_BYTES ?? String(64 * 1024 * 1024), 10) })
             }
             // abstract-level opens lazily on first op; open explicitly so any
             // open/create error surfaces here rather than on the first read.
