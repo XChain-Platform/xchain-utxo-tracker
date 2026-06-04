@@ -34,6 +34,7 @@ const bs = require("binary-search")
 const { hrtime } = require('node:process');
 
 const CHECK_BLOCK_DELAY_MS = 1000 //1 second to continously ask for new block when all has been parsed
+const BLOCKCHAIN_INFO_REFRESH_MS = 30000 //Re-poll the node tip at least this often during catch-up so the tracked tip stays current
 const DB_TRANSACTION_BLOCKS_QUANTITY = 200
 // Heap-pressure flush guard: modern BTC blocks (~4k tx avg, 10k+ in dense
 // windows) accumulate ~17–90 MB of staged Buffer writes per block in
@@ -716,6 +717,7 @@ class XChainUtxoTracker {
         }
 
         let lastBlockchainInfo = null
+        let lastBlockchainInfoRefreshAt = 0
         this.blockchainInfoLastBlock = -1
         let blocksQuantity = 0
         
@@ -785,8 +787,15 @@ class XChainUtxoTracker {
     
         while (true){
             if (this.keepParsing){
-                //Getting the last block from the blockchain
-                if (!lastBlockchainInfo || (lastProcessedBlockIndex >= this.blockchainInfoLastBlock)){
+                //Getting the last block from the blockchain.
+                //Refresh when we have no info yet, when we have caught up to the
+                //previously-seen tip, OR periodically on a wall-clock interval — the
+                //last condition keeps blockchainInfoLastBlock tracking the live chain
+                //during a long catch-up, so the synced flag and reported confirmations
+                //reflect the true chain tip instead of a frozen startup value.
+                if (!lastBlockchainInfo
+                    || (lastProcessedBlockIndex >= this.blockchainInfoLastBlock)
+                    || (Date.now() - lastBlockchainInfoRefreshAt >= BLOCKCHAIN_INFO_REFRESH_MS)){
                     try {
                         lastBlockchainInfo = await this.connector.getBlockchainInfo()
                         this.latestKnownChainTip = lastBlockchainInfo["blocks"]
@@ -805,6 +814,7 @@ class XChainUtxoTracker {
                         }
 
                         this.blockchainInfoLastBlock = lastBlockchainInfo["blocks"]
+                        lastBlockchainInfoRefreshAt = Date.now()
                     } catch (e){
                         console.error('Error fetching blockchain info from node: ' + e.message, e)
                         await this.sleep(3000)
