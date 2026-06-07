@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "mocha",
+  "plugins": [
+    "@stryker-mutator/mocha-runner"
+  ],
+  "mochaOptions": {
+    "spec": [
+      "test/boundary/**/*.test.js",
+      "test/security/**/*.test.js",
+      "test/regression/**/*.test.js"
+    ],
+    "config": "test/mutation/.mocharc.stryker.yml"
+  },
+  "//": "Focused on the exact functions the new boundary/security/regression suites exercise, via Stryker line-range mutate syntax. satoshiToDecimalString + coinFromNetwork/resolveUndoBlocks (XChainUtxoTracker), and rangeEnd + getOutputsScriptPubKey + getValuesFromKeyPattern (LevelUpDb).",
+  "mutate": [
+    "src/XChainUtxoTracker.js:54-60",
+    "src/XChainUtxoTracker.js:88-101",
+    "src/LevelUpDb.js:92-101",
+    "src/LevelUpDb.js:1106-1132",
+    "src/LevelUpDb.js:1223-1247"
+  ],
+  "reporters": ["clear-text", "progress"],
+  "concurrency": 4,
+  "timeoutMS": 30000,
+  "timeoutFactor": 1.5,
+  "coverageAnalysis": "off",
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": null
+  }
+}
