@@ -89,6 +89,49 @@ function idxBuf(n) {
     return b
 }
 
+// ─── Address-query pagination ──────────────────────────────────────────────────
+// A single-address output scan (O-prefix range) can return millions of rows for a
+// mega miner-coinbase/payout address. Materializing them all into one array OOMs
+// the process and takes the tracker down for every caller. getOutputsScriptPubKey
+// therefore supports a bounded page (`limit` + `after` cursor) and a fail-loud
+// safety ceiling (`maxOutputs`) for unbounded callers.
+
+// Thrown when an unbounded scan would exceed the safety ceiling. The API layer
+// maps `.code` to HTTP 413 so callers switch to ?limit=&after= pagination.
+class AddressTooLargeError extends Error {
+    constructor(maxOutputs) {
+        super(`address has more than ${maxOutputs} outputs; page the result with ?limit=&after=`)
+        this.name = 'AddressTooLargeError'
+        this.code = 'ADDRESS_TOO_LARGE'
+        this.maxOutputs = maxOutputs
+    }
+}
+
+// Thrown when a pagination cursor is malformed (the API layer maps to HTTP 400).
+class InvalidCursorError extends Error {
+    constructor(cursor) {
+        super(`invalid pagination cursor ${JSON.stringify(cursor)} (expected "<txHash8Hex>:<vout>")`)
+        this.name = 'InvalidCursorError'
+        this.code = 'INVALID_CURSOR'
+    }
+}
+
+// Parse an "<txHash8Hex>:<vout>" cursor — the txid (8-byte/16-hex O-key prefix)
+// and vout of the last output returned by the previous page. Returns null on any
+// malformed input so the caller rejects it rather than crashing the iterator.
+function parseOutputCursor(cursor) {
+    if (typeof cursor !== 'string') return null
+    const sep = cursor.indexOf(':')
+    if (sep <= 0) return null
+    const txHash8Hex = cursor.slice(0, sep)
+    const voutStr    = cursor.slice(sep + 1)
+    if (!/^[0-9a-fA-F]{16}$/.test(txHash8Hex)) return null
+    if (!/^\d+$/.test(voutStr)) return null
+    const vout = Number(voutStr)
+    if (!Number.isInteger(vout) || vout < 0 || vout > 0xFFFFFFFF) return null
+    return { txHash8Hex: txHash8Hex.toLowerCase(), vout }
+}
+
 function rangeEnd(prefix) {
     // 12 bytes of 0xFF covers the longest possible suffix after the longest
     // prefix used in any range scan (e.g. O-prefix scans use a 33-byte prefix
@@ -1103,17 +1146,36 @@ class LevelUpStore {
 
     // ─── Queries ─────────────────────────────────────────────────────────────
 
-    async getOutputsScriptPubKey(scriptPubKey){
+    async getOutputsScriptPubKey(scriptPubKey, { limit = null, after = null, maxOutputs = null } = {}){
         const outputs = []
         const prefix  = Buffer.concat([pb(P_OUTPUT), h2b(scriptPubKey)])
         const options = {
-            gte: prefix,
             lte: rangeEnd(prefix),
             keys: true,
             values: true
         }
 
+        // Pagination cursor: resume strictly after the last key the previous page
+        // returned. Reconstruct the full O key from the cursor and use an exclusive
+        // lower bound (`gt`) so the cursor row is not repeated.
+        if (after != null) {
+            const parsed = parseOutputCursor(after)
+            if (!parsed) throw new InvalidCursorError(after)
+            options.gt = Buffer.concat([prefix, h2b(parsed.txHash8Hex), idxBuf(parsed.vout)])
+        } else {
+            options.gte = prefix
+        }
+
+        // Bounded page: let LevelDB stop scanning at `limit` rows. When unbounded,
+        // `maxOutputs` is a hard safety ceiling — refuse rather than build a
+        // multi-million-entry array that would OOM the process.
+        const pageLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : null
+        if (pageLimit != null) options.limit = pageLimit
+
         for await (const [key, value] of this.db.iterator(options)) {
+            if (pageLimit == null && maxOutputs != null && outputs.length >= maxOutputs) {
+                throw new AddressTooLargeError(maxOutputs)
+            }
             // O key: [O(1)][scriptPubKey(32)][txHash8(8)][outputIndex(4)]
             const txHash8Hex = b2h(key.slice(33, 41))
             const n          = key.readUInt32BE(41)
@@ -1248,3 +1310,5 @@ class LevelUpStore {
 }
 
 module.exports = LevelUpStore
+module.exports.AddressTooLargeError = AddressTooLargeError
+module.exports.InvalidCursorError  = InvalidCursorError

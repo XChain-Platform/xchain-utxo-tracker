@@ -256,6 +256,71 @@ describe('LevelUpDb', function () {
       expect(outputs[0].txid).to.equal(txAllFF);
       expect(outputs[0].vout).to.equal(7);
     });
+
+    // ─── Pagination + safety ceiling ─────────────────────────────────────
+    // A mega miner-coinbase/payout address can hold millions of outputs.
+    // Materializing them all OOMs the process; getOutputsScriptPubKey gained a
+    // bounded page (limit + after cursor) and a fail-loud maxOutputs ceiling.
+    describe('pagination + safety ceiling', function () {
+      async function seed(scriptHash, n) {
+        for (let i = 0; i < n; i++) {
+          await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash8(), outputIndex: i % 3, value: BigInt(1000 + i), height: i + 1, fullTxHash: randHash() });
+        }
+        await db.endTransaction(true);
+      }
+
+      it('unbounded fetch with maxOutputs at/above the count does not throw', async function () {
+        const scriptHash = randHash();
+        await seed(scriptHash, 12);
+        const out = await db.getOutputsScriptPubKey(scriptHash, { maxOutputs: 12 });
+        expect(out).to.have.length(12);
+      });
+
+      it('maxOutputs below the count throws ADDRESS_TOO_LARGE', async function () {
+        const scriptHash = randHash();
+        await seed(scriptHash, 12);
+        let err = null;
+        try { await db.getOutputsScriptPubKey(scriptHash, { maxOutputs: 5 }); } catch (e) { err = e; }
+        expect(err).to.be.an('error');
+        expect(err.code).to.equal('ADDRESS_TOO_LARGE');
+      });
+
+      it('limit + after cursor pages the full set with no gaps, repeats, or reorder', async function () {
+        const scriptHash = randHash();
+        await seed(scriptHash, 23);
+        const full = await db.getOutputsScriptPubKey(scriptHash);
+        const fullKeys = full.map(o => o.txid + ':' + o.vout);
+
+        const pageSize = 7;
+        const collected = [];
+        let after = null, guard = 0;
+        while (guard++ < 100) {
+          const page = await db.getOutputsScriptPubKey(scriptHash, { limit: pageSize, after });
+          page.forEach(o => collected.push(o.txid + ':' + o.vout));
+          if (page.length < pageSize) break;
+          const last = page[page.length - 1];
+          after = last.txid + ':' + last.vout;
+        }
+        expect(collected).to.deep.equal(fullKeys);
+        expect(new Set(collected).size).to.equal(23);
+      });
+
+      it('a bounded page ignores the maxOutputs ceiling', async function () {
+        const scriptHash = randHash();
+        await seed(scriptHash, 12);
+        const page = await db.getOutputsScriptPubKey(scriptHash, { limit: 3, maxOutputs: 1 });
+        expect(page).to.have.length(3);
+      });
+
+      it('a malformed cursor throws INVALID_CURSOR', async function () {
+        const scriptHash = randHash();
+        await seed(scriptHash, 3);
+        let err = null;
+        try { await db.getOutputsScriptPubKey(scriptHash, { limit: 2, after: 'not-a-cursor' }); } catch (e) { err = e; }
+        expect(err).to.be.an('error');
+        expect(err.code).to.equal('INVALID_CURSOR');
+      });
+    });
   });
 
   // ─── Output hint (H prefix) ───────���──────────────────────────────────────

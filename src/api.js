@@ -44,6 +44,13 @@ const UTXO_TRACKER_API_PORT = process.env.UTXO_TRACKER_API_PORT
 const DB_NAME =  "xchain-utxo-tracker"
 const AUX_POW = process.env.AUX_POW === 'true' || process.env.AUX_POW === '1'
 
+// Largest page a single ?limit= request may ask for. Caps page size so a caller
+// can't re-introduce the OOM by requesting one giant page. Independent of the
+// tracker's MAX_ADDRESS_OUTPUTS safety ceiling (which bounds *unbounded* scans).
+const MAX_PAGE_LIMIT = Number(process.env.UTXO_MAX_PAGE_LIMIT) > 0
+    ? Math.floor(Number(process.env.UTXO_MAX_PAGE_LIMIT))
+    : 10000
+
 // Bulk-sync pre-flight (activates on empty DB). See runBulkSyncIfEmpty below.
 const BULK_SYNC_WORKERS      = process.env.BULK_SYNC_WORKERS      || '6'
 const BULK_SYNC_CHUNK_SIZE   = process.env.BULK_SYNC_CHUNK_SIZE   || '10000'
@@ -60,9 +67,40 @@ async function startApi(){
     const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
     tracker.start()
 
-    async function getUtxos(address){
-        let utxos = await tracker.getUtxosAddress(address)
-        return utxos
+    async function getUtxos(address, opts){
+        return await tracker.getUtxosAddress(address, opts)
+    }
+
+    // Parse optional ?limit=&after= pagination params into tracker opts. Throws a
+    // BAD_REQUEST-coded error on a malformed limit so the route returns HTTP 400.
+    function parsePageOpts(query){
+        const opts = {}
+        if (query && query.limit != null && query.limit !== '') {
+            const n = Number(query.limit)
+            if (!Number.isInteger(n) || n <= 0) {
+                const e = new Error('limit must be a positive integer')
+                e.code = 'BAD_REQUEST'
+                throw e
+            }
+            opts.limit = Math.min(n, MAX_PAGE_LIMIT)
+        }
+        if (query && query.after != null && query.after !== '') opts.after = String(query.after)
+        return opts
+    }
+
+    // Map address-query errors to HTTP status codes. ADDRESS_TOO_LARGE -> 413 (use
+    // pagination); malformed cursor/limit -> 400; everything else -> 500. Without
+    // this, an unbounded mega-address query would have OOM-crashed the process.
+    function sendAddressError(res, err){
+        const code = err && err.code
+        if (code === 'ADDRESS_TOO_LARGE') {
+            res.status(413).json({ error: err.message, code })
+        } else if (code === 'INVALID_CURSOR' || code === 'BAD_REQUEST') {
+            res.status(400).json({ error: err.message, code })
+        } else {
+            console.error('Address query failed:', err)
+            res.status(500).json({ error: (err && err.message) || 'internal error' })
+        }
     }
 
     async function getFirstSeen(address){
@@ -101,12 +139,19 @@ async function startApi(){
 
     app.get('/utxos/:address', async (req, res) => {
         const address = req.params.address;
-        const utxos = await getUtxos(address);
-        // Signal mempool readiness so callers can distinguish a genuinely empty
-        // result from one served before the in-memory mempool has reconverged
-        // after a restart. Body shape (a bare array) is left unchanged.
-        res.set('X-Mempool-Ready', String(tracker.isSynced()));
-        res.send(utxos);
+        try {
+            const utxos = await getUtxos(address, parsePageOpts(req.query));
+            // Signal mempool readiness so callers can distinguish a genuinely empty
+            // result from one served before the in-memory mempool has reconverged
+            // after a restart. Body shape (a bare array) is left unchanged.
+            res.set('X-Mempool-Ready', String(tracker.isSynced()));
+            // Continuation cursor for paginated requests (?limit=). Absent when not
+            // paginating or when the final page has been reached.
+            if (utxos && utxos.nextCursor) res.set('X-Next-Cursor', String(utxos.nextCursor));
+            res.send(utxos);
+        } catch (err) {
+            sendAddressError(res, err);
+        }
     })
 
     app.get('/firstseen/:address', async (req, res) => {
@@ -117,24 +162,32 @@ async function startApi(){
 
     app.get('/balance/:address', async (req, res) => {
         const address = req.params.address;
-        const balance = await getBalance(address);
-        // See /utxos above: expose mempool readiness via header without altering
-        // the existing bare-number body.
-        res.set('X-Mempool-Ready', String(tracker.isSynced()));
-        res.send(balance);
+        try {
+            const balance = await getBalance(address);
+            // See /utxos above: expose mempool readiness via header without altering
+            // the existing bare-number body.
+            res.set('X-Mempool-Ready', String(tracker.isSynced()));
+            res.send(balance);
+        } catch (err) {
+            sendAddressError(res, err);
+        }
     })
 
     app.get('/info/:address', async (req, res) => {
         const address = req.params.address;
-        const info = await getInfo(address);
-        // info is a JSON object, so expose readiness both in-body (additive
-        // field) and via header. A false value means the in-memory mempool is
-        // still reconverging after a restart and `balances.pending` may be
-        // understated — callers should not treat pending=0 as authoritative yet.
-        const mempoolReady = tracker.isSynced();
-        res.set('X-Mempool-Ready', String(mempoolReady));
-        if (info && typeof info === 'object') info.mempool_ready = mempoolReady;
-        res.send(info);
+        try {
+            const info = await getInfo(address);
+            // info is a JSON object, so expose readiness both in-body (additive
+            // field) and via header. A false value means the in-memory mempool is
+            // still reconverging after a restart and `balances.pending` may be
+            // understated — callers should not treat pending=0 as authoritative yet.
+            const mempoolReady = tracker.isSynced();
+            res.set('X-Mempool-Ready', String(mempoolReady));
+            if (info && typeof info === 'object') info.mempool_ready = mempoolReady;
+            res.send(info);
+        } catch (err) {
+            sendAddressError(res, err);
+        }
     })
 
     const jsonRpcController = {
@@ -233,12 +286,16 @@ async function startApi(){
             };
         },
 
-        // Function to create transactions hex for a given data and encoding type
-        async get_utxos({address}) {
-            let utxos = await getUtxos(address)
+        // Function to create transactions hex for a given data and encoding type.
+        // Optional limit/after page the result; omitted = full set (capped by the
+        // tracker's MAX_ADDRESS_OUTPUTS safety ceiling). nextCursor is returned only
+        // when paginating and more rows remain; existing callers ignore it.
+        async get_utxos({address, limit, after}) {
+            let utxos = await getUtxos(address, parsePageOpts({ limit, after }))
 
-            // Return utxos
-            return { utxos: utxos}
+            const result = { utxos: utxos }
+            if (utxos && utxos.nextCursor) result.nextCursor = utxos.nextCursor
+            return result
         },
         // Function to retrieve the height of the block where an address was first seen
         async get_first_seen({address}) {

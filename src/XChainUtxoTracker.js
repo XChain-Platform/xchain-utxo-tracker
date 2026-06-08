@@ -74,6 +74,16 @@ const REMOVE_SPENT = true
 const ETA_WINDOW_BLOCKS = 1000 //Rolling window size for ETA calculation
 const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node need to have to start parsing
 
+// Hard ceiling on how many outputs a single-address query will materialize. A
+// mega miner-coinbase/payout address can hold millions of UTXOs; loading them all
+// into one array OOMs the process and takes the tracker down for every caller.
+// Above this ceiling, unbounded queries (get_utxos / get_balance with no page
+// limit) fail loud (HTTP 413) so callers page via /utxos?limit=&after= instead.
+// Tune per host via UTXO_MAX_ADDRESS_OUTPUTS.
+const MAX_ADDRESS_OUTPUTS = Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS) > 0
+    ? Math.floor(Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS))
+    : 500000
+
 // Per-chain reorg recovery window (Tier B, 2026-06-02): how many recent blocks of
 // spent-output recovery records (K/M entries) are retained, and therefore the
 // deepest reorg the tracker can auto-recover from before a manual resync is
@@ -281,8 +291,8 @@ class XChainUtxoTracker {
         let utxosPending = 0
         let totalReceived = 0n
 
-        let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash)
-        let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash)
+        let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
+        let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
 
         for (let nextOutput of confirmedOutputs) {
             let txid = nextOutput.fullTxid || nextOutput.txid
@@ -328,13 +338,36 @@ class XChainUtxoTracker {
         }
     }
     
-    async getUtxosAddress(address){
+    async getUtxosAddress(address, { limit = null, after = null } = {}){
         let script = bitcoin.address.toOutputScript(address, this.network)
         let scriptHash = createHash('sha256').update(script).digest('hex')
         let scriptPubKeyHex = util.uint8ArrayToHex(script)
 
-        let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash)
-        let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash)
+        const paged = Number.isFinite(limit) && limit > 0
+        const pageLimit = paged ? Math.floor(limit) : null
+
+        // Paged mode pulls one bounded page of confirmed outputs (resuming from
+        // `after`); unbounded mode pulls everything but is capped by the
+        // MAX_ADDRESS_OUTPUTS safety ceiling.
+        let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash, paged
+            ? { limit: pageLimit, after }
+            : { maxOutputs: MAX_ADDRESS_OUTPUTS })
+
+        // Continuation cursor for the next page, captured BEFORE the loop below
+        // rewrites each output's `txid` to the full hash. The cursor is the last
+        // *scanned* confirmed DB key (txHash8:vout) — independent of mempool-spend
+        // filtering — so the next page resumes with no gaps or repeats. Only set
+        // when a full page was read (more rows may remain).
+        const nextCursor = (paged && confirmedOutputs.length === pageLimit)
+            ? confirmedOutputs[confirmedOutputs.length - 1].txid + ':' + confirmedOutputs[confirmedOutputs.length - 1].vout
+            : null
+
+        // Mempool outputs are unpaginated (the mempool set is small and bounded).
+        // In paged mode include them only on the first page (after == null) so they
+        // are not duplicated across pages.
+        let mempoolOutputs = (!paged || after == null)
+            ? await this.mempoolDb.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
+            : []
 
         let results = []
 
@@ -391,9 +424,14 @@ class XChainUtxoTracker {
             results.push(nextOutput)
         }
 
+        // Expose the continuation cursor as a non-enumerable property so the array
+        // still serializes as a bare UTXO list (preserving the existing API/JSON-RPC
+        // contract) while the REST layer can read it for the X-Next-Cursor header.
+        if (paged) Object.defineProperty(results, 'nextCursor', { value: nextCursor, enumerable: false })
+
         return results
     }
-    
+
     async getFirstSeen(address){
         const script = bitcoin.address.toOutputScript(address, this.network)
         const scriptHash = createHash('sha256').update(script).digest('hex')
