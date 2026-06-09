@@ -385,4 +385,125 @@ describe('BlockchainConnector', function () {
       }
     });
   });
+
+  // ─── additional branch coverage ───────────────────────────────────────────
+
+  describe('getRawTransaction (tx no longer present)', function () {
+    it('resolves null when the node returns no result (mined/evicted)', async function () {
+      clientStub.resolves({ data: { result: null } });
+      const result = await connector.getRawTransaction('gone-txid');
+      expect(result).to.equal(null);
+    });
+  });
+
+  describe('getBlock (error branch)', function () {
+    it('throws and rethrows when the node returns no result', async function () {
+      clientStub.resolves({ data: {} }); // postWithRetry returns it; no .result
+      try {
+        await connector.getBlock('hashX');
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err.message).to.include('block hex');
+      }
+    });
+  });
+
+  describe('postWithRetry', function () {
+    it('retries on ECONNABORTED then succeeds', async function () {
+      sinon.stub(connector, 'sleep').resolves();
+      clientStub.onCall(0).rejects({ code: 'ECONNABORTED' });
+      clientStub.onCall(1).resolves({ data: { result: 'ok' } });
+      const res = await connector.postWithRetry({ method: 'x' });
+      expect(res.data.result).to.equal('ok');
+      expect(clientStub.callCount).to.equal(2);
+    });
+
+    it('rethrows a non-timeout error immediately', async function () {
+      clientStub.rejects(new Error('connection refused'));
+      try {
+        await connector.postWithRetry({ method: 'x' });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err.message).to.include('connection refused');
+        expect(clientStub.callCount).to.equal(1);
+      }
+    });
+
+    it('throws after exhausting the 10 timeout retries', async function () {
+      sinon.stub(connector, 'sleep').resolves();
+      clientStub.rejects({ code: 'ECONNABORTED' });
+      try {
+        await connector.postWithRetry({ method: 'x' });
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err.message).to.include('after retries');
+        expect(clientStub.callCount).to.equal(10);
+      }
+    });
+  });
+
+  describe('getBlocksBatchWithoutAuxPow', function () {
+    it('returns empty array for empty heights', async function () {
+      const result = await connector.getBlocksBatchWithoutAuxPow([]);
+      expect(result).to.deep.equal([]);
+      expect(clientStub.called).to.be.false;
+    });
+
+    it('fetches hash+header+block batches and strips AuxPoW bytes', async function () {
+      const heights = [200, 201];
+      // call 0: getblockhash batch
+      clientStub.onCall(0).resolves({ data: heights.map((h, i) => ({ id: i, result: 'hash' + i })) });
+      // call 1: getblockheader batch — index 0 header longer than 160 hex chars (AuxPoW), index 1 exactly 160
+      clientStub.onCall(1).resolves({ data: [
+        { id: 0, result: 'a'.repeat(200) },  // 40 extra hex chars of AuxPoW
+        { id: 1, result: 'b'.repeat(160) }   // standard header, nothing to strip
+      ]});
+      // call 2: getblock batch
+      clientStub.onCall(2).resolves({ data: [
+        { id: 0, result: 'h'.repeat(160) + 'x'.repeat(40) + 'TX0' },
+        { id: 1, result: 'h'.repeat(160) + 'TX1' }
+      ]});
+
+      const results = await connector.getBlocksBatchWithoutAuxPow(heights);
+      expect(clientStub.callCount).to.equal(3);
+      expect(results).to.have.length(2);
+      // index 0: 40 auxpow hex chars removed → header(160) + 'TX0'
+      expect(results[0]).to.deep.equal({ height: 200, hash: 'hash0', hex: 'h'.repeat(160) + 'TX0' });
+      // index 1: nothing stripped
+      expect(results[1]).to.deep.equal({ height: 201, hash: 'hash1', hex: 'h'.repeat(160) + 'TX1' });
+    });
+
+    it('throws when a hash batch entry is null', async function () {
+      clientStub.onCall(0).resolves({ data: [{ id: 0, result: null }] });
+      try {
+        await connector.getBlocksBatchWithoutAuxPow([5]);
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err.message).to.include('block hash in batch');
+      }
+    });
+
+    it('throws when a header batch entry is null', async function () {
+      clientStub.onCall(0).resolves({ data: [{ id: 0, result: 'hash0' }] });
+      clientStub.onCall(1).resolves({ data: [{ id: 0, result: null }] });
+      try {
+        await connector.getBlocksBatchWithoutAuxPow([5]);
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err.message).to.include('block header in batch');
+      }
+    });
+
+    it('throws when a block batch entry is null', async function () {
+      clientStub.onCall(0).resolves({ data: [{ id: 0, result: 'hash0' }] });
+      clientStub.onCall(1).resolves({ data: [{ id: 0, result: 'h'.repeat(160) }] });
+      clientStub.onCall(2).resolves({ data: [{ id: 0, result: null }] });
+      try {
+        await connector.getBlocksBatchWithoutAuxPow([5]);
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err.message).to.include('block in batch');
+      }
+    });
+  });
 });

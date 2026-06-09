@@ -105,4 +105,49 @@ describe('util', function () {
       expect(() => util.throwError('boom')).to.throw('boom');
     });
   });
+
+  describe('debug timers', function () {
+    const sinon = require('sinon');
+    let logStub;
+    beforeEach(function () { logStub = sinon.stub(console, 'log'); });
+    afterEach(function () { sinon.restore(); });
+
+    it('startTimer returns a numeric timestamp', function () {
+      const t = util.startTimer();
+      expect(t).to.be.a('number');
+    });
+
+    it('logTimer logs with a custom label', function () {
+      util.logTimer(util.startTimer() - 1500, 'phase');
+      expect(logStub.calledOnce).to.be.true;
+      expect(logStub.firstCall.args[0]).to.include('phase');
+      expect(logStub.firstCall.args[0]).to.match(/ms/);
+    });
+
+    it('logTimer falls back to "Time" when no label is given', function () {
+      util.logTimer(util.startTimer(), null);
+      expect(logStub.firstCall.args[0]).to.include('Time');
+    });
+
+    it('markTime + addTime accumulate and logTotalTime reports then resets', function () {
+      util.markTime('op');
+      util.addTime('op');          // first add → initializes the **TOTAL/**COUNT entries
+      util.markTime('op');
+      util.addTime('op');          // second add → accumulates
+      util.logTotalTime('op');     // logs and deletes the totals
+      expect(logStub.called).to.be.true;
+      expect(logStub.lastCall.args[0]).to.include("Time('op')");
+      // After logTotalTime deletes the totals, a second call is a no-op (no extra log).
+      logStub.resetHistory();
+      util.logTotalTime('op');
+      expect(logStub.called).to.be.false;
+    });
+
+    it('logTime logs the elapsed time for a marked name', function () {
+      util.markTime('single');
+      util.logTime('single');
+      expect(logStub.calledOnce).to.be.true;
+      expect(logStub.firstCall.args[0]).to.include("Time('single')");
+    });
+  });
 });

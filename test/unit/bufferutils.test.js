@@ -379,6 +379,30 @@ describe('bufferutils (local patched copy)', function () {
       const buf = writer.end();
       expect(buf.readBigInt64LE(0)).to.equal(BigInt(256));
     });
+
+    it('writeVarInt + writeVarSlice + writeVector encode length-prefixed data', function () {
+      const a = Buffer.from([0xAA]);
+      const b = Buffer.from([0xBB, 0xCC]);
+      // 1 (varint count) + (1+1) + (1+2) = 6 bytes
+      const writer = localBufferutils.BufferWriter.withCapacity(6);
+      writer.writeVector([a, b]);
+      const buf = writer.end();
+      const reader = new localBufferutils.BufferReader(buf);
+      expect(reader.readVarInt()).to.equal(2);          // count
+      expect(reader.readVarSlice()).to.deep.equal(a);
+      expect(reader.readVarSlice()).to.deep.equal(b);
+    });
+
+    it('writeSlice throws when writing past the buffer end', function () {
+      const writer = new localBufferutils.BufferWriter(Buffer.alloc(2));
+      expect(() => writer.writeSlice(Buffer.from([1, 2, 3]))).to.throw(/out of bounds/);
+    });
+
+    it('end() throws when the buffer is not fully written', function () {
+      const writer = new localBufferutils.BufferWriter(Buffer.alloc(4));
+      writer.writeUInt8(1);
+      expect(() => writer.end()).to.throw(/buffer size/);
+    });
   });
 
   describe('BufferReader', function () {
@@ -412,6 +436,33 @@ describe('bufferutils (local patched copy)', function () {
       const slice = reader.readSlice(3);
       expect(slice).to.deep.equal(Buffer.from([1, 2, 3]));
       expect(reader.offset).to.equal(3);
+    });
+
+    it('readSlice throws when reading past the end', function () {
+      const reader = new localBufferutils.BufferReader(Buffer.from([1, 2]));
+      expect(() => reader.readSlice(5)).to.throw(/out of bounds/);
+    });
+
+    it('readVarInt decodes a single-byte and a 0xFD-prefixed value', function () {
+      expect(new localBufferutils.BufferReader(Buffer.from([0x10])).readVarInt()).to.equal(16);
+      // 0xFD marks a 2-byte little-endian value (300 = 0x012C)
+      const r = new localBufferutils.BufferReader(Buffer.from([0xFD, 0x2C, 0x01]));
+      expect(r.readVarInt()).to.equal(300);
+      expect(r.offset).to.equal(3);
+    });
+
+    it('readVarSlice reads length-prefixed data', function () {
+      const reader = new localBufferutils.BufferReader(Buffer.from([0x02, 0xAA, 0xBB]));
+      expect(reader.readVarSlice()).to.deep.equal(Buffer.from([0xAA, 0xBB]));
+    });
+
+    it('readVector reads a count-prefixed list of var slices', function () {
+      // count=2, then [0x01,0xAA], [0x02,0xBB,0xCC]
+      const buf = Buffer.from([0x02, 0x01, 0xAA, 0x02, 0xBB, 0xCC]);
+      const vec = new localBufferutils.BufferReader(buf).readVector();
+      expect(vec).to.have.length(2);
+      expect(vec[0]).to.deep.equal(Buffer.from([0xAA]));
+      expect(vec[1]).to.deep.equal(Buffer.from([0xBB, 0xCC]));
     });
   });
 

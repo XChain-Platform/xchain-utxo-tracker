@@ -185,5 +185,82 @@ describe('XChainBlockDecoder', function () {
       expect(tx.ins).to.have.length(1);
       expect(tx.outs).to.have.length(1);
     });
+
+    it('does not strip when the tx version is neither 01 nor 02', function () {
+      // version=03 → the HogEx-strip guard is false; the tx is parsed verbatim.
+      const v3Tx =
+        '03000000' +
+        '01' +
+        '0000000000000000000000000000000000000000000000000000000000000000' +
+        'ffffffff' +
+        '04' + '01020304' +
+        'ffffffff' +
+        '01' +
+        '0100000000000000' +
+        '01' + '51' +
+        '00000000';
+      const tx = decoder.txFromHex(v3Tx);
+      expect(tx.version).to.equal(3);
+      expect(tx.ins).to.have.length(1);
+    });
+
+    it('strips the MWEB+segwit flag (0x00 0x09) from a v2 tx', function () {
+      const baseTxHex =
+        '02000000' +
+        '01' +
+        '0000000000000000000000000000000000000000000000000000000000000000' +
+        'ffffffff' +
+        '04' + '01020304' +
+        'ffffffff' +
+        '01' +
+        '0100000000000000' +
+        '01' + '51' +
+        '00000000';
+      // version(02000000) + marker(00) + flag(09) + rest-after-version
+      const mwebTxHex = '02000000' + '0009' + baseTxHex.substring(8);
+      const tx = decoder.txFromHex(mwebTxHex);
+      expect(tx.ins).to.have.length(1);
+      expect(tx.outs).to.have.length(1);
+    });
+  });
+
+  describe('blockFromBuffer (litecoin) - full block with transactions', function () {
+    const decoder = new XChainBlockDecoder('litecoin-mainnet');
+
+    // Coinbase tx body after the 8-char version field (shared by both cases).
+    const txAfterVersion =
+      '01' +                                                              // input count
+      '0000000000000000000000000000000000000000000000000000000000000000' + // coinbase prev (null)
+      'ffffffff' +                                                        // coinbase index
+      '04' + '01020304' +                                                 // script
+      'ffffffff' +                                                        // sequence
+      '01' +                                                              // output count
+      '0100000000000000' +                                                // value 1 sat
+      '01' + '51' +                                                       // OP_1
+      '00000000';                                                         // locktime
+
+    function header(){
+      const h = Buffer.alloc(80);
+      h.writeInt32LE(1, 0);        // version
+      h.writeUInt32LE(12345, 68);  // timestamp
+      return h.toString('hex');
+    }
+
+    it('parses a litecoin block whose single (normal) tx is not HogEx', function () {
+      const normalTx = '01000000' + txAfterVersion; // marker byte = 0x01 (input count) → not HogEx
+      const blockHex = header() + '01' + normalTx;
+      const block = decoder.blockFromHex(blockHex);
+      expect(block.transactions).to.have.length(1);
+      expect(block.transactions[0].ins).to.have.length(1);
+    });
+
+    it('strips the HogEx marker+flag from the last tx of a litecoin block', function () {
+      // Last (only) tx carries marker 0x00 + flag 0x08 right after the version.
+      const hogexTx = '01000000' + '0008' + txAfterVersion;
+      const blockHex = header() + '01' + hogexTx;
+      const block = decoder.blockFromHex(blockHex);
+      expect(block.transactions).to.have.length(1);
+      expect(block.transactions[0].outs).to.have.length(1);
+    });
   });
 });
