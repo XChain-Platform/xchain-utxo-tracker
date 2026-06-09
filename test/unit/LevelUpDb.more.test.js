@@ -653,13 +653,13 @@ describe('LevelUpDb (extended coverage)', function () {
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
         afterEach(async function () { try { await db.close(); } catch (e) {} });
 
-        it('invokes the in-memory recover branch and clears deletedTransactionArray', async function () {
-            // NOTE: The in-memory recovery path (lines 971-984) is exercised here.
-            // Source bug: when the O-key was removed from transactionArray, the
-            // recovery re-creates it with h2b(latin1MapKey) which produces a
-            // corrupted key — so the output does NOT reappear in the DB.
-            // The test below covers the code path while documenting actual behavior.
+        it('recovers a removed output under its ORIGINAL key (regression: latin1 vs hex)', async function () {
+            // Regression for the in-memory recovery key-encoding bug: the recovery
+            // else-branch must rebuild the original key Buffer with 'latin1' (the
+            // inverse of toMapKey), NOT h2b/'hex'. With the old h2b path the key was
+            // corrupted, so the reorg-recovered output never reappeared in the DB.
             const scriptBuf = randBuf32();
+            const scriptHex = scriptBuf.toString('hex');
             const txHash8   = randHash8();
             const blockHash = randHash();
 
@@ -668,18 +668,21 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
 
             // removeOutputWithInput on an in-memory entry populates deletedTransactionArray
+            // and removes the O-key from transactionArray (forcing the else-branch on recovery).
             await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
-
-            // deletedTransactionArray should now have the blockHash entry
             expect(db.deletedTransactionArray.has(blockHash)).to.be.true;
 
-            // processDeletedOutputs(recover=true) exercises the in-memory branch (lines 971-984)
+            // Recover (reorg undo) — exercises the in-memory else-branch.
             await db.processDeletedOutputs(blockHash, true);
-
-            // After processing, the in-memory deletedTransactionArray entry is cleared
             expect(db.deletedTransactionArray.has(blockHash)).to.be.false;
 
             await db.endTransaction(true);
+
+            // The output must be queryable again under its real script key — proving the
+            // recovered key Buffer was rebuilt correctly (latin1), not corrupted (hex).
+            const outputs = await db.getOutputsScriptPubKey(scriptHex);
+            expect(outputs).to.have.length(1);
+            expect(Number(outputs[0].value)).to.equal(4000);
         });
 
         it('purges in-memory deletedTransactionArray without recovery when recover=false', async function () {

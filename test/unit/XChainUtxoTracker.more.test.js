@@ -164,12 +164,17 @@ describe('XChainUtxoTracker (more)', function () {
             expect(type).to.equal('p2sh');
         });
 
-        // NOTE: P2TR detection (getAddressType → 'p2tr') requires bitcoinjs-lib's
-        // ECC library (initEccLib) to be initialized. In this unit-test environment
-        // ECC is not set up, so payments.p2tr() always throws "No ECC Library
-        // provided" and getAddressType falls through to 'unknown'. The p2tr branch
-        // is tested indirectly via the src path, but its return value is masked by
-        // the ECC dependency. Covered only via integration/regtest stack.
+        it('detects P2TR (taproot) address (regression: needs initEccLib)', function () {
+            // src/XChainUtxoTracker.js registers tiny-secp256k1 via bitcoin.initEccLib
+            // at module load, so payments.p2tr() works and taproot addresses are
+            // classified correctly instead of silently falling through to 'unknown'.
+            const bitcoin = require('bitcoinjs-lib');
+            const type = tracker.getAddressType(
+                'bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0',
+                bitcoin.networks.bitcoin
+            );
+            expect(type).to.equal('p2tr');
+        });
 
         it('returns unknown for garbage', function () {
             const type = tracker.getAddressType('zzzznotanaddress', tracker.network);

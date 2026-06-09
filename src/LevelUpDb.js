@@ -975,8 +975,12 @@ class LevelUpStore {
                     if (item){
                         item.value = value
                     } else {
-                        // Re-create put entry — key is hex-encoded Buffer
-                        const keyBuf = Buffer.isBuffer(mapKey) ? mapKey : h2b(mapKey)
+                        // Re-create the put entry. innerMap/transactionArray keys are
+                        // latin1-encoded byte strings (see toMapKey), NOT hex — so the
+                        // original key Buffer is recovered with 'latin1', the exact
+                        // inverse of toMapKey. (Using h2b/'hex' here reinterprets the
+                        // bytes as hex digits and writes a corrupted key on recovery.)
+                        const keyBuf = Buffer.isBuffer(mapKey) ? mapKey : Buffer.from(mapKey, 'latin1')
                         this.transactionArray.set(mapKey, { type: "put", key: keyBuf, value })
                     }
                 })
