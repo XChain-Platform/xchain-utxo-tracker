@@ -28,6 +28,7 @@
   "scripts": {
     "api": "node --max-old-space-size=4096 ./src/api.js",
     "test": "mocha --timeout 0 --recursive test/unit/**/*.test.js",
+    "coverage": "c8 --reporter=text --reporter=html --include 'src/**/*.js' mocha --timeout 0 --recursive 'test/unit/**/*.test.js' --exit",
     "ci": "mocha 'test/unit/**/*.test.js' --timeout 10000 --recursive --exit",
     "test:smoke": "mocha --timeout 10000 test/smoke/smoke.test.js",
     "test:boundary": "mocha --timeout 30000 --recursive test/boundary/**/*.test.js --exit",
@@ -58,6 +59,7 @@
     "@stryker-mutator/core": "^8.6.0",
     "@stryker-mutator/mocha-runner": "^8.6.0",
     "autocannon": "^7.15.0",
+    "c8": "^11.0.0",
     "chai": "^4.5.0",
     "fast-check": "^4.6.0",
     "mocha": "^11.7.5",
