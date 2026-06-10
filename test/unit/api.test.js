@@ -17,6 +17,7 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const helmet = require('helmet');
 const supertest = require('supertest');
+const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 
 // We can't import api.js directly (it calls startApi and hits real env vars).
 // Instead, we construct the Express app with mocked tracker.
@@ -106,10 +107,14 @@ function createTestApp(mockTracker) {
       return info;
     },
     async get_input_from_key_pattern({ pattern }) {
-      if (pattern.length < 32) {
+      if (typeof pattern !== 'string' || pattern.length < 32) {
         return { error: 'pattern is too short' };
       }
-      const results = await mockTracker.db.getValuesFromKeyPattern(pattern);
+      if (!/^[0-9a-fA-F]+$/.test(pattern)) {
+        return { error: 'pattern must be a hex string' };
+      }
+      const results = await mockTracker.db.getValuesFromKeyPattern(pattern,
+        { maxValues: XChainUtxoTracker.MAX_ADDRESS_OUTPUTS });
       return { result: results };
     }
   };
@@ -307,6 +312,14 @@ describe('API', function () {
     it('get_input_from_key_pattern rejects short patterns', async function () {
       const res = await rpcRequest('get_input_from_key_pattern', { pattern: 'short' }).expect(200);
       expect(res.body.result.error).to.include('too short');
+    });
+
+    it('get_input_from_key_pattern rejects non-hex patterns of valid length', async function () {
+      // Buffer.from silently truncates at the first non-hex char, so 32 'g's
+      // would decode to an empty prefix (full-DB scan) without the hex gate.
+      const res = await rpcRequest('get_input_from_key_pattern', { pattern: 'g'.repeat(32) }).expect(200);
+      expect(res.body.result.error).to.include('hex');
+      expect(mockTracker.db.getValuesFromKeyPattern.called).to.equal(false);
     });
 
     it('get_input_from_key_pattern returns results for valid pattern', async function () {

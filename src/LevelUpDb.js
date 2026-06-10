@@ -1286,8 +1286,19 @@ class LevelUpStore {
     // ─── Generic key-pattern scan (used by API) ───────────────────────────────
     // pattern: hex string representing the binary key prefix
 
-    async getValuesFromKeyPattern(pattern){
+    async getValuesFromKeyPattern(pattern, { maxValues = null } = {}){
         const patternBuf = Buffer.isBuffer(pattern) ? pattern : h2b(pattern)
+
+        // Guard the DECODED byte length, not the input string length:
+        // Buffer.from(str, 'hex') silently stops at the first non-hex character,
+        // so a long-but-invalid string can decode to a 0/1-byte prefix whose
+        // range (gte=prefix, lte=rangeEnd) covers most or all of the database.
+        if (patternBuf.length < 2) {
+            const e = new Error('pattern must decode to at least 2 bytes of key prefix')
+            e.code = 'BAD_REQUEST'
+            throw e
+        }
+
         const values = []
         const options = {
             gte: patternBuf,
@@ -1298,6 +1309,12 @@ class LevelUpStore {
 
         try {
             for await (const [key, value] of this.db.iterator(options)) {
+                // `maxValues` is a hard safety ceiling, mirroring the maxOutputs
+                // guard in getOutputsScriptPubKey — refuse rather than build a
+                // multi-million-entry array that would OOM the process.
+                if (maxValues != null && values.length >= maxValues) {
+                    throw new AddressTooLargeError(maxValues)
+                }
                 values.push({
                     key:   b2h(key),
                     value: b2h(value)

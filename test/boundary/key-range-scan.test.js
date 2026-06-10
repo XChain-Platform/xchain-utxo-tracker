@@ -122,12 +122,30 @@ describe('Boundary: getValuesFromKeyPattern hex-decode + inclusive bounds', func
     try { await db.close(); } catch (e) {}
   });
 
-  it('odd-length hex pattern truncates the trailing nibble rather than throwing', async function () {
-    // h2b() is Buffer.from(hex,'hex'); Node drops a dangling nibble. The scan
-    // must degrade to the even-length prefix, never crash.
-    const pattern = 'a'; // single nibble → empty buffer prefix
-    const results = await db.getValuesFromKeyPattern(pattern);
-    expect(results).to.be.an('array'); // empty DB → no rows, but no throw
+  it('a pattern that decodes below the 2-byte prefix floor is refused', async function () {
+    // h2b() is Buffer.from(hex,'hex'); Node drops a dangling nibble, so a
+    // single nibble decodes to an EMPTY buffer — whose scan range would cover
+    // the entire database. The method must fail loud, not scan.
+    let err = null;
+    try {
+      await db.getValuesFromKeyPattern('a'); // single nibble → empty buffer prefix
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.an('error');
+    expect(err.code).to.equal('BAD_REQUEST');
+  });
+
+  it('odd-length hex above the floor truncates the trailing nibble rather than throwing', async function () {
+    // A dangling nibble on an otherwise-valid prefix degrades to the
+    // even-length prefix; the scan must not crash and must stay prefix-scoped.
+    const scriptHash = 'be'.repeat(32);
+    await db.beginTransaction();
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: '11'.repeat(8), outputIndex: 0, value: 5, height: 1, fullTxHash: '11'.repeat(32) });
+    await db.endTransaction();
+
+    const rows = await db.getValuesFromKeyPattern('4f' + scriptHash + 'a');
+    expect(rows).to.be.an('array').with.length(1);
   });
 
   it('returns rows at the exact prefix and is inclusive of the upper bound', async function () {

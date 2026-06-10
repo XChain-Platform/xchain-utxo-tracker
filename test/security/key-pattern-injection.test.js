@@ -12,16 +12,21 @@
 
 // ─── Security: get_input_from_key_pattern raw-scan primitive ──────────────────
 //
-// The JSON-RPC method get_input_from_key_pattern runs a LevelDB prefix scan,
-// gated by `pattern.length < 32`. These tests pin its input-handling contract:
+// The JSON-RPC method get_input_from_key_pattern runs a LevelDB prefix scan.
+// These tests pin its input-handling contract:
 //
-//   1. The length gate is a STRING check, so a non-string `pattern` (number, or
-//      an object without a numeric .length) takes the else branch and reaches
-//      the DB layer rather than the structured "too short" reply — the call then
-//      surfaces an error instead of a clean rejection.
+//   1. The gate rejects non-strings, strings shorter than 32 chars, and strings
+//      containing any non-hex character. Buffer.from(str, 'hex') silently
+//      truncates at the first invalid character, so without the hex check a
+//      32-char all-invalid pattern (e.g. 'g'.repeat(32)) would decode to an
+//      EMPTY prefix and the scan range (gte=[], lte=rangeEnd) would dump the
+//      entire database into one in-memory array.
 //   2. Results are the RAW {key, value} hex for the supplied prefix, not the
 //      sanitised UTXO shape the address endpoints return, and the scan is
 //      prefix-bounded (rangeEnd), never a full-table dump.
+//   3. The DB layer itself refuses prefixes that decode to <2 bytes and caps
+//      result accumulation via maxValues (AddressTooLargeError), so even a
+//      caller that bypasses the API gate cannot trigger an unbounded scan.
 //
 // We replicate the controller's exact guard (api.js) bound to a real in-memory
 // tracker.db, mirroring how unit/api.test.js reconstructs the app for testing.
@@ -32,14 +37,20 @@ const {
   createTestTracker,
   closeTracker,
 } = require('../integration/helpers');
+const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
+const { AddressTooLargeError } = require('../../src/LevelUpDb');
 
 // Verbatim copy of the api.js JSON-RPC handler body, so a drift in the real
-// guard (e.g. tightening it to also reject non-strings) surfaces here.
+// guard surfaces here.
 function getInputFromKeyPattern(tracker, { pattern }) {
-  if (pattern.length < 32) {
+  if (typeof pattern !== 'string' || pattern.length < 32) {
     return Promise.resolve({ error: 'pattern is too short' });
   }
-  return tracker.db.getValuesFromKeyPattern(pattern).then((results) => ({ result: results }));
+  if (!/^[0-9a-fA-F]+$/.test(pattern)) {
+    return Promise.resolve({ error: 'pattern must be a hex string' });
+  }
+  return tracker.db.getValuesFromKeyPattern(pattern,
+    { maxValues: XChainUtxoTracker.MAX_ADDRESS_OUTPUTS }).then((results) => ({ result: results }));
 }
 
 const ADDR = TEST_KEYS[0];
@@ -77,19 +88,68 @@ describe('Security: get_input_from_key_pattern guard + scan surface', function (
     expect(at32.result).to.be.an('array');
   });
 
-  it('a numeric pattern is not caught by the string-length gate and surfaces an error', async function () {
-    // (12345).length === undefined → `undefined < 32` is false → the guard is
-    // skipped and the raw value flows into getValuesFromKeyPattern, which rejects
-    // the non-string/non-Buffer input. A hardened gate would reject earlier with
-    // the structured "too short"/"invalid" reply; pinned here so that change is
-    // visible if the guard is later tightened.
-    let rejected = false;
-    try {
-      await getInputFromKeyPattern(tracker, { pattern: 99999999999999999999 });
-    } catch (e) {
-      rejected = true;
+  it('a numeric pattern gets the structured rejection, never reaching the DB', async function () {
+    // (12345).length === undefined, so the old string-length-only gate skipped
+    // it and the raw number flowed into the DB layer. The typeof check now
+    // rejects any non-string cleanly at the gate.
+    const res = await getInputFromKeyPattern(tracker, { pattern: 99999999999999999999 });
+    expect(res).to.deep.equal({ error: 'pattern is too short' });
+  });
+
+  it('rejects a 32-char all-invalid-hex pattern at the gate (empty-prefix full-DB scan)', async function () {
+    // 'g'.repeat(32) clears the length gate but Buffer.from(.., 'hex') would
+    // decode it to a 0-byte buffer — a scan of gte=[] lte=[FF…]: the whole DB.
+    const res = await getInputFromKeyPattern(tracker, { pattern: 'g'.repeat(32) });
+    expect(res).to.deep.equal({ error: 'pattern must be a hex string' });
+  });
+
+  it('rejects a pattern with a non-hex character mid-string (1-byte-prefix scan)', async function () {
+    // '4f' + 'g'.repeat(30) would silently truncate to the single byte 0x4f —
+    // a scan of every live O-prefix UTXO in the database.
+    const res = await getInputFromKeyPattern(tracker, { pattern: '4f' + 'g'.repeat(30) });
+    expect(res).to.deep.equal({ error: 'pattern must be a hex string' });
+  });
+
+  it('still accepts mixed-case valid hex', async function () {
+    const prefix = ('4f' + ADDR.scriptHash).toUpperCase();
+    const res = await getInputFromKeyPattern(tracker, { pattern: prefix });
+    expect(res).to.have.property('result');
+    expect(res.result.length).to.be.greaterThan(0);
+  });
+
+  it('DB layer refuses a pattern that decodes to a <2-byte prefix', async function () {
+    // Defense in depth: even bypassing the API gate, getValuesFromKeyPattern
+    // must throw on a 0/1-byte decoded prefix instead of scanning the full DB.
+    for (const pattern of ['g'.repeat(32), '4f' + 'g'.repeat(30), '', '4f']) {
+      let err = null;
+      try {
+        await tracker.db.getValuesFromKeyPattern(pattern);
+      } catch (e) {
+        err = e;
+      }
+      expect(err, `pattern ${JSON.stringify(pattern)} should throw`).to.be.an('error');
+      expect(err.code).to.equal('BAD_REQUEST');
     }
-    expect(rejected, 'numeric pattern should not reach a clean rejection (it throws)').to.equal(true);
+  });
+
+  it('DB layer enforces the maxValues ceiling (AddressTooLargeError)', async function () {
+    // Two rows exist under ADDR's O-prefix after this insert; a ceiling of 1
+    // must fail loud rather than accumulate past it.
+    await tracker.db.beginTransaction();
+    await tracker.db.insertOutput({
+      scriptPubKey: ADDR.scriptHash, txHash: 'dd'.repeat(8), outputIndex: 1,
+      value: 1111, height: 4, fullTxHash: 'dd'.repeat(32),
+    });
+    await tracker.db.endTransaction();
+
+    let err = null;
+    try {
+      await tracker.db.getValuesFromKeyPattern('4f' + ADDR.scriptHash, { maxValues: 1 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).to.be.an.instanceOf(AddressTooLargeError);
+    expect(err.code).to.equal('ADDRESS_TOO_LARGE');
   });
 
   it('returns raw key/value hex for a supplied prefix, scoped to that prefix', async function () {

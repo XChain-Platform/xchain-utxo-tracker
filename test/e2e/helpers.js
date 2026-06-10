@@ -448,8 +448,11 @@ function createApiApp(tracker) {
       return await tracker.getBalanceInfo(address);
     },
     async get_input_from_key_pattern({ pattern }) {
-      if (!pattern || pattern.length < 32) {
+      if (typeof pattern !== 'string' || pattern.length < 32) {
         return { error: 'pattern is too short' };
+      }
+      if (!/^[0-9a-fA-F]+$/.test(pattern)) {
+        return { error: 'pattern must be a hex string' };
       }
       const results = await tracker.db.getValuesFromKeyPattern(pattern);
       return { result: results };

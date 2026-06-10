@@ -1323,3 +1323,4 @@ class XChainUtxoTracker {
 module.exports = XChainUtxoTracker
 module.exports.satoshiToDecimalString = satoshiToDecimalString
 module.exports.SYNCED_THRESHOLD = SYNCED_THRESHOLD
+module.exports.MAX_ADDRESS_OUTPUTS = MAX_ADDRESS_OUTPUTS

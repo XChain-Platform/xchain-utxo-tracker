@@ -44,6 +44,16 @@ const UTXO_TRACKER_API_PORT = process.env.UTXO_TRACKER_API_PORT
 const DB_NAME =  "xchain-utxo-tracker"
 const AUX_POW = process.env.AUX_POW === 'true' || process.env.AUX_POW === '1'
 
+// API key for admin JSON-RPC methods (DB bootstrap snapshot/restore and raw
+// key scans). These methods fail closed (401) when no key is configured;
+// read-only UTXO/balance queries stay open for the encoder/indexer.
+const UTXO_TRACKER_API_KEY = process.env.UTXO_TRACKER_API_KEY || ''
+const ADMIN_METHODS = new Set([
+    'getbootstrap', 'getbootstrapstatus',
+    'restorebootstrap', 'getbootstraprestorestatus',
+    'get_input_from_key_pattern'
+])
+
 // Largest page a single ?limit= request may ask for. Caps page size so a caller
 // can't re-introduce the OOM by requesting one giant page. Independent of the
 // tracker's MAX_ADDRESS_OUTPUTS safety ceiling (which bounds *unbounded* scans).
@@ -134,8 +144,25 @@ async function startApi(){
     // Allow JSON requests
     app.use(bodyParser.json());
 
-    // Allow CORS for development
-    app.use(cors());
+    // CORS disabled by default; set CORS_ORIGIN to allow a specific origin
+    app.use(cors({ origin: process.env.CORS_ORIGIN || false }));
+
+    // API key enforcement for admin JSON-RPC methods. Fails closed: without a
+    // configured key these methods are rejected, never left open.
+    app.use((req, res, next) => {
+        let method = req.body && req.body.method;
+        let normalized = method ? method.toLowerCase() : '';
+        if(method && ADMIN_METHODS.has(normalized)){
+            let header = req.headers['authorization'];
+            if(!UTXO_TRACKER_API_KEY || !header || header !== 'Bearer ' + UTXO_TRACKER_API_KEY){
+                return res.status(401).json({
+                    jsonrpc: '2.0', id: req.body.id || null,
+                    error: { code: -32001, message: 'Unauthorized' }
+                });
+            }
+        }
+        next();
+    });
 
     app.get('/utxos/:address', async (req, res) => {
         const address = req.params.address;
@@ -315,11 +342,18 @@ async function startApi(){
         },
         
         async get_input_from_key_pattern({pattern}) {
-            if (pattern.length < 32){
+            if (typeof pattern !== 'string' || pattern.length < 32){
                 return {error: "pattern is too short"}
+            } else if (!/^[0-9a-fA-F]+$/.test(pattern)){
+                // Buffer.from(str, 'hex') silently truncates at the first non-hex
+                // character, so e.g. 32 'g's would decode to an EMPTY prefix and
+                // scan the entire database. Reject non-hex before it decodes.
+                return {error: "pattern must be a hex string"}
             } else {
-            
-                let results = await tracker.db.getValuesFromKeyPattern(pattern)
+                // maxValues caps the scan the same way MAX_ADDRESS_OUTPUTS bounds
+                // unbounded address queries — fail loud instead of OOMing.
+                let results = await tracker.db.getValuesFromKeyPattern(pattern,
+                    { maxValues: XChainUtxoTracker.MAX_ADDRESS_OUTPUTS })
 
                 // Return utxos
                 return { result: results}
