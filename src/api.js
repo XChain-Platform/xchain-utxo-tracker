@@ -22,7 +22,7 @@
 const dotenv = require('dotenv')
 dotenv.config()
 
-const { spawn, exec } = require('child_process');
+const { spawn } = require('child_process');
 const LevelUpStore = require('./LevelUpDb.js')
 const fs = require('fs')
 const express = require('express');
@@ -328,6 +328,8 @@ async function startApi(){
         
         async getbootstrap({filename}){
             console.log("A bootstrap was requested")
+            try { filename = safeBootstrapFilename(filename) }
+            catch (e) { return { error: e.message } }
             let taskId = randomUUID()
             await tracker.stopParsing()
             try {
@@ -362,6 +364,8 @@ async function startApi(){
         
         async restorebootstrap({filename}){
             console.log("A bootstrap restore was requested")
+            try { filename = safeBootstrapFilename(filename) }
+            catch (e) { return { error: e.message } }
             let taskId = randomUUID()
             await tracker.stopParsing()
             try {
@@ -488,31 +492,73 @@ async function compressDirPigz(taskId, source, destination) {
     })
 }
 
-async function getGzipJsonMetadata(filePath) {
-    return new Promise((resolve, reject) => {
-        // Search for a line that starts with "{" and ends with "}"
-        const command = `head -c 65K "${filePath}" | strings | grep -oE '^\\{.*\\}$' | head -n 1`
+function safeBootstrapFilename(filename) {
+    // Bootstrap RPC filenames are concatenated into a filesystem path, so they
+    // must be a single path component — no directory traversal. Reject anything
+    // with a path separator, parent ref, NUL, or that path.basename would alter.
+    // Without this, "../../.." escapes /bootstrap/xchain-utxo-tracker/ and reads
+    // or writes arbitrary files as root over an unauthenticated RPC.
+    if (typeof filename !== 'string' || filename.length === 0 || filename.length > 255) {
+        throw new Error('invalid bootstrap filename')
+    }
+    if (filename.includes('/') || filename.includes('\\') || filename.includes('\0')
+        || filename === '.' || filename === '..'
+        || filename !== path.basename(filename)) {
+        throw new Error('invalid bootstrap filename: path traversal rejected')
+    }
+    return filename
+}
 
-        exec(command, { maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-            if (error) {
-                // An error could mean that no JSON was found
-                resolve(null)
-                return
-            }
-            const jsonString = stdout.trim()
-            if (jsonString) {
+async function getGzipJsonMetadata(filePath) {
+    // Extract the embedded JSON metadata line from the file's leading bytes
+    // WITHOUT a shell. The previous implementation interpolated `filePath` into
+    // a `head | strings | grep` pipeline run via child_process.exec, so a
+    // crafted filename (e.g. "$(...)" / backticks) injected shell commands —
+    // remote code execution on an unauthenticated bootstrap RPC. This pure-Node
+    // version reads a bounded prefix, emulates `strings` (runs of >= 4 printable
+    // ASCII bytes, broken by any other byte), and returns the first run that is
+    // a parseable JSON object. Contract is unchanged: resolves the metadata
+    // object, or null when none is found / the file can't be read.
+    const MAX_BYTES = 65 * 1024
+    const MIN_RUN = 4
+
+    let buf
+    try {
+        const fd = await fs.promises.open(filePath, 'r')
+        try {
+            const out = Buffer.alloc(MAX_BYTES)
+            const { bytesRead } = await fd.read(out, 0, MAX_BYTES, 0)
+            buf = out.subarray(0, bytesRead)
+        } finally {
+            await fd.close()
+        }
+    } catch (err) {
+        // Missing/unreadable file — same as "no metadata found".
+        return null
+    }
+
+    let start = -1
+    for (let i = 0; i <= buf.length; i++) {
+        const b = i < buf.length ? buf[i] : -1
+        const printable = b >= 0x20 && b <= 0x7e
+        if (printable) {
+            if (start === -1) start = i
+            continue
+        }
+        if (start !== -1) {
+            if (i - start >= MIN_RUN
+                && buf[start] === 0x7b /* { */
+                && buf[i - 1] === 0x7d /* } */) {
                 try {
-                    const metadata = JSON.parse(jsonString)
-                    resolve(metadata)
+                    return JSON.parse(buf.toString('latin1', start, i))
                 } catch (parseError) {
-                    console.error(`Error parsing the JSON found: ${parseError.message}`)
-                    resolve(null)
+                    // Not valid JSON — keep scanning for the next candidate run.
                 }
-            } else {
-                resolve(null)
             }
-        })
-    })
+            start = -1
+        }
+    }
+    return null
 }
 
 
