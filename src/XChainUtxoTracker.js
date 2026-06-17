@@ -7,7 +7,7 @@
  *
  * This file is part of XChain Platform. Licensed under the GNU Affero
  * General Public License v3.0 or later; see LICENSE.md. A commercial
- * license (without AGPL source-disclosure terms) is available —
+ * license (without AGPL source-disclosure terms) is available -
  * contact legal@dankest.llc.
  *
  **********************************************************************
@@ -55,6 +55,7 @@ const PARSE_MODE_BULK_INSERTS = 1
 const SYNCED_THRESHOLD = 3
 const SATOSHI_UNIT = 100000000.0
 const SATOSHI_BIGINT = 100000000n
+const DEBUG_TRACE = process.env.DEBUG_TRACE === 'true' || process.env.DEBUG_TRACE === '1'
 
 // Exact satoshi -> decimal-string conversion. Plain float division (value / 1e8)
 // loses precision once a total exceeds Number.MAX_SAFE_INTEGER (e.g. DOGE balances
@@ -153,6 +154,12 @@ class XChainUtxoTracker {
       
       this.keepParsing = true
       this.pendingKMCleanup = []
+
+      // Lifetime counters for mempool RPC failures. Surfaced in get_sync_status
+      // so operators can detect a node degraded on mempool fetches without
+      // needing to watch the console for the "Giving up" warning.
+      this.mempoolRpcFailures = 0
+      this.lastMempoolErrorAt = null
     }
     
     async addToLastBlocks(blockHash){
@@ -192,6 +199,14 @@ class XChainUtxoTracker {
     }
     
     async removeFromLastBlocks(blockHash){
+        // Guard against the empty-list edge case: when lastBlocks is empty,
+        // indexOf returns -1 and length-1 is also -1, making the condition
+        // true and silently pop()-ing undefined instead of throwing. An empty
+        // list means we have rolled back past the tracked window, which is an
+        // error that should abort rather than silently corrupt state.
+        if (this.lastBlocks.length === 0){
+            throw new Error("Can't delete a block from 'last blocks': list is empty (reorg exceeds tracked window)")
+        }
         if (this.lastBlocks.indexOf(blockHash) == this.lastBlocks.length-1){
             this.lastBlocks.pop()
             await this.db.removeLastStoredBlock(blockHash)
@@ -363,8 +378,8 @@ class XChainUtxoTracker {
 
         // Continuation cursor for the next page, captured BEFORE the loop below
         // rewrites each output's `txid` to the full hash. The cursor is the last
-        // *scanned* confirmed DB key (txHash8:vout) — independent of mempool-spend
-        // filtering — so the next page resumes with no gaps or repeats. Only set
+        // *scanned* confirmed DB key (txHash8:vout), independent of mempool-spend
+        // filtering, so the next page resumes with no gaps or repeats. Only set
         // when a full page was read (more rows may remain).
         const nextCursor = (paged && confirmedOutputs.length === pageLimit)
             ? confirmedOutputs[confirmedOutputs.length - 1].txid + ':' + confirmedOutputs[confirmedOutputs.length - 1].vout
@@ -383,7 +398,7 @@ class XChainUtxoTracker {
             let txid = nextOutput.fullTxid || nextOutput.txid
 
             // A valid txid is the full 32-byte hash (64 hex chars). When fullTxid
-            // is null the fallback yields the 8-byte O-key prefix (16 hex chars) —
+            // is null the fallback yields the 8-byte O-key prefix (16 hex chars),
             // which happens only for O-records written before the full hash was
             // added to the O-record format. Such a record can never produce a
             // valid spend, so fail loudly here rather than letting the truncated
@@ -391,7 +406,7 @@ class XChainUtxoTracker {
             if (txid.length !== 64) {
                 throw new Error(
                     `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
-                    ` This record predates the O-record fullTxHash field — re-index this LevelDB before use.` +
+                    ` This record predates the O-record fullTxHash field; re-index this LevelDB before use.` +
                     ` UTXO key: ${nextOutput.txid}`
                 )
             }
@@ -415,7 +430,7 @@ class XChainUtxoTracker {
             if (txid.length !== 64) {
                 throw new Error(
                     `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
-                    ` This record predates the O-record fullTxHash field — re-index this LevelDB before use.` +
+                    ` This record predates the O-record fullTxHash field; re-index this LevelDB before use.` +
                     ` UTXO key: ${nextOutput.txid}`
                 )
             }
@@ -469,7 +484,7 @@ class XChainUtxoTracker {
             await db.insertTransaction({hash:nextTxId, blockHash:blockHash})
         }
 
-        // Process all inputs concurrently — each input has its own hash buffer so
+        // Process all inputs concurrently (each input has its own hash buffer so
         // the in-place .reverse() calls don't interfere between parallel closures
         const inputCounts = await Promise.all(transaction.ins.map(async (nextInput) => {
             const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
@@ -511,7 +526,7 @@ class XChainUtxoTracker {
             return 1
         }))
 
-        // Process all outputs concurrently — each output is fully independent
+        // Process all outputs concurrently (each output is fully independent
         await Promise.all(transaction.outs.map(async (nextOutput, txOutputIndex) => {
             const scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
 
@@ -543,30 +558,30 @@ class XChainUtxoTracker {
         }
 
         // Sequential in vout order so that insertOutputScriptBlock writes the
-        // S-record for the first (smallest vout) occurrence of a scriptHash —
+        // S-record for the first (smallest vout) occurrence of a scriptHash:
         // matching bulk-sync's block-tx-vout-ordered dedup. Concurrent Promise.all
         // here raced, producing non-deterministic S-record winners.
         for (let txOutputIndex = 0; txOutputIndex < transaction.outs.length; txOutputIndex++) {
             const nextOutput = transaction.outs[txOutputIndex]
-            const _h0 = Date.now()
-            // Keep the hash as a Buffer — insertOutput / insertOutputHint /
+            const _h0 = DEBUG_TRACE ? Date.now() : 0
+            // Keep the hash as a Buffer: insertOutput / insertOutputHint /
             // insertOutputScriptBlock all accept Buffers and use buf.copy()
             // instead of decoding a hex string back into bytes.
             const scriptHash = createHash('sha256').update(nextOutput.script).digest()
-            _tt.hash += Date.now() - _h0
+            if (DEBUG_TRACE) _tt.hash += Date.now() - _h0
 
-            const _i0 = Date.now()
+            const _i0 = DEBUG_TRACE ? Date.now() : 0
             await db.insertOutput({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex, value: nextOutput.value, height: blockHeight, fullTxHash: nextTxId})
-            _tt.ins += Date.now() - _i0
+            if (DEBUG_TRACE) _tt.ins += Date.now() - _i0
 
             if (addHints || removeSpent) {
-                const _i1 = Date.now()
+                const _i1 = DEBUG_TRACE ? Date.now() : 0
                 await db.insertOutputHint({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex})
-                _tt.ins += Date.now() - _i1
+                if (DEBUG_TRACE) _tt.ins += Date.now() - _i1
 
-                const _s0 = Date.now()
+                const _s0 = DEBUG_TRACE ? Date.now() : 0
                 await db.insertOutputScriptBlock(scriptHash, blockHash, blockHeight)
-                _tt.sb += Date.now() - _s0
+                if (DEBUG_TRACE) _tt.sb += Date.now() - _s0
 
                 await db.insertOutputBlock({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex, blockHash})
             }
@@ -669,7 +684,7 @@ class XChainUtxoTracker {
                 
                 if (lastBlockHash != blockHashFromNode){
                     // Depth guard: spent-output recovery records (K/M entries) are
-                    // retained only for the most recent UNDO_BLOCKS blocks —
+                    // retained only for the most recent UNDO_BLOCKS blocks;
                     // cleanupAgedBlocks() purges them once a block ages out of that
                     // window. Once we have already rolled back UNDO_BLOCKS blocks, the
                     // next block's recovery records are gone, so processDeletedOutputs(
@@ -694,7 +709,7 @@ class XChainUtxoTracker {
                             await this.db.removeOutputScriptsInBlock(lastBlockHash)
                             await this.db.processDeletedOutputs(lastBlockHash, true)
                             // Purge outputs created in the rolled-back block that were
-                            // never spent — processDeletedOutputs only restores outputs
+                            // never spent (processDeletedOutputs only restores outputs
                             // spent in it. Runs last so any output both created and spent
                             // in this block (just re-staged above) is removed, not revived.
                             await this.db.removeCreatedOutputsInBlock(lastBlockHash)
@@ -716,8 +731,7 @@ class XChainUtxoTracker {
                         blocksDeleted.push({"block_index":lastBlockIndex, "block_hash":lastBlockHash})
                     } catch (err){
                         try { await this.db.endTransaction(false) } catch (_) {}
-                        console.log(err)
-                        console.log("There was a problem trying to delete a block while verifying a reorg", err)
+                        console.error(`verifyReorg: failed to delete block ${lastBlock["h"]} (${lastBlockHash}): ${err.message}`, err)
                         if (++retryCount >= 10) throw new Error('verifyReorg: deleteBlockByIndex failed after 10 attempts, aborting')
                         await this.sleep(3000); continue
                     }
@@ -765,6 +779,11 @@ class XChainUtxoTracker {
         let lastBlockchainInfoRefreshAt = 0
         this.blockchainInfoLastBlock = -1
         let blocksQuantity = 0
+        // Transactions confirmed in this batch that need their mempool records
+        // removed. Collected per-block and flushed AFTER db.endTransaction() so
+        // confirmed outputs are always committed before mempool records are deleted,
+        // closing the brief "in neither store" window described in the ordering fix.
+        let pendingMempoolTxCleanup = []
         
         let blockTimestamps = [] // Rolling window of {height, time, txCount} for ETA calculation
         let _t = { fetch: 0, decode: 0, parse: 0, parseOut: 0, parseIn: 0, commit: 0, cleanup: 0, blocks: 0 }
@@ -834,7 +853,7 @@ class XChainUtxoTracker {
             if (this.keepParsing){
                 //Getting the last block from the blockchain.
                 //Refresh when we have no info yet, when we have caught up to the
-                //previously-seen tip, OR periodically on a wall-clock interval — the
+                //previously-seen tip, OR periodically on a wall-clock interval: the
                 //last condition keeps blockchainInfoLastBlock tracking the live chain
                 //during a long catch-up, so the synced flag and reported confirmations
                 //reflect the true chain tip instead of a frozen startup value.
@@ -919,7 +938,7 @@ class XChainUtxoTracker {
                         if (prefetchQueue.length > 0 && prefetchQueue[0].height === nextBlockHeight) {
                             fetched = await prefetchQueue.shift().promise
                         } else {
-                            // Queue is out of sync (e.g. after reorg) — fetch directly
+                            // Queue is out of sync (e.g. after reorg), fetch directly
                             prefetchQueue = []
                             fetched = await fetchBlock(nextBlockHeight)
                         }
@@ -947,8 +966,8 @@ class XChainUtxoTracker {
                             // records aged-out blocks awaiting K/M cleanup, but those
                             // blocks are too old to reorg and still need cleaning.
                             // Persist the list with a standalone put on the underlying
-                            // store — deliberately outside the transaction just rolled
-                            // back — so the startup recovery path runs cleanupAgedBlocks()
+                            // store, deliberately outside the transaction just rolled
+                            // back, so the startup recovery path runs cleanupAgedBlocks()
                             // for them on the next restart instead of stranding the
                             // entries on disk.
                             if (this.pendingKMCleanup.length > 0) {
@@ -970,6 +989,7 @@ class XChainUtxoTracker {
                             inputsCount = 0
                             outputsCount = 0
                             this.pendingKMCleanup = []
+                            pendingMempoolTxCleanup = []
                             blockTimestamps = []
                             console.log("Blocks were updated")
                             continue
@@ -984,7 +1004,7 @@ class XChainUtxoTracker {
                     await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp, previousHash:previousBlockHash})
                     blocksCount = blocksCount + 1               
                     
-                    //Parse the transactions — two-pass approach to allow full parallelism:
+                    //Parse the transactions (two-pass approach to allow full parallelism):
                     //  Pass 1: insert all outputs for every tx concurrently
                     //  Pass 2: process all inputs concurrently (same-block outputs are
                     //          now in transactionArray so removeOutputWithInput finds them)
@@ -994,7 +1014,7 @@ class XChainUtxoTracker {
                     const _tParseOut = Date.now()
                     // Sequential in tx-index order so that S-record writes across
                     // txs in the same block land in deterministic (tx-index, vout)
-                    // order — matching bulk-sync.
+                    // order, matching bulk-sync.
                     const blockOutputCounts = new Array(transactions.length)
                     for (let txIdx = 0; txIdx < transactions.length; txIdx++) {
                         blockOutputCounts[txIdx] = await this.parseTxOutputs(
@@ -1024,48 +1044,15 @@ class XChainUtxoTracker {
                     outputsCount = outputsCount + blockOutputCounts.reduce((acc, n) => acc + n, 0)
                     inputsCount  = inputsCount  + blockInputTotal
 
-                    // Eagerly remove mempool-DB entries for txs that have now
-                    // been confirmed in this block. Without this, the mempool
-                    // DB can hold stale records for up to MEMPOOL_INTERVAL (60s)
-                    // after a tx is mined — get_utxos would return those stale
-                    // outputs alongside the confirmed ones, the encoder would
-                    // sort by value and pick the (now-spent) stale UTXO as the
-                    // first input, and the broadcast would fail with
-                    // node error -25 "Missing inputs". The block-time cleanup
-                    // is a no-op for txs the mempool poll never saw (most of
-                    // them in regtest, where blocks mine faster than the 60s
-                    // mempool refresh tick).
-                    // Commit the whole block's mempool-cleanup deletions as one
-                    // atomic batch. deleteOutputsByHint/deleteInputsByHint use
-                    // per-entry `for await` read streams that yield to the event
-                    // loop, so without a wrapping transaction a concurrent
-                    // updateMempool() could split these deletions across its
-                    // batch and direct writes, briefly exposing a half-removed
-                    // (output gone, hint not yet) view to balance queries.
-                    //
-                    // beginTransaction()/endTransaction() share a single
-                    // transactionArray slot with updateMempool(), so we must not
-                    // open a second transaction while a mempool update owns it —
-                    // doing so would orphan its batch and crash its endTransaction
-                    // on a nulled array. mempoolBusy is the existing mutex: wait
-                    // for any in-flight update to release it, then claim it for
-                    // the cleanup. updateMempool() already tolerates a busy tick
-                    // by skipping and retrying on the next interval.
-                    while (this.mempoolBusy){
-                        await this.sleep(50)
-                    }
-                    this.mempoolBusy = true
-                    try {
-                        await this.mempoolDb.beginTransaction()
-                        for (const tx of transactions) {
-                            const txid = "id" in tx ? tx["id"] : tx.getId()
-                            await this.mempoolDb.deleteOutputsByHint(txid)
-                            await this.mempoolDb.deleteInputsByHint(txid)
-                            await this.mempoolDb.deleteTransaction(txid)
-                        }
-                        await this.mempoolDb.endTransaction()
-                    } finally {
-                        this.mempoolBusy = false
+                    // Collect txids for mempool cleanup. The actual deletions are
+                    // deferred to after db.endTransaction() at flush time so that
+                    // confirmed outputs are always committed before their mempool
+                    // records are removed, closing the window where a just-mined
+                    // UTXO would transiently appear in neither the confirmed nor
+                    // the mempool store. The cleanup is a no-op for txs the
+                    // mempool poll never saw (most in regtest).
+                    for (const tx of transactions) {
+                        pendingMempoolTxCleanup.push("id" in tx ? tx["id"] : tx.getId())
                     }
 
                     //Add the block to the last blocks
@@ -1099,6 +1086,32 @@ class XChainUtxoTracker {
                         await this.db.endTransaction()
                         _t.commit += Date.now() - _tCommit
 
+                        // Flush deferred mempool cleanup AFTER confirmed outputs are committed.
+                        // This closes the ordering gap: mined UTXOs are queryable from the
+                        // confirmed DB before their mempool records are removed, so no query
+                        // window exists where the output appears in neither store.
+                        // deleteOutputsByHint/deleteInputsByHint are per-entry read streams that
+                        // yield to the event loop, so wrap in a transaction for atomicity and
+                        // wait for any in-flight updateMempool() to release the mutex first.
+                        if (pendingMempoolTxCleanup.length > 0) {
+                            while (this.mempoolBusy) {
+                                await this.sleep(50)
+                            }
+                            this.mempoolBusy = true
+                            try {
+                                await this.mempoolDb.beginTransaction()
+                                for (const txid of pendingMempoolTxCleanup) {
+                                    await this.mempoolDb.deleteOutputsByHint(txid)
+                                    await this.mempoolDb.deleteInputsByHint(txid)
+                                    await this.mempoolDb.deleteTransaction(txid)
+                                }
+                                await this.mempoolDb.endTransaction()
+                            } finally {
+                                this.mempoolBusy = false
+                            }
+                            pendingMempoolTxCleanup = []
+                        }
+
                         // Clean up K/M entries for aged-out blocks now that the batch is committed
                         const _tCleanup = Date.now()
                         await this.cleanupAgedBlocks()
@@ -1123,7 +1136,7 @@ class XChainUtxoTracker {
                         LevelUpStore.knownScriptsHits = 0
                         LevelUpStore.knownScriptsMisses = 0
 
-                        // Rolling ETA based on tx throughput — window is a span of
+                        // Rolling ETA based on tx throughput; window is a span of
                         // ETA_WINDOW_BLOCKS blocks, not a count of samples. Each sample
                         // covers DB_TRANSACTION_BLOCKS_QUANTITY blocks, so a count-based
                         // trim would keep ~200× more history than intended.
@@ -1201,7 +1214,7 @@ class XChainUtxoTracker {
                 
             } catch (error){
                 console.error('Error updating mempool: ' + error.message, error)
-                // Reset the busy flag — without this, a single transient
+                // Reset the busy flag: without this, a single transient
                 // getRawMempool failure permanently locks out further mempool
                 // updates for the lifetime of the process (next setInterval
                 // tick sees mempoolBusy=true and bails).
@@ -1243,16 +1256,20 @@ class XChainUtxoTracker {
                     let nextTxsHex = []
                     try {
                         nextTxsHex = await this.connector.getRawTransactions(nextRawMempoolChunk)
-                        // Successful fetch — clear the failure streak so a future
+                        // Successful fetch: clear the per-pass streak so a future
                         // transient blip starts counting from zero again.
                         consecutiveTxFetchFailures = 0
 
                     } catch (err){
                         console.log(err)
                         consecutiveTxFetchFailures = consecutiveTxFetchFailures + 1
+                        // Increment the lifetime counter so get_sync_status can surface
+                        // that this node is degraded on mempool fetches.
+                        this.mempoolRpcFailures++
+                        this.lastMempoolErrorAt = Date.now()
                         // If the node stays down, retrying forever here would keep
                         // execution inside the outer try and never reach the finally
-                        // that resets mempoolBusy — locking out all future mempool
+                        // that resets mempoolBusy, locking out all future mempool
                         // updates and block sync until a process restart. Bail out
                         // after a bounded number of consecutive failures so the
                         // finally fires and the next interval tick can recover.
@@ -1284,10 +1301,10 @@ class XChainUtxoTracker {
                     }
 
                     i = i + MEMPOOL_BATCH_SIZE
-                    // Only throttle between batches — the inter-batch sleep is for
+                    // Only throttle between batches: the inter-batch sleep is for
                     // CPU/IO breathing room when a giant mempool needs many passes.
                     // If we just finished the final batch (or only batch), don't
-                    // sleep — single-batch updates (typical for regtest and most
+                    // skip the sleep: single-batch updates (typical for regtest and most
                     // mainnet conditions) shouldn't pay a tail latency.
                     if (i < rawMempool.length) {
                         await this.sleep(MEMPOOL_INTER_BATCH_SLEEP)
@@ -1303,8 +1320,8 @@ class XChainUtxoTracker {
                     +" Inputs ("+inputsCount+" more, "+deletedInputsCount+" less) "
                     +" Outputs("+outputsCount+" more, "+deletedOutputsCount+" less) ["+timeString+"]")
             } catch (error){
-                // Any failure in the parse/commit path — txFromHex on malformed
-                // hex, a parseTransaction error, or a DB I/O fault — must not
+                // Any failure in the parse/commit path (txFromHex on malformed
+                // hex, a parseTransaction error, or a DB I/O fault) must not
                 // leave mempoolBusy stuck true; otherwise every subsequent
                 // setInterval tick bails with "Mempool is still busy" and the
                 // mempool silently stagnates for the lifetime of the process.

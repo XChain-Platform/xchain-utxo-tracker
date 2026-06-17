@@ -134,7 +134,28 @@ class BlockchainConnector {
             let blockHeaderHex = await this.getBlockHeader(blockhash, true)
             let blockHex = await this.getBlock(blockhash, true)
 
-		let dataToRemove = blockHeaderHex.length - 160 //80 bytes of bitcoin block header
+            let dataToRemove = blockHeaderHex.length - 160 //80 bytes of bitcoin block header
+
+            // Sanity guard: the block version is the first 4 bytes of blockHex
+            // (little-endian). Dogecoin sets bit 8 (0x100) on merge-mined blocks.
+            // If that bit is set but getblockheader returned exactly 160 hex chars
+            // (80 bytes, no AuxPoW), the assumption that getblockheader includes
+            // AuxPoW has been violated; parsing the unstripped block would corrupt
+            // every txid in this block. Fail loud so the issue is caught immediately
+            // rather than silently producing wrong UTXOs.
+            if (dataToRemove === 0 && blockHex.length >= 8) {
+                const versionLE = parseInt(blockHex.substring(0, 8), 16)
+                const version = ((versionLE & 0xFF) << 24) | (((versionLE >> 8) & 0xFF) << 16) |
+                                (((versionLE >> 16) & 0xFF) << 8) | ((versionLE >> 24) & 0xFF)
+                if (version & 0x100) {
+                    throw new Error(
+                        'AuxPoW strip invariant violated for block ' + blockhash +
+                        ': version 0x' + version.toString(16) + ' has AuxPoW bit set but ' +
+                        'getblockheader returned only 160 hex chars (no AuxPoW bytes). ' +
+                        'Re-verify the getblockheader serialization for this dogecoind version.'
+                    )
+                }
+            }
 
             if (dataToRemove > 0) {
                 blockHex = blockHex.substring(0,160)+blockHex.substring(160+dataToRemove)
@@ -142,7 +163,7 @@ class BlockchainConnector {
 
             return blockHex
         } catch (err) {
-            throw new Error("There were problems getting a block hex without auxpow. ")
+            throw new Error("There were problems getting a block hex without auxpow. " + err.message)
         }
     }
 
@@ -187,7 +208,7 @@ class BlockchainConnector {
                         resolve(response.data.result);
                         break
                     } else {
-                        // Tx no longer in mempool (mined/evicted between getRawMempool and this call) — caller filters nulls
+                        // Tx no longer in mempool (mined/evicted between getRawMempool and this call): caller filters nulls
                         resolve(null);
                         break
                     }
@@ -243,7 +264,7 @@ class BlockchainConnector {
     // POST a (batched) JSON-RPC payload, retrying on transient connection timeouts.
     // Mirrors the ECONNABORTED retry loop in getBlockHeader: up to 10 attempts with a
     // short backoff. The batch methods route every .post() through here so a single
-    // transient timeout doesn't throw away the whole batch window — without this, one
+    // transient timeout doesn't throw away the whole batch window; without this, one
     // flaky request evicts all prefetched heights and forces slow single-block refetching.
     async postWithRetry(data) {
         let tries = 10
@@ -324,7 +345,7 @@ class BlockchainConnector {
             return r.result
         })
 
-        // Batch 2: all getblockheader calls (hex format) — needed to compute AuxPoW size
+        // Batch 2: all getblockheader calls (hex format), needed to compute AuxPoW size
         const headerBatch = hashes.map((hash, i) => ({
             jsonrpc: '2.0',
             method: 'getblockheader',
@@ -354,6 +375,24 @@ class BlockchainConnector {
             const headerHex = headers[i]
             let blockHex    = blocks[i]
             const dataToRemove = headerHex.length - 160  // 160 hex chars = 80-byte standard header
+
+            // Sanity guard (mirrors getBlockWithoutAuxPow): if the block version
+            // has the AuxPoW bit set but getblockheader returned no extra bytes,
+            // fail loud rather than silently mis-parsing every txid in the block.
+            if (dataToRemove === 0 && blockHex.length >= 8) {
+                const versionLE = parseInt(blockHex.substring(0, 8), 16)
+                const version = ((versionLE & 0xFF) << 24) | (((versionLE >> 8) & 0xFF) << 16) |
+                                (((versionLE >> 16) & 0xFF) << 8) | ((versionLE >> 24) & 0xFF)
+                if (version & 0x100) {
+                    throw new Error(
+                        'AuxPoW strip invariant violated for block ' + hashes[i] + ' at height ' + h +
+                        ': version 0x' + version.toString(16) + ' has AuxPoW bit set but ' +
+                        'getblockheader returned only 160 hex chars (no AuxPoW bytes). ' +
+                        'Re-verify the getblockheader serialization for this dogecoind version.'
+                    )
+                }
+            }
+
             if (dataToRemove > 0) {
                 blockHex = blockHex.substring(0, 160) + blockHex.substring(160 + dataToRemove)
             }

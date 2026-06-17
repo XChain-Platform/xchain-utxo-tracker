@@ -7,7 +7,7 @@
  *
  * This file is part of XChain Platform. Licensed under the GNU Affero
  * General Public License v3.0 or later; see LICENSE.md. A commercial
- * license (without AGPL source-disclosure terms) is available —
+ * license (without AGPL source-disclosure terms) is available -
  * contact legal@dankest.llc.
  *
  **********************************************************************
@@ -119,14 +119,14 @@ async function startApi(){
     
     async function getBalance(address){
         let utxos = await tracker.getUtxosAddress(address)
-        let balance = 0
+        let balance = 0n
 
         for (let nextUtxo of utxos){
-            balance = balance + nextUtxo.amount
+            balance = balance + BigInt(nextUtxo.value)
         }
 
         // Return balance
-        return balance
+        return XChainUtxoTracker.satoshiToDecimalString(balance)
     }
     
     async function getInfo(address){
@@ -183,8 +183,12 @@ async function startApi(){
 
     app.get('/firstseen/:address', async (req, res) => {
         const address = req.params.address;
-        const firstSeen = await getFirstSeen(address);
-        res.send(firstSeen);
+        try {
+            const firstSeen = await getFirstSeen(address);
+            res.send(firstSeen);
+        } catch (err) {
+            sendAddressError(res, err);
+        }
     })
 
     app.get('/balance/:address', async (req, res) => {
@@ -207,7 +211,7 @@ async function startApi(){
             // info is a JSON object, so expose readiness both in-body (additive
             // field) and via header. A false value means the in-memory mempool is
             // still reconverging after a restart and `balances.pending` may be
-            // understated — callers should not treat pending=0 as authoritative yet.
+            // understated; callers should not treat pending=0 as authoritative yet.
             const mempoolReady = tracker.isSynced();
             res.set('X-Mempool-Ready', String(mempoolReady));
             if (info && typeof info === 'object') info.mempool_ready = mempoolReady;
@@ -229,7 +233,7 @@ async function startApi(){
         // not in-flight processing. This matters because the tracker buffers
         // up to DB_TRANSACTION_BLOCKS_QUANTITY blocks before flushing via
         // endTransaction(). During a mid-batch state, in-memory has the new
-        // UTXOs but disk doesn't — and getLastBlockHeight() reads from disk.
+        // UTXOs but disk doesn't; and getLastBlockHeight() reads from disk.
         // So getLastBlockHeight() returning N is a hard guarantee that every
         // output in blocks 0..N is queryable via get_utxos / get_balance.
         // is_quiescent() builds on this: it returns ready=true only when the
@@ -240,7 +244,7 @@ async function startApi(){
 
         // Sync-status probe: tracker tip vs node tip. Used by e2e tests and
         // ops tooling to diagnose lag when an address's funding tx looks lost.
-        // `tracker_height` and `committed_height` are aliases — both report
+        // `tracker_height` and `committed_height` are aliases, both report
         // the last committed block. `committed_height` is the canonical name
         // going forward; `tracker_height` retained for existing callers.
         async get_sync_status() {
@@ -270,12 +274,18 @@ async function startApi(){
                 synced:           lag !== null && lag <= XChainUtxoTracker.SYNCED_THRESHOLD
             };
             if (nodeHeightStale) result.node_height_stale = true;
+            // Surface mempool RPC health so operators can detect a node that is
+            // degraded on mempool fetches without watching the console log.
+            if (tracker.mempoolRpcFailures > 0) {
+                result.mempool_rpc_failures  = tracker.mempoolRpcFailures;
+                result.last_mempool_error_at = tracker.lastMempoolErrorAt;
+            }
             return result;
         },
 
         // Quiescence probe: returns ready=true iff every previously-broadcast
         // tx is mined-and-indexed AND the tracker has no in-flight batch.
-        // Test framework barrier — callers can poll this between e2e tests so
+        // Test framework barrier: callers can poll this between e2e tests so
         // the next test starts from a fully-settled stack instead of inheriting
         // hidden state (unflushed batch, mempool backlog) that caused
         // ordering-dependent flakes.
@@ -351,7 +361,7 @@ async function startApi(){
                 return {error: "pattern must be a hex string"}
             } else {
                 // maxValues caps the scan the same way MAX_ADDRESS_OUTPUTS bounds
-                // unbounded address queries — fail loud instead of OOMing.
+                // unbounded address queries: fail loud instead of OOMing.
                 let results = await tracker.db.getValuesFromKeyPattern(pattern,
                     { maxValues: XChainUtxoTracker.MAX_ADDRESS_OUTPUTS })
 
@@ -528,7 +538,7 @@ async function compressDirPigz(taskId, source, destination) {
 
 function safeBootstrapFilename(filename) {
     // Bootstrap RPC filenames are concatenated into a filesystem path, so they
-    // must be a single path component — no directory traversal. Reject anything
+    // must be a single path component (no directory traversal). Reject anything
     // with a path separator, parent ref, NUL, or that path.basename would alter.
     // Without this, "../../.." escapes /bootstrap/xchain-utxo-tracker/ and reads
     // or writes arbitrary files as root over an unauthenticated RPC.
@@ -547,7 +557,7 @@ async function getGzipJsonMetadata(filePath) {
     // Extract the embedded JSON metadata line from the file's leading bytes
     // WITHOUT a shell. The previous implementation interpolated `filePath` into
     // a `head | strings | grep` pipeline run via child_process.exec, so a
-    // crafted filename (e.g. "$(...)" / backticks) injected shell commands —
+    // crafted filename (e.g. "$(...)" / backticks) injected shell commands:
     // remote code execution on an unauthenticated bootstrap RPC. This pure-Node
     // version reads a bounded prefix, emulates `strings` (runs of >= 4 printable
     // ASCII bytes, broken by any other byte), and returns the first run that is
@@ -567,7 +577,7 @@ async function getGzipJsonMetadata(filePath) {
             await fd.close()
         }
     } catch (err) {
-        // Missing/unreadable file — same as "no metadata found".
+        // Missing/unreadable file: same as "no metadata found".
         return null
     }
 
@@ -586,7 +596,7 @@ async function getGzipJsonMetadata(filePath) {
                 try {
                     return JSON.parse(buf.toString('latin1', start, i))
                 } catch (parseError) {
-                    // Not valid JSON — keep scanning for the next candidate run.
+                    // Not valid JSON: keep scanning for the next candidate run.
                 }
             }
             start = -1
@@ -743,7 +753,7 @@ function runBulkSyncOrchestrator() {
     // Resume support: if parsed/ already has worker output, skip dump+parse.
     const parsedDir = path.join(BULK_SYNC_WORK_DIR, 'parsed')
     if (fs.existsSync(parsedDir) && fs.readdirSync(parsedDir).some(f => f.endsWith('.dat'))) {
-        console.log('[bulk-sync] detected existing parsed/ — adding --skip-parse')
+        console.log('[bulk-sync] detected existing parsed/ - adding --skip-parse')
         args.push('--skip-parse')
     }
 
@@ -763,19 +773,19 @@ async function runBulkSyncIfEmpty() {
     if (!(await isDbEmpty())) {
         return
     }
-    console.log(`[bulk-sync] DB '${DB_NAME}' is empty — triggering bulk-sync pipeline`)
+    console.log(`[bulk-sync] DB '${DB_NAME}' is empty, triggering bulk-sync pipeline`)
     await waitForNodeSynced()
 
     // bulk-sync requires at least tipSafety+1 blocks. On fresh regtest stacks
     // (or any chain that hasn't reached coinbase maturity yet) the node reports
-    // headers==blocks==0 — waitForNodeSynced returns immediately, then dump.js
+    // headers==blocks==0: waitForNodeSynced returns immediately, then dump.js
     // FATALs with "computed dump end (tip=0 - safety=10) is before --from=0".
     // Skip the pipeline and let the normal incremental tracker handle it.
     const connector = new BlockchainConnector(NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD)
     const info      = await connector.getBlockchainInfo()
     const minBlocks = parseInt(BULK_SYNC_TIP_SAFETY, 10) + 1
     if (info.blocks < minBlocks) {
-        console.log(`[bulk-sync] chain too short (${info.blocks} blocks < ${minBlocks} required) — skipping bulk-sync, incremental sync will index from block 0`)
+        console.log(`[bulk-sync] chain too short (${info.blocks} blocks < ${minBlocks} required): skipping bulk-sync, incremental sync will index from block 0`)
         return
     }
 

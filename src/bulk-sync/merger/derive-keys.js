@@ -39,7 +39,7 @@
  * S/Z semantics (option A): scripts are derived from the FULL outputs
  * stream (pre-cancellation) so scripts that appeared and were fully
  * spent are still emitted. For each unique scriptHash, the record
- * retained is the one with the lowest rowId in the source file — i.e.
+ * retained is the one with the lowest rowId in the source file (i.e.
  * the earliest appearance in block/tx/vout order.
  *
  ********************************************************************/
@@ -66,6 +66,30 @@ const OUTPUTS_RECORD_SIZE = 120
 const SPENDS_RECORD_SIZE  = 20
 const OUTPUTS_HEADER_SIZE = 64
 const SPENDS_HEADER_SIZE  = 64
+
+// Per-chain N-window defaults (mirrors XChainUtxoTracker DEFAULT_UNDO_BLOCKS).
+// Must match the live tracker's per-chain undoBlocks so the bulk-seeded N-prefix
+// covers at least as many blocks as the live reorg depth guard allows.
+const DEFAULT_UNDO_BLOCKS = { BTC: 12, LTC: 48, DOGE: 120 }
+const FALLBACK_UNDO_BLOCKS = 12
+
+// Resolve the N-window size: explicit opts.undoBlocks wins, then
+// XCHAIN_UNDO_BLOCKS_<COIN> env var, then per-chain default, then fallback.
+// network is a string like 'bitcoin-mainnet', 'dogecoin-regtest', etc.
+function resolveUndoBlocks(network, optsUndoBlocks) {
+    if (optsUndoBlocks) return optsUndoBlocks
+    const n = String(network || '').toLowerCase()
+    let coin = null
+    if (n.startsWith('bitcoin'))  coin = 'BTC'
+    else if (n.startsWith('litecoin')) coin = 'LTC'
+    else if (n.startsWith('dogecoin')) coin = 'DOGE'
+    if (coin) {
+        const envVal = parseInt(process.env['XCHAIN_UNDO_BLOCKS_' + coin], 10)
+        if (envVal > 0) return envVal
+        return DEFAULT_UNDO_BLOCKS[coin]
+    }
+    return FALLBACK_UNDO_BLOCKS
+}
 
 // Per-prefix (keySize, valueSize, recordSize).
 const LAYOUT = {
@@ -137,9 +161,17 @@ async function sortByKey(inputPath, outputPath, recordSize, keySize, tmpDir, ram
  * @param {string}  opts.outDir            where to write final per-prefix files
  * @param {string}  opts.tmpDir            temp scratch
  * @param {number}  opts.ramBudgetBytes    sort RAM cap (default 1 GiB)
- * @param {number}  opts.undoBlocks        size of N-prefix window (default 10)
+ * @param {string}  opts.network           network string e.g. 'dogecoin-mainnet'.
+ *                                          Used to resolve per-chain undoBlocks
+ *                                          when opts.undoBlocks is not provided.
+ * @param {number}  opts.undoBlocks        size of N-prefix window. Should match
+ *                                          the live tracker's per-chain undoBlocks
+ *                                          so the seeded N-prefix covers the full
+ *                                          reorg recovery window. If omitted,
+ *                                          resolved from opts.network and the
+ *                                          XCHAIN_UNDO_BLOCKS_<COIN> env var.
  * @param {boolean} opts.removeSpent       skip T/I/J emission. Matches
- *                                          XChainUtxoTracker.REMOVE_SPENT — when
+ *                                          XChainUtxoTracker.REMOVE_SPENT; when
  *                                          true, live code never writes I/J
  *                                          records so bulk-sync shouldn't either.
  *                                          Default false (emit I/J).
@@ -151,7 +183,7 @@ async function deriveKeys(opts) {
         outDir, tmpDir,
     } = opts
     const ramBudgetBytes = opts.ramBudgetBytes || (1024 * 1024 * 1024)
-    const undoBlocks     = opts.undoBlocks     || 10
+    const undoBlocks     = resolveUndoBlocks(opts.network, opts.undoBlocks)
     const removeSpent    = Boolean(opts.removeSpent)
     const onProgress     = opts.onProgress     || noop
 
@@ -360,7 +392,7 @@ async function deriveKeys(opts) {
     // ─── Phase 6: dedup by scriptHash → S.dat (sorted), Z-raw (unsorted) ─────
     // Because we sorted by (scriptHash, rowId), the first record per
     // scriptHash in the sorted stream is the earliest occurrence. S.dat is
-    // already sorted by scriptHash (=key minus prefix) — emit in-order.
+    // already sorted by scriptHash (=key minus prefix): emit in-order.
     const candReader = new RecordReader(candSortedPath, 0, CAND_REC_SIZE)
     const sOut       = new RecordWriter(path.join(outDir, 'S.dat'), LAYOUT.S.recordSize)
     const zRawPath   = path.join(tmpDir, 'Z-raw.dat')
@@ -412,7 +444,7 @@ async function deriveKeys(opts) {
 
     // ─── Phase 8: spends-by-prevtx → I.dat (sorted), J-raw (unsorted) ────────
     // spends-by-prevtx.dat has no header, records = 20B, sorted by
-    // (prevTxHash8, prevVout) — matches I key order exactly.
+    // (prevTxHash8, prevVout): matches I key order exactly.
     //
     // Skipped entirely when removeSpent=true: the live tracker with
     // REMOVE_SPENT=true never persists I/J records (spent outputs are
@@ -470,7 +502,7 @@ async function deriveKeys(opts) {
 
     // ─── Phase 10: L markers (JSON) ──────────────────────────────────────────
     if (lastBlockHash == null) {
-        throw new Error('deriveKeys: meta file had no blocks — cannot emit LAST_* markers')
+        throw new Error('deriveKeys: meta file had no blocks; cannot emit LAST_* markers')
     }
     const lJson = {
         LAST_BLOCK_HEIGHT: lastHeight.toString(16),

@@ -75,7 +75,7 @@ const P_BLK_SCRIPT = 0x5A  // 'Z'
 const P_OUT_DEL    = 0x4B  // 'K'
 const P_HINT_DEL   = 0x4D  // 'M'
 const P_STORED_BLK = 0x4E  // 'N'
-const P_OUT_BLK    = 0x57  // 'W' — creation-block reverse index for outputs
+const P_OUT_BLK    = 0x57  // 'W' - creation-block reverse index for outputs
 
 // ─── Binary helpers ───────────────────────────────────────────────────────────
 
@@ -116,7 +116,7 @@ class InvalidCursorError extends Error {
     }
 }
 
-// Parse an "<txHash8Hex>:<vout>" cursor — the txid (8-byte/16-hex O-key prefix)
+// Parse an "<txHash8Hex>:<vout>" cursor: the txid (8-byte/16-hex O-key prefix)
 // and vout of the last output returned by the previous page. Returns null on any
 // malformed input so the caller rejects it rather than crashing the iterator.
 function parseOutputCursor(cursor) {
@@ -138,7 +138,7 @@ function rangeEnd(prefix) {
     // [O byte + scriptHash], leaving a 12-byte suffix [txHash8 + idx]).
     // A single 0xFF byte fails when the actual next byte is also 0xFF, since
     // LevelDB's lexicographic compare treats the longer key as greater than
-    // the shorter upper bound. Regression of commit 39696e8 — was silently
+    // the shorter upper bound. Regression of commit 39696e8: was silently
     // reverted by commit a2774ac.
     return Buffer.concat([prefix, Buffer.alloc(12, 0xFF)])
 }
@@ -156,7 +156,7 @@ function toMapKey(key) {
 
 // ─── Key constructors ─────────────────────────────────────────────────────────
 // Each constructor allocates a single Buffer and writes fields directly via
-// buf.write(hex, offset, 'hex') — avoids the 3–5 temporary Buffers that
+// buf.write(hex, offset, 'hex'): avoids the 3-5 temporary Buffers that
 // Buffer.concat + h2b + pb + idxBuf produced previously. At ~5M key builds per
 // batch flush this is the largest single contributor to GC pressure.
 
@@ -321,7 +321,7 @@ function encodeOutput(value, height, fullTxHashHex) {
     // i.e. ZERO_HASH. decodeOutput maps that sentinel back to t: null, which
     // callers (getUtxosAddress) treat as "no full txid available". All current
     // insertion paths supply fullTxHash, so a zero hash on read means the record
-    // predates this field — such a LevelDB must be re-indexed before use, since
+    // predates this field; such a LevelDB must be re-indexed before use, since
     // the 8-byte O-key prefix is not a spendable txid.
     if (fullTxHashHex) h2b(fullTxHashHex).copy(buf, 12)
     return buf
@@ -503,12 +503,12 @@ class LevelUpStore {
     // Records the block-tip in the same in-flight batch as the UTXO inserts
     // produced while processing this block. Because endTransaction() flushes
     // the whole batch atomically via db.batch(), the on-disk last-block-height
-    // and all of the block's outputs become queryable together — never out of
+    // and all of the block's outputs become queryable together, never out of
     // order. This is the load-bearing guarantee that get_sync_status and
     // is_quiescent rely on: callers can treat a returned committed_height as
     // "every output in blocks 0..N is queryable right now".
     async setLastBlockHeight(height){
-        // valueEncoding is 'buffer' — store the hex string as its UTF-8 bytes.
+        // valueEncoding is 'buffer': store the hex string as its UTF-8 bytes.
         await this.addTransaction("put", PREFIX_LAST_BLOCK_HEIGHT, Buffer.from(height.toString(16)))
         return true
     }
@@ -520,7 +520,7 @@ class LevelUpStore {
     }
 
     async setLastBlockHash(hash){
-        // valueEncoding is 'buffer' — store the hash string as its UTF-8 bytes.
+        // valueEncoding is 'buffer': store the hash string as its UTF-8 bytes.
         return await this.addTransaction("put", PREFIX_LAST_BLOCK_HASH, Buffer.from(hash))
     }
 
@@ -700,8 +700,19 @@ class LevelUpStore {
         // Populate the recent-output cache so Phase 2 of removeOutputsWithInputsBatch
         // can absorb spends of this output without a DB read.
         // Pack outputIndex into 2 BMP chars (high/low 16 bits) instead of
-        // ":" + String(n) — avoids the NumberPrototypeToString hot spot from the
+        // ":" + String(n): avoids the NumberPrototypeToString hot spot from the
         // profile while covering the full 32-bit range.
+        //
+        // outputCache is a process-global static shared by the confirmed and mempool
+        // stores. The mempool store also calls insertOutput (height=-1), so its
+        // entries land here too. Correctness relies on block Pass 1 (parseTxOutputs /
+        // insertOutput) overwriting any mempool cache entry with the confirmed height
+        // before Pass 2 (removeOutputsWithInputsBatch) reads it. A confirmed block
+        // can only spend an already-mined output, so by the time Pass 2 runs, all
+        // relevant cache entries already carry the confirmed height from Pass 1.
+        // The reorg path (removeCreatedOutputsInBlock) deletes O records for orphaned
+        // outputs but does not evict the cache; stale entries from the orphaned block
+        // are never re-read because the spending tx is also gone after the reorg.
         const _oi = output.outputIndex
         const cacheKey = output.txHash + String.fromCharCode((_oi >>> 16) & 0xFFFF, _oi & 0xFFFF)
         const cache = LevelUpStore.outputCache
@@ -740,9 +751,9 @@ class LevelUpStore {
 
     // Records which block created this output so a reorg can find and delete the
     // O/H entries for outputs born in a rolled-back block but never spent (which
-    // K/M spend-recovery alone cannot reach). Confirmed outputs only — mempool
+    // K/M spend-recovery alone cannot reach). Confirmed outputs only (mempool
     // outputs (no blockHash) are skipped, like the S/Z script-block index.
-    // Note: this only heals reorgs going forward — outputs created before this
+    // Note: this only heals reorgs going forward; outputs created before this
     // index existed have no W entry, so a node that reorged in the past must be
     // re-indexed to clear any pre-existing phantom UTXOs.
     // output.scriptPubKey may be a Buffer (hot path) or a hex string.
@@ -765,7 +776,7 @@ class LevelUpStore {
         const mKey = kHintDel(input.blockHash, input.prevTxHash, input.prevOutputIndex)
 
         // abstract-level .get returns undefined on a missing key (it does NOT
-        // throw). Real I/O errors still reject the promise and propagate up —
+        // throw). Real I/O errors still reject the promise and propagate up;
         // we deliberately do NOT swallow them here, unlike the previous
         // catch-all which treated every error as "not committed yet".
         const scriptPubKeyBuf = await this.db.get(hKey)                            // 32-byte Buffer or undefined
@@ -777,7 +788,7 @@ class LevelUpStore {
         }
 
         if (scriptPubKeyBuf === undefined || oVal === undefined) {
-            // Output not yet committed — check in-memory transaction map
+            // Output not yet committed: check in-memory transaction map
             const inMemScript = this.getTransactionValue(hKey)
             if (inMemScript != null){
                 const inMemOKey = kOutputFromBuf(inMemScript, input.prevTxHash, input.prevOutputIndex)
@@ -795,7 +806,7 @@ class LevelUpStore {
 
         const kKey = kOutDelFromBuf(input.blockHash, scriptPubKeyBuf, input.prevTxHash, input.prevOutputIndex)
 
-        // Stage for deferred deletion — will be purged after batch commit
+        // Stage for deferred deletion: will be purged after batch commit
         await this.addTransaction("put", mKey, scriptPubKeyBuf)
         await this.addTransaction("put", kKey, oVal)
         await this.addTransaction("del", oKey)
@@ -803,7 +814,7 @@ class LevelUpStore {
         return true
     }
 
-    // Batch version of removeOutputWithInput — collects all inputs for a block,
+    // Batch version of removeOutputWithInput: collects all inputs for a block,
     // resolves hints and outputs with 2 getMany calls instead of N individual db.get().
     async removeOutputsWithInputsBatch(inputs) {
         if (inputs.length === 0) return 0
@@ -864,13 +875,13 @@ class LevelUpStore {
             const r = resolved[i]
             r.oKey = kOutputFromBuf(r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
 
-            // Cache lookup — must match the fromCharCode encoding used in insertOutput
+            // Cache lookup (must match the fromCharCode encoding used in insertOutput)
             const _pi = inp.prevOutputIndex
             const cacheKey = inp.prevTxHash + String.fromCharCode((_pi >>> 16) & 0xFFFF, _pi & 0xFFFF)
             const cached = cache.get(cacheKey)
             if (cached !== undefined) {
                 r.oVal = cached
-                cache.delete(cacheKey)   // spent — drop from cache
+                cache.delete(cacheKey)   // spent: drop from cache
                 LevelUpStore.outputCacheHits++
                 continue
             }
@@ -976,7 +987,7 @@ class LevelUpStore {
                         item.value = value
                     } else {
                         // Re-create the put entry. innerMap/transactionArray keys are
-                        // latin1-encoded byte strings (see toMapKey), NOT hex — so the
+                        // latin1-encoded byte strings (see toMapKey), NOT hex: so the
                         // original key Buffer is recovered with 'latin1', the exact
                         // inverse of toMapKey. (Using h2b/'hex' here reinterprets the
                         // bytes as hex digits and writes a corrupted key on recovery.)
@@ -1042,7 +1053,7 @@ class LevelUpStore {
 
     // outputScript may be a Buffer (hot path) or a hex string (mempool / legacy callers).
     async insertOutputScriptBlock(outputScript, blockHash, blockHeight){
-        // Mempool transactions have no confirmed block — S/Z prefix tracking is meaningless
+        // Mempool transactions have no confirmed block: S/Z prefix tracking is meaningless
         if (!blockHash) return true
 
         // Recreate the Set to avoid V8 tombstone accumulation from constant add+delete.
@@ -1053,11 +1064,11 @@ class LevelUpStore {
 
         // Normalize the Set key to a latin1-encoded 32-char string when the input
         // is a Buffer. latin1 is half the size of hex and avoids the nibble
-        // encoding cost — used only as the in-memory dedup key, never for DB ops.
+        // encoding cost; used only as the in-memory dedup key, never for DB ops.
         const isBuf = Buffer.isBuffer(outputScript)
         const scriptKey = isBuf ? outputScript.toString('latin1') : outputScript
 
-        // Tier 0: known to exist from a previous batch — pure in-memory, no DB hit
+        // Tier 0: known to exist from a previous batch (pure in-memory, no DB hit)
         if (LevelUpStore.knownScripts.has(scriptKey)) {
             LevelUpStore.knownScriptsHits++
             return true
@@ -1066,7 +1077,7 @@ class LevelUpStore {
 
         const sKey = isBuf ? kScriptBlkFromBuf(outputScript) : kScriptBlk(outputScript)
 
-        // Tier 1: in current batch — avoids a real DB read
+        // Tier 1: in current batch (avoids a real DB read)
         if (this.getTransactionValue(sKey) !== null) {
             LevelUpStore.knownScripts.add(scriptKey)
             return true
@@ -1080,7 +1091,7 @@ class LevelUpStore {
             return true  // already exists
         }
 
-        // New script — insert and remember
+        // New script: insert and remember
         await this.addTransaction("put", sKey, encodeScriptBlk(blockHeight))
         const zKey = isBuf ? kBlkScriptFromBuf(blockHash, outputScript) : kBlkScript(blockHash, outputScript)
         await this.addTransaction("put", zKey, EMPTY)
@@ -1105,17 +1116,30 @@ class LevelUpStore {
             values: true
         }
 
+        let deleted = 0
         for await (const [key] of this.db.iterator(options)) {
             // Z key: [Z(1)][blockHash(32)][scriptPubKey(32)]
             const scriptBuf = key.slice(33)
             await this.addTransaction("del", Buffer.concat([pb(P_SCRIPT_BLK), scriptBuf]))
             await this.addTransaction("del", key)
+            deleted++
+        }
+
+        // Reset the in-memory existence cache whenever on-disk S/Z entries are
+        // deleted (reorg path). Without this, a script that appeared in the
+        // rolled-back block stays in knownScripts, causing insertOutputScriptBlock
+        // to Tier-0 hit and skip recreating S/Z for the replacement block's tx,
+        // permanently losing that script's first-seen height. A full reset is
+        // safe: the cache is a read-acceleration shortcut and cannot produce a
+        // wrong answer after rebuilding from disk.
+        if (deleted > 0) {
+            LevelUpStore.knownScripts = new Set()
         }
     }
 
     // Delete the O/H entries for every output CREATED in the given block, using
     // the W creation-block reverse index. Called during a reorg to purge outputs
-    // born in a rolled-back block that were never spent — K/M recovery only
+    // born in a rolled-back block that were never spent (K/M recovery only
     // restores outputs spent in the rolled-back block, so without this they would
     // linger as phantom UTXOs and inflate balances permanently. Must run after
     // processDeletedOutputs(recover=true): if an output was both created and spent
@@ -1171,7 +1195,7 @@ class LevelUpStore {
         }
 
         // Bounded page: let LevelDB stop scanning at `limit` rows. When unbounded,
-        // `maxOutputs` is a hard safety ceiling — refuse rather than build a
+        // `maxOutputs` is a hard safety ceiling: refuse rather than build a
         // multi-million-entry array that would OOM the process.
         const pageLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : null
         if (pageLimit != null) options.limit = pageLimit
@@ -1310,7 +1334,7 @@ class LevelUpStore {
         try {
             for await (const [key, value] of this.db.iterator(options)) {
                 // `maxValues` is a hard safety ceiling, mirroring the maxOutputs
-                // guard in getOutputsScriptPubKey — refuse rather than build a
+                // guard in getOutputsScriptPubKey: refuse rather than build a
                 // multi-million-entry array that would OOM the process.
                 if (maxValues != null && values.length >= maxValues) {
                     throw new AddressTooLargeError(maxValues)
