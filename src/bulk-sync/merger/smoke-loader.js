@@ -152,7 +152,7 @@ async function main() {
     assert.strictEqual(res.stats.S, 2)
     assert.strictEqual(res.stats.Z, 2)
     assert.strictEqual(res.stats.L, 2)
-    console.log('[smoke/loader] load counts OK — elapsed', res.elapsed_ms, 'ms')
+    console.log('[smoke/loader] load counts OK, elapsed', res.elapsed_ms, 'ms')
 
     // Read back some keys and verify byte-exact value.
     const { ClassicLevel } = require('classic-level')

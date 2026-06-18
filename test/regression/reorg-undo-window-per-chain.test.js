@@ -19,7 +19,7 @@
 // manual resync. The window is resolved at construction into this.undoBlocks,
 // with an env override (XCHAIN_UNDO_BLOCKS_<COIN>) and a 12-block fallback for
 // unknown coins. A reversion to a flat constant would silently shrink DOGE/LTC
-// headroom — this pins each coin's value and the override/fallback behaviour.
+// headroom; this pins each coin's value and the override/fallback behaviour.
 
 const { expect } = require('chai');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
@@ -44,7 +44,7 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
 
   it('Dogecoin widens to 120 blocks (the flat-10 regression target)', function () {
     expect(undoBlocksFor('dogecoin-mainnet')).to.equal(120);
-    // The pre-fix flat value — assert we are NOT back to it.
+    // Assert we are NOT back to the pre-fix flat value.
     expect(undoBlocksFor('dogecoin-mainnet')).to.not.equal(10);
   });
 

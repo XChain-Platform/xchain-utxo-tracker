@@ -17,7 +17,7 @@
 // to derive prevTxHash. The bug: `nextInput.hash.reverse()` mutates in place,
 // and the SAME decoded tx is parsed more than once (mempool ingest, then block
 // confirmation). The first parse flipped the shared buffer; the second parse
-// flipped it back — producing a double-reversed (corrupt) prevTxHash and a
+// flipped it back, producing a double-reversed (corrupt) prevTxHash and a
 // spend-hint that no longer matches the funding output. The fix wraps it in
 // Buffer.from(...) so the source bytes are never touched.
 //

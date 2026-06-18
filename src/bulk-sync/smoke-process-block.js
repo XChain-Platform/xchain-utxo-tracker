@@ -12,7 +12,7 @@
 
 // Ad-hoc smoke test for process-block.js. Uses a hand-built mock of the
 // decoded Bitcoin mainnet genesis block (to avoid requiring bitcoinjs-lib
-// locally — real-decoder integration is exercised on dankesttest).
+// locally (real-decoder integration is exercised on dankesttest).
 //
 // Genesis facts (Bitcoin mainnet, block 0):
 //   blockHash      (display): 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f

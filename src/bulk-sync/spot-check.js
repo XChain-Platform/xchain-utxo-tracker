@@ -18,7 +18,7 @@
  *
  * Random-sample byte-exact validation of a candidate DB vs a truth DB,
  * grouped by key-prefix byte. Unlike validate-db (full merge-walk), this
- * is appropriate when the two DBs cover different block ranges — it only
+ * is appropriate when the two DBs cover different block ranges. It only
  * checks whether candidate keys, when they exist in truth, hold the same
  * bytes.
  *
@@ -29,7 +29,7 @@
  *   - GET key from truth
  *   - If found  → compare byte-exact (count exact vs mismatch)
  *   - If absent → count as miss (can be legitimate: option-a divergence,
- *                  tip drift, etc. — script does not classify)
+ *                  tip drift, etc.; script does not classify)
  *
  * Exit codes:
  *   0 = no byte-level mismatches on hits
@@ -55,7 +55,7 @@ function parseArgs(argv) {
             case '--truth':     args.truth     = argv[++i]; break
             case '--candidate': args.candidate = argv[++i]; break
             case '--samples':   args.samples   = parseInt(argv[++i], 10); break
-            // Legacy backend flag — the only backend now is classic-level.
+            // Legacy backend flag (the only backend now is classic-level).
             // Accepted (and ignored) so older invocations don't error out.
             case '--backend':   i++; break
             case '--prefixes':  args.prefixes  = argv[++i]; break
@@ -257,10 +257,10 @@ async function main() {
     console.log('')
     console.log(`[spot-check] done in ${elapsed}s`)
     if (totalMismatch === 0) {
-        console.log('[spot-check] RESULT: OK — no byte-level mismatches on any hit')
+        console.log('[spot-check] RESULT: OK - no byte-level mismatches on any hit')
         process.exit(0)
     } else {
-        console.log(`[spot-check] RESULT: MISMATCH — ${totalMismatch} byte-level diffs on hits`)
+        console.log(`[spot-check] RESULT: MISMATCH - ${totalMismatch} byte-level diffs on hits`)
         process.exit(1)
     }
 }

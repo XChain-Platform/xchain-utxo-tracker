@@ -26,7 +26,7 @@
  * LAST_* markers are written as Buffer-encoded entries to match
  * LevelUpDb's schema: key = 'LAST_BLOCK_HEIGHT'/'LAST_BLOCK_HASH' (UTF-8
  * bytes), value = hex-string / hash-string bytes. These keys are NOT in any
- * .dat file — they are read from L.json.
+ * .dat file; they are read from L.json.
  *
  ********************************************************************/
 
@@ -59,7 +59,7 @@ async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize) {
         while (true) {
             const rec = reader.next()
             if (!rec) break
-            // Buffer.from copies — views are invalidated on next read.
+            // Buffer.from copies; views are invalidated on next read.
             const key   = Buffer.from(rec.subarray(0, keySize))
             const value = Buffer.from(rec.subarray(keySize, recordSize))
             ops.push({ type: 'put', key, value })
@@ -82,7 +82,7 @@ async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize) {
  * @param {string}  opts.dbPath       DB directory path (classic-level / LevelDB)
  * @param {number}  opts.batchSize    records per batch (default 10000)
  * @param {boolean} opts.removeSpent  skip T/I/J prefixes. Matches
- *                                     XChainUtxoTracker.REMOVE_SPENT — when
+ *                                     XChainUtxoTracker.REMOVE_SPENT: when
  *                                     true, live code never persists T/I/J so
  *                                     loading them wastes disk for records
  *                                     nobody reads. Default false.
@@ -126,14 +126,14 @@ async function loadKeys(opts) {
             })
         }
 
-        // L markers — string keys, string values (match LevelUpDb schema).
+        // L markers: string keys, string values (match LevelUpDb schema).
         const lPath = path.join(keysDir, 'L.json')
         if (!fs.existsSync(lPath)) throw new Error(`loadKeys: missing L.json at ${lPath}`)
         const L = JSON.parse(fs.readFileSync(lPath, 'utf8'))
         if (!('LAST_BLOCK_HEIGHT' in L) || !('LAST_BLOCK_HASH' in L)) {
             throw new Error('loadKeys: L.json missing LAST_BLOCK_HEIGHT / LAST_BLOCK_HASH')
         }
-        // DB is opened with buffer encodings — store the string metadata keys
+        // DB is opened with buffer encodings; store the string metadata keys
         // and values as their UTF-8 byte Buffers (matches LevelUpDb.js).
         await db.batch([
             { type: 'put', key: Buffer.from('LAST_BLOCK_HEIGHT'), value: Buffer.from(L.LAST_BLOCK_HEIGHT) },

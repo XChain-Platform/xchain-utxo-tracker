@@ -224,12 +224,12 @@ function stubBlockchain(tracker, initialBlocks) {
     throw new Error('Block height out of range: ' + height);
   });
 
-  // Stub getBlock — returns a fake hex string keyed by hash
+  // Stub getBlock: returns a fake hex string keyed by hash
   sinon.stub(tracker.connector, 'getBlock').callsFake(async (hash) => {
     return 'fakehex_' + hash;
   });
 
-  // Stub getBlocksBatch — used for non-AuxPoW prefetching
+  // Stub getBlocksBatch: used for non-AuxPoW prefetching
   sinon.stub(tracker.connector, 'getBlocksBatch').callsFake(async (heights) => {
     return heights.map(h => {
       const b = state.blocks[h];
@@ -238,7 +238,7 @@ function stubBlockchain(tracker, initialBlocks) {
     });
   });
 
-  // Stub blockFromHex — maps our fake hex back to the mock block object
+  // Stub blockFromHex: maps our fake hex back to the mock block object
   sinon.stub(tracker.xchainBlockDecoder, 'blockFromHex').callsFake((hex) => {
     // hex is 'fakehex_<hash>'
     const hash = hex.replace('fakehex_', '');
@@ -346,7 +346,7 @@ async function waitForSynced(tracker, timeoutMs = 30000) {
 
 /**
  * Create a tracker instance suitable for E2E testing.
- * The tracker is NOT started — call tracker.start() yourself.
+ * The tracker is NOT started. Call tracker.start() yourself.
  * The start() method will create its own LevelDB instances.
  *
  * For in-memory DBs, we monkey-patch LevelUpStore so the tracker's start()

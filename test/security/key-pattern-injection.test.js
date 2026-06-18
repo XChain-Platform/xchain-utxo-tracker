@@ -98,13 +98,13 @@ describe('Security: get_input_from_key_pattern guard + scan surface', function (
 
   it('rejects a 32-char all-invalid-hex pattern at the gate (empty-prefix full-DB scan)', async function () {
     // 'g'.repeat(32) clears the length gate but Buffer.from(.., 'hex') would
-    // decode it to a 0-byte buffer — a scan of gte=[] lte=[FF…]: the whole DB.
+    // decode it to a 0-byte buffer (a scan of gte=[] lte=[FF...]: the whole DB).
     const res = await getInputFromKeyPattern(tracker, { pattern: 'g'.repeat(32) });
     expect(res).to.deep.equal({ error: 'pattern must be a hex string' });
   });
 
   it('rejects a pattern with a non-hex character mid-string (1-byte-prefix scan)', async function () {
-    // '4f' + 'g'.repeat(30) would silently truncate to the single byte 0x4f —
+    // '4f' + 'g'.repeat(30) would silently truncate to the single byte 0x4f,
     // a scan of every live O-prefix UTXO in the database.
     const res = await getInputFromKeyPattern(tracker, { pattern: '4f' + 'g'.repeat(30) });
     expect(res).to.deep.equal({ error: 'pattern must be a hex string' });
@@ -165,7 +165,7 @@ describe('Security: get_input_from_key_pattern guard + scan surface', function (
     const row = res.result[0];
     expect(row).to.have.all.keys('key', 'value');
     expect(row.key).to.match(/^4f/); // begins with the O prefix byte
-    // The value is the raw stored encoding as hex — non-empty (scan requested
+    // The value is the raw stored encoding as hex, non-empty (scan requested
     // values, not just keys).
     expect(row.value).to.be.a('string').and.match(/^[0-9a-f]+$/i).and.have.length.greaterThan(0);
     expect(row).to.not.have.property('amount');
@@ -173,8 +173,8 @@ describe('Security: get_input_from_key_pattern guard + scan surface', function (
   });
 
   it('a prefix matching no records returns an empty set, not the whole DB', async function () {
-    // A 33-byte prefix for a scriptHash with no outputs must scope to nothing —
-    // proving the scan is prefix-bounded (rangeEnd), not a full table dump.
+    // A 33-byte prefix for a scriptHash with no outputs must scope to nothing.
+    // This proves the scan is prefix-bounded (rangeEnd), not a full table dump.
     const emptyPrefix = '4f' + 'de'.repeat(32);
     const res = await getInputFromKeyPattern(tracker, { pattern: emptyPrefix });
     expect(res.result).to.be.an('array').with.length(0);

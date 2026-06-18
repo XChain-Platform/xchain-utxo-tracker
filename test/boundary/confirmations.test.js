@@ -17,7 +17,7 @@
 // 1-confirmed, not 0; an output exactly one block back is 2-confirmed; and a
 // mempool (unconfirmed) output reports 0 with a null height. We also pin the
 // behaviour when the tracker's cached tip momentarily trails an output's height
-// (height > tip) — the formula is unclamped, so this documents whether a stale
+// (height > tip): the formula is unclamped, so this documents whether a stale
 // tip can surface a 0/negative confirmation count to callers.
 
 const { expect } = require('chai');

@@ -131,7 +131,7 @@ describe('BlockchainConnector', function () {
       expect(hex).to.be.a('string');
 
       // hexFormat=true → pass verbosity 0 to getblock for hex (getblock takes an
-      // integer verbosity: 0=hex, 1=json — unlike getblockheader's boolean verbose)
+      // integer verbosity: 0=hex, 1=json (unlike getblockheader's boolean verbose)
       const payload = clientStub.firstCall.args[1];
       expect(payload.params[1]).to.equal(0);
     });
@@ -453,7 +453,7 @@ describe('BlockchainConnector', function () {
       const heights = [200, 201];
       // call 0: getblockhash batch
       clientStub.onCall(0).resolves({ data: heights.map((h, i) => ({ id: i, result: 'hash' + i })) });
-      // call 1: getblockheader batch — index 0 header longer than 160 hex chars (AuxPoW), index 1 exactly 160
+      // call 1: getblockheader batch: index 0 header longer than 160 hex chars (AuxPoW), index 1 exactly 160
       clientStub.onCall(1).resolves({ data: [
         { id: 0, result: 'a'.repeat(200) },  // 40 extra hex chars of AuxPoW
         { id: 1, result: 'b'.repeat(160) }   // standard header, nothing to strip

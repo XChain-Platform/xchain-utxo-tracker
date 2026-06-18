@@ -58,9 +58,9 @@ function writeHeader(fd, magic, chain, netName, firstHeight, lastHeight, recordS
     buf.writeUInt16LE(FILE_VERSION,         10)
     buf.writeUInt32LE(firstHeight,          12)
     buf.writeUInt32LE(lastHeight,           16)
-    // 20..28 record_count — back-filled in close() via pwrite
+    // 20..28 record_count (back-filled in close() via pwrite)
     buf.writeUInt32LE(recordSize,           28)
-    // 32..64 reserved — already zero from Buffer.alloc
+    // 32..64 reserved, already zero from Buffer.alloc
     fs.writeSync(fd, buf, 0, HEADER_SIZE)
 }
 
@@ -134,7 +134,7 @@ class FixedRecordWriter {
 }
 
 /**
- * outputs-*.dat — 120 bytes/record.
+ * outputs-*.dat: 120 bytes/record.
  *
  *   [0..8]     txHash8        8B raw
  *   [8..12]    vout           uint32 BE
@@ -164,7 +164,7 @@ class OutputsWriter extends FixedRecordWriter {
 }
 
 /**
- * spends-*.dat — 20 bytes/record. Coinbases are NOT emitted.
+ * spends-*.dat: 20 bytes/record. Coinbases are NOT emitted.
  *
  *   [0..8]    prevTxHash8      8B raw
  *   [8..12]   prevVout         uint32 BE
@@ -186,7 +186,7 @@ class SpendsWriter extends FixedRecordWriter {
 }
 
 /**
- * meta-*.dat — variable-length, inlined tx list per block.
+ * meta-*.dat: variable-length, inlined tx list per block.
  *
  *   Block record (76 + 8*tx_count bytes):
  *     [0..4]    height        uint32 BE

@@ -209,7 +209,7 @@ async function main() {
         console.log('[smoke/external-sort] case F misaligned input rejected')
     }
 
-    // ---- Case G: stability-ish — sort is key-only; equal keys may reorder.
+    // ---- Case G: stability-ish (sort is key-only; equal keys may reorder).
     // We verify only that the output is a permutation with keys sorted.
     {
         const RS = 20, KS = 4, N = 3000 // 32-bit keys → lots of collisions

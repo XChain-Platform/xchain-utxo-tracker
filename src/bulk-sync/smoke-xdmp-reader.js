@@ -103,7 +103,7 @@ function writeXdmp(filePath, header, records) {
     console.log('[smoke/xdmp-reader] happy path OK')
 }
 
-// ---- case 2: blockBytes view semantics — confirm the caller MUST copy ----
+// ---- case 2: blockBytes view semantics: confirm the caller MUST copy ----
 {
     const header = buildHeader({ firstHeight: 0, lastHeight: 1, chainTip: 1 })
     const file = path.join(TMP_DIR, 'view.xdmp')
@@ -122,7 +122,7 @@ function writeXdmp(filePath, header, records) {
     // Advance: scratch gets overwritten.
     const second = it.next().value
     assert.strictEqual(second.blockBytes[0], 0x22)
-    // firstBytesRef is now aliasing the SAME scratch region — it sees 0x22.
+    // firstBytesRef is aliasing the SAME scratch region, so it now sees 0x22.
     assert.strictEqual(firstBytesRef[0], 0x22,
         'confirming view is invalidated on next iteration (caller must copy)')
 

@@ -59,11 +59,11 @@ function arbHexString(nBytes) {
     .map(arr => Buffer.from(arr).toString('hex'));
 }
 
-// 32-byte hex (64 chars) — for txids and block hashes
+// 32-byte hex (64 chars): for txids and block hashes
 function arbTxId() { return arbHexString(32); }
 function arbBlockHash() { return arbHexString(32); }
 
-// 8-byte hex (16 chars) — for txHash8
+// 8-byte hex (16 chars): for txHash8
 function arbTxHash8() { return arbHexString(8); }
 
 // Satoshi value as BigInt in valid range
@@ -100,7 +100,7 @@ function arbConfirmedHeight() {
   return fc.integer({ min: 0, max: 2000000 });
 }
 
-// Address arbitrary — mix of valid and invalid
+// Address arbitrary (mix of valid and invalid)
 function arbAddress() {
   return fc.oneof(
     // Valid regtest addresses from TEST_KEYS
@@ -146,7 +146,7 @@ function arbOutputIndex() {
   return fc.oneof(
     fc.integer({ min: 0, max: 20 }),      // typical
     fc.constant(0),
-    fc.constant(4294967295)                 // 0xFFFFFFFF — coinbase marker
+    fc.constant(4294967295)                 // 0xFFFFFFFF (coinbase marker)
   );
 }
 

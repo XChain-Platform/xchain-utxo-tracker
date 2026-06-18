@@ -23,7 +23,7 @@
  *
  * The yielded `blockHash` is a fresh 32-byte copy (safe to retain).
  * The yielded `blockBytes` is a SLICE into an internal scratch buffer
- * and is INVALIDATED on the next iteration — the caller must consume
+ * and is INVALIDATED on the next iteration; the caller must consume
  * it (typically via decoder.blockFromBuffer(...)) before advancing the
  * generator. This avoids per-block allocations over 32 MB on mainnet.
  *
@@ -133,7 +133,7 @@ class XdmpReader {
             }
             this._pos += blockSize
 
-            // VIEW into scratch — invalidated next iteration.
+            // VIEW into scratch; invalidated on the next iteration.
             const blockBytes = this._dataBuf.slice(0, blockSize)
 
             yield { height, blockHash, blockBytes }

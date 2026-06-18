@@ -65,7 +65,7 @@ describe('Chaos: Storage Faults', function () {
       }
       expect(threw).to.be.true;
 
-      // State anchor unchanged — atomicity preserved
+      // State anchor unchanged: atomicity preserved
       expect(await tracker.db.getLastBlockHeight()).to.equal(heightBefore);
 
       // transactionArray preserved (Map not nullified on error)
@@ -87,7 +87,7 @@ describe('Chaos: Storage Faults', function () {
       // First attempt fails
       try { await tracker.db.endTransaction(); } catch (e) { /* expected */ }
 
-      // Restore and retry — the accumulated ops in transactionArray are still valid
+      // Restore and retry: the accumulated ops in transactionArray are still valid
       fault.restore();
       await tracker.db.endTransaction();
 

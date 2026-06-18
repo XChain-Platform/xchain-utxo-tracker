@@ -42,7 +42,7 @@ describe('Integration: Chain Reorganization', function () {
     await tracker.verifyReorg();
   }
 
-  // ─── Scenario 4.1: Single-Block Reorg — Height/Hash Rollback ─────────
+  // ─── Scenario 4.1: Single-Block Reorg (Height/Hash Rollback) ─────────
 
   describe('single-block reorg', function () {
     it('rolls back block height and hash to the fork point', async function () {
@@ -161,16 +161,16 @@ describe('Integration: Chain Reorganization', function () {
 
   describe('reorg restores spent output', function () {
     it('unspends outputs when the spending block is rolled back', async function () {
-      // Block 0: coinbase 50 BTC to addr0 — committed in batch 1
+      // Block 0: coinbase 50 BTC to addr0 (committed in batch 1)
       const cb = makeCoinbaseTx(0, 50 * SATOSHI);
       const block0 = makeBlock(0, '0'.repeat(64), [cb]);
       await processAndCommit(tracker, block0);
 
-      // Block 1: filler — committed in batch 2
+      // Block 1: filler (committed in batch 2)
       const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(2)]);
       await processAndCommit(tracker, block1);
 
-      // Block 2: spend addr0's UTXO — committed in batch 3
+      // Block 2: spend addr0's UTXO (committed in batch 3)
       // Since block0's O/H are committed, removeOutputWithInput uses the DB path,
       // creating K/M records that allow restoration on reorg.
       const spendTx = makeTx({
@@ -203,7 +203,7 @@ describe('Integration: Chain Reorganization', function () {
       expect(infoAfter0.utxos.confirmed).to.equal(1);
 
       // addr1's 49 BTC output was CREATED in the rolled-back block and never
-      // spent — it must not survive as a phantom UTXO (W-index cleanup).
+      // spent; it must not survive as a phantom UTXO (W-index cleanup).
       const infoAfter1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(infoAfter1.balances.confirmed).to.equal('0.00000000');
       expect(infoAfter1.utxos.confirmed).to.equal(0);

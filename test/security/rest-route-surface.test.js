@@ -13,12 +13,12 @@
 // ─── Security: REST address routes pass untrusted input straight through ──────
 //
 // The four GET /…/:address routes (api.js) take `req.params.address` verbatim
-// and hand it to the tracker — there is NO length cap, charset allowlist, or
+// and hand it to the tracker. There is NO length cap, charset allowlist, or
 // schema check at the HTTP edge; the only validation is toOutputScript deep
 // inside the tracker (covered by address-validation.test.js). These tests
 // reconstruct the real routes (mirroring unit/api.test.js) and pin:
 //   • the X-Mempool-Ready readiness-header contract, and
-//   • that arbitrary attacker bytes reach the tracker unmodified — quantifying
+//   • that arbitrary attacker bytes reach the tracker unmodified, quantifying
 //     the input surface the validation gate must therefore be trusted to hold.
 //
 // NB the production routes delegate all address validation to the tracker layer
@@ -102,7 +102,7 @@ describe('Security: REST address-route input surface', function () {
 
   it('forwards attacker-controlled :address bytes to the tracker unmodified (no HTTP-edge validation)', async function () {
     // A long, special-character-laden segment. Express URL-decodes the segment,
-    // and the route passes it straight to the tracker — proving the only
+    // and the route passes it straight to the tracker, proving the only
     // validation is the tracker's toOutputScript gate, not the HTTP layer.
     const hostile = 'A'.repeat(300) + "_'%3B--";
     await supertest(app).get('/utxos/' + encodeURIComponent(hostile)).expect(200);

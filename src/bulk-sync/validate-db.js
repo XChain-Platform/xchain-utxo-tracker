@@ -17,7 +17,7 @@
  *
  * Compares two LevelUpDb (classic-level / LevelDB) directories key-by-key via
  * a streaming merge-walk. Reports total keys, matches, value diffs, keys
- * only in truth, keys only in candidate — broken down by prefix byte.
+ * only in truth, keys only in candidate (broken down by prefix byte).
  * Prints the first N diffs verbatim for inspection.
  *
  * Both DBs must be closed (not in use by another process).
@@ -37,7 +37,7 @@ function parseArgs(argv) {
         switch (arg) {
             case '--truth':             args.truth = argv[++i]; break
             case '--candidate':         args.candidate = argv[++i]; break
-            // Legacy backend flags — the only backend now is classic-level.
+            // Legacy backend flags (the only backend now is classic-level).
             // Accepted (and ignored) so older invocations don't error out.
             case '--truth-backend':
             case '--candidate-backend':
@@ -259,10 +259,10 @@ async function main() {
     console.log(`[validate-db] ${totalKeys} keys compared in ${(elapsed / 1000).toFixed(1)}s`)
     const ok = tDiffs === 0 && tMissing === 0 && tExtra === 0
     if (ok) {
-        console.log('[validate-db] RESULT: OK — databases are identical')
+        console.log('[validate-db] RESULT: OK - databases are identical')
         process.exit(0)
     } else {
-        console.log(`[validate-db] RESULT: MISMATCH — ${tDiffs} diffs, ${tMissing} missing, ${tExtra} extra`)
+        console.log(`[validate-db] RESULT: MISMATCH - ${tDiffs} diffs, ${tMissing} missing, ${tExtra} extra`)
         process.exit(2)
     }
 }

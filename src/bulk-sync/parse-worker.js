@@ -23,7 +23,7 @@
  * ./writers.js. Stateless, single-threaded, one dump per invocation.
  *
  * Parallelism is achieved by spawning N processes (one per .xdmp)
- * from an external launcher — not inside this worker.
+ * from an external launcher, not inside this worker.
  *
  * Usage:
  *   node src/bulk-sync/parse-worker.js --in <dump.xdmp> --out <dir>
@@ -123,7 +123,7 @@ function main() {
 
     // Skip if all three outputs already exist (idempotent re-runs).
     if (fs.existsSync(paths.outputs) && fs.existsSync(paths.spends) && fs.existsSync(paths.meta)) {
-        console.log(`[parse-worker] all outputs already exist for this range — skipping`)
+        console.log(`[parse-worker] all outputs already exist for this range, skipping`)
         reader.close()
         return
     }

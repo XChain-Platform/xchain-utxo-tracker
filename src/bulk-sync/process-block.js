@@ -43,7 +43,7 @@ function sha256(buf) {
  * @returns {{txs:number, outputs:number, spends:number}}
  */
 function processBlock(block, height, blockHash, writers) {
-    // block.prevHash is bitcoinjs-lib internal LE — reverse to display order.
+    // block.prevHash is bitcoinjs-lib internal LE (reverse to get display order).
     // Clone instead of mutating; defensive against the decoder reusing the block.
     const previousHash = reverseBytes32(block.prevHash)
 

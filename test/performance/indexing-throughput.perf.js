@@ -144,7 +144,7 @@ describe('Perf: Sustained Indexing Throughput', function () {
     console.log(`    Heap after:  ${(heapAfter / 1024 / 1024).toFixed(1)} MB`);
     console.log(`    Growth:      ${heapGrowthMB.toFixed(1)} MB`);
 
-    // Allow generous threshold — memdown stores everything in memory
+    // Allow generous threshold (memdown stores everything in memory,
     // so growth is expected; we're looking for leaks beyond the data itself
     const expectedDataMB = (SCALE.blocks * SCALE.txsPerBlock * 200) / (1024 * 1024); // ~200 bytes per UTXO entry
     const leakThreshold = expectedDataMB + 100; // data + 100MB overhead

@@ -37,7 +37,7 @@ describe('Fuzz: Address Validation (P1)', function () {
         fc.asyncProperty(
           fc.string({ minLength: 0, maxLength: 200 }),
           async (addr) => {
-            // Must not throw — should return a string type
+            // Must not throw; should return a string type
             const result = tracker.getAddressType(addr, NETWORK);
             expect(result).to.be.a('string');
             expect(['p2pkh', 'p2sh', 'p2wpkh', 'p2tr', 'unknown']).to.include(result);

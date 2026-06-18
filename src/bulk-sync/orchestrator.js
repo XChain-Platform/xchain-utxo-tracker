@@ -78,7 +78,7 @@ class CleanupManager {
         if (this.thresholdBytes <= 0) return
         const before = this.freeBytes()
         if (before >= this.thresholdBytes) return
-        log('CLEANUP', `disk low (${(before / 1e9).toFixed(1)}GB free, threshold ${(this.thresholdBytes / 1e9).toFixed(1)}GB) — ${reason}`)
+        log('CLEANUP', `disk low (${(before / 1e9).toFixed(1)}GB free, threshold ${(this.thresholdBytes / 1e9).toFixed(1)}GB): ${reason}`)
         let freedBytes = 0
         while (this.queue.length > 0 && this.freeBytes() < this.thresholdBytes) {
             const { filePath, label } = this.queue.shift()
@@ -132,7 +132,7 @@ function parseArgs(argv) {
             case '--chunk-size':      args.chunkSize   = parseInt(argv[++i], 10); break
             case '--out':             args.out         = argv[++i]; break
             case '--db':              args.db          = argv[++i]; break
-            // Legacy backend flag — the only backend now is classic-level.
+            // Legacy backend flag (the only backend now is classic-level).
             // Accepted (and ignored) so older invocations don't error out.
             case '--backend':         i++; break
             case '--workers':         args.workers     = parseInt(argv[++i], 10); break
@@ -183,7 +183,7 @@ Options:
                         to match XChainUtxoTracker.REMOVE_SPENT=true)
 
 Environment:
-  NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD — coin node RPC
+  NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD (coin node RPC)
 `)
 }
 
@@ -339,7 +339,7 @@ async function phaseParse(args, dirs, xdmpFiles) {
 
     log('PARSE', 'all workers done')
 
-    // Dumps are consumed only by parse — keeping them through MERGE risks
+    // Dumps are consumed only by parse. Keeping them through MERGE risks
     // ENOSPC because the sort phase needs hundreds of GB of scratch space.
     log('PARSE', `removing ${dirs.dumps} to free disk for merge`)
     fs.rmSync(dirs.dumps, { recursive: true, force: true })
@@ -396,7 +396,7 @@ async function phaseMerge(args, dirs, cleanup) {
             ramBudgetBytes,
             onProgress(ev) {
                 if (ev.phase === 'sort-done' || ev.phase === 'merge-done') {
-                    log('MERGE', `  sort outputs: ${ev.phase} — ${JSON.stringify(ev)}`)
+                    log('MERGE', `  sort outputs: ${ev.phase} ${JSON.stringify(ev)}`)
                 }
             }
         })
@@ -420,7 +420,7 @@ async function phaseMerge(args, dirs, cleanup) {
             ramBudgetBytes,
             onProgress(ev) {
                 if (ev.phase === 'sort-done' || ev.phase === 'merge-done') {
-                    log('MERGE', `  sort spends: ${ev.phase} — ${JSON.stringify(ev)}`)
+                    log('MERGE', `  sort spends: ${ev.phase} ${JSON.stringify(ev)}`)
                 }
             }
         })
@@ -468,7 +468,7 @@ async function phaseMerge(args, dirs, cleanup) {
             if (ev.phase && ev.phase.includes('done')) {
                 log('MERGE', `  derive: ${ev.phase}`)
             }
-            // Each phase consumes a specific input — once it's done, the
+            // Each phase consumes a specific input. Once it's done, the
             // input is dead weight on disk. Enqueue + maybe-free trades
             // resume capability for ENOSPC safety on tight disks.
             if (ev.phase === 'meta-done') {
@@ -564,7 +564,7 @@ async function main() {
 
     const elapsed = Date.now() - t0
     log('ORCHESTRATOR', `pipeline complete in ${fmtDuration(elapsed)}`)
-    log('ORCHESTRATOR', `DB at ${args.db} — ready for validate-db`)
+    log('ORCHESTRATOR', `DB at ${args.db}: ready for validate-db`)
 }
 
 main().catch(err => {

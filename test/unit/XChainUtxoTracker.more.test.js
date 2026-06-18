@@ -115,7 +115,7 @@ describe('XChainUtxoTracker (more)', function () {
         });
 
         it('converts large DOGE-scale amount', function () {
-            // 100M DOGE = 10_000_000_000_000_000 sat — above Number.MAX_SAFE_INTEGER
+            // 100M DOGE = 10_000_000_000_000_000 sat, above Number.MAX_SAFE_INTEGER
             const doge100M = 10_000_000_000_000_000n;
             const result = satoshiToDecimalString(doge100M);
             expect(result).to.equal('100000000.00000000');
@@ -593,7 +593,7 @@ describe('XChainUtxoTracker (more)', function () {
 
             const page1 = await tracker.getUtxosAddress(address, { limit: 2 });
             expect(page1).to.have.length(2);
-            // nextCursor is non-enumerable — access directly
+            // nextCursor is non-enumerable; access directly
             expect(page1.nextCursor).to.be.a('string');
         });
 
@@ -621,7 +621,7 @@ describe('XChainUtxoTracker (more)', function () {
             expect(page1.some(u => u.confirmations === 0)).to.be.true;
 
             // Second page (after=validCursor): should NOT include mempool.
-            // Cursor format must be "<txHash8Hex>:<vout>" — use a valid but non-existent one.
+            // Cursor format must be "<txHash8Hex>:<vout>"; use a valid but non-existent one.
             const validCursor = randHash8() + ':0';
             const page2 = await tracker.getUtxosAddress(address, { limit: 10, after: validCursor });
             expect(page2.every(u => u.confirmations !== 0)).to.be.true;
@@ -771,7 +771,7 @@ describe('XChainUtxoTracker (more)', function () {
         });
 
         it('multi-batch: logs estimate and sleeps between batches when rawMempool > MEMPOOL_BATCH_SIZE', async function () {
-            // MEMPOOL_BATCH_SIZE=1000 — provide 1001 txids to trigger the multi-batch path
+            // MEMPOOL_BATCH_SIZE=1000; provide 1001 txids to trigger the multi-batch path
             // (lines 1224-1228 and 1284-1286).
             const BATCH_SIZE = 1000;
             const txids = Array.from({ length: BATCH_SIZE + 1 }, () => randHash());
@@ -792,13 +792,13 @@ describe('XChainUtxoTracker (more)', function () {
 
     // ── verifyReorg height-mismatch branch (lines 634-649) ────────────────
 
-    describe('verifyReorg — height mismatch (db recovery branch)', function () {
+    describe('verifyReorg: height mismatch (db recovery branch)', function () {
         it('fixes mismatched lastBlockIndex and continues when lastBlock exists and heights are consistent', async function () {
             let callCount = 0;
             tracker.undoBlocks = 1000;
             sinon.stub(tracker, 'sleep').resolves();
 
-            // First pass: lastBlockIndex(100) != lastBlock.h(99) — triggers the fix branch.
+            // First pass: lastBlockIndex(100) != lastBlock.h(99); triggers the fix branch.
             // Second pass: heights agree and node hash matches → thereAreDifferences = false.
             tracker.db = {
                 getLastBlockHeight: sinon.stub()

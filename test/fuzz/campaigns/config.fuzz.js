@@ -29,7 +29,7 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
               const tracker = new XChainUtxoTracker(
                 network, '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
               );
-              // Constructor succeeded — the network may or may not be valid
+              // Constructor succeeded; the network may or may not be valid
               // but it should not crash
             } catch (e) {
               // Throwing is acceptable for invalid network
@@ -77,7 +77,7 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
               const tracker = new XChainUtxoTracker(
                 'bitcoin-regtest', '127.0.0.1', port, 'user', 'pass', 'test-db', false
               );
-              // Constructor may succeed — port validation happens at connection time
+              // Constructor may succeed (port validation happens at connection time)
             } catch (e) {
               expect(e).to.be.an('error');
             }
@@ -122,7 +122,7 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
               const tracker = new XChainUtxoTracker(
                 'bitcoin-regtest', '127.0.0.1', '18443', user, pass, 'test-db', false
               );
-              // Constructor should succeed — auth happens at connection time
+              // Constructor should succeed (auth happens at connection time)
             } catch (e) {
               expect(e).to.be.an('error');
             }

@@ -336,7 +336,7 @@ describe('XChainUtxoTracker', function () {
       });
       await db.endTransaction(true);
 
-      // Insert mempool input spending it — insertInput truncates to first 16 chars
+      // Insert mempool input spending it; insertInput truncates to first 16 chars
       await mempoolDb.insertInput({
         prevTxHash: txHash8 + '0'.repeat(48), // full 64-char hex, first 16 match txHash8
         prevOutputIndex: 0,
@@ -438,7 +438,7 @@ describe('XChainUtxoTracker', function () {
       });
       await db.endTransaction(true);
 
-      // Mempool spends this output — insertInput keys on the 8-byte prefix
+      // Mempool spends this output; insertInput keys on the 8-byte prefix
       await mempoolDb.insertInput({
         prevTxHash: fullTxHash,
         prevOutputIndex: 0,
@@ -457,7 +457,7 @@ describe('XChainUtxoTracker', function () {
       const script = bitcoin.address.toOutputScript(address, tracker.network);
       const scriptHash = createHash('sha256').update(script).digest('hex');
 
-      // Output written WITHOUT a fullTxHash — the zero-hash sentinel decodes to
+      // Output written WITHOUT a fullTxHash. The zero-hash sentinel decodes to
       // fullTxid: null, so the resolved txid is only the 16-char key prefix.
       // Such records predate the O-record fullTxHash field and cannot spend
       // validly; getUtxosAddress must reject them rather than emit a truncated id.

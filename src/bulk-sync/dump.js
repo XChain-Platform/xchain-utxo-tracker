@@ -26,7 +26,7 @@
  *     12..16  first_block_height (u32 LE)
  *     16..20  last_block_height (u32 LE)
  *     20..24  block_count (u32 LE) = last - first + 1
- *     24..28  chain_tip_at_dump (u32 LE) — tip when dump started
+ *     24..28  chain_tip_at_dump (u32 LE) - tip when dump started
  *     28..64  reserved (zero-filled)
  *
  *   Block records (stream after header, ascending height, no gaps):
@@ -215,7 +215,7 @@ async function dumpChunk(connector, args, chunkStart, chunkEnd, chainTipAtDump) 
     const elapsed = Date.now() - startedAt
     const blocks  = chunkEnd - chunkStart + 1
     const mb      = (bytesWritten / (1024 * 1024)).toFixed(1)
-    console.log(`[done] ${fileName} — ${blocks} blocks, ${mb} MB, ${fmtDuration(elapsed)}`)
+    console.log(`[done] ${fileName}: ${blocks} blocks, ${mb} MB, ${fmtDuration(elapsed)}`)
     return { skipped: false, bytes: bytesWritten, blocks }
 }
 
@@ -280,7 +280,7 @@ async function main() {
     console.log(`[bulk-sync/dump] done: ${totalBlocksWritten} blocks, ${totalMb} MB, ${chunkCount} chunks, ${fmtDuration(elapsed)}`)
     console.log(`[bulk-sync/dump] tip at start=${chainTipAtDump}, tip now=${tipAfter}`)
     if (tipAfter < chainTipAtDump) {
-        console.log(`[bulk-sync/dump] WARNING: tip decreased — possible reorg, verify dump integrity`)
+        console.log(`[bulk-sync/dump] WARNING: tip decreased (possible reorg, verify dump integrity)`)
     }
 }
 

@@ -22,7 +22,7 @@ describe('Fuzz: Block Decoder (P0)', function () {
     decoder = new XChainBlockDecoder('bitcoin-regtest');
   });
 
-  // ─── blockFromBuffer — random buffers must never hang or segfault ──────────
+  // ─── blockFromBuffer: random buffers must never hang or segfault ───────────
 
   describe('blockFromBuffer', function () {
     it('never hangs on arbitrary buffers (throws or returns)', async function () {
@@ -34,7 +34,7 @@ describe('Fuzz: Block Decoder (P0)', function () {
             try {
               decoder.blockFromBuffer(buf);
             } catch (e) {
-              // Throwing is fine — we just assert it doesn't hang or segfault
+              // Throwing is fine; we just assert it doesn't hang or segfault
               expect(e).to.be.an('error');
             }
           }
@@ -99,7 +99,7 @@ describe('Fuzz: Block Decoder (P0)', function () {
     });
   });
 
-  // ─── blockFromHex — fuzzed hex strings ─────────────────────────────────────
+  // ─── blockFromHex: fuzzed hex strings ──────────────────────────────────────
 
   describe('blockFromHex', function () {
     it('never hangs on arbitrary hex strings', async function () {
@@ -136,7 +136,7 @@ describe('Fuzz: Block Decoder (P0)', function () {
     });
   });
 
-  // ─── txFromHex — fuzzed transaction hex ────────────────────────────────────
+  // ─── txFromHex: fuzzed transaction hex ─────────────────────────────────────
 
   describe('txFromHex', function () {
     it('never hangs on arbitrary hex', async function () {
@@ -212,7 +212,7 @@ describe('Fuzz: Block Decoder (P0)', function () {
     });
   });
 
-  // ─── doubleSha256AndReverse — should always produce 32 bytes ───────────────
+  // ─── doubleSha256AndReverse: should always produce 32 bytes ────────────────
 
   describe('doubleSha256AndReverse', function () {
     it('always returns a 32-byte buffer for any input', async function () {

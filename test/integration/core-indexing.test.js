@@ -73,7 +73,7 @@ describe('Integration: Core Indexing', function () {
 
       await processAndCommit(tracker, block);
 
-      // Coinbase index is 0xFFFFFFFF — no I record should exist
+      // Coinbase index is 0xFFFFFFFF; no I record should exist
       const input = await tracker.db.getInput(txid8, 4294967295);
       expect(input).to.be.null;
     });
@@ -211,7 +211,7 @@ describe('Integration: Core Indexing', function () {
       const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(3), tx1, tx2]);
       await processAndCommit(tracker, block1);
 
-      // Address 1: output was created by tx1 and spent by tx2 — should have 0 UTXOs
+      // Address 1: output was created by tx1 and spent by tx2, should have 0 UTXOs
       const utxos1 = await tracker.getUtxosAddress(TEST_KEYS[1].address);
       expect(utxos1).to.have.length(0);
 

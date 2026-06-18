@@ -26,7 +26,7 @@
  *       | tx_count(4 BE) | tx_count × txHash8(8)
  *
  * The generator yields objects whose `blockHash`, `previousHash` and each
- * entry of `txHash8List` are Buffer VIEWS into a single scratch buffer —
+ * entry of `txHash8List` are Buffer VIEWS into a single scratch buffer;
  * they are invalidated on the next iteration. Callers that need to retain
  * bytes across iterations must Buffer.from(view) to copy.
  *

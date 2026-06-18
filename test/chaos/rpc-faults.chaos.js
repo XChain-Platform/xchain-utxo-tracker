@@ -54,7 +54,7 @@ describe('Chaos: RPC Faults', function () {
       // the chain is consistent (no actual reorg)
       await forceVerifyReorg(tracker);
 
-      // Height unchanged — no reorg occurred, just transient failures
+      // Height unchanged: no reorg occurred, just transient failures
       expect(await tracker.db.getLastBlockHeight()).to.equal(4);
       expect(await tracker.db.getLastBlockHash()).to.equal(blocks[4].hash);
 

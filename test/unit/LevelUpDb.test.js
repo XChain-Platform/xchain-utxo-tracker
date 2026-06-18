@@ -224,7 +224,7 @@ describe('LevelUpDb', function () {
     // Regression: rangeEnd previously appended a single 0xFF byte. For any
     // output whose txHash8 started with 0xFF, the range scan in
     // getOutputsScriptPubKey treated the actual key (longer, byte[33]=0xFF)
-    // as greater than the upper bound — silently skipping it. Fixed by
+    // as greater than the upper bound, silently skipping it. Fixed by
     // appending 12 bytes of 0xFF in commit 6385686. This guards against
     // accidental re-reverts during perf refactors of LevelUpDb.js.
     it('returns outputs whose txHash8 starts with 0xFF (rangeEnd regression)', async function () {
@@ -443,7 +443,7 @@ describe('LevelUpDb', function () {
       const blockHash = randHash();
 
       await db.beginTransaction();
-      // No output or hint exists — should not throw
+      // No output or hint exists; should not throw
       const result = await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
       expect(result).to.be.true;
     });
@@ -696,7 +696,7 @@ describe('LevelUpDb', function () {
     // Regression for the binary-search polarity bug fixed in commit 095bee7.
     // The prior comparator was inverted AND the not-found check was `== -1`
     // (instead of `< 0`), causing ~40% of not-in-list needles to be
-    // misclassified as "found and kept" — leaking stale mempool entries
+    // misclassified as "found and kept", leaking stale mempool entries
     // through the cleanup path. Pin the txHash bytes so the lex ordering is
     // deterministic instead of relying on random hashes (which gave the
     // original test ~60% pass-by-luck).
@@ -729,7 +729,7 @@ describe('LevelUpDb', function () {
       expect(await db.getOutputsScriptPubKey(scriptHash_hi)).to.have.length(1);
     });
 
-    // Mirror of the above with the keep-list at lex-low side instead — covers
+    // Mirror of the above with the keep-list at lex-low side instead, covering
     // the other branch direction in binary-search.
     it('deletes the lex-larger tx when only the lex-smaller one is kept', async function () {
       const tx_lo = '00' + randHash().substring(2);
@@ -780,7 +780,7 @@ describe('LevelUpDb', function () {
       await db.recoverDeletedOutputsHints(blockHash);
       await db.endTransaction(true);
 
-      // The H entry should be back — verify by trying to delete outputs by hint
+      // The H entry should be back; verify by trying to delete outputs by hint
       // which reads the H entry to find and delete the O entry
       // Since the O entry was deleted, this should just succeed without error
       await db.beginTransaction();

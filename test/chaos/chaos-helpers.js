@@ -32,7 +32,7 @@ async function measureMs(asyncFn) {
 
 /**
  * Monkey-patches db.db.batch to reject with the given error.
- * Target: LevelUpDb.js:290 — endTransaction() calls this.db.batch()
+ * Target: LevelUpDb.js:290 - endTransaction() calls this.db.batch()
  * Returns { restore() } to undo the patch.
  */
 function injectBatchWriteFailure(levelUpStore, error) {

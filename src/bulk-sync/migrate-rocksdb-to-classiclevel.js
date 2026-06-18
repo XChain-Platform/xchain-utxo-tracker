@@ -23,17 +23,17 @@
  *   schema change. Both backends hold the identical set of key/value pairs
  *   (proven byte-identical during the migration: regtest 11,979 keys 0-diff +
  *   a 2,000-round dual-backend differential harness). A raw KV copy therefore
- *   reproduces exactly the database a from-scratch chain reparse would build —
+ *   reproduces exactly the database a from-scratch chain reparse would build.
  *   in disk-IO time (hours) instead of a multi-day parse, and without the
  *   multi-TB intermediate scratch the bulk-sync pipeline needs.
  *
- * Runtime requirements — needs BOTH backends loadable in one process:
+ * Runtime requirements (needs BOTH backends loadable in one process):
  *   read  side : `rocksdb`        (use the pre-migration image's already-built
- *                                  binary AS-IS — do NOT run npm in that image,
+ *                                  binary AS-IS (do NOT run npm in that image,
  *                                  it would prune rocksdb and/or try to rebuild
  *                                  the native addon, which fails on Node 22)
  *   write side : `classic-level`  (supply via NODE_PATH pointing at a migrated
- *                                  image's node_modules — copied in, not installed)
+ *                                  image's node_modules, copied in, not installed)
  *   Recommended setup (sidecar, no npm in the rocksdb image):
  *     # base = a committed pre-migration (rocksdb) tracker image
  *     docker run -d --name mig --entrypoint sleep <rocksdb-image> infinity
@@ -100,7 +100,7 @@ function openRocks(dir) {
 }
 
 // Pull adapter over a rocksdb (abstract-leveldown) iterator -> { next()/close() }.
-// fillCache:false — reading the whole DB once must not grow the block cache.
+// fillCache:false: reading the whole DB once must not grow the block cache.
 function pullFromRocks(db) {
     const it = db.iterator({ keys: true, values: true, keyAsBuffer: true, valueAsBuffer: true, fillCache: false })
     return {
@@ -228,8 +228,8 @@ async function verify(src, dst) {
     log(`VERIFY done: matched=${same.toLocaleString()} valueDiff=${valueDiff} missingInDst=${missingInDst} extraInDst=${extraInDst}`)
     if (!ok) { samples.forEach(s => console.error('  ' + s)) }
     console.log(ok
-        ? 'RESULT: OK — databases are identical (0 diffs / 0 missing / 0 extra)'
-        : 'RESULT: MISMATCH — databases differ')
+        ? 'RESULT: OK: databases are identical (0 diffs / 0 missing / 0 extra)'
+        : 'RESULT: MISMATCH: databases differ')
     return ok
 }
 
@@ -244,13 +244,13 @@ async function verify(src, dst) {
     if (!fs.existsSync(path.join(a.src, 'CURRENT'))) fail('src does not look like a LevelDB/RocksDB dir (no CURRENT): ' + a.src)
 
     if (!a.verifyOnly) {
-        if (fs.existsSync(path.join(a.dst, 'CURRENT'))) fail('dst already initialized (CURRENT present) — refuse to overwrite: ' + a.dst)
+        if (fs.existsSync(path.join(a.dst, 'CURRENT'))) fail('dst already initialized (CURRENT present); refusing to overwrite: ' + a.dst)
         await copy(a.src, a.dst, a.batchBytes, a.segmentKeys)
     }
 
     let ok = true
     if (a.verify || a.verifyOnly) ok = await verify(a.src, a.dst)
 
-    log(ok ? 'ALL DONE — migration verified.' : 'FAILED — verification mismatch; do NOT use dst.')
+    log(ok ? 'ALL DONE: migration verified.' : 'FAILED: verification mismatch; do NOT use dst.')
     process.exit(ok ? 0 : 1)
 })().catch(e => { console.error('FATAL', e && e.stack || e); process.exit(1) })

@@ -13,17 +13,17 @@
 // ─── Regression: satoshiToDecimalString must stay exact-integer, never float ──
 //
 // Commit a2774ac reintroduced (and was reverted from) a float-based amount
-// formatter — `Number(sats) / 1e8` then toFixed(8). For any satoshi count above
+// formatter (`Number(sats) / 1e8` then toFixed(8)). For any satoshi count above
 // 2**53 that division loses the low digits, so a balance can be misreported by
 // one or more satoshi. The current source uses BigInt. These tests reproduce a
 // value where the naive float path provably diverges, and assert the source
-// returns the exact decimal — so a silent reversion to float fails here.
+// returns the exact decimal, so a silent reversion to float fails here.
 
 const { expect } = require('chai');
 const { satoshiToDecimalString } = require('../../src/XChainUtxoTracker');
 
 // The naive (buggy) implementation, kept ONLY to prove these inputs actually
-// expose the float error — i.e. the regression test is not vacuous.
+// expose the float error (i.e. the regression test is not vacuous).
 function naiveFloat(sats) {
   return (Number(sats) / 1e8).toFixed(8);
 }
@@ -32,7 +32,7 @@ describe('Regression (a2774ac): exact-integer satoshi formatting', function () {
 
   // Each entry is a value whose naive float formatting is WRONG.
   const divergent = [
-    '9007199254740993',    // 2**53 + 1 — first integer Number can't represent
+    '9007199254740993',    // 2**53 + 1: first integer Number can't represent
     '90071992547409930',   // ×10, still beyond float's integer range
     '2099999997690000001', // > max BTC supply in sats, +1 (sub-sat sensitive)
     '18446744073709551615', // uint64 max
@@ -58,7 +58,7 @@ describe('Regression (a2774ac): exact-integer satoshi formatting', function () {
 
   it('the off-by-one above 2**53 is preserved (90071992.54740993, not ...992)', function () {
     expect(satoshiToDecimalString('9007199254740993')).to.equal('90071992.54740993');
-    // The float path rounds the trailing 3 down to a 2 — the exact symptom.
+    // The float path rounds the trailing 3 down to a 2 (the exact symptom).
     expect(naiveFloat('9007199254740993')).to.equal('90071992.54740992');
   });
 

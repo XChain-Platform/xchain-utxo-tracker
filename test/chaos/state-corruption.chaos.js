@@ -109,7 +109,7 @@ describe('Chaos: State Corruption', function () {
       const blocks = await buildCommittedChain(tracker, 3, 0);
       await deleteStateAnchors(tracker.db);
 
-      // Re-process the chain — simulates restart from genesis
+      // Re-process the chain: simulates restart from genesis
       await processBlocksAndCommit(tracker, blocks);
 
       expect(await tracker.db.getLastBlockHeight()).to.equal(2);

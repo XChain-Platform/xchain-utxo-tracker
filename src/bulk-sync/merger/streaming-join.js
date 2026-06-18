@@ -45,7 +45,7 @@ function noop() {}
 
 /**
  * Buffered sequential reader of fixed-size records. Yields a Buffer VIEW
- * into a scratch buffer for each record — views are invalidated on the
+ * into a scratch buffer for each record; views are invalidated on the
  * next `next()` call, so the caller must consume or copy immediately.
  */
 class RecordReader {
@@ -102,7 +102,7 @@ class RecordReader {
 }
 
 /**
- * Buffered writer for fixed-size records. Has no header logic — the caller
+ * Buffered writer for fixed-size records. Has no header logic; the caller
  * writes the header (if any) via `writeRaw` before any records.
  */
 class RecordWriter {
@@ -245,7 +245,7 @@ async function leftAntiJoin(opts) {
             }
         }
 
-        // Drain any remaining right — all of them are orphan spends.
+        // Drain any remaining right records; all are orphan spends.
         while (rightCurr) {
             orphanSpends++
             onAnomaly({ type: 'orphan-spend', key: Buffer.from(rightCurr.subarray(0, keySize)) })

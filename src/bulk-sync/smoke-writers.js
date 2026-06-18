@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// Ad-hoc smoke test for writers.js. Not a mocha test — plain assertions.
+// Ad-hoc smoke test for writers.js. Not a mocha test; uses plain assertions.
 // Writes a few synthetic records with each writer, reads the file back,
 // verifies header bytes and record layout match SPEC.md.
 

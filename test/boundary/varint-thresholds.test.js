@@ -14,7 +14,7 @@
 //
 // The existing unit/bufferutils suite round-trips a single-byte varint and
 // decodes one 3-byte (0xFD) value, and round-trips uint64 up to MAX_SAFE_INTEGER.
-// What it does NOT pin are the *transitions* between Compact-Size classes —
+// What it does NOT pin are the *transitions* between Compact-Size classes,
 // exactly the boundaries where an off-by-one in length math silently mis-frames a
 // transaction. varint is encoded as: n < 0xFD → 1 byte; n ≤ 0xFFFF → 0xFD + 2
 // bytes; n ≤ 0xFFFFFFFF → 0xFE + 4 bytes; else 0xFF + 8 bytes. We exercise the
@@ -26,7 +26,7 @@ const { expect } = require('chai');
 const varuint = require('varuint-bitcoin');
 // src/bufferutils.js is a Docker-only override of bitcoinjs-lib/src/bufferutils
 // (its require('./types') only resolves inside the lib's src/). The code that
-// runs locally — XChainBlockDecoder's BufferReader — loads the installed lib
+// runs locally (XChainBlockDecoder's BufferReader) loads the installed lib
 // copy, so that is the real, exercised path we pin here (same API). See
 // unit/bufferutils.test.js for the resolver shim that also covers the patch.
 const {

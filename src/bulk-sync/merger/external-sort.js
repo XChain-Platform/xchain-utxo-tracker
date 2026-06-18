@@ -21,7 +21,7 @@
  *
  *   1. Create sorted runs: read chunks of (ramBudgetBytes / recordSize)
  *      records, sort in RAM by Buffer.compare on the key prefix, write to
- *      a temp run file (no header — just records).
+ *      a temp run file (no header, just records).
  *
  *   2. k-way merge: open all runs, maintain a min-heap of the front record
  *      from each run keyed by the key prefix, emit in order.

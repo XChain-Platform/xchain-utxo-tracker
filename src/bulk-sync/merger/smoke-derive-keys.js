@@ -24,7 +24,7 @@
 //
 // Expectations:
 //   B=2  T=2  N=2 (window)  I=1  J=1  O=2 (live)  H=2 (live)
-//   S=3 (X, Y, Z — X is fully spent but we use pre-cancellation outputs)
+//   S=3 (X, Y, Z; X is fully spent but we use pre-cancellation outputs)
 //   Z=3
 //   L: LAST_BLOCK_HEIGHT='1', LAST_BLOCK_HASH=H1.hex
 //
@@ -141,7 +141,7 @@ async function main() {
     assert.strictEqual(stats.J, 1, 'J count')
     assert.strictEqual(stats.O, 2, 'O count')
     assert.strictEqual(stats.H, 2, 'H count')
-    assert.strictEqual(stats.S, 3, 'S count — X, Y, Z (option A preserves fully-spent scripts)')
+    assert.strictEqual(stats.S, 3, 'S count: X, Y, Z (option A preserves fully-spent scripts)')
     assert.strictEqual(stats.Z, 3, 'Z count')
 
     // ── File sizes match layout.recordSize × count ──

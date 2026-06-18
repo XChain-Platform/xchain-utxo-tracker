@@ -155,7 +155,7 @@ describe('bufferutils', function () {
         const buf = writer.end();
         expect(buf.readBigInt64LE(0)).to.equal(BigInt(256));
       } catch (e) {
-        // Stock version — skip BigInt test
+        // Stock version: skip BigInt test
         this.skip();
       }
     });
@@ -283,7 +283,7 @@ describe('bufferutils', function () {
 });
 
 // ---------------------------------------------------------------------------
-// Local bufferutils.js — the patched file that lives in the repo root.
+// Local bufferutils.js: the patched file that lives in the repo root.
 // These tests ensure mutations to the local file are detected by Stryker.
 // ---------------------------------------------------------------------------
 describe('bufferutils (local patched copy)', function () {

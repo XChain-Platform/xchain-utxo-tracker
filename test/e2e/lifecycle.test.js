@@ -21,7 +21,7 @@ const {
   createE2ETracker, patchLevelUpStoreInMemory
 } = require('./helpers');
 
-describe('E2E: Lifecycle — start() Loop', function () {
+describe('E2E: Lifecycle - start() Loop', function () {
   let tracker;
   let restoreLevelUp;
 

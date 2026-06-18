@@ -66,7 +66,7 @@ describe('Chaos: Concurrency', function () {
         expect(info).to.have.nested.property('balances.confirmed');
         // Balance should be a valid decimal string
         expect(info.balances.confirmed).to.match(/^\d+\.\d{8}$/);
-        // Should be either pre-commit (250) or post-commit (400) — never garbage
+        // Should be either pre-commit (250) or post-commit (400), never garbage
         const balance = parseFloat(info.balances.confirmed);
         expect(balance === 250 || balance === 400,
           `balance ${info.balances.confirmed} is neither pre-commit (250) nor post-commit (400)`

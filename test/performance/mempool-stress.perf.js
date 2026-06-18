@@ -38,7 +38,7 @@ describe('Perf: Mempool Stress', function () {
     addressPool = generateAddressPool(SCALE.addresses);
     metrics = new MetricsCollector('Mempool Stress');
 
-    // Seed confirmed chain — need enough UTXOs for mempool spending
+    // Seed confirmed chain: need enough UTXOs for mempool spending
     const seedBlocks = Math.max(100, Math.ceil(SCALE.mempoolTxs / SCALE.txsPerBlock) * 2);
     const result = await seedTracker(tracker, seedBlocks, addressPool, SCALE.txsPerBlock);
     utxoPool = result.utxoPool;

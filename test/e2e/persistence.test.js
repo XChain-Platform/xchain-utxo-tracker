@@ -28,7 +28,7 @@ const {
   createE2ETracker
 } = require('./helpers');
 
-describe('E2E: Persistence — Disk-Backed LevelDB', function () {
+describe('E2E: Persistence - Disk-Backed LevelDB', function () {
   let tmpDir;
   let origCreateDatabase;
 
@@ -314,7 +314,7 @@ describe('E2E: Persistence — Disk-Backed LevelDB', function () {
       sinon.restore();
 
       // Second run: new tracker, SAME dbName, fresh stub whose mempool is empty.
-      // This models the reconvergence window — the in-memory mempool DB did not
+      // This models the reconvergence window: the in-memory mempool DB did not
       // survive the restart, so pending must be rebuilt from the next scan.
       const tracker2 = new XChainUtxoTracker(
         'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass',

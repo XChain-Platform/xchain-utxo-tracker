@@ -13,7 +13,7 @@
 // ─── Boundary: range-scan upper bound at a maximal (all-0xFF) key suffix ───────
 //
 // rangeEnd(prefix) caps a prefix scan with `prefix + 12 bytes of 0xFF`. The
-// source comment (LevelUpDb.js) records that a *single* 0xFF byte is wrong —
+// source comment (LevelUpDb.js) records that a *single* 0xFF byte is wrong:
 // LevelDB's lexicographic compare ranks a longer key as greater than a shorter
 // upper bound, so a record whose suffix is itself all-0xFF sorts ABOVE a 1-byte
 // 0xFF cap and silently vanishes from the scan. That exact regression landed
@@ -22,7 +22,7 @@
 // The existing unit/boundary "all-ff scriptHash prefix" case only stores
 // outputIndex 0 (suffix = txHash8 + 00000000), so it never exercises a maximal
 // suffix. Here the suffix bytes after the 33-byte O-prefix are themselves all
-// 0xFF (txHash8 = ff..ff, outputIndex = 0xFFFFFFFF) — the precise shape that a
+// 0xFF (txHash8 = ff..ff, outputIndex = 0xFFFFFFFF), the precise shape that a
 // too-short upper bound would drop.
 
 const { expect } = require('chai');
@@ -124,8 +124,8 @@ describe('Boundary: getValuesFromKeyPattern hex-decode + inclusive bounds', func
 
   it('a pattern that decodes below the 2-byte prefix floor is refused', async function () {
     // h2b() is Buffer.from(hex,'hex'); Node drops a dangling nibble, so a
-    // single nibble decodes to an EMPTY buffer — whose scan range would cover
-    // the entire database. The method must fail loud, not scan.
+    // single nibble decodes to an EMPTY buffer (whose scan range would cover
+    // the entire database). The method must fail loud, not scan.
     let err = null;
     try {
       await db.getValuesFromKeyPattern('a'); // single nibble → empty buffer prefix

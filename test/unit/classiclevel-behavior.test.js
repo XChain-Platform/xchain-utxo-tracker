@@ -72,7 +72,7 @@ describe('classic-level backend behaviour contract', function () {
     const P = 0x4f
     const inRangeFF = Buffer.concat([Buffer.from([P]), Buffer.alloc(12, 0xFF)]) // 13-byte key, all 0xFF tail
     const normal = Buffer.from([P, 0x10, 0x20])
-    const outOfRange = Buffer.from([P + 1, 0x00])                                 // next prefix — must be excluded
+    const outOfRange = Buffer.from([P + 1, 0x00])                                 // next prefix, must be excluded
     await db.batch([
       { type: 'put', key: normal, value: Buffer.from('n') },
       { type: 'put', key: inRangeFF, value: Buffer.from('f') },
