@@ -32,7 +32,7 @@ const path           = require('path')
 const { fork }       = require('child_process')
 const { externalSort }  = require('./merger/external-sort.js')
 const { leftAntiJoin }  = require('./merger/streaming-join.js')
-const { deriveKeys }    = require('./merger/derive-keys.js')
+const { deriveKeys, resolveUndoBlocks } = require('./merger/derive-keys.js')
 const { loadKeys }      = require('./merger/loader.js')
 const { HEADER_SIZE, OUTPUTS_RECORD_SIZE, SPENDS_RECORD_SIZE } = require('./writers.js')
 
@@ -155,6 +155,22 @@ function parseArgs(argv) {
     if (!args.out)     throw new Error('--out is required')
     if (!args.db)      throw new Error('--db is required')
     return args
+}
+
+// Reorg-recovery invariant (SPEC.md, "W, K, M reverse indices are skipped"): the merger
+// emits no W/K/M reorg-recovery indices, so any block bulk-sync seeds directly is
+// un-recoverable on reorg. The design stops bulk-sync at least undoBlocks below the tip
+// and lets the live incremental worker build W/K/M for every block inside the reorg
+// window. With tip-safety < undoBlocks the seeded N-window includes bulk-synced blocks
+// with no W/K/M, so a reorg into that range leaves phantom (unspent, never-deleted) or
+// missing (spent, never-restored) UTXOs until a full re-index (#4634). When --to is not
+// pinned we clamp tip-safety up to undoBlocks (the same per-chain value derive-keys uses
+// to size the N-window, so the stop point and the seeded window stay in lockstep). Clamp
+// up only: an operator may choose a LARGER margin, never a smaller one. An explicit --to
+// is the operator's responsibility (the tip is unknown here), so it is returned as-is.
+function effectiveTipSafety(tipSafety, to, network) {
+    if (to !== null) return tipSafety
+    return Math.max(tipSafety, resolveUndoBlocks(network))
 }
 
 function printUsage() {
@@ -538,6 +554,18 @@ async function main() {
     log('ORCHESTRATOR', `out=${args.out} db=${args.db}`)
     log('ORCHESTRATOR', `cleanup-threshold=${args.cleanupThresholdMb}MB ${args.cleanupThresholdMb > 0 ? '(enabled)' : '(disabled)'}`)
 
+    // Enforce the reorg-recovery invariant before the dump phase reads tip-safety
+    // (see effectiveTipSafety): clamp tip-safety up to undoBlocks so no bulk-seeded
+    // block lands inside the active reorg window with no W/K/M indices (#4634).
+    const undoBlocks = resolveUndoBlocks(args.network)
+    const clampedTipSafety = effectiveTipSafety(args.tipSafety, args.to, args.network)
+    if (args.to !== null) {
+        log('ORCHESTRATOR', `explicit --to ${args.to} set: ensure it is <= tip-${undoBlocks}, or a reorg into the bulk range will find no W/K/M reorg-recovery indices (#4634)`)
+    } else if (clampedTipSafety !== args.tipSafety) {
+        log('ORCHESTRATOR', `tip-safety ${args.tipSafety} < undo-blocks ${undoBlocks} for ${args.network}; raising tip-safety to ${clampedTipSafety} so the reorg window stays inside the live-built W/K/M range (#4634)`)
+        args.tipSafety = clampedTipSafety
+    }
+
     const cleanup = new CleanupManager(args.out, args.cleanupThresholdMb)
 
     // Phase 1: Dump
@@ -567,8 +595,14 @@ async function main() {
     log('ORCHESTRATOR', `DB at ${args.db}: ready for validate-db`)
 }
 
-main().catch(err => {
-    console.error('[orchestrator] FATAL:', err.message)
-    if (err.stack) console.error(err.stack)
-    process.exit(1)
-})
+// Export pure helpers for unit testing; only auto-run the pipeline when invoked
+// directly (node orchestrator.js), not when required by a test.
+module.exports = { parseArgs, effectiveTipSafety, resolveUndoBlocks }
+
+if (require.main === module) {
+    main().catch(err => {
+        console.error('[orchestrator] FATAL:', err.message)
+        if (err.stack) console.error(err.stack)
+        process.exit(1)
+    })
+}

@@ -1,12 +1,12 @@
 # Bulk-sync intermediate file format
 
 Binary formats for the 3 streams emitted by `parse-worker` and consumed by `merger`.
-All intermediate files are ephemeral — discarded after `loader` + `validate-db` succeed.
+All intermediate files are ephemeral; they are discarded after `loader` + `validate-db` succeed.
 
 **Endianness is hybrid.** Header fields are little-endian for byte-level compatibility
 with `dump.js` headers (first 20 bytes are identical layout across all pipeline files).
-Record fields are big-endian so that lexicographic byte-sort coincides with numeric sort
-— required by the merger's external sort for fields like `height`, `vout`, `value`.
+Record fields are big-endian so that lexicographic byte-sort coincides with numeric sort,
+as required by the merger's external sort for fields like `height`, `vout`, `value`.
 All hashes and scripts are raw bytes (never hex-encoded on disk).
 
 ## Naming
@@ -21,18 +21,18 @@ meta-h00100000-h00199999.dat
 
 `FIRST`/`LAST` = inclusive block-height range (8 hex digits, zero-padded).
 Ranges are globally unique because each dump covers a unique block range
-and each parse-worker processes exactly one dump — no worker-id suffix is
+and each parse-worker processes exactly one dump, so no worker-id suffix is
 needed. 8 hex digits support heights up to ~99,999,999 (~1,900 years at
 ~52k blocks/year).
 
 ## Shared header (64 bytes)
 
 Every `.dat` file starts with this 64-byte header. The first 20 bytes are identical in
-layout to `XCHNDMP1` from `dump.js` — any tool that reads the common prefix (magic,
+layout to `XCHNDMP1` from `dump.js`, so any tool that reads the common prefix (magic,
 chain, net, version, heights) works across dump and intermediate files.
 
 ```
-Shared prefix (0..20) — same layout as dump.js
+Shared prefix (0..20), same layout as dump.js
   [0..8]    8   magic          "XCHNOUT1" | "XCHNSPD1" | "XCHNMTA1"
   [8]       1   chain_code     uint8: 1=bitcoin, 2=litecoin, 3=dogecoin
   [9]       1   net_code       uint8: 1=mainnet, 2=testnet, 3=regtest
@@ -47,7 +47,7 @@ Stream-specific tail (20..64)
 ```
 
 `record_count` is written last, via a pwrite at offset 20 after all records are flushed.
-A file whose count is still 0 at open time signals a crashed/partial worker — re-run
+A file whose count is still 0 at open time signals a crashed/partial worker; re-run
 that range. `record_size` documents the fixed record size inline (0 for variable-length
 streams like `meta-*.dat`).
 
@@ -82,14 +82,14 @@ offset   size  field
 Merger derives both `I` and `J` LevelUpDb keys from this 20-byte record, and uses
 `(prevTxHash8, prevVout)` as the join key against `outputs-*.dat`.
 
-## meta-*.dat  (magic `XCHNMTA1`, record_size = 0 — variable length)
+## meta-*.dat  (magic `XCHNMTA1`, record_size = 0, variable length)
 
 Blocks emitted in ascending height order. Each block header is followed immediately
 by the txs contained in that block. `blockHash` is implicit context for the tx list
 (no redundant per-tx blockHash).
 
 ```
-Block record (variable — 76 + 8*tx_count bytes):
+Block record (variable: 76 + 8*tx_count bytes):
   [0..4]    height        uint32 BE
   [4..8]    timestamp     uint32 BE
   [8..40]   blockHash     32B
@@ -119,7 +119,7 @@ and pairs it with each `txHash8` to produce `T`-key records.
 ## Merger operations (for context)
 
 The merger is where all the sorting and joining happens. Summary of the required
-sort orders — each is an external sort over the concatenation of all workers' files
+sort orders; each is an external sort over the concatenation of all workers' files
 for that stream:
 
 | Target LevelUpDb keys | Sort key                             | Source stream   |
@@ -135,13 +135,19 @@ for that stream:
 | B / N                | `blockHash`                          | meta (blocks)   |
 | LAST_BLOCK_{HEIGHT,HASH} | max height                       | meta (blocks)   |
 
-`K` and `M` prefixes are skipped entirely — bulk-sync stops `UNDO_BLOCKS` before the
-tip and the regular incremental worker takes over with normal K/M bookkeeping.
+The `W`, `K`, and `M` reorg-recovery reverse indices are skipped entirely. The design
+relies on bulk-sync stopping at least `UNDO_BLOCKS` before the tip so the regular
+incremental worker builds W/K/M for every block inside the reorg window. The
+orchestrator enforces this: it clamps `--tip-safety` up to `resolveUndoBlocks(network)`
+(the same per-chain value that sizes the seeded `N` window), so no bulk-seeded block can
+fall inside the active reorg window. If this invariant is broken (tip-safety below
+`UNDO_BLOCKS`), a reorg into the bulk range finds no W/K/M and leaves phantom (unspent,
+never-deleted) or missing (spent, never-restored) UTXOs until a full re-index (#4634).
 
 ## Endianness rationale
 
 **Header fields are LE** to match `dump.js` byte-for-byte on the shared prefix. Headers
-are read once per file through explicit field readers — byte order only needs to be
+are read once per file through explicit field readers, so byte order only needs to be
 self-consistent, not sort-friendly.
 
 **Record fields are BE** so lexicographic byte-order sort (cheapest for external sort)

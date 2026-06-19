@@ -516,4 +516,4 @@ async function deriveKeys(opts) {
     return { stats, layout: LAYOUT }
 }
 
-module.exports = { deriveKeys, LAYOUT }
+module.exports = { deriveKeys, LAYOUT, resolveUndoBlocks }
