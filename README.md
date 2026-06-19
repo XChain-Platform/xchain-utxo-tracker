@@ -6,7 +6,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/version-1.0.6-blue" alt="Version">
   <img src="https://img.shields.io/badge/tests-618%20passing-brightgreen" alt="Tests">
-  <img src="https://img.shields.io/badge/node-%3E%3D18-green" alt="Node">
+  <img src="https://img.shields.io/badge/node-%3E%3D22-green" alt="Node">
   <img src="https://img.shields.io/badge/license-Dankest%20Community-orange" alt="License">
 </p>
 
@@ -18,21 +18,21 @@ UTXO indexing service for the XChain Platform. Continuously polls cryptocurrency
 
 ## Features
 
-- **Full UTXO index** — every unspent output indexed by SHA-256 scriptPubKey hash for fast address lookups
-- **Compact binary encoding** — 11 LevelDB key prefix types stored as raw binary Buffers, reducing DB size ~50% vs hex strings
-- **Truncated txid keys** — 8-byte transaction ID truncations in index keys for further space savings
-- **Active-UTXO-only storage** — only unspent outputs in the live index; spent outputs archived temporarily for reorg recovery
-- **Real-time mempool tracking** — unconfirmed transactions in a separate in-memory LevelDB, updated every 60 seconds
-- **BigInt precision** — all balance calculations use BigInt arithmetic with `satoshiToDecimalString()`, no floating-point
-- **Reorg handling** — 10-block undo history (K/M archive records) with automatic rollback on chain reorganization
-- **Concurrent block prefetch** — up to 10 blocks pre-fetched concurrently via JSON-RPC batch requests with HTTP keep-alive
-- **Batch writes** — LevelDB writes batched in groups of 100 blocks with atomic commit
-- **Two-pass transaction processing** — outputs inserted before inputs within each block, correctly handling intra-block spends
-- **Multi-chain support** — Bitcoin, Litecoin, and Dogecoin on mainnet, testnet, and regtest
-- **AuxPoW block parsing** — Dogecoin and Litecoin HogEx block header stripping
-- **Bootstrap support** — compressed tar archive backup and restore for fast initial sync
-- **REST + JSON-RPC API** — dual interface for UTXO queries, balance lookups, address info, and bootstrap operations
-- **618 tests** — unit, integration, e2e, smoke, fuzz, chaos, performance, and mutation testing
+- **Full UTXO index**: every unspent output indexed by SHA-256 scriptPubKey hash for fast address lookups
+- **Compact binary encoding**: 11 LevelDB key prefix types stored as raw binary Buffers, reducing DB size ~50% vs hex strings
+- **Truncated txid keys**: 8-byte transaction ID truncations in index keys for further space savings
+- **Active-UTXO-only storage**: only unspent outputs in the live index; spent outputs archived temporarily for reorg recovery
+- **Real-time mempool tracking**: unconfirmed transactions in a separate in-memory LevelDB, updated every 60 seconds
+- **BigInt precision**: all balance calculations use BigInt arithmetic with `satoshiToDecimalString()`, no floating-point
+- **Reorg handling**: 10-block undo history (K/M archive records) with automatic rollback on chain reorganization
+- **Concurrent block prefetch**: up to 10 blocks pre-fetched concurrently via JSON-RPC batch requests with HTTP keep-alive
+- **Batch writes**: LevelDB writes batched in groups of 100 blocks with atomic commit
+- **Two-pass transaction processing**: outputs inserted before inputs within each block, correctly handling intra-block spends
+- **Multi-chain support**: Bitcoin, Litecoin, and Dogecoin on mainnet, testnet, and regtest
+- **AuxPoW block parsing**: Dogecoin and Litecoin HogEx block header stripping
+- **Bootstrap support**: compressed tar archive backup and restore for fast initial sync
+- **REST + JSON-RPC API**: dual interface for UTXO queries, balance lookups, address info, and bootstrap operations
+- **618 tests**: unit, integration, e2e, smoke, fuzz, chaos, performance, and mutation testing
 
 ## Documentation
 
@@ -47,7 +47,7 @@ Full UTXO tracker documentation is available in the [xchain-documentation](https
 
 ## Quick Start
 
-Requires **Node.js ≥ 22**.
+Requires **Node.js >= 22**.
 
 ```bash
 git clone https://github.com/XChain-platform/xchain-utxo-tracker.git
@@ -56,7 +56,7 @@ npm install
 ```
 
 > Storage is LevelDB-backed via [`classic-level`](https://github.com/Level/classic-level),
-> which ships prebuilt binaries for Node 22 — `npm install` needs no compiler
+> which ships prebuilt binaries for Node 22. `npm install` needs no compiler
 > toolchain or build flags.
 
 Create a `.env` file:
@@ -83,14 +83,14 @@ npm run api
 > The on-disk output (`O`) record format was extended to carry the full 32-byte
 > transaction hash. Records written before that field was added store a zero hash
 > instead, which decodes to a missing txid. The tracker cannot derive a valid,
-> spendable transaction id from such a record — only the 8-byte key prefix is
+> spendable transaction id from such a record: only the 8-byte key prefix is
 > available, and a 16-character prefix is not a usable txid.
 >
 > If your LevelDB was first populated by a version of the tracker that predates
 > the full-hash output format, wipe the data directory and re-sync from the coin
 > node before serving address/UTXO queries with the current version. Without a
 > re-index, any UTXO drawn from a pre-migration record raises an explicit
-> "missing a fullTxHash … re-index this LevelDB" error on the first spend attempt
+> "missing a fullTxHash ... re-index this LevelDB" error on the first spend attempt
 > rather than silently producing an invalid transaction. A fresh sync, or any DB
 > already synced under the current format, needs no action.
 
@@ -124,11 +124,11 @@ npm run api
 | Unit | ~247 | `LevelUpDb.test.js`, `XChainUtxoTracker.test.js`, `BlockchainConnector.test.js`, `api.test.js`, `XChainBlockDecoder.test.js`, `bufferutils.test.js`, `CryptoNetworks.test.js`, `util.test.js`, `boundary.test.js` |
 | Integration | ~131 | `core-indexing.test.js`, `reorg.test.js`, `mempool.test.js`, `api-queries.test.js`, `batch-boundaries.test.js`, `boundary.test.js` |
 | E2E | 33 | `lifecycle.test.js`, `persistence.test.js`, `reorg.test.js`, `api.test.js`, `mempool.test.js` |
-| Smoke | 11 | `smoke.test.js` — module loading, config, API liveness |
+| Smoke | 11 | `smoke.test.js`: module loading, config, API liveness |
 | Fuzz | ~119 | 12 campaigns: blockDecoder, txProcessing, connector, addressValidation, balanceCalc, outputEncoding, leveldbKeys, apiEndpoints, bootstrap, config, reorgHandling, mempool |
 | Performance | 36 | Indexing throughput, query load, mempool stress, DB growth, reorg under load |
 | Chaos | 41 | RPC faults, storage faults, concurrency, state corruption |
-| Mutation | — | Stryker Mutator: P1/P2/P3 tiers + custom Buffer/encoding mutations |
+| Mutation | (Stryker) | Stryker Mutator: P1/P2/P3 tiers + custom Buffer/encoding mutations |
 | **Total** | **618+** | |
 
 ---

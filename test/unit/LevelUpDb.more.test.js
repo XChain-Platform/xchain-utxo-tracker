@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// Additional unit tests for LevelUpDb.js — covers uncovered lines not reached
+// Additional unit tests for LevelUpDb.js covering uncovered lines not reached
 // by LevelUpDb.test.js. All stores use in-memory MemoryLevel (no disk).
 
 const { expect } = require('chai');
@@ -67,7 +67,7 @@ describe('LevelUpDb (extended coverage)', function () {
 
     // ─── addTransaction with null transactionArray (direct write path) ───────
 
-    describe('addTransaction — direct-write path (transactionArray === null)', function () {
+    describe('addTransaction: direct-write path (transactionArray === null)', function () {
         let db;
         beforeEach(async function () {
             db = makeDb();
@@ -160,7 +160,7 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(before).to.not.be.null;
 
             // deleteInputs keeps inputs whose txHash IS in the list.
-            // Our spendingTx8 is NOT in the list → it should be deleted.
+            // Our spendingTx8 is NOT in the list, so it should be deleted.
             await db.beginTransaction();
             const count = await db.deleteInputs([randHash8()]); // unrelated tx in keep list
             await db.endTransaction(true);
@@ -272,7 +272,7 @@ describe('LevelUpDb (extended coverage)', function () {
 
     // ─── insertOutputBlock (W prefix) ────────────────────────────────────────
 
-    describe('insertOutputBlock() — W prefix', function () {
+    describe('insertOutputBlock(): W prefix', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
         afterEach(async function () { try { await db.close(); } catch (e) {} });
@@ -287,7 +287,7 @@ describe('LevelUpDb (extended coverage)', function () {
             });
             await db.endTransaction(true);
             expect(result).to.be.true;
-            // No W entries should exist — DB should be empty for W prefix (0x57)
+            // No W entries should exist; DB should be empty for W prefix (0x57)
         });
 
         it('stages a W entry with hex scriptPubKey', async function () {
@@ -371,7 +371,7 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── removeOutputsWithInputsBatch — batch remove path ────────────────────
+    // ─── removeOutputsWithInputsBatch: batch remove path ─────────────────────
 
     describe('removeOutputsWithInputsBatch()', function () {
         let db;
@@ -450,7 +450,7 @@ describe('LevelUpDb (extended coverage)', function () {
             ]);
             await db.endTransaction(true);
 
-            // Should not throw; resolved[i] is null for the missing hint → skipped
+            // Should not throw; resolved[i] is null for the missing hint, so it is skipped
             expect(count).to.equal(1);
         });
 
@@ -487,13 +487,13 @@ describe('LevelUpDb (extended coverage)', function () {
             const txHash8   = randHash8();
             const blockHash = randHash();
 
-            // Insert and commit — this populates the static outputCache
+            // Insert and commit; this populates the static outputCache
             await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0, value: BigInt(7777), height: 3 });
             await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
             await db.endTransaction(true);
 
             // Cache should now contain the entry (populated by insertOutput above)
-            // Run batch removal — Phase 2 should see a cache hit
+            // Run batch removal; Phase 2 should see a cache hit
             await db.beginTransaction();
             const hitsBefore = LevelUpStore.outputCacheHits;
             await db.removeOutputsWithInputsBatch([
@@ -501,8 +501,8 @@ describe('LevelUpDb (extended coverage)', function () {
             ]);
             await db.endTransaction(true);
 
-            // At least one cache hit (or miss — the output may have been evicted,
-            // so we check that the removal worked rather than the cache stat alone)
+            // At least one cache hit (or miss if the output was evicted);
+            // check that the removal worked rather than the cache stat alone
             const outputs = await db.getOutputsScriptPubKey(scriptHex);
             expect(outputs).to.be.empty;
         });
@@ -532,9 +532,9 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── insertOutputScriptBlock — Tier 1 and Tier 2 cache paths ─────────────
+    // ─── insertOutputScriptBlock: Tier 1 and Tier 2 cache paths ──────────────
 
-    describe('insertOutputScriptBlock() — tier cache paths', function () {
+    describe('insertOutputScriptBlock(): tier cache paths', function () {
         let db;
         beforeEach(async function () {
             db = makeDb();
@@ -580,7 +580,7 @@ describe('LevelUpDb (extended coverage)', function () {
             const missesBefore = LevelUpStore.knownScriptsMisses;
             await db.insertOutputScriptBlock(scriptHex, blockHash, 20);
 
-            // Both calls happened before endTransaction — Tier 1 path taken on 2nd call
+            // Both calls happened before endTransaction; Tier 1 path taken on 2nd call
             await db.endTransaction(true);
 
             // Height should be 10 (from first call; second was a no-op)
@@ -604,7 +604,7 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.insertOutputScriptBlock(scriptHex, blockHash, 99);
             await db.endTransaction(true);
 
-            // Height remains 5 — the second call was rejected by Tier 2
+            // Height remains 5; the second call was rejected by Tier 2
             const result = await db.getOutputScriptBlock(scriptHex);
             expect(result.h).to.equal(5);
         });
@@ -624,7 +624,7 @@ describe('LevelUpDb (extended coverage)', function () {
         });
 
         it('knownScripts cache resets when size exceeds KNOWN_SCRIPTS_MAX', async function () {
-            // KNOWN_SCRIPTS_MAX = 2_000_000 — we can't flood it in a unit test.
+            // KNOWN_SCRIPTS_MAX = 2_000_000; we can't flood it in a unit test.
             // Instead, replace the Set with a stub whose .size reports over the limit.
             const realSet = LevelUpStore.knownScripts;
             const fakeSet = new Set();
@@ -646,9 +646,9 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── processDeletedOutputs — in-memory recovery (deletedTransactionArray) ─
+    // ─── processDeletedOutputs: in-memory recovery (deletedTransactionArray) ──
 
-    describe('processDeletedOutputs() — in-memory branch', function () {
+    describe('processDeletedOutputs(): in-memory branch', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
         afterEach(async function () { try { await db.close(); } catch (e) {} });
@@ -672,13 +672,13 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
             expect(db.deletedTransactionArray.has(blockHash)).to.be.true;
 
-            // Recover (reorg undo) — exercises the in-memory else-branch.
+            // Recover (reorg undo); exercises the in-memory else-branch.
             await db.processDeletedOutputs(blockHash, true);
             expect(db.deletedTransactionArray.has(blockHash)).to.be.false;
 
             await db.endTransaction(true);
 
-            // The output must be queryable again under its real script key — proving the
+            // The output must be queryable again under its real script key, proving the
             // recovered key Buffer was rebuilt correctly (latin1), not corrupted (hex).
             const outputs = await db.getOutputsScriptPubKey(scriptHex);
             expect(outputs).to.have.length(1);
@@ -712,9 +712,9 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── removeLastStoredBlock — error branch ─────────────────────────────────
+    // ─── removeLastStoredBlock: error branch ──────────────────────────────────
 
-    describe('removeLastStoredBlock() — error branch', function () {
+    describe('removeLastStoredBlock(): error branch', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
         afterEach(async function () { try { await db.close(); } catch (e) {} });
@@ -750,9 +750,9 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── getValuesFromKeyPattern — error branch ───────────────────────────────
+    // ─── getValuesFromKeyPattern: error branch ────────────────────────────────
 
-    describe('getValuesFromKeyPattern() — error re-throw', function () {
+    describe('getValuesFromKeyPattern(): error re-throw', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
         afterEach(async function () { try { await db.close(); } catch (e) {} });
@@ -890,7 +890,7 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── removeTransactionIfExists — false branch ─────────────────────────────
+    // ─── removeTransactionIfExists: false branch ──────────────────────────────
 
     describe('removeTransactionIfExists()', function () {
         let db;
@@ -913,7 +913,7 @@ describe('LevelUpDb (extended coverage)', function () {
 
     // ─── getLastBlock with multiple blocks (covers both branches) ────────────
 
-    describe('getLastBlock() — comparison branches', function () {
+    describe('getLastBlock(): comparison branches', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
         afterEach(async function () { try { await db.close(); } catch (e) {} });
@@ -958,9 +958,9 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── recoverDeletedOutputsHints — standalone M recovery ──────────────────
+    // ─── recoverDeletedOutputsHints: standalone M recovery ───────────────────
 
-    describe('recoverDeletedOutputsHints() — standalone M recovery', function () {
+    describe('recoverDeletedOutputsHints(): standalone M recovery', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
         afterEach(async function () { try { await db.close(); } catch (e) {} });
@@ -996,7 +996,7 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.beginTransaction();
             const count = await db.deleteOutputsByHint(txHash8 + randHash().substring(16));
             await db.endTransaction(true);
-            // count may be 0 (no O entry) or 1 — just confirm no throw
+            // count may be 0 (no O entry) or 1; just confirm no throw
             expect(count).to.be.gte(0);
         });
     });
@@ -1036,7 +1036,7 @@ describe('LevelUpDb (extended coverage)', function () {
 
     // ─── processDeletedOutputs line 976: item.value = value ─────────────────
 
-    describe('processDeletedOutputs() — item.value update branch (line 976)', function () {
+    describe('processDeletedOutputs(): item.value update branch (line 976)', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
         afterEach(async function () { try { await db.close(); } catch (e) {} });
@@ -1079,7 +1079,7 @@ describe('LevelUpDb (extended coverage)', function () {
 
     // ─── endTransaction catch block (line 489-492) ───────────────────────────
 
-    describe('endTransaction() — batch error catch path', function () {
+    describe('endTransaction(): batch error catch path', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
         afterEach(async function () { try { await db.close(); } catch (e) {} });
@@ -1111,15 +1111,15 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── insertOutput — output cache eviction (lines 710-713) ───────────────
+    // ─── insertOutput: output cache eviction (lines 710-713) ─────────────────
 
-    describe('insertOutput() — output cache eviction', function () {
+    describe('insertOutput(): output cache eviction', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
         afterEach(async function () { try { await db.close(); } catch (e) {} });
 
         it('resets the outputCache Map when it exceeds OUTPUT_CACHE_MAX', async function () {
-            // OUTPUT_CACHE_MAX = 2_000_000 — too large to flood in a unit test.
+            // OUTPUT_CACHE_MAX = 2_000_000; too large to flood in a unit test.
             // Instead stub the cache's size property to exceed the threshold.
             const realCache = LevelUpStore.outputCache;
             const fakeCache = new Map();
@@ -1149,4 +1149,3 @@ describe('LevelUpDb (extended coverage)', function () {
     });
 
 });
-
