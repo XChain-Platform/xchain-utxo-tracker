@@ -282,8 +282,11 @@ async function startApi(){
                 lag:              lag,
                 // Authoritative sync verdict computed against the tracker's own
                 // SYNCED_THRESHOLD so callers don't replicate the threshold.
-                // null lag (nothing indexed yet) is never "synced".
-                synced:           lag !== null && lag <= XChainUtxoTracker.SYNCED_THRESHOLD
+                // null lag (nothing indexed yet) is never "synced". A stale node height
+                // (RPC down, lag computed against a frozen cached tip) is also never
+                // "synced": the live chain may have advanced far past the cached tip, so a
+                // monitor keying on synced/lag must not read a frozen lag:0 as caught-up.
+                synced:           !nodeHeightStale && lag !== null && lag <= XChainUtxoTracker.SYNCED_THRESHOLD
             };
             if (nodeHeightStale) result.node_height_stale = true;
             // Surface mempool RPC health so operators can detect a node that is
