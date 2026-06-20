@@ -479,6 +479,7 @@ async function phaseMerge(args, dirs, cleanup) {
         outDir:           dirs.keys,
         tmpDir:           dirs.deriveTmp,
         ramBudgetBytes,
+        network:          args.network,
         removeSpent:      args.removeSpent,
         onProgress(ev) {
             if (ev.phase && ev.phase.includes('done')) {
