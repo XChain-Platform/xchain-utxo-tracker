@@ -36,21 +36,21 @@ UTXO indexing service for the XChain Platform. Continuously polls cryptocurrency
 
 ## Documentation
 
-Full UTXO tracker documentation is available in the [xchain-documentation](https://github.com/XChain-platform/xchain-documentation/tree/master/components/utxo-tracker) repository:
+Full UTXO tracker documentation is available in the [xchain-documentation](https://github.com/XChain-Platform/xchain-documentation/tree/master/components/utxo-tracker) repository:
 
 | Document | Description |
 |---|---|
-| [README](https://github.com/XChain-platform/xchain-documentation/blob/master/components/utxo-tracker/README.md) | Overview, features, installation, quick start, scripts, dependencies |
-| [Architecture](https://github.com/XChain-platform/xchain-documentation/blob/master/components/utxo-tracker/ARCHITECTURE.md) | Data pipeline position, LevelDB key schema, block processing loop, reorg handling, mempool tracking |
-| [Configuration](https://github.com/XChain-platform/xchain-documentation/blob/master/components/utxo-tracker/CONFIGURATION.md) | Environment variables, internal constants, database paths |
-| [Operations](https://github.com/XChain-platform/xchain-documentation/blob/master/components/utxo-tracker/OPERATIONS.md) | Running, Docker, REST and JSON-RPC API reference, resilience, troubleshooting |
+| [README](https://github.com/XChain-Platform/xchain-documentation/blob/master/components/utxo-tracker/README.md) | Overview, features, installation, quick start, scripts, dependencies |
+| [Architecture](https://github.com/XChain-Platform/xchain-documentation/blob/master/components/utxo-tracker/ARCHITECTURE.md) | Data pipeline position, LevelDB key schema, block processing loop, reorg handling, mempool tracking |
+| [Configuration](https://github.com/XChain-Platform/xchain-documentation/blob/master/components/utxo-tracker/CONFIGURATION.md) | Environment variables, internal constants, database paths |
+| [Operations](https://github.com/XChain-Platform/xchain-documentation/blob/master/components/utxo-tracker/OPERATIONS.md) | Running, Docker, REST and JSON-RPC API reference, resilience, troubleshooting |
 
 ## Quick Start
 
 Requires **Node.js >= 22**.
 
 ```bash
-git clone https://github.com/XChain-platform/xchain-utxo-tracker.git
+git clone https://github.com/XChain-Platform/xchain-utxo-tracker.git
 cd xchain-utxo-tracker
 npm install
 ```
