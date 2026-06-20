@@ -31,6 +31,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const XChainUtxoTracker  = require('./XChainUtxoTracker');
 const BlockchainConnector = require('./BlockchainConnector');
+const { resolveUndoBlocks } = require('./bulk-sync/merger/derive-keys.js')
 const jsonRouter = require('express-json-rpc-router')
 const { randomUUID } = require('crypto')
 const path = require('path')
@@ -798,7 +799,15 @@ async function runBulkSyncIfEmpty() {
     // Skip the pipeline and let the normal incremental tracker handle it.
     const connector = new BlockchainConnector(NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD)
     const info      = await connector.getBlockchainInfo()
-    const minBlocks = parseInt(BULK_SYNC_TIP_SAFETY, 10) + 1
+    // The floor must match the orchestrator's actual stop point, not the raw
+    // tip-safety. We always spawn it with --to unpinned, so effectiveTipSafety()
+    // clamps tip-safety up to resolveUndoBlocks(network) (BTC 12 / LTC 48 /
+    // DOGE 120) and dump.js stops at chainTip - max(tipSafety, undoBlocks). If
+    // this pre-flight only required tipSafety+1, a chain whose tip sits in
+    // [tipSafety+1, undoBlocks) would pass here, then dump.js computes a negative
+    // dumpEnd and FATALs, crash-looping the tracker before startApi(). Keep the
+    // two in lockstep so a too-short chain falls through to the incremental tracker.
+    const minBlocks = Math.max(parseInt(BULK_SYNC_TIP_SAFETY, 10), resolveUndoBlocks(NETWORK)) + 1
     if (info.blocks < minBlocks) {
         console.log(`[bulk-sync] chain too short (${info.blocks} blocks < ${minBlocks} required): skipping bulk-sync, incremental sync will index from block 0`)
         return
