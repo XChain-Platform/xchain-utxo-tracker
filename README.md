@@ -4,14 +4,14 @@
 # XChain Platform UTXO Tracker
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.6-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.10-blue" alt="Version">
   <img src="https://img.shields.io/badge/tests-618%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/node-%3E%3D22-green" alt="Node">
-  <img src="https://img.shields.io/badge/license-Dankest%20Community-orange" alt="License">
+  <img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue" alt="License">
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/coverage-unit%20%7C%20integration%20%7C%20e2e%20%7C%20fuzz%20%7C%20chaos%20%7C%20mutation%20%7C%20smoke%20%7C%20performance-brightgreen" alt="Coverage">
+  <img src="https://img.shields.io/badge/coverage-unit%20%7C%20integration%20%7C%20e2e%20%7C%20boundary%20%7C%20security%20%7C%20fuzz%20%7C%20chaos%20%7C%20mutation%20%7C%20regression%20%7C%20performance%20%7C%20smoke-brightgreen" alt="Coverage">
 </p>
 
 UTXO indexing service for the XChain Platform. Continuously polls cryptocurrency nodes (Bitcoin, Litecoin, Dogecoin) via JSON-RPC, decodes every block, indexes all unspent transaction outputs in LevelDB using compact binary encoding, and serves balance and UTXO queries through REST and JSON-RPC APIs. The encoder depends on this service to find spendable inputs when constructing transactions.
@@ -23,16 +23,16 @@ UTXO indexing service for the XChain Platform. Continuously polls cryptocurrency
 - **Truncated txid keys**: 8-byte transaction ID truncations in index keys for further space savings
 - **Active-UTXO-only storage**: only unspent outputs in the live index; spent outputs archived temporarily for reorg recovery
 - **Real-time mempool tracking**: unconfirmed transactions in a separate in-memory LevelDB, updated every 60 seconds
-- **BigInt precision**: all balance calculations use BigInt arithmetic with `satoshiToDecimalString()`, no floating-point
-- **Reorg handling**: 10-block undo history (K/M archive records) with automatic rollback on chain reorganization
+- **BigInt precision**: JSON-RPC `get_info` returns full-precision balance strings via `satoshiToDecimalString()`; the REST `/balance` endpoint returns a float (use `get_info` when precision matters)
+- **Reorg handling**: per-chain undo history (BTC: 12, LTC: 48, DOGE: 120 blocks) with K/M archive records and automatic rollback on chain reorganization; depth overridable via `XCHAIN_UNDO_BLOCKS_<COIN>`
 - **Concurrent block prefetch**: up to 10 blocks pre-fetched concurrently via JSON-RPC batch requests with HTTP keep-alive
-- **Batch writes**: LevelDB writes batched in groups of 100 blocks with atomic commit
+- **Batch writes**: LevelDB writes batched in groups of 200 blocks with atomic commit
 - **Two-pass transaction processing**: outputs inserted before inputs within each block, correctly handling intra-block spends
 - **Multi-chain support**: Bitcoin, Litecoin, and Dogecoin on mainnet, testnet, and regtest
-- **AuxPoW block parsing**: Dogecoin and Litecoin HogEx block header stripping
+- **AuxPoW/HogEx header stripping**: Dogecoin AuxPoW headers and Litecoin HogEx witness flag stripped before block decoding
 - **Bootstrap support**: compressed tar archive backup and restore for fast initial sync
 - **REST + JSON-RPC API**: dual interface for UTXO queries, balance lookups, address info, and bootstrap operations
-- **618 tests**: unit, integration, e2e, smoke, fuzz, chaos, performance, and mutation testing
+- **618 tests**: unit, integration, e2e, boundary, security, fuzz, chaos, mutation, regression, performance, and smoke testing
 
 ## Documentation
 
@@ -143,14 +143,3 @@ with a commercial license available for proprietary use.
 You may use, modify, and distribute this material under the terms of the License.
 See [LICENSE](./LICENSE.md) and [NOTICE](./NOTICE.md) for full terms.
 See the [licensing overview](https://docs.xchain.io/legal/licensing).
-
-## License
-
-XChain Platform is **open source**, dual-licensed under:
-
-- the **[GNU Affero General Public License v3.0](./LICENSE.md)** (`AGPL-3.0-or-later`), free for everyone, and
-- a **[commercial license](https://docs.xchain.io/legal/commercial-license)** for companies that need to keep modifications private.
-
-See the **[licensing overview](https://docs.xchain.io/legal/licensing)** for which one applies to you. "XChain" is a trademark of Dankest, LLC. See the **[Trademark Policy](https://docs.xchain.io/legal/trademark)**.
-
-Copyright © 2025-2026 Dankest, LLC.
