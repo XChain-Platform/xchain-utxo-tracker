@@ -188,6 +188,12 @@ class XChainUtxoTracker {
         for (let blockHash of this.pendingKMCleanup){
             await this.db.processDeletedOutputs(blockHash, false)
             await this.db.removeLastStoredBlock(blockHash)
+            // Prune the W creation-block reverse-index too. It is only read by the
+            // reorg unwind (removeCreatedOutputsInBlock), which can never reach past
+            // the undoBlocks window, so once a block ages out of that window its W
+            // records are dead weight; without this the W index grows with every
+            // output ever created instead of the live-UTXO set (TP-19).
+            await this.db.removeCreatedOutputsBlockIndexOnly(blockHash)
         }
 
         // Remove the crash-recovery marker atomically with the cleanup writes so

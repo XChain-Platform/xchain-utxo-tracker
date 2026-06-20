@@ -371,6 +371,45 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
+    // ─── removeCreatedOutputsBlockIndexOnly (W prefix aged-out prune) ─────────
+
+    describe('removeCreatedOutputsBlockIndexOnly()', function () {
+        let db;
+        beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
+        afterEach(async function () { try { await db.close(); } catch (e) {} });
+
+        it('deletes the W reverse-index for the block but LEAVES the live O/H output', async function () {
+            const scriptBuf = randBuf32();
+            const scriptHex = scriptBuf.toString('hex');
+            const txHash8   = randHash8();
+            const blockHash = randHash();
+
+            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0, value: BigInt(9000), height: 50 });
+            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
+            await db.insertOutputBlock({ blockHash, scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
+            await db.endTransaction(true);
+
+            // W entry present, output visible
+            expect(await db.getValuesFromKeyPattern('57' + blockHash)).to.have.length(1);
+            expect(await db.getOutputsScriptPubKey(scriptHex)).to.have.length(1);
+
+            // Aged-out prune: drop only the W index for this block
+            await db.beginTransaction();
+            await db.removeCreatedOutputsBlockIndexOnly(blockHash);
+            await db.endTransaction(true);
+
+            // W gone; the live output (O/H) must still be there (unlike the reorg path)
+            expect(await db.getValuesFromKeyPattern('57' + blockHash)).to.be.empty;
+            expect(await db.getOutputsScriptPubKey(scriptHex)).to.have.length(1);
+        });
+
+        it('no-ops when no W entries exist for the block', async function () {
+            await db.beginTransaction();
+            await db.removeCreatedOutputsBlockIndexOnly(randHash());
+            await db.endTransaction(true);
+        });
+    });
+
     // ─── removeOutputsWithInputsBatch: batch remove path ─────────────────────
 
     describe('removeOutputsWithInputsBatch()', function () {

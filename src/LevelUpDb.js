@@ -1172,6 +1172,29 @@ class LevelUpStore {
         }
     }
 
+    // Delete ONLY the W creation-block reverse-index records for an aged-out block.
+    // Unlike removeCreatedOutputsInBlock (the reorg path, which also removes the live
+    // O/H rows for an orphaned block), this leaves O/H untouched: an aged-out block's
+    // outputs may still be unspent and live. The W index is consulted only by the
+    // reorg unwind, which can never reach past the undoBlocks window, so W records
+    // beyond that window are permanently dead weight (the index otherwise grows with
+    // every output ever created, not the live-UTXO set). Queues into the caller's
+    // open transaction batch, same as processDeletedOutputs/removeLastStoredBlock.
+    async removeCreatedOutputsBlockIndexOnly(blockHash){
+        const prefixBuf = Buffer.concat([pb(P_OUT_BLK), h2b(blockHash)])
+
+        const options = {
+            gte: prefixBuf,
+            lte: rangeEnd(prefixBuf),
+            keys: true,
+            values: false
+        }
+
+        for await (const [key] of this.db.iterator(options)) {
+            await this.addTransaction("del", key)
+        }
+    }
+
     // ─── Queries ─────────────────────────────────────────────────────────────
 
     async getOutputsScriptPubKey(scriptPubKey, { limit = null, after = null, maxOutputs = null } = {}){
