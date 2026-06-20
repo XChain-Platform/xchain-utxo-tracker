@@ -75,7 +75,19 @@ var tasks = {}
 async function startApi(){
     //Start the tracker
     const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
-    tracker.start()
+    // Top-level guard for the polling loop. start() is intentionally not awaited (the
+    // Express server below must come up alongside it), so without this .catch() any
+    // throw out of the loop (a malformed-block decode, a verifyReorg fail-stop, a
+    // transient DB I/O fault) becomes a bare unhandledRejection: no clean rollback and
+    // an unclear log. Roll back any open LevelDB batch and exit non-zero so the
+    // orchestrator restarts us cleanly and the reason is in the logs. A persistent
+    // fatal (e.g. reorg depth exceeds the recovery window) intentionally keeps failing
+    // here, loudly, until an operator resyncs.
+    tracker.start().catch((err) => {
+        console.error('[fatal] UTXO tracker polling loop terminated: ' + (err && err.message), err)
+        try { if (tracker.db && tracker.db.endTransaction) tracker.db.endTransaction(false) } catch (_) {}
+        process.exit(1)
+    })
 
     async function getUtxos(address, opts){
         return await tracker.getUtxosAddress(address, opts)
