@@ -13,12 +13,9 @@
  **********************************************************************
  *
  * XChain UTXO Tracker - UTXO Tracker Class
- * 
- * This file handles starting the UTXO tracker instance
  *
  ********************************************************************/
 
-// Load required libraries
 const util = require('./util')
 const crypto = require('crypto');
 const bs58check = require('bs58check')
@@ -169,7 +166,7 @@ class XChainUtxoTracker {
         while (this.lastBlocks.length > this.undoBlocks){
             let nextBlockHash = this.lastBlocks.shift()
 
-            // Discard in-memory deletions for outputs created & spent within the same batch.
+            // Outputs created & spent within the same batch are discarded from in-memory deletions.
             // On-disk K/M cleanup is deferred to after the batch is committed via cleanupAgedBlocks().
             if (this.db.deletedTransactionArray && this.db.deletedTransactionArray.has(nextBlockHash)){
                 this.db.deletedTransactionArray.delete(nextBlockHash)
@@ -857,12 +854,9 @@ class XChainUtxoTracker {
     
         while (true){
             if (this.keepParsing){
-                //Getting the last block from the blockchain.
-                //Refresh when we have no info yet, when we have caught up to the
-                //previously-seen tip, OR periodically on a wall-clock interval: the
-                //last condition keeps blockchainInfoLastBlock tracking the live chain
-                //during a long catch-up, so the synced flag and reported confirmations
-                //reflect the true chain tip instead of a frozen startup value.
+                // Refresh node tip when: no info yet, caught up to the previously-seen tip,
+                // OR periodically so blockchainInfoLastBlock stays current during catch-up
+                // (synced flag and confirmations reflect the true tip, not a frozen startup value).
                 if (!lastBlockchainInfo
                     || (lastProcessedBlockIndex >= this.blockchainInfoLastBlock)
                     || (Date.now() - lastBlockchainInfoRefreshAt >= BLOCKCHAIN_INFO_REFRESH_MS)){
@@ -910,7 +904,6 @@ class XChainUtxoTracker {
                     }
                 }
                 
-                //If there is no new block, wait for some seconds to ask again
                 if (lastProcessedBlockIndex == this.blockchainInfoLastBlock){
                     this.synced = true
                     if (this.mempoolInterval == null){
@@ -918,20 +911,18 @@ class XChainUtxoTracker {
                         this.updateMempool()
                         this.mempoolInterval = setInterval(this.updateMempool.bind(this), MEMPOOL_INTERVAL)
                     }
-                    
+
                     await this.sleep(CHECK_BLOCK_DELAY_MS)
-                } else { //If there is a new block, parse it
-                    //Put the flag synced false if there are too many blocks behind
+                } else {
                     if ((this.blockchainInfoLastBlock - lastProcessedBlockIndex) > SYNCED_THRESHOLD){
                         this.synced = false
                         if (this.mempoolInterval != null){
                             console.log("Mempool updates stopped!")
                             clearInterval(this.mempoolInterval)
                             this.mempoolInterval = null
-                        }   
+                        }
                     }
-                    
-                    //Get the next block
+
                     let nextBlockHeight = lastProcessedBlockIndex + 1
 
                     // Kick off pre-fetches for upcoming blocks while we process the current one
@@ -962,9 +953,7 @@ class XChainUtxoTracker {
                     let previousBlockHash = util.uint8ArrayToHex(Buffer.from(block.prevHash).reverse())
                     _t.decode += Date.now() - _tDecode
 
-                    //Check if there is a reorg
                     if (nextBlockHeight > 0){
-                        //previousBlockHash is not the same, it must be a reorg 
                         if (previousBlockHash != lastProcessedBlockHash){
                             prefetchQueue = []
                             await this.db.endTransaction(false)
@@ -1001,19 +990,13 @@ class XChainUtxoTracker {
                             continue
                         }
                     }
-                    //Start a transaction if there are no blocks processed yet
                     if (blocksQuantity == 0){
                         await this.db.beginTransaction()
                     }
-                    
-                    //Insert the processed block
+
                     await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp, previousHash:previousBlockHash})
                     blocksCount = blocksCount + 1               
                     
-                    //Parse the transactions (two-pass approach to allow full parallelism):
-                    //  Pass 1: insert all outputs for every tx concurrently
-                    //  Pass 2: process all inputs concurrently (same-block outputs are
-                    //          now in transactionArray so removeOutputWithInput finds them)
                     var transactions = block.transactions
 
                     const _tParse = Date.now()
@@ -1061,14 +1044,9 @@ class XChainUtxoTracker {
                         pendingMempoolTxCleanup.push("id" in tx ? tx["id"] : tx.getId())
                     }
 
-                    //Add the block to the last blocks
                     await this.addToLastBlocks(nextBlockHash)
-                    
-                    //If there are enough processed blocks, then add them to the database.
-                    //Three triggers: batch full, at chain tip, or heap under pressure.
-                    //Heap-pressure flush keeps the block-count constant working as an
-                    //upper bound while preventing V8 OOM on dense chain windows where a
-                    //full 200-block batch would push staged Buffers past the heap cap.
+
+                    // Flush triggers: batch full, at chain tip, or heap pressure.
                     const _earlyFlushHeapMB = process.memoryUsage().heapUsed / 1048576
                     const _flushReason =
                         (nextBlockHeight == this.blockchainInfoLastBlock)             ? 'tip' :
@@ -1123,7 +1101,6 @@ class XChainUtxoTracker {
                         await this.cleanupAgedBlocks()
                         _t.cleanup += Date.now() - _tCleanup
 
-                        // ── Print timing summary ──
                         _t.blocks = blocksQuantity + 1
                         const _total = _t.decode + _t.parse + _t.commit + _t.cleanup
                         const _pb = XChainUtxoTracker.parseOutBuckets
