@@ -25,11 +25,11 @@ class CryptoNetworks {
     static getBitcoinJsNetwork(networkName){
         switch(networkName){
             case "bitcoin-mainnet":
-                return bitcoin.networks.bitcoin
+                return { ...bitcoin.networks.bitcoin, dustThreshold: 546, minStandardTxNonWitnessSize: 65, singleOpReturnPolicy: true }
             case "bitcoin-testnet":
-                return bitcoin.networks.testnet         
+                return { ...bitcoin.networks.testnet, dustThreshold: 546, minStandardTxNonWitnessSize: 65, singleOpReturnPolicy: true }
             case "bitcoin-regtest":
-                return bitcoin.networks.regtest
+                return { ...bitcoin.networks.regtest, dustThreshold: 546, minStandardTxNonWitnessSize: 65, singleOpReturnPolicy: true }
             case "dogecoin-mainnet":
                 return {
                     "messagePrefix": '\x19Dogecoin Signed Message:\n',
@@ -40,7 +40,9 @@ class CryptoNetworks {
                     "pubKeyHash": 0x1e,
                     "scriptHash": 0x16,
                     "wif": 0x9e,
-                    "dustThreshold": 100000
+                    "dustThreshold": 100000,
+                    "supportsSegwit": false,
+                    "singleOpReturnPolicy": false
                 }
             case "dogecoin-testnet":
                 return {
@@ -52,7 +54,9 @@ class CryptoNetworks {
                     "pubKeyHash": 0x71,
                     "scriptHash": 0xc4,
                     "wif": 0xf1,
-                    "dustThreshold": 100000
+                    "dustThreshold": 100000,
+                    "supportsSegwit": false,
+                    "singleOpReturnPolicy": false
                 }
             case "dogecoin-regtest":
                 // Dogecoin v1.14.x regtest reuses Bitcoin-testnet prefixes
@@ -69,7 +73,9 @@ class CryptoNetworks {
                     "pubKeyHash": 0x6f,
                     "scriptHash": 0xc4,
                     "wif": 0xef,
-                    "dustThreshold": 100000
+                    "dustThreshold": 100000,
+                    "supportsSegwit": false,
+                    "singleOpReturnPolicy": false
                 }
             case "litecoin-mainnet":
                 return {
@@ -82,7 +88,9 @@ class CryptoNetworks {
                     "pubKeyHash": 0x30,
                     "scriptHash": 0x32,
                     "wif": 0xb0,
-                    "dustThreshold": 5460
+                    "dustThreshold": 5460,
+                    "minStandardTxNonWitnessSize": 85,
+                    "singleOpReturnPolicy": false
                 }
             case "litecoin-testnet":
                 return {
@@ -95,7 +103,9 @@ class CryptoNetworks {
                     "pubKeyHash": 0x6f,
                     "scriptHash": 0xc4,
                     "wif": 0xef,
-                    "dustThreshold": 5460
+                    "dustThreshold": 5460,
+                    "minStandardTxNonWitnessSize": 85,
+                    "singleOpReturnPolicy": false
                 }
             case "litecoin-regtest":
                 return {
@@ -108,7 +118,9 @@ class CryptoNetworks {
                     "pubKeyHash": 0x6f,
                     "scriptHash": 0xc4,
                     "wif": 0xef,
-                    "dustThreshold": 5460
+                    "dustThreshold": 5460,
+                    "minStandardTxNonWitnessSize": 85,
+                    "singleOpReturnPolicy": false
                 }   
         }
     }
