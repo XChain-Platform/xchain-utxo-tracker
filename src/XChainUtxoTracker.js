@@ -643,7 +643,7 @@ class XChainUtxoTracker {
         return inputCounts.reduce((acc, n) => acc + n, 0)
     }
 
-    async verifyReorg(){
+    async verifyReorg(nodeTipHeight = null){
         let thereAreDifferences = true
         let blocksDeleted = []
         let retryCount = 0
@@ -674,18 +674,26 @@ class XChainUtxoTracker {
                     continue
                 }
             } else {
-                let blockHashFromNode
-                try {
-                    blockHashFromNode = await this.connector.getBlockHash(lastBlockIndex)
-                } catch (err){
-                    console.error('Error fetching block hash from node: ' + err.message, err)
-                    await this.sleep(3000)
-                    continue
+                // If the caller passed the node's current tip height and our committed
+                // tip sits above it (node reset / reindex / invalidateblock regression),
+                // those blocks cannot exist on the node's chain. Delete them directly
+                // rather than asking the node for a hash at a height it no longer has
+                // (which would error and spin this loop). Once the walk reaches the node
+                // tip, the normal hash comparison below reconciles the common ancestor.
+                let aboveNodeTip = (nodeTipHeight !== null && lastBlockIndex > nodeTipHeight)
+                let blockHashFromNode = null
+                if (!aboveNodeTip){
+                    try {
+                        blockHashFromNode = await this.connector.getBlockHash(lastBlockIndex)
+                    } catch (err){
+                        console.error('Error fetching block hash from node: ' + err.message, err)
+                        await this.sleep(3000)
+                        continue
+                    }
+                    console.log("Last block hash from node is "+blockHashFromNode)
                 }
-                
-                console.log("Last block hash from node is "+blockHashFromNode)
-                
-                if (lastBlockHash != blockHashFromNode){
+
+                if (aboveNodeTip || lastBlockHash != blockHashFromNode){
                     // Depth guard: spent-output recovery records (K/M entries) are
                     // retained only for the most recent UNDO_BLOCKS blocks;
                     // cleanupAgedBlocks() purges them once a block ages out of that
@@ -891,8 +899,20 @@ class XChainUtxoTracker {
                         let lastBlockDb = await this.db.getLastBlock()
                         
                         if (lastBlockDb.height > this.blockchainInfoLastBlock){
-                            console.log("WARNING! The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"). It's possible that the node was reset.")
-                            //throw Error("The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+")")
+                            // True regression: the node's tip is genuinely below our committed
+                            // tip (node reset / reindex / invalidateblock). Roll back onto the
+                            // node's chain instead of warn-and-spin. Without this we fall through,
+                            // try to fetch block N+1 the node doesn't have, loop forever, and keep
+                            // serving the orphaned tip's UTXOs. verifyReorg(nodeTip) deletes the
+                            // blocks above the node tip, then reconciles by hash, honoring the
+                            // undoBlocks depth guard (a regression deeper than the window aborts
+                            // loudly for an operator-driven resync).
+                            console.log("WARNING! The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"). The node likely reset or reorged below our tip; rolling back to its chain.")
+                            this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+                            await this.verifyReorg(this.blockchainInfoLastBlock)
+                            lastProcessedBlockIndex = await this.db.getLastBlockHeight()
+                            lastProcessedBlockHash = await this.db.getLastBlockHash()
+                            continue
                         } else {
                             await this.db.setLastBlockHash(lastBlockDb.hash)
                             await this.db.setLastBlockHeight(lastBlockDb.height)
@@ -906,6 +926,30 @@ class XChainUtxoTracker {
                 
                 if (lastProcessedBlockIndex == this.blockchainInfoLastBlock){
                     this.synced = true
+
+                    // Same-height tip reorg detection. While synced we otherwise never
+                    // re-check the committed tip hash, so a node that replaces its tip at
+                    // the same height and then stalls would have us keep serving the
+                    // orphaned block's UTXOs until a new height arrives. Cheaply re-compare
+                    // the committed tip hash against the node each synced poll; on a
+                    // mismatch drive verifyReorg to roll back to the common ancestor.
+                    if (lastProcessedBlockIndex > 0){
+                        let tipHashFromNode = null
+                        try {
+                            tipHashFromNode = await this.connector.getBlockHash(lastProcessedBlockIndex)
+                        } catch (err){
+                            console.error('Error re-checking the committed tip hash from node: ' + err.message, err)
+                        }
+                        if (tipHashFromNode && tipHashFromNode != lastProcessedBlockHash){
+                            console.log("A same-height tip reorg has been detected. Cleaning blocks...")
+                            this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+                            await this.verifyReorg()
+                            lastProcessedBlockIndex = await this.db.getLastBlockHeight()
+                            lastProcessedBlockHash = await this.db.getLastBlockHash()
+                            continue
+                        }
+                    }
+
                     if (this.mempoolInterval == null){
                         console.log("Mempool updates started!")
                         this.updateMempool()

@@ -97,3 +97,57 @@ describe('XChainUtxoTracker.verifyReorg retry budget', function () {
     expect(threw, 'verifyReorg should abort after 10 consecutive failures').to.equal(true);
   });
 });
+
+// Regression test for the node-tip-below-committed path (a node reset / reindex /
+// invalidateblock that drops the chain below our committed tip). verifyReorg(nodeTip)
+// must delete the blocks above the node tip WITHOUT calling getBlockHash for those
+// heights (the node cannot answer them), then reconcile by hash at the node tip.
+describe('XChainUtxoTracker.verifyReorg node-tip-below-committed', function () {
+  this.timeout(0);
+
+  it('rolls back blocks above the node tip without querying their hash', async function () {
+    const tracker = new XChainUtxoTracker(
+      'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
+    );
+    tracker.undoBlocks = 1000;
+    tracker.sleep = async () => {};
+    tracker.removeFromLastBlocks = async () => {};
+
+    let top = 105;                 // committed tip
+    const nodeTip = 102;           // node regressed below us
+    const deleted = [];
+    const queriedHeights = [];
+    const heightOf = (hash) => parseInt(hash.replace('db', ''), 10);
+
+    tracker.connector = {
+      // The node only has heights <= nodeTip; asking for anything above is an error.
+      getBlockHash: async (h) => {
+        queriedHeights.push(h);
+        if (h > nodeTip) throw new Error('Block height out of range');
+        return 'db' + h;           // node agrees with us at/below the node tip
+      }
+    };
+    tracker.db = {
+      getLastBlockHeight: async () => top,
+      getLastBlockHash: async () => 'db' + top,
+      getBlock: async (hash) => { const h = heightOf(hash); return { h, ph: 'db' + (h - 1) }; },
+      getLastBlock: async () => ({ hash: 'db' + top, height: top }),
+      beginTransaction: async () => {},
+      endTransaction: async () => {},
+      removeOutputScriptsInBlock: async () => {},
+      processDeletedOutputs: async () => {},
+      removeCreatedOutputsInBlock: async () => {},
+      deleteBlock: async (hash) => { const h = heightOf(hash); deleted.push(h); top = h - 1; },
+      setLastBlockHash: async () => {},
+      setLastBlockHeight: async () => {}
+    };
+
+    const result = await tracker.verifyReorg(nodeTip);
+
+    expect(result).to.equal(true);
+    // 105/104/103 are above the node tip and rolled back; 102 matches and ends the walk.
+    expect(deleted).to.deep.equal([105, 104, 103]);
+    // getBlockHash must never be called for a height the node lacks (would have thrown).
+    expect(queriedHeights.every((h) => h <= nodeTip)).to.equal(true);
+  });
+});
