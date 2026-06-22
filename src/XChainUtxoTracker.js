@@ -1022,6 +1022,13 @@ class XChainUtxoTracker {
                             lastProcessedBlockIndex = await this.db.getLastBlockHeight()
                             lastProcessedBlockHash = await this.db.getLastBlockHash()
 
+                            // The P key was persisted above (standalone put, outside the
+                            // rolled-back batch) so a restart would re-run cleanupAgedBlocks.
+                            // Run it now so aged-out K/M/W records are purged immediately
+                            // and the P key is deleted atomically, not left on disk until
+                            // the next restart or flush.
+                            await this.cleanupAgedBlocks()
+
                             blocksQuantity = 0
                             blocksCount = 0
                             transactionsCount = 0

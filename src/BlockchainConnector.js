@@ -22,6 +22,102 @@
 const axios = require('axios');
 const http  = require('http');
 
+// Decode a Bitcoin-style varint from `buf` at `offset`.
+// Returns { value, bytes } where `bytes` is the number of bytes consumed.
+function readVarint(buf, offset) {
+    const first = buf[offset]
+    if (first < 0xFD) return { value: first, bytes: 1 }
+    if (first === 0xFD) return { value: buf.readUInt16LE(offset + 1), bytes: 3 }
+    if (first === 0xFE) return { value: buf.readUInt32LE(offset + 1), bytes: 5 }
+    // 0xFF: 8-byte varint; safe for our sizes (branch counts are small)
+    const lo = buf.readUInt32LE(offset + 1)
+    const hi = buf.readUInt32LE(offset + 5)
+    return { value: hi * 0x100000000 + lo, bytes: 9 }
+}
+
+// Parse the AuxPoW section from a raw block Buffer starting at byte offset `start`
+// (immediately after the 80-byte standard header). Returns the byte offset of the
+// first byte after the AuxPoW section (i.e. where the tx-count varint begins).
+// AuxPoW layout: coinbase tx | parent block hash (32 B) |
+//                coinbase merkle branch (varint count + count*32 B + 4 B index) |
+//                chain merge-mining branch (same layout) |
+//                parent block header (80 B)
+// Throws if the buffer is too short or structurally invalid.
+function skipAuxPow(buf, start) {
+    let offset = start
+
+    // Skip the coinbase transaction (a full serialized Bitcoin tx).
+    // version (4) | [segwit marker+flag (2, optional)] | inputs | outputs | [witness] | locktime (4)
+    if (offset + 4 > buf.length) throw new Error('AuxPoW parse: buffer too short for coinbase version')
+    offset += 4  // version
+
+    // Detect SegWit marker (0x00 flag byte means segwit)
+    const hasSegwit = (buf[offset] === 0x00)
+    if (hasSegwit) offset += 2  // skip marker + flag
+
+    // Inputs
+    const insVI = readVarint(buf, offset)
+    offset += insVI.bytes
+    const nIns = insVI.value
+    for (let i = 0; i < nIns; i++) {
+        if (offset + 36 > buf.length) throw new Error('AuxPoW parse: buffer too short for coinbase input prevout')
+        offset += 36  // prev hash (32) + prev index (4)
+        const scriptVI = readVarint(buf, offset)
+        offset += scriptVI.bytes + scriptVI.value  // script length + script bytes
+        if (offset + 4 > buf.length) throw new Error('AuxPoW parse: buffer too short for coinbase input sequence')
+        offset += 4  // sequence
+    }
+
+    // Outputs
+    const outsVI = readVarint(buf, offset)
+    offset += outsVI.bytes
+    const nOuts = outsVI.value
+    for (let i = 0; i < nOuts; i++) {
+        if (offset + 8 > buf.length) throw new Error('AuxPoW parse: buffer too short for coinbase output value')
+        offset += 8  // value (8 bytes)
+        const scriptVI = readVarint(buf, offset)
+        offset += scriptVI.bytes + scriptVI.value
+    }
+
+    // Witness data (only if segwit coinbase)
+    if (hasSegwit) {
+        for (let i = 0; i < nIns; i++) {
+            const stackVI = readVarint(buf, offset)
+            offset += stackVI.bytes
+            const stackItems = stackVI.value
+            for (let j = 0; j < stackItems; j++) {
+                const itemVI = readVarint(buf, offset)
+                offset += itemVI.bytes + itemVI.value
+            }
+        }
+    }
+
+    if (offset + 4 > buf.length) throw new Error('AuxPoW parse: buffer too short for coinbase locktime')
+    offset += 4  // locktime
+
+    // Parent block hash (32 bytes)
+    if (offset + 32 > buf.length) throw new Error('AuxPoW parse: buffer too short for parent block hash')
+    offset += 32
+
+    // Coinbase merkle branch: varint count, count*32 B hashes, 4 B index
+    const cbVI = readVarint(buf, offset)
+    offset += cbVI.bytes
+    if (offset + cbVI.value * 32 + 4 > buf.length) throw new Error('AuxPoW parse: buffer too short for coinbase branch')
+    offset += cbVI.value * 32 + 4
+
+    // Chain merge-mining branch: same layout
+    const chainVI = readVarint(buf, offset)
+    offset += chainVI.bytes
+    if (offset + chainVI.value * 32 + 4 > buf.length) throw new Error('AuxPoW parse: buffer too short for chain branch')
+    offset += chainVI.value * 32 + 4
+
+    // Parent block header (80 bytes)
+    if (offset + 80 > buf.length) throw new Error('AuxPoW parse: buffer too short for parent block header')
+    offset += 80
+
+    return offset
+}
+
 class BlockchainConnector {
     constructor(url, port, rpcUser, rpcPassword) {
         this.url = "http://"+url+":"+port
@@ -134,31 +230,29 @@ class BlockchainConnector {
             let blockHeaderHex = await this.getBlockHeader(blockhash, true)
             let blockHex = await this.getBlock(blockhash, true)
 
-            let dataToRemove = blockHeaderHex.length - 160 //80 bytes of bitcoin block header
+            // Dogecoin Core 1.14.x getblockheader always returns the pure 80-byte header
+            // (160 hex chars) regardless of whether the block is merge-mined. When the
+            // header is longer than 160 chars the legacy path (length-based strip) works;
+            // when it is exactly 160 chars and the AuxPoW version bit (0x100) is set we
+            // must parse the AuxPoW size from the block hex itself to find where the
+            // AuxPoW section ends and the tx-count varint begins.
+            const dataToRemove = blockHeaderHex.length - 160
 
-            // Sanity guard: the block version is the first 4 bytes of blockHex
-            // (little-endian). Dogecoin sets bit 8 (0x100) on merge-mined blocks.
-            // If that bit is set but getblockheader returned exactly 160 hex chars
-            // (80 bytes, no AuxPoW), the assumption that getblockheader includes
-            // AuxPoW has been violated; parsing the unstripped block would corrupt
-            // every txid in this block. Fail loud so the issue is caught immediately
-            // rather than silently producing wrong UTXOs.
-            if (dataToRemove === 0 && blockHex.length >= 8) {
+            if (dataToRemove > 0) {
+                // Legacy path: getblockheader included AuxPoW bytes (older daemon).
+                blockHex = blockHex.substring(0, 160) + blockHex.substring(160 + dataToRemove)
+            } else if (blockHex.length >= 8) {
                 const versionLE = parseInt(blockHex.substring(0, 8), 16)
                 const version = ((versionLE & 0xFF) << 24) | (((versionLE >> 8) & 0xFF) << 16) |
                                 (((versionLE >> 16) & 0xFF) << 8) | ((versionLE >> 24) & 0xFF)
                 if (version & 0x100) {
-                    throw new Error(
-                        'AuxPoW strip invariant violated for block ' + blockhash +
-                        ': version 0x' + version.toString(16) + ' has AuxPoW bit set but ' +
-                        'getblockheader returned only 160 hex chars (no AuxPoW bytes). ' +
-                        'Re-verify the getblockheader serialization for this dogecoind version.'
-                    )
+                    // AuxPoW version bit is set but getblockheader returned no extra bytes
+                    // (Dogecoin Core 1.14 behavior). Parse the AuxPoW structure directly
+                    // from the block hex to find its exact byte length and strip it.
+                    const blockBuf = Buffer.from(blockHex, 'hex')
+                    const afterAuxPow = skipAuxPow(blockBuf, 80)
+                    blockHex = blockHex.substring(0, 160) + blockHex.substring(afterAuxPow * 2)
                 }
-            }
-
-            if (dataToRemove > 0) {
-                blockHex = blockHex.substring(0,160)+blockHex.substring(160+dataToRemove)
             }
 
             return blockHex
@@ -318,11 +412,17 @@ class BlockchainConnector {
         const blockResponse = await this.postWithRetry(blockBatch)
         const blockResults  = blockResponse.data.sort((a, b) => a.id - b.id)
 
-        return heights.map((h, i) => ({
-            height: h,
-            hash:   hashes[i],
-            hex:    blockResults[i].result
-        }))
+        // Guard matches the hash batch above and the AuxPoW path: a JSON-RPC error
+        // element returns result=null and would produce hex:undefined, causing an
+        // opaque decode failure later instead of a clear error here.
+        return heights.map((h, i) => {
+            if (!blockResults[i].result) throw new Error('Error getting block in batch for id ' + blockResults[i].id)
+            return {
+                height: h,
+                hash:   hashes[i],
+                hex:    blockResults[i].result
+            }
+        })
     }
 
     // Like getBlocksBatch, but strips AuxPoW data from each block hex using a third
@@ -376,26 +476,23 @@ class BlockchainConnector {
             let blockHex    = blocks[i]
             const dataToRemove = headerHex.length - 160  // 160 hex chars = 80-byte standard header
 
-            // Sanity guard (mirrors getBlockWithoutAuxPow): if the block version
-            // has the AuxPoW bit set but getblockheader returned no extra bytes,
-            // fail loud rather than silently mis-parsing every txid in the block.
-            if (dataToRemove === 0 && blockHex.length >= 8) {
+            if (dataToRemove > 0) {
+                // Legacy path: getblockheader included AuxPoW bytes (older daemon).
+                blockHex = blockHex.substring(0, 160) + blockHex.substring(160 + dataToRemove)
+            } else if (blockHex.length >= 8) {
                 const versionLE = parseInt(blockHex.substring(0, 8), 16)
                 const version = ((versionLE & 0xFF) << 24) | (((versionLE >> 8) & 0xFF) << 16) |
                                 (((versionLE >> 16) & 0xFF) << 8) | ((versionLE >> 24) & 0xFF)
                 if (version & 0x100) {
-                    throw new Error(
-                        'AuxPoW strip invariant violated for block ' + hashes[i] + ' at height ' + h +
-                        ': version 0x' + version.toString(16) + ' has AuxPoW bit set but ' +
-                        'getblockheader returned only 160 hex chars (no AuxPoW bytes). ' +
-                        'Re-verify the getblockheader serialization for this dogecoind version.'
-                    )
+                    // AuxPoW version bit set, but getblockheader returned no extra bytes
+                    // (Dogecoin Core 1.14 behavior). Parse the AuxPoW size from the
+                    // block hex directly, identical to the single-block path.
+                    const blockBuf = Buffer.from(blockHex, 'hex')
+                    const afterAuxPow = skipAuxPow(blockBuf, 80)
+                    blockHex = blockHex.substring(0, 160) + blockHex.substring(afterAuxPow * 2)
                 }
             }
 
-            if (dataToRemove > 0) {
-                blockHex = blockHex.substring(0, 160) + blockHex.substring(160 + dataToRemove)
-            }
             return {
                 height: h,
                 hash:   hashes[i],

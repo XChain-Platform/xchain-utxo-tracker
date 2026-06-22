@@ -218,8 +218,39 @@ describe('BlockchainConnector', function () {
 
   // ─── getBlockWithoutAuxPow ───────────────────────────────────────────────
 
+  // Build a minimal but structurally valid AuxPoW block hex for testing the
+  // structural-parse path (Dogecoin Core 1.14 behavior: getblockheader returns
+  // exactly 160 hex chars regardless of merge-mining status).
+  // AuxPoW layout after the 80-byte header:
+  //   coinbase tx (version 4B + nIns varint + input[prevout 36B + script 0B varint + seq 4B] + nOuts varint + output[value 8B + script 0B varint] + locktime 4B)
+  //   + parent block hash (32B) + coinbase branch (0 hashes, index 4B) + chain branch (0 hashes, index 4B) + parent header (80B)
+  function buildAuxPowBlockHex(txBodyHex) {
+    // 80-byte standard header with AuxPoW version bit (0x100) set.
+    // Version bytes in little-endian: 0x00000101 -> 01 01 00 00
+    const standardHeader = '01010000' + '00'.repeat(76)  // version (4 B) + 76 B padding = 80 B total = 160 hex chars
+
+    // Minimal coinbase tx: version(4) + nIns(1=0x01) + prevout(32 zeros + ffffffff) + scriptLen(0) + seq(ffffffff) + nOuts(1) + value(0 8B) + scriptLen(0) + locktime(4)
+    const coinbaseTx = (
+      '01000000'        +  // version (4 B)
+      '01'              +  // nIns = 1
+      '00'.repeat(32) + 'ffffffff' +  // prevout hash (32 B) + index (0xffffffff)
+      '00'              +  // script length = 0
+      'ffffffff'        +  // sequence
+      '01'              +  // nOuts = 1
+      '0000000000000000' + // value = 0
+      '00'              +  // script length = 0
+      '00000000'           // locktime
+    )
+    const parentBlockHash = '00'.repeat(32)  // 32 B
+    const coinbaseBranch  = '00' + '00000000'  // nHashes=0, index=0
+    const chainBranch     = '00' + '00000000'  // nHashes=0, index=0
+    const parentHeader    = '00'.repeat(80)   // 80 B
+    const auxPow = coinbaseTx + parentBlockHash + coinbaseBranch + chainBranch + parentHeader
+    return standardHeader + auxPow + txBodyHex
+  }
+
   describe('getBlockWithoutAuxPow', function () {
-    it('strips AuxPoW bytes when header is longer than 160 hex chars', async function () {
+    it('strips AuxPoW bytes when header is longer than 160 hex chars (legacy daemon path)', async function () {
       // Standard 80-byte header = 160 hex chars
       const standardHeader = 'a'.repeat(160);
       const auxPowExtra = 'bb'.repeat(50); // 100 extra hex chars
@@ -236,7 +267,7 @@ describe('BlockchainConnector', function () {
       expect(result.substring(0, 160)).to.equal(standardHeader);
     });
 
-    it('does not strip when header is exactly 160 hex chars', async function () {
+    it('does not strip when header is exactly 160 hex chars and no AuxPoW version bit', async function () {
       const header = 'a'.repeat(160);
       const block = 'a'.repeat(160) + 'dd'.repeat(10);
 
@@ -245,6 +276,24 @@ describe('BlockchainConnector', function () {
 
       const result = await connector.getBlockWithoutAuxPow('somehash');
       expect(result).to.equal(block);
+    });
+
+    it('strips AuxPoW by structural parse when getblockheader returns 160 chars but AuxPoW bit is set (Dogecoin Core 1.14)', async function () {
+      // Dogecoin Core 1.14 always returns exactly 160 hex chars from getblockheader.
+      // The stripping must be driven by parsing the AuxPoW structure from the block hex.
+      const txBodyHex = 'ee'.repeat(10)  // fake tx-count + txs after AuxPoW
+      const fullBlockHex = buildAuxPowBlockHex(txBodyHex)
+      const pureHeader = '0'.repeat(160)  // 160 chars only, no extra AuxPoW
+
+      clientStub.onCall(0).resolves({ data: { result: pureHeader } })   // getBlockHeader
+      clientStub.onCall(1).resolves({ data: { result: fullBlockHex } }) // getBlock
+
+      const result = await connector.getBlockWithoutAuxPow('somehash')
+      // The first 160 chars are the standard header from the block hex (not from getblockheader,
+      // since getBlockWithoutAuxPow preserves the block's own 80-byte header in the output)
+      expect(result.substring(0, 160)).to.equal(fullBlockHex.substring(0, 160))
+      // The tx body must appear immediately after the 160-char header with AuxPoW stripped
+      expect(result.substring(160)).to.equal(txBodyHex)
     });
   });
 
@@ -384,6 +433,19 @@ describe('BlockchainConnector', function () {
         expect(err.message).to.include('batch');
       }
     });
+
+    it('throws when a block result in batch is null', async function () {
+      // Hash batch succeeds, block batch returns a null result for one entry.
+      clientStub.onCall(0).resolves({ data: [{ id: 0, result: 'hash0' }] });
+      clientStub.onCall(1).resolves({ data: [{ id: 0, result: null }] });
+
+      try {
+        await connector.getBlocksBatch([100]);
+        expect.fail('should have thrown');
+      } catch (err) {
+        expect(err.message).to.include('block in batch');
+      }
+    });
   });
 
   // ─── additional branch coverage ───────────────────────────────────────────
@@ -504,6 +566,23 @@ describe('BlockchainConnector', function () {
       } catch (err) {
         expect(err.message).to.include('block in batch');
       }
+    });
+
+    it('strips AuxPoW by structural parse when getblockheader returns 160 chars but AuxPoW bit is set (Dogecoin Core 1.14)', async function () {
+      // Mirrors the single-block test: header always 160 chars, strip from block hex.
+      const txBodyHex = 'ff'.repeat(8)
+      const fullBlockHex = buildAuxPowBlockHex(txBodyHex)
+      const pureHeader = '0'.repeat(160)
+
+      clientStub.onCall(0).resolves({ data: [{ id: 0, result: 'hash0' }] })
+      clientStub.onCall(1).resolves({ data: [{ id: 0, result: pureHeader }] })
+      clientStub.onCall(2).resolves({ data: [{ id: 0, result: fullBlockHex }] })
+
+      const results = await connector.getBlocksBatchWithoutAuxPow([42])
+      expect(results).to.have.length(1)
+      expect(results[0].height).to.equal(42)
+      expect(results[0].hex.substring(0, 160)).to.equal(fullBlockHex.substring(0, 160))
+      expect(results[0].hex.substring(160)).to.equal(txBodyHex)
     });
   });
 });
