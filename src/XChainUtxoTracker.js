@@ -97,8 +97,8 @@ const MAX_ADDRESS_OUTPUTS = Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS) > 0
 // stays comfortably above that chain's cross-chain confirmation gate (an ordinary
 // reorg inside the trust window is auto-recovered, never a manual resync). On
 // 1-minute DOGE blocks the old flat value of 10 was only ~10 minutes of headroom.
-const DEFAULT_UNDO_BLOCKS = { BTC: 12, LTC: 48, DOGE: 120 }
-const FALLBACK_UNDO_BLOCKS = 12
+// Single-sourced in undo-blocks.js so the live worker and the bulk seeder can never drift.
+const { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS } = require('./undo-blocks.js')
 
 // Map a network string ('dogecoin-mainnet', 'litecoin-testnet', ...) to its coin.
 function coinFromNetwork(network){

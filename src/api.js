@@ -73,22 +73,27 @@ const BULK_SYNC_NODE_POLL_MS = 30000
 
 var tasks = {}
 
-async function startApi(){
-    //Start the tracker
-    const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
-    // Top-level guard for the polling loop. start() is intentionally not awaited (the
-    // Express server below must come up alongside it), so without this .catch() any
-    // throw out of the loop (a malformed-block decode, a verifyReorg fail-stop, a
-    // transient DB I/O fault) becomes a bare unhandledRejection: no clean rollback and
-    // an unclear log. Roll back any open LevelDB batch and exit non-zero so the
-    // orchestrator restarts us cleanly and the reason is in the logs. A persistent
-    // fatal (e.g. reorg depth exceeds the recovery window) intentionally keeps failing
-    // here, loudly, until an operator resyncs.
+// Launch the tracker polling loop with the top-level guard. start() is intentionally not
+// awaited (the Express server must come up alongside it), so without this .catch() any
+// throw out of the loop (a malformed-block decode, a verifyReorg fail-stop, a transient
+// DB I/O fault) becomes a bare unhandledRejection: no clean rollback and an unclear log.
+// Roll back any open LevelDB batch and exit non-zero so the orchestrator restarts cleanly
+// with the reason in the logs. A persistent fatal (e.g. reorg depth exceeds the recovery
+// window) intentionally keeps failing here, loudly, until an operator resyncs. Used at
+// EVERY start() site (primary boot + bootstrap/restore restarts) so none can regress to a
+// bare unhandledRejection that skips the rollback + [fatal] log.
+function launchTracker(tracker){
     tracker.start().catch((err) => {
         console.error('[fatal] UTXO tracker polling loop terminated: ' + (err && err.message), err)
         try { if (tracker.db && tracker.db.endTransaction) tracker.db.endTransaction(false) } catch (_) {}
         process.exit(1)
     })
+}
+
+async function startApi(){
+    //Start the tracker
+    const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
+    launchTracker(tracker)
 
     async function getUtxos(address, opts){
         return await tracker.getUtxosAddress(address, opts)
@@ -399,7 +404,7 @@ async function startApi(){
                 compressDirPigz(taskId, "/data/"+DB_NAME, destination).then((finished) =>{
                     tasks[taskId]["progress"] = 100
                     console.log("Starting the parsing again")
-                    tracker.start()
+                    launchTracker(tracker)
                 }).catch(error => {
                     tasks[taskId]["progress"] = -1
                     console.log("Warning, compression was not succesful: "+error)
@@ -434,7 +439,7 @@ async function startApi(){
                 decompressPigz(taskId, source, "/data/"+DB_NAME).then((finished) =>{
                     tasks[taskId]["progress"] = 100
                     console.log("Starting the parsing")
-                    tracker.start()
+                    launchTracker(tracker)
                 }).catch(error => {
                     tasks[taskId]["progress"] = -1
                     console.log("Warning, decompression was not succesful: "+error)

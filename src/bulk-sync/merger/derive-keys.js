@@ -67,11 +67,10 @@ const SPENDS_RECORD_SIZE  = 20
 const OUTPUTS_HEADER_SIZE = 64
 const SPENDS_HEADER_SIZE  = 64
 
-// Per-chain N-window defaults (mirrors XChainUtxoTracker DEFAULT_UNDO_BLOCKS).
-// Must match the live tracker's per-chain undoBlocks so the bulk-seeded N-prefix
-// covers at least as many blocks as the live reorg depth guard allows.
-const DEFAULT_UNDO_BLOCKS = { BTC: 12, LTC: 48, DOGE: 120 }
-const FALLBACK_UNDO_BLOCKS = 12
+// Per-chain N-window defaults, single-sourced in undo-blocks.js so the bulk-seeded
+// N-prefix always covers at least as many blocks as the live reorg depth guard allows
+// (a hand-copied second table previously risked re-opening the per-chain reorg gap).
+const { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS } = require('../../undo-blocks.js')
 
 // Resolve the N-window size: explicit opts.undoBlocks wins, then
 // XCHAIN_UNDO_BLOCKS_<COIN> env var, then per-chain default, then fallback.
