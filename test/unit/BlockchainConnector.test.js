@@ -67,26 +67,6 @@ describe('BlockchainConnector', function () {
     });
   });
 
-  // ─── getNetworkInfo ────────────────────────────────────────────────────
-
-  describe('getNetworkInfo', function () {
-    it('returns result on success', async function () {
-      clientStub.resolves({ data: { result: { version: 250000 } } });
-      const info = await connector.getNetworkInfo();
-      expect(info.version).to.equal(250000);
-    });
-
-    it('throws on null result', async function () {
-      clientStub.resolves({ data: { result: null } });
-      try {
-        await connector.getNetworkInfo();
-        expect.fail('should have thrown');
-      } catch (err) {
-        expect(err.message).to.include('network info');
-      }
-    });
-  });
-
   // ─── getBlockHash ────────────────────────────────────────────────────────
 
   describe('getBlockHash', function () {
@@ -178,6 +158,7 @@ describe('BlockchainConnector', function () {
     });
 
     it('retries on ECONNABORTED timeout', async function () {
+      sinon.stub(connector, 'sleep').resolves();  // skip the real 500ms backoff
       const timeoutErr = new Error('timeout');
       timeoutErr.code = 'ECONNABORTED';
 
@@ -188,9 +169,12 @@ describe('BlockchainConnector', function () {
       const result = await connector.getBlockHeader('abc');
       expect(result).to.equal('headerdata');
       expect(clientStub.callCount).to.equal(3);
+      // Backoff applied between the two failed attempts (no hot-spin).
+      expect(connector.sleep.callCount).to.equal(2);
     });
 
-    it('throws after 10 timeout retries', async function () {
+    it('throws after 10 timeout retries, backing off between each', async function () {
+      const sleepStub = sinon.stub(connector, 'sleep').resolves();  // skip real backoff
       const timeoutErr = new Error('timeout');
       timeoutErr.code = 'ECONNABORTED';
       clientStub.rejects(timeoutErr);
@@ -201,6 +185,8 @@ describe('BlockchainConnector', function () {
       } catch (err) {
         expect(err.message).to.include('problems getting a block hex');
         expect(clientStub.callCount).to.equal(10);
+        // 9 backoffs across 10 attempts (none after the final attempt).
+        expect(sleepStub.callCount).to.equal(9);
       }
     });
 
@@ -249,6 +235,46 @@ describe('BlockchainConnector', function () {
     return standardHeader + auxPow + txBodyHex
   }
 
+  // Parameterized variant that exercises the two AuxPoW branches real mainnet DOGE
+  // blocks hit but the 0-hash/non-segwit fixture above never does: a segwit-serialized
+  // parent coinbase (marker + flag + per-input witness stack) and multi-hash coinbase/
+  // chain merkle branches (count > 0). The offsets here are the mirror image of
+  // skipAuxPow()'s byte-walk, so any divergence in the segwit skip or the count*32+4
+  // branch arithmetic shifts the parent-header boundary and fails the round-trip below.
+  function buildAuxPowBlockHexEx(txBodyHex, { segwit = false, cbBranchHashes = 0, chainBranchHashes = 0 } = {}) {
+    const standardHeader = '01010000' + '00'.repeat(76)  // version w/ AuxPoW bit (0x100) + 76 B = 80 B
+
+    let coinbaseTx = (
+      '01000000'        +                 // version (4 B)
+      (segwit ? '0001' : '') +            // segwit marker (00) + flag (01)
+      '01'              +                 // nIns = 1
+      '00'.repeat(32) + 'ffffffff' +      // prevout hash (32 B) + index
+      '00'              +                 // script length = 0
+      'ffffffff'        +                 // sequence
+      '01'              +                 // nOuts = 1
+      '0000000000000000' +                // value = 0
+      '00'                                // script length = 0
+    )
+    if (segwit) {
+      // One witness stack for the single input: 1 item of 32 bytes (coinbase
+      // witness reserved value), matching skipAuxPow's per-input stack walk.
+      coinbaseTx += '01' + '20' + '00'.repeat(32)
+    }
+    coinbaseTx += '00000000'              // locktime
+
+    const parentBlockHash = '00'.repeat(32)
+    // varint count + count*32 B hashes + 4 B index; distinct byte fills per hash so a
+    // miscount is not masked by repeated bytes.
+    const branch = (n) => {
+      let hex = n.toString(16).padStart(2, '0')
+      for (let i = 0; i < n; i++) hex += (i + 1).toString(16).padStart(2, '0').repeat(32)
+      return hex + '00000000'
+    }
+    const parentHeader = '00'.repeat(80)
+    const auxPow = coinbaseTx + parentBlockHash + branch(cbBranchHashes) + branch(chainBranchHashes) + parentHeader
+    return standardHeader + auxPow + txBodyHex
+  }
+
   describe('getBlockWithoutAuxPow', function () {
     it('strips AuxPoW bytes when header is longer than 160 hex chars (legacy daemon path)', async function () {
       // Standard 80-byte header = 160 hex chars
@@ -293,6 +319,53 @@ describe('BlockchainConnector', function () {
       // since getBlockWithoutAuxPow preserves the block's own 80-byte header in the output)
       expect(result.substring(0, 160)).to.equal(fullBlockHex.substring(0, 160))
       // The tx body must appear immediately after the 160-char header with AuxPoW stripped
+      expect(result.substring(160)).to.equal(txBodyHex)
+    });
+
+    it('strips AuxPoW with multi-hash coinbase and chain merkle branches (count > 0)', async function () {
+      // Mainnet AuxPoW coinbase/chain branches routinely carry several 32-byte hashes;
+      // the baseline fixture only covers count = 0. A wrong count*32+4 stride here would
+      // leave branch bytes in (or eat header bytes from) the stripped output.
+      const txBodyHex = 'ee'.repeat(10)
+      const fullBlockHex = buildAuxPowBlockHexEx(txBodyHex, { cbBranchHashes: 3, chainBranchHashes: 2 })
+      const pureHeader = '0'.repeat(160)
+
+      clientStub.onCall(0).resolves({ data: { result: pureHeader } })
+      clientStub.onCall(1).resolves({ data: { result: fullBlockHex } })
+
+      const result = await connector.getBlockWithoutAuxPow('somehash')
+      expect(result.substring(0, 160)).to.equal(fullBlockHex.substring(0, 160))
+      expect(result.substring(160)).to.equal(txBodyHex)
+    });
+
+    it('strips AuxPoW with a segwit-serialized parent coinbase (marker + flag + witness)', async function () {
+      // The parent chain is Litecoin, whose coinbase can carry a witness commitment.
+      // This drives the hasSegwit branch (skip marker+flag, then walk the per-input
+      // witness stack) that the non-segwit baseline fixture never reaches.
+      const txBodyHex = 'cc'.repeat(12)
+      const fullBlockHex = buildAuxPowBlockHexEx(txBodyHex, { segwit: true })
+      const pureHeader = '0'.repeat(160)
+
+      clientStub.onCall(0).resolves({ data: { result: pureHeader } })
+      clientStub.onCall(1).resolves({ data: { result: fullBlockHex } })
+
+      const result = await connector.getBlockWithoutAuxPow('somehash')
+      expect(result.substring(0, 160)).to.equal(fullBlockHex.substring(0, 160))
+      expect(result.substring(160)).to.equal(txBodyHex)
+    });
+
+    it('strips AuxPoW with a segwit coinbase AND multi-hash branches together', async function () {
+      // The realistic mainnet shape: both branches active at once, so a sign/stride
+      // error in either the witness walk or the branch arithmetic is caught.
+      const txBodyHex = 'ab'.repeat(15)
+      const fullBlockHex = buildAuxPowBlockHexEx(txBodyHex, { segwit: true, cbBranchHashes: 4, chainBranchHashes: 3 })
+      const pureHeader = '0'.repeat(160)
+
+      clientStub.onCall(0).resolves({ data: { result: pureHeader } })
+      clientStub.onCall(1).resolves({ data: { result: fullBlockHex } })
+
+      const result = await connector.getBlockWithoutAuxPow('somehash')
+      expect(result.substring(0, 160)).to.equal(fullBlockHex.substring(0, 160))
       expect(result.substring(160)).to.equal(txBodyHex)
     });
   });

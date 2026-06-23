@@ -118,6 +118,35 @@ function skipAuxPow(buf, start) {
     return offset
 }
 
+// Strip the AuxPoW section from a merge-mined block's hex, preserving the 80-byte
+// (160 hex char) standard header. Two daemon behaviors are handled: an older daemon
+// whose getblockheader already includes the AuxPoW bytes (length-based strip via the
+// header/block length delta), and Dogecoin Core 1.14 whose getblockheader always
+// returns exactly 160 chars, requiring the AuxPoW size to be parsed structurally from
+// the block hex (skipAuxPow). Non-AuxPoW blocks pass through unchanged. Shared by the
+// single-block (getBlockWithoutAuxPow) and batch (getBlocksBatchWithoutAuxPow) paths
+// so a strip correction can never land in one and silently miss the other.
+function stripAuxPowFromBlockHex(headerHex, blockHex) {
+    const dataToRemove = headerHex.length - 160  // 160 hex chars = 80-byte standard header
+    if (dataToRemove > 0) {
+        // Legacy path: getblockheader included AuxPoW bytes (older daemon).
+        return blockHex.substring(0, 160) + blockHex.substring(160 + dataToRemove)
+    }
+    if (blockHex.length >= 8) {
+        const versionLE = parseInt(blockHex.substring(0, 8), 16)
+        const version = ((versionLE & 0xFF) << 24) | (((versionLE >> 8) & 0xFF) << 16) |
+                        (((versionLE >> 16) & 0xFF) << 8) | ((versionLE >> 24) & 0xFF)
+        if (version & 0x100) {
+            // AuxPoW version bit set but getblockheader returned no extra bytes
+            // (Dogecoin Core 1.14). Parse the AuxPoW size from the block hex directly.
+            const blockBuf = Buffer.from(blockHex, 'hex')
+            const afterAuxPow = skipAuxPow(blockBuf, 80)
+            return blockHex.substring(0, 160) + blockHex.substring(afterAuxPow * 2)
+        }
+    }
+    return blockHex
+}
+
 class BlockchainConnector {
     constructor(url, port, rpcUser, rpcPassword) {
         this.url = "http://"+url+":"+port
@@ -135,22 +164,6 @@ class BlockchainConnector {
 
     async sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-
-    async getNetworkInfo(){
-        const data = {
-            jsonrpc: '2.0',
-            method: 'getnetworkinfo',
-            id: 1
-        }
-
-        const response = await this.client.post(this.url, data)
-
-        if (response.data.result) {
-            return response.data.result;
-        } else {
-            throw new Error('Error getting network info');
-        }
     }
 
     async getBlockchainInfo(){
@@ -214,7 +227,10 @@ class BlockchainConnector {
                 if (error.code === 'ECONNABORTED') {
                     tries = tries - 1
                     console.log("Getting timeout trying to get block hex, trying again...")
-                    //Do nothing, let the while to try again
+                    // Back off 500ms between attempts so a persistently-flapping node is
+                    // not hot-spun through all 10 tries near-instantly; matches the
+                    // postWithRetry / getBlock retry cadence.
+                    if (tries > 0) await this.sleep(500)
                 } else {
                     console.error('Error:', error);
                     throw error;
@@ -236,24 +252,7 @@ class BlockchainConnector {
             // when it is exactly 160 chars and the AuxPoW version bit (0x100) is set we
             // must parse the AuxPoW size from the block hex itself to find where the
             // AuxPoW section ends and the tx-count varint begins.
-            const dataToRemove = blockHeaderHex.length - 160
-
-            if (dataToRemove > 0) {
-                // Legacy path: getblockheader included AuxPoW bytes (older daemon).
-                blockHex = blockHex.substring(0, 160) + blockHex.substring(160 + dataToRemove)
-            } else if (blockHex.length >= 8) {
-                const versionLE = parseInt(blockHex.substring(0, 8), 16)
-                const version = ((versionLE & 0xFF) << 24) | (((versionLE >> 8) & 0xFF) << 16) |
-                                (((versionLE >> 16) & 0xFF) << 8) | ((versionLE >> 24) & 0xFF)
-                if (version & 0x100) {
-                    // AuxPoW version bit is set but getblockheader returned no extra bytes
-                    // (Dogecoin Core 1.14 behavior). Parse the AuxPoW structure directly
-                    // from the block hex to find its exact byte length and strip it.
-                    const blockBuf = Buffer.from(blockHex, 'hex')
-                    const afterAuxPow = skipAuxPow(blockBuf, 80)
-                    blockHex = blockHex.substring(0, 160) + blockHex.substring(afterAuxPow * 2)
-                }
-            }
+            blockHex = stripAuxPowFromBlockHex(blockHeaderHex, blockHex)
 
             return blockHex
         } catch (err) {
@@ -474,24 +473,8 @@ class BlockchainConnector {
         return heights.map((h, i) => {
             const headerHex = headers[i]
             let blockHex    = blocks[i]
-            const dataToRemove = headerHex.length - 160  // 160 hex chars = 80-byte standard header
 
-            if (dataToRemove > 0) {
-                // Legacy path: getblockheader included AuxPoW bytes (older daemon).
-                blockHex = blockHex.substring(0, 160) + blockHex.substring(160 + dataToRemove)
-            } else if (blockHex.length >= 8) {
-                const versionLE = parseInt(blockHex.substring(0, 8), 16)
-                const version = ((versionLE & 0xFF) << 24) | (((versionLE >> 8) & 0xFF) << 16) |
-                                (((versionLE >> 16) & 0xFF) << 8) | ((versionLE >> 24) & 0xFF)
-                if (version & 0x100) {
-                    // AuxPoW version bit set, but getblockheader returned no extra bytes
-                    // (Dogecoin Core 1.14 behavior). Parse the AuxPoW size from the
-                    // block hex directly, identical to the single-block path.
-                    const blockBuf = Buffer.from(blockHex, 'hex')
-                    const afterAuxPow = skipAuxPow(blockBuf, 80)
-                    blockHex = blockHex.substring(0, 160) + blockHex.substring(afterAuxPow * 2)
-                }
-            }
+            blockHex = stripAuxPowFromBlockHex(headerHex, blockHex)
 
             return {
                 height: h,
