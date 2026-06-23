@@ -110,10 +110,11 @@ describe('BlockchainConnector', function () {
       const hex = await connector.getBlock('abc123');
       expect(hex).to.be.a('string');
 
-      // hexFormat=true → pass verbosity 0 to getblock for hex (getblock takes an
-      // integer verbosity: 0=hex, 1=json (unlike getblockheader's boolean verbose)
+      // hexFormat=true → pass boolean false to getblock for hex. getblock's
+      // verbose arg is a boolean (false=hex, true=json), matching getblockheader;
+      // Dogecoin Core 1.14 rejects an integer verbosity here.
       const payload = clientStub.firstCall.args[1];
-      expect(payload.params[1]).to.equal(0);
+      expect(payload.params[1]).to.equal(false);
     });
 
     it('returns object when hexFormat=false', async function () {

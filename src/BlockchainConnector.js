@@ -333,7 +333,7 @@ class BlockchainConnector {
             const data = {
                 jsonrpc: '2.0',
                 method: 'getblock',
-                params: [blockhash, hexFormat ? 0 : 1],
+                params: [blockhash, !hexFormat],  // getblock verbose is a boolean (false=hex, true=json); Dogecoin 1.14 rejects integer verbosity, matching getBlockHeader above
                 id: 1,
             }
 
@@ -405,7 +405,7 @@ class BlockchainConnector {
         const blockBatch = hashes.map((hash, i) => ({
             jsonrpc: '2.0',
             method: 'getblock',
-            params: [hash, 0],  // 0 = hex format
+            params: [hash, false],  // false = hex format; Dogecoin 1.14 getblock expects a boolean verbose, not integer verbosity
             id: i
         }))
         const blockResponse = await this.postWithRetry(blockBatch)
@@ -461,7 +461,7 @@ class BlockchainConnector {
         const blockBatch = hashes.map((hash, i) => ({
             jsonrpc: '2.0',
             method: 'getblock',
-            params: [hash, 0],  // 0 = hex format
+            params: [hash, false],  // false = hex format; Dogecoin 1.14 getblock expects a boolean verbose, not integer verbosity
             id: i
         }))
         const blockResponse = await this.postWithRetry(blockBatch)
