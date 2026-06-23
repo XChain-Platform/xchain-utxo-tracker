@@ -777,6 +777,56 @@ class LevelUpStore {
 
     // ─── Output + hint removal (REMOVE_SPENT path) ───────────────────────────
 
+    // Cross-block in-memory spend recovery.
+    //
+    // When an output is created and spent within the SAME uncommitted batch the
+    // spend takes the in-memory path: the O/H entries are dropped from the
+    // staging map and the only restore record is the per-spend-block entry in
+    // deletedTransactionArray. That in-memory record is discarded the moment the
+    // batch commits (endTransaction nulls the maps), so it cannot survive to a
+    // later reorg. For a same-block create+spend that is harmless: a reorg can
+    // never split a single block, so the output never needs restoring on its own.
+    // But a batch spans up to DB_TRANSACTION_BLOCKS_QUANTITY blocks, so a create
+    // at block N and a spend at block N+k (k>0) is also in-memory yet CAN be split
+    // by a reorg to a fork between N and N+k. After commit there are no K/M records
+    // on disk, so processDeletedOutputs finds nothing to restore and the spent
+    // output's balance is silently lost.
+    //
+    // Fix: when the spent output was created in a strictly earlier block than the
+    // spending input, write the same M (hint) + K (output) restore records the
+    // DB/archive branch writes, keyed by the spend blockHash. A reorg that rolls
+    // back the spend block then restores the output exactly as for a normal
+    // committed spend. The records are still pruned by cleanupAgedBlocks once the
+    // spend block ages out of the undoBlocks window.
+    //
+    // spendBlockHeight is read from the B record inserted for this block earlier
+    // in the same batch; createdHeight is decoded from the spent output's value.
+    // Both are needed because the input object carries no height.
+    spendBlockHeightInBatch(blockHashHex){
+        const blkVal = this.getTransactionValue(kBlock(blockHashHex))
+        if (blkVal == null) return null
+        return decodeBlock(blkVal).h
+    }
+
+    // Write the M/K reorg-restore records for an in-memory spend whose output was
+    // created in an earlier block of the same batch. Returns true when records
+    // were written (cross-block), false when skipped (same-block or unknown
+    // heights). oVal is the spent output's stored value (encodeOutput bytes).
+    async writeCrossBlockSpendRecovery(input, scriptPubKeyBuf, oVal){
+        if (oVal == null) return false
+        const createdHeight = decodeOutput(oVal).h          // creation block height
+        const spendHeight = this.spendBlockHeightInBatch(input.blockHash)
+        // Only a strictly-earlier creation block is reorg-splittable. If either
+        // height is unknown, or the spend is same-block, skip (no record needed).
+        if (createdHeight == null || createdHeight < 0 || spendHeight == null) return false
+        if (createdHeight >= spendHeight) return false
+        const mKey = kHintDel(input.blockHash, input.prevTxHash, input.prevOutputIndex)
+        const kKey = kOutDelFromBuf(input.blockHash, scriptPubKeyBuf, input.prevTxHash, input.prevOutputIndex)
+        await this.addTransaction("put", mKey, scriptPubKeyBuf)
+        await this.addTransaction("put", kKey, oVal)
+        return true
+    }
+
     async removeOutputWithInput(input) {
         const hKey = kOutHint(input.prevTxHash, input.prevOutputIndex)
         const mKey = kHintDel(input.blockHash, input.prevTxHash, input.prevOutputIndex)
@@ -798,12 +848,17 @@ class LevelUpStore {
             const inMemScript = this.getTransactionValue(hKey)
             if (inMemScript != null){
                 const inMemOKey = kOutputFromBuf(inMemScript, input.prevTxHash, input.prevOutputIndex)
+                // Capture the staged output value BEFORE removal so a cross-block
+                // spend can write durable K/M restore records (see
+                // writeCrossBlockSpendRecovery). Same-block spends write nothing.
+                const inMemOVal = this.getTransactionValue(inMemOKey)
                 if (!this.removeTransaction(inMemOKey, input.blockHash)){
                     throw Error("Missing output match for input "+JSON.stringify(input))
                 }
                 if (!this.removeTransaction(hKey, input.blockHash)){
                     throw Error("Missing outputHintKey match for input "+JSON.stringify(input))
                 }
+                await this.writeCrossBlockSpendRecovery(input, inMemScript, inMemOVal)
             } else {
                 console.log("Warning: Missing outputHintKey for input "+JSON.stringify(input)+" - output may have been indexed before REMOVE_SPENT was enabled")
             }
@@ -918,8 +973,13 @@ class LevelUpStore {
                 if (DEBUG_TRACE) {
                     console.log(`TRACE delOutput db=${this.dbName} path=inMem sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
                 }
+                // Capture the staged output value BEFORE removal so a cross-block
+                // spend writes durable K/M restore records (see
+                // writeCrossBlockSpendRecovery). Same-block spends write nothing.
+                const inMemOVal = this.getTransactionValue(inMemOKey)
                 this.removeTransaction(inMemOKey, inp.blockHash)
                 this.removeTransaction(r.hKey, inp.blockHash)
+                await this.writeCrossBlockSpendRecovery(inp, r.scriptPubKeyBuf, inMemOVal)
                 continue
             }
 

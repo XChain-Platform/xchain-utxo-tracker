@@ -139,6 +139,12 @@ class XChainUtxoTracker {
       this.debugTime = {}
       
       this.synced = false
+      // True only after the first successful mempool reconverge following a
+      // synced=true transition. synced flips true at block-sync before the first
+      // (unawaited) updateMempool() populates the in-memory mempool DB, so on a
+      // restart the mempool is briefly empty while synced already reads true.
+      // Readiness must gate on both so callers never see a synced-but-empty mempool.
+      this.mempoolReconverged = false
       
       this.blockchainInfoLastBlock = -1
       this.latestKnownChainTip = null
@@ -262,6 +268,13 @@ class XChainUtxoTracker {
     
     isSynced(){
         return this.synced
+    }
+
+    // True once the mempool has reconverged at least once since the last
+    // synced=true transition. Pairs with isSynced() to form the readiness signal:
+    // synced alone can be true while the mempool DB is still empty/repopulating.
+    isMempoolReconverged(){
+        return this.mempoolReconverged
     }
     
     async stopParsing(){
@@ -967,6 +980,10 @@ class XChainUtxoTracker {
                 } else {
                     if ((this.blockchainInfoLastBlock - lastProcessedBlockIndex) > SYNCED_THRESHOLD){
                         this.synced = false
+                        // Falling out of sync invalidates mempool readiness: the
+                        // mempool poller is torn down here and must reconverge once
+                        // before readiness is asserted again.
+                        this.mempoolReconverged = false
                         if (this.mempoolInterval != null){
                             console.log("Mempool updates stopped!")
                             clearInterval(this.mempoolInterval)
@@ -1353,6 +1370,11 @@ class XChainUtxoTracker {
                 }
 
                 await this.mempoolDb.endTransaction()
+                // A successful commit means the in-memory mempool DB now reflects
+                // the node mempool: readiness can be asserted. Reset to false on
+                // any synced=false transition (see above) and on mempool errors,
+                // which take the catch path below and skip this line.
+                this.mempoolReconverged = true
                 let mempoolEndTime = Date.now()
                 let timeString = this.millisecondsToTimeString(mempoolEndTime-mempoolStartTime)
 

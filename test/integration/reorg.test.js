@@ -244,6 +244,102 @@ describe('Integration: Chain Reorganization', function () {
     });
   });
 
+  // ─── Scenario 4.6: Cross-block create+spend within ONE uncommitted batch ──
+  //
+  // Regression for the silent-UTXO-loss bug: when create(N) and spend(N+k>N)
+  // both land in a single uncommitted batch, the spend takes the in-memory
+  // path. Before the fix that path wrote no durable K/M restore records, so the
+  // restore data was discarded at commit and a later reorg could not unspend the
+  // output. The created output's balance vanished permanently.
+  describe('cross-block in-batch spend reorg recovery', function () {
+    it('restores a UTXO created and spent across blocks of one committed batch', async function () {
+      // Block 0: coinbase 50 BTC to addr0. Block 1: filler. Block 2: spend
+      // addr0's UTXO to addr1. All three blocks are processed in ONE batch
+      // (single begin/endTransaction), so the spend resolves block 0's output
+      // from the in-memory staging map, not the DB. create at height 0,
+      // spend at height 2 = a strictly-earlier creation block.
+      const cb = makeCoinbaseTx(0, 50 * SATOSHI);
+      const block0 = makeBlock(0, '0'.repeat(64), [cb]);
+      const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(2)]);
+      const spendTx = makeTx({
+        ins: [makeSpendInput(cb._txid, 0)],
+        outs: [makeOutput(1, 49 * SATOSHI)]
+      });
+      const block2 = makeBlock(2, block1.hash, [makeCoinbaseTx(3), spendTx]);
+
+      await processBlocksAndCommit(tracker, [block0, block1, block2]);
+
+      // Before reorg: addr0 spent (0), addr1 holds the 49 BTC output.
+      const before0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
+      expect(before0.balances.confirmed).to.equal('0.00000000');
+
+      // Reorg to a fork point between block 0 and block 2: node still has
+      // block 0's hash but reports different hashes for blocks 1 and 2.
+      const getBlockHash = sinon.stub(tracker.connector, 'getBlockHash');
+      getBlockHash.withArgs(0).resolves(block0.hash);
+      getBlockHash.withArgs(1).resolves(randHash());
+      getBlockHash.withArgs(2).resolves(randHash());
+
+      tracker.lastBlocks = await tracker.loadLastBlocksSortedByHeight();
+      await runVerifyReorg();
+
+      // Rolled back to block 0.
+      expect(await tracker.db.getLastBlockHeight()).to.equal(0);
+
+      // addr0's coinbase UTXO must be restored: rolling back block 2 (the spend
+      // block) replays the K/M records written by the cross-block in-memory path.
+      const after0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
+      expect(after0.balances.confirmed).to.equal('50.00000000');
+      expect(after0.utxos.confirmed).to.equal(1);
+
+      // addr1's 49 BTC output was created in a rolled-back block and never spent:
+      // it must not survive as a phantom UTXO.
+      const after1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
+      expect(after1.balances.confirmed).to.equal('0.00000000');
+      expect(after1.utxos.confirmed).to.equal(0);
+    });
+  });
+
+  // ─── Scenario 4.7: Reorg depth guard ─────────────────────────────────────
+  //
+  // K/M recovery records are retained only for the most recent undoBlocks
+  // blocks. Once a reorg has already rolled back undoBlocks blocks, the next
+  // block's recovery records are gone, so verifyReorg must abort loudly rather
+  // than silently leave the UTXO index under-counted.
+  describe('reorg depth guard', function () {
+    it('throws once blocksDeleted reaches the undo-depth window', async function () {
+      // Use a small window so the test stays fast.
+      tracker.undoBlocks = 3;
+
+      const blocks = [];
+      let prevHash = '0'.repeat(64);
+      for (let i = 0; i < 8; i++) {
+        const block = makeBlock(i, prevHash, [makeCoinbaseTx(0, 10 * SATOSHI)]);
+        blocks.push(block);
+        prevHash = block.hash;
+      }
+      await processBlocksAndCommit(tracker, blocks);
+
+      // Node forks everything above the genesis block: every height past 0
+      // mismatches, forcing a rollback deeper than the undo window.
+      const getBlockHash = sinon.stub(tracker.connector, 'getBlockHash');
+      getBlockHash.withArgs(0).resolves(blocks[0].hash);
+      for (let i = 1; i <= 7; i++) getBlockHash.withArgs(i).resolves(randHash());
+
+      tracker.lastBlocks = await tracker.loadLastBlocksSortedByHeight();
+
+      // verifyReorg rolls back undoBlocks (3) blocks, then aborts on the next.
+      let threw = false;
+      try {
+        await runVerifyReorg();
+      } catch (err) {
+        threw = true;
+        expect(err.message).to.match(/reorg depth exceeds the recovery window/i);
+      }
+      expect(threw, 'verifyReorg should throw past the undo-depth window').to.equal(true);
+    });
+  });
+
   // ─── Scenario 4.5: Reorg then re-index creates correct S record ──────
 
   describe('reorg then re-index', function () {
