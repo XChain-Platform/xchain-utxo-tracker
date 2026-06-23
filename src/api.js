@@ -301,6 +301,10 @@ async function startApi(){
                 result.mempool_rpc_failures  = tracker.mempoolRpcFailures;
                 result.last_mempool_error_at = tracker.lastMempoolErrorAt;
             }
+            // Surface reorg counters so operators can detect chains with
+            // frequent reorganizations and know the depth of the last one.
+            result.reorg_count      = tracker.reorgCount;
+            result.last_reorg_depth = tracker.lastReorgDepth;
             return result;
         },
 
@@ -462,6 +466,25 @@ async function startApi(){
             }
         }
     }
+
+    // GET /status: lightweight health probe for Docker HEALTHCHECK and uptime
+    // monitors. Runs the same DB read that get_sync_status uses to verify the
+    // store is reachable and returns 503 when it is not. The JSON-RPC catch-all
+    // would otherwise respond 200 to any GET (serving the method-not-found
+    // error body), making a DB-down tracker appear healthy to healthchecks.
+    app.get('/status', async (req, res) => {
+        let dbOk = false
+        let committedHeight = -1
+        try {
+            committedHeight = await tracker.db.getLastBlockHeight()
+            dbOk = true
+        } catch (err) {
+            // DB unreachable; fall through to 503
+        }
+        const status = dbOk ? 'ok' : 'degraded'
+        if (!dbOk) res.status(503)
+        res.json({ status, db: dbOk, committed_height: committedHeight })
+    })
 
     // Allow JSON-RPC requests
     app.use(jsonRouter({methods: jsonRpcController}))

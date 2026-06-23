@@ -104,6 +104,10 @@ class AddressTooLargeError extends Error {
         this.name = 'AddressTooLargeError'
         this.code = 'ADDRESS_TOO_LARGE'
         this.maxOutputs = maxOutputs
+        // JSON-RPC router serializes Error instances by enumerable props only;
+        // .code is a non-enumerable own property so it arrives as null at the
+        // client. Mirror it into .data so the router preserves it.
+        this.data = { code: this.code }
     }
 }
 
@@ -113,6 +117,8 @@ class InvalidCursorError extends Error {
         super(`invalid pagination cursor ${JSON.stringify(cursor)} (expected "<txHash8Hex>:<vout>")`)
         this.name = 'InvalidCursorError'
         this.code = 'INVALID_CURSOR'
+        // Mirror .code into .data for the same reason as AddressTooLargeError above.
+        this.data = { code: this.code }
     }
 }
 
@@ -404,7 +410,7 @@ class LevelUpStore {
             await this.db.open()
             return this.db
         } catch (err){
-            throw new Error("Couldn't open/create LevelDB database")
+            throw new Error("Couldn't open/create LevelDB '" + this.dbName + "': " + (err && err.message), { cause: err })
         }
     }
 
@@ -539,7 +545,7 @@ class LevelUpStore {
             await this.addTransaction("del", key)
             return true
         } catch (err) {
-            throw new Error("Error when trying to remove last stored block")
+            throw new Error("removeLastStoredBlock failed for " + blockHash + ": " + (err && err.message), { cause: err })
         }
     }
 

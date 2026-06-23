@@ -157,6 +157,11 @@ class XChainUtxoTracker {
       // needing to watch the console for the "Giving up" warning.
       this.mempoolRpcFailures = 0
       this.lastMempoolErrorAt = null
+
+      // Lifetime reorg counters. Surfaced in get_sync_status so operators can
+      // detect chains that reorg frequently and know how deep the last one was.
+      this.reorgCount = 0
+      this.lastReorgDepth = 0
     }
     
     async addToLastBlocks(blockHash){
@@ -754,8 +759,10 @@ class XChainUtxoTracker {
         
         if (blocksDeleted.length > 0){
             console.log(blocksDeleted.length+" blocks were removed")
+            this.reorgCount++
+            this.lastReorgDepth = blocksDeleted.length
         }
-        
+
         return true
     }
     
