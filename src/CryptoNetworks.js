@@ -13,117 +13,27 @@
  **********************************************************************
  *
  * XChain UTXO Tracker - Crypto Networks Class
- * 
- * This file handles getting a bitcoinJS config for a specific network
- * 
+ *
+ * Thin adapter over the canonical coin registry (src/coins). The tracker only
+ * needs the bitcoinjs network object (address coding); it builds no transactions,
+ * so the relay-only fields it now inherits from canonical (e.g.
+ * singleOpReturnPolicy) are unused here. Returns undefined for an unknown network
+ * name, matching the prior no-default behavior.
+ *
  ********************************************************************/
 
-// Load required libraries
-const bitcoin = require('bitcoinjs-lib');
+const coins = require('./coins');
 
 class CryptoNetworks {
     static getBitcoinJsNetwork(networkName){
-        switch(networkName){
-            case "bitcoin-mainnet":
-                return { ...bitcoin.networks.bitcoin, dustThreshold: 546, minStandardTxNonWitnessSize: 65, singleOpReturnPolicy: true }
-            case "bitcoin-testnet":
-                return { ...bitcoin.networks.testnet, dustThreshold: 546, minStandardTxNonWitnessSize: 65, singleOpReturnPolicy: true }
-            case "bitcoin-regtest":
-                return { ...bitcoin.networks.regtest, dustThreshold: 546, minStandardTxNonWitnessSize: 65, singleOpReturnPolicy: true }
-            case "dogecoin-mainnet":
-                return {
-                    "messagePrefix": '\x19Dogecoin Signed Message:\n',
-                    "bip32": {
-                       "public": 0x02facafd,
-                       "private": 0x02fac398
-                    },
-                    "pubKeyHash": 0x1e,
-                    "scriptHash": 0x16,
-                    "wif": 0x9e,
-                    "dustThreshold": 100000,
-                    "supportsSegwit": false,
-                    "singleOpReturnPolicy": false
-                }
-            case "dogecoin-testnet":
-                return {
-                    "messagePrefix": '\x19Dogecoin Signed Message:\n',
-                    "bip32": {
-                       "public": 0x0432a9a8,
-                       "private": 0x0432a243
-                    },
-                    "pubKeyHash": 0x71,
-                    "scriptHash": 0xc4,
-                    "wif": 0xf1,
-                    "dustThreshold": 100000,
-                    "supportsSegwit": false,
-                    "singleOpReturnPolicy": false
-                }
-            case "dogecoin-regtest":
-                // Dogecoin v1.14.x regtest reuses Bitcoin-testnet prefixes
-                // (pubKeyHash 0x6f, WIF 0xef, bip32 0x043587cf/0x04358394).
-                // NOT Dogecoin-testnet prefixes (0x71/0xf1/etc.). Generating
-                // or recognizing addresses with 0x71 makes the tracker reject
-                // node-issued addresses with "no matching Script".
-                return {
-                    "messagePrefix": '\x19Dogecoin Signed Message:\n',
-                    "bip32": {
-                       "public": 0x043587cf,
-                       "private": 0x04358394
-                    },
-                    "pubKeyHash": 0x6f,
-                    "scriptHash": 0xc4,
-                    "wif": 0xef,
-                    "dustThreshold": 100000,
-                    "supportsSegwit": false,
-                    "singleOpReturnPolicy": false
-                }
-            case "litecoin-mainnet":
-                return {
-                    "messagePrefix": '\x19Litecoin Signed Message:\n',
-                    "bech32": 'ltc',
-                    "bip32": {
-                       "public": 0x019da462,
-                       "private": 0x019d9cfe 
-                    },
-                    "pubKeyHash": 0x30,
-                    "scriptHash": 0x32,
-                    "wif": 0xb0,
-                    "dustThreshold": 5460,
-                    "minStandardTxNonWitnessSize": 85,
-                    "singleOpReturnPolicy": false
-                }
-            case "litecoin-testnet":
-                return {
-                    "messagePrefix": '\x19Litecoin Signed Message:\n',
-                    "bech32": 'tltc',
-                    "bip32": {
-                       "public": 0x0436f6e1,
-                       "private": 0x0436ef7d 
-                    },
-                    "pubKeyHash": 0x6f,
-                    "scriptHash": 0xc4,
-                    "wif": 0xef,
-                    "dustThreshold": 5460,
-                    "minStandardTxNonWitnessSize": 85,
-                    "singleOpReturnPolicy": false
-                }
-            case "litecoin-regtest":
-                return {
-                    "messagePrefix": '\x19Litecoin Signed Message:\n',
-                    "bech32": 'rltc',
-                    "bip32": {
-                       "public": 0x0436f6e1,
-                       "private": 0x0436ef7d 
-                    },
-                    "pubKeyHash": 0x6f,
-                    "scriptHash": 0xc4,
-                    "wif": 0xef,
-                    "dustThreshold": 5460,
-                    "minStandardTxNonWitnessSize": 85,
-                    "singleOpReturnPolicy": false
-                }   
-        }
+        const s = String(networkName);
+        const i = s.lastIndexOf('-');
+        if(i < 0) return undefined;
+        const tick = coins.FULL_NAME_TO_TICK[s.slice(0, i)];
+        const net  = s.slice(i + 1);
+        if(!tick || !coins.NETWORKS.includes(net)) return undefined;
+        return coins.getCoinConfig(tick, net).net;
     }
 }
 
-module.exports = CryptoNetworks
+module.exports = CryptoNetworks;
