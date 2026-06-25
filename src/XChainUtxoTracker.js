@@ -340,6 +340,19 @@ class XChainUtxoTracker {
 
         for (let nextOutput of confirmedOutputs) {
             let txid = nextOutput.fullTxid || nextOutput.txid
+
+            // Same fail-loud guard as getUtxosAddress: a 16-char fallback means
+            // the O-record predates the fullTxHash field. get_utxos already throws
+            // here; get_info must too, or a pre-format DB silently returns balances
+            // while every spend path errors, masking the need for a re-index.
+            if (txid.length !== 64) {
+                throw new Error(
+                    `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
+                    ` This record predates the O-record fullTxHash field; re-index this LevelDB before use.` +
+                    ` UTXO key: ${nextOutput.txid}`
+                )
+            }
+
             let amount = BigInt(nextOutput.value)
 
             // Note: with REMOVE_SPENT=true, totalReceived only reflects currently unspent confirmed outputs
@@ -359,6 +372,16 @@ class XChainUtxoTracker {
 
         for (let nextOutput of mempoolOutputs) {
             let txid = nextOutput.fullTxid || nextOutput.txid
+
+            // See the confirmed-output loop above: a 16-char fallback means the
+            // O-record predates the fullTxHash field and can never spend validly.
+            if (txid.length !== 64) {
+                throw new Error(
+                    `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
+                    ` This record predates the O-record fullTxHash field; re-index this LevelDB before use.` +
+                    ` UTXO key: ${nextOutput.txid}`
+                )
+            }
 
             let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
             if (mempoolInput == null) {
