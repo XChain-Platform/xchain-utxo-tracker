@@ -338,6 +338,12 @@ class XChainUtxoTracker {
         let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
         let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
 
+        // Outpoints already accounted from the confirmed store. A just-mined tx
+        // lives in both stores until the deferred mempool cleanup runs, so the
+        // mempool loop must skip any outpoint already counted here or the same
+        // coin is double-listed (inflating the reported balance).
+        const confirmedKeys = new Set()
+
         for (let nextOutput of confirmedOutputs) {
             let txid = nextOutput.fullTxid || nextOutput.txid
 
@@ -353,12 +359,15 @@ class XChainUtxoTracker {
                 )
             }
 
+            confirmedKeys.add(txid + ':' + nextOutput.vout)
+
             let amount = BigInt(nextOutput.value)
 
             // Note: with REMOVE_SPENT=true, totalReceived only reflects currently unspent confirmed outputs
             totalReceived += amount
 
-            let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
+            // getInput keys on the 8-byte (16-hex) txid prefix, matching insertInput.
+            let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
             if (mempoolInput != null) {
                 // Confirmed output being spent in the mempool: counts as confirmed but pending out
                 confirmedBalance += amount
@@ -383,7 +392,11 @@ class XChainUtxoTracker {
                 )
             }
 
-            let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
+            // Skip an outpoint already counted from the confirmed store (just-mined
+            // tx still present in both stores during the cleanup window).
+            if (confirmedKeys.has(txid + ':' + nextOutput.vout)) continue
+
+            let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
             if (mempoolInput == null) {
                 pendingBalance += BigInt(nextOutput.value)
                 utxosPending++
@@ -438,6 +451,12 @@ class XChainUtxoTracker {
 
         let results = []
 
+        // Outpoints emitted from the confirmed store, so the mempool loop can skip
+        // a just-mined tx that still lives in both stores during the deferred
+        // cleanup window (otherwise the same outpoint is returned twice, handing
+        // the encoder a duplicate input).
+        const confirmedKeys = new Set()
+
         for (let nextOutput of confirmedOutputs) {
             let txid = nextOutput.fullTxid || nextOutput.txid
 
@@ -455,8 +474,11 @@ class XChainUtxoTracker {
                 )
             }
 
-            // Skip confirmed outputs being spent in the mempool
-            let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
+            confirmedKeys.add(txid + ':' + nextOutput.vout)
+
+            // Skip confirmed outputs being spent in the mempool. getInput keys on
+            // the 8-byte (16-hex) txid prefix, matching insertInput.
+            let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
             if (mempoolInput != null) continue
 
             nextOutput.txid = txid
@@ -479,8 +501,12 @@ class XChainUtxoTracker {
                 )
             }
 
+            // Skip an outpoint already emitted from the confirmed store (just-mined
+            // tx still present in both stores during the cleanup window).
+            if (confirmedKeys.has(txid + ':' + nextOutput.vout)) continue
+
             // Skip mempool outputs that are also spent by another mempool tx
-            let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
+            let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
             if (mempoolInput != null) continue
 
             nextOutput.txid = txid

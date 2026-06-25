@@ -179,6 +179,14 @@ function kTx(txHash8Hex) {
     return buf
 }
 function kInput(prevTxHash8Hex, idx) {
+    // The I-key carries only the 8-byte (16-hex) txid prefix. Fail loudly if a
+    // caller passes a full 64-hex txid: today that resolves to the right key
+    // purely by buffer-overrun coincidence (write caps at the 12 free bytes,
+    // then writeUInt32BE(idx,9) overwrites the overrun), so any future change to
+    // this layout would silently make every getInput miss. Assert the contract.
+    if (prevTxHash8Hex.length !== 16) {
+        throw new Error(`kInput expects a 16-hex (8-byte) txid prefix, got ${prevTxHash8Hex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(13)
     buf[0] = P_INPUT
     buf.write(prevTxHash8Hex, 1, 'hex')

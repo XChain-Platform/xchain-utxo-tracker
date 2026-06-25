@@ -324,21 +324,25 @@ describe('XChainUtxoTracker', function () {
       const scriptHash = createHash('sha256').update(script).digest('hex');
 
       const txHash8 = randHash8();
+      // A valid full txid whose first 8 bytes match the O-record key prefix, so
+      // the mempool-spend lookup (which keys on the 8-byte prefix) still matches.
+      // A pre-migration record without fullTxHash is now rejected by the
+      // fail-loud guard, so a migrated record is required to exercise this path.
+      const fullTxHash = txHash8 + '0'.repeat(48);
 
-      // Insert confirmed output WITHOUT fullTxHash so txid falls back to 16-char prefix
-      // (matches the 8-byte key format used by insertInput)
       await db.insertOutput({
         scriptPubKey: scriptHash,
         txHash: txHash8,
         outputIndex: 0,
         value: BigInt('100000000'), // 1 BTC
-        height: 400
+        height: 400,
+        fullTxHash
       });
       await db.endTransaction(true);
 
-      // Insert mempool input spending it; insertInput truncates to first 16 chars
+      // Insert mempool input spending it; insertInput keys on the 8-byte prefix
       await mempoolDb.insertInput({
-        prevTxHash: txHash8 + '0'.repeat(48), // full 64-char hex, first 16 match txHash8
+        prevTxHash: fullTxHash,
         prevOutputIndex: 0,
         txHash: randHash8()
       });
