@@ -40,6 +40,9 @@ const ADMIN_METHODS = new Set([
   'get_input_from_key_pattern'
 ]);
 
+// Mirror of src/api.js MAX_JSONRPC_BATCH default.
+const MAX_JSONRPC_BATCH = 20;
+
 function createTestApp(mockTracker, adminApiKey = '') {
   const app = express();
   app.use(helmet());
@@ -50,6 +53,14 @@ function createTestApp(mockTracker, adminApiKey = '') {
   // batch) names an admin method. Fails closed when no key is configured.
   app.use((req, res, next) => {
     const body = req.body;
+    // Mirror of src/api.js: bound batch fan-out before the router's uncapped
+    // Promise.all runs every entry.
+    if (Array.isArray(body) && body.length > MAX_JSONRPC_BATCH) {
+      return res.status(400).json({
+        jsonrpc: '2.0', id: null,
+        error: { code: -32600, message: 'Batch too large (max ' + MAX_JSONRPC_BATCH + ' requests per call)' }
+      });
+    }
     const entries = Array.isArray(body) ? body : [body];
     const wantsAdmin = entries.some(e =>
       e && typeof e.method === 'string' && ADMIN_METHODS.has(e.method.toLowerCase()));
@@ -452,6 +463,27 @@ describe('API', function () {
         .send([{ jsonrpc: '2.0', method: 'ping', id: 1 }])
         .expect(200);
       expect(res.body[0].result).to.deep.equal({ status: 'success' });
+    });
+  });
+
+  // ─── JSON-RPC batch cap (amplification guard) ────────────────────────────
+  // express-json-rpc-router runs Promise.all over every array element, so an
+  // uncapped batch turns one unauthenticated POST into thousands of concurrent
+  // read scans / node RPCs. The guard rejects an over-cap array before the router.
+  describe('JSON-RPC batch cap', function () {
+    it('rejects a batch larger than MAX_JSONRPC_BATCH with -32600', async function () {
+      const batch = Array.from({ length: MAX_JSONRPC_BATCH + 1 },
+        (_, i) => ({ jsonrpc: '2.0', method: 'ping', id: i }));
+      const res = await supertest(app).post('/').send(batch).expect(400);
+      expect(res.body.error.code).to.equal(-32600);
+      expect(res.body.error.message).to.match(/Batch too large/);
+    });
+
+    it('allows a batch at exactly MAX_JSONRPC_BATCH', async function () {
+      const batch = Array.from({ length: MAX_JSONRPC_BATCH },
+        (_, i) => ({ jsonrpc: '2.0', method: 'ping', id: i }));
+      const res = await supertest(app).post('/').send(batch).expect(200);
+      expect(res.body).to.be.an('array').with.length(MAX_JSONRPC_BATCH);
     });
   });
 

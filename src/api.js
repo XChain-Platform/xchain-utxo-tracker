@@ -67,6 +67,15 @@ const ADMIN_METHODS = new Set([
     'get_input_from_key_pattern'
 ])
 
+// Largest JSON-RPC batch (array body) accepted. express-json-rpc-router runs
+// Promise.all over every array element, so without a cap a single unauthenticated
+// ~100kb POST fans out into thousands of concurrent read scans / node RPCs (each
+// get_balance can accumulate up to MAX_ADDRESS_OUTPUTS objects; each get_sync_status
+// fires a node RPC), amplifying one request into a heap-exhaustion / backend-load DoS.
+// Mirrors the decoder/encoder batch guard. Tunable via UTXO_MAX_RPC_BATCH.
+const MAX_JSONRPC_BATCH = Number(process.env.UTXO_MAX_RPC_BATCH) > 0
+    ? Number(process.env.UTXO_MAX_RPC_BATCH) : 20
+
 // Largest page a single ?limit= request may ask for. Caps page size so a caller
 // can't re-introduce the OOM by requesting one giant page. Independent of the
 // tracker's MAX_ADDRESS_OUTPUTS safety ceiling (which bounds *unbounded* scans).
@@ -84,6 +93,15 @@ const BULK_SYNC_WORK_DIR     = process.env.BULK_SYNC_WORK_DIR     || path.join('
 const BULK_SYNC_NODE_POLL_MS = 30000
 
 var tasks = {}
+
+// Serializes bootstrap/restore operations. Both getbootstrap and restorebootstrap
+// stopParsing() then wipe/read /data via pigz+tar; two overlapping calls (a fresh
+// randomUUID task each) would run two `tar` processes into the same directory and
+// corrupt the live LevelDB. stopParsing() is idempotent (guards only on
+// parsingStopped) so it is NOT a mutex. This flag rejects a second op while one is
+// in flight; it is cleared in every completion path (.then success, .catch failure,
+// and the synchronous throw path).
+var bootstrapBusy = false
 
 // Launch the tracker polling loop with the top-level guard. start() is intentionally not
 // awaited (the Express server must come up alongside it), so without this .catch() any
@@ -221,6 +239,14 @@ async function startApi(){
     // unauthenticated. Gate the whole request when ANY entry is an admin method.
     app.use((req, res, next) => {
         const body = req.body;
+        // Bound batch fan-out BEFORE the router's uncapped Promise.all executes every
+        // entry: an over-cap array is an amplification vector, not a legitimate request.
+        if(Array.isArray(body) && body.length > MAX_JSONRPC_BATCH){
+            return res.status(400).json({
+                jsonrpc: '2.0', id: null,
+                error: { code: -32600, message: 'Batch too large (max ' + MAX_JSONRPC_BATCH + ' requests per call)' }
+            });
+        }
         const entries = Array.isArray(body) ? body : [body];
         const wantsAdmin = entries.some(e =>
             e && typeof e.method === 'string' && ADMIN_METHODS.has(e.method.toLowerCase()));
@@ -470,9 +496,11 @@ async function startApi(){
         
         async getbootstrap({filename}){
             console.log("A bootstrap was requested")
+            if(bootstrapBusy) return { error: 'a bootstrap or restore operation is already in progress' }
             try { filename = safeBootstrapFilename(filename) }
             catch (e) { return { error: e.message } }
             let taskId = randomUUID()
+            bootstrapBusy = true
             await tracker.stopParsing()
             try {
                 console.log("Compressing the data...")
@@ -481,17 +509,20 @@ async function startApi(){
                 compressDirPigz(taskId, "/data/"+DB_NAME, destination).then((finished) =>{
                     tasks[taskId]["progress"] = 100
                     console.log("Starting the parsing again")
+                    bootstrapBusy = false
                     launchTracker(tracker)
                 }).catch(error => {
                     // Compression failed but /data is untouched: resume indexing so a
                     // failed snapshot never freezes the tracker, and keep the task
                     // record so a status poll surfaces the failure (M-9).
+                    bootstrapBusy = false
                     handleBootstrapFailure({ tasks, taskId, error, relaunch: () => launchTracker(tracker) })
                 })
 
                 return {"task_id":taskId}
             } catch (err){
                 console.log("Warning compression was not succesful: "+err)
+                bootstrapBusy = false
                 delete tasks[taskId]
                 return {error: err}
             }
@@ -507,9 +538,11 @@ async function startApi(){
         
         async restorebootstrap({filename}){
             console.log("A bootstrap restore was requested")
+            if(bootstrapBusy) return { error: 'a bootstrap or restore operation is already in progress' }
             try { filename = safeBootstrapFilename(filename) }
             catch (e) { return { error: e.message } }
             let taskId = randomUUID()
+            bootstrapBusy = true
             await tracker.stopParsing()
             try {
                 let source = "/bootstrap/xchain-utxo-tracker/"+filename
@@ -517,18 +550,21 @@ async function startApi(){
                 decompressPigz(taskId, source, "/data/"+DB_NAME).then((finished) =>{
                     tasks[taskId]["progress"] = 100
                     console.log("Starting the parsing")
+                    bootstrapBusy = false
                     launchTracker(tracker)
                 }).catch(error => {
                     // decompressPigz wipes /data BEFORE extracting, so a mid-restore
                     // failure leaves the on-disk DB partially wiped and untrustworthy.
                     // Do NOT silently resume indexing on a corrupt store: fail loud so
                     // the supervisor restarts into a clean recovery path (M-9).
+                    bootstrapBusy = false
                     handleRestoreFailure({ tasks, taskId, error, failLoud: () => process.exit(1) })
                 })
 
                 return {"task_id":taskId}
             } catch (err){
                 console.log("Warning decompression was not succesful: "+err)
+                bootstrapBusy = false
                 delete tasks[taskId]
                 return {error: err}
             }

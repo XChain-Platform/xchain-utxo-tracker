@@ -139,14 +139,19 @@ function parseOutputCursor(cursor) {
 }
 
 function rangeEnd(prefix) {
-    // 12 bytes of 0xFF covers the longest possible suffix after the longest
-    // prefix used in any range scan (e.g. O-prefix scans use a 33-byte prefix
-    // [O byte + scriptHash], leaving a 12-byte suffix [txHash8 + idx]).
-    // A single 0xFF byte fails when the actual next byte is also 0xFF, since
-    // LevelDB's lexicographic compare treats the longer key as greater than
-    // the shorter upper bound. Regression of commit 39696e8: was silently
-    // reverted by commit a2774ac.
-    return Buffer.concat([prefix, Buffer.alloc(12, 0xFF)])
+    // The 0xFF suffix must be at least as long as the longest key suffix of ANY
+    // range scan, or a key whose leading suffix bytes are all 0xFF sorts above the
+    // (shorter) inclusive `lte` bound and is silently dropped from the iterator.
+    // The previous 12-byte suffix covered only the 12-byte-suffix scans (O/H/I/M:
+    // 33-byte prefix over 45-byte keys), but UNDER-covered the reorg-consistency
+    // scans: the K/P_OUT_DEL restore scan uses a 33-byte [K+blockHash] prefix over
+    // 77-byte keys (44-byte suffix) and the Z/P_BLK_SCRIPT scan leaves a 32-byte
+    // scriptHash suffix. A dropped K key means a spent output is NOT restored on a
+    // reorg rollback (permanent balance under-count); a dropped Z key leaves a stale
+    // first-seen (S) record. 64 bytes covers the current maximum (44) with margin; a
+    // longer all-0xFF upper bound never bleeds into the next prefix (the differing
+    // prefix byte is compared first) and never excludes a valid key.
+    return Buffer.concat([prefix, Buffer.alloc(64, 0xFF)])
 }
 
 // Normalize a key to a string for use as a JavaScript Map key.

@@ -162,4 +162,23 @@ describe('Boundary: getValuesFromKeyPattern hex-decode + inclusive bounds', func
     const rows = await db.getValuesFromKeyPattern(prefixHex);
     expect(rows.length).to.equal(2);
   });
+
+  it('covers a key whose suffix after the scan prefix is >12 bytes of 0xFF', async function () {
+    // Regression for the widened rangeEnd cap. An all-0xFF scriptHash scanned by a
+    // 2-byte prefix [O][0xFF] leaves a 43-byte all-0xFF suffix. The old 12-byte
+    // rangeEnd upper bound sorted BELOW such a key and silently dropped it - the
+    // exact failure mode of the K/P_OUT_DEL reorg-restore scan (44-byte suffix) and
+    // the Z/P_BLK_SCRIPT scan (32-byte suffix), where a dropped key means a spent
+    // output is never restored on rollback (permanent balance under-count). The
+    // widened cap must include it.
+    const scriptHash = 'ff'.repeat(32);
+    await db.beginTransaction();
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: FF_TXID8, outputIndex: MAX_VOUT, value: 999, height: 1, fullTxHash: FF_FULLTXID });
+    await db.endTransaction();
+
+    // Scan prefix = 0x4F ('O') + first scriptHash byte (0xFF) = 2 bytes; the stored
+    // key continues with 43 more 0xFF bytes, well past the old 12-byte cap.
+    const rows = await db.getValuesFromKeyPattern('4fff');
+    expect(rows).to.be.an('array').with.length(1);
+  });
 });
