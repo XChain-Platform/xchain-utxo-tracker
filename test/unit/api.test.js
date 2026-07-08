@@ -17,7 +17,16 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const helmet = require('helmet');
 const supertest = require('supertest');
+const { timingSafeEqual } = require('crypto');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
+
+// Mirror of src/api.js keyEquals: length-guarded constant-time comparison.
+function keyEquals(provided, expected) {
+  const a = Buffer.from(String(provided == null ? '' : provided));
+  const b = Buffer.from(String(expected == null ? '' : expected));
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 // We can't import api.js directly (it calls startApi and hits real env vars).
 // Instead, we construct the Express app with mocked tracker.
@@ -46,7 +55,7 @@ function createTestApp(mockTracker, adminApiKey = '') {
       e && typeof e.method === 'string' && ADMIN_METHODS.has(e.method.toLowerCase()));
     if (wantsAdmin) {
       const header = req.headers['authorization'];
-      if (!adminApiKey || !header || header !== 'Bearer ' + adminApiKey) {
+      if (!adminApiKey || !header || !keyEquals(header, 'Bearer ' + adminApiKey)) {
         return res.status(401).json({
           jsonrpc: '2.0', id: (!Array.isArray(body) && body && body.id) || null,
           error: { code: -32001, message: 'Unauthorized' }

@@ -33,7 +33,7 @@ const XChainUtxoTracker  = require('./XChainUtxoTracker');
 const BlockchainConnector = require('./BlockchainConnector');
 const { resolveUndoBlocks } = require('./bulk-sync/merger/derive-keys.js')
 const jsonRouter = require('express-json-rpc-router')
-const { randomUUID } = require('crypto')
+const { randomUUID, timingSafeEqual } = require('crypto')
 const path = require('path')
 
 const NETWORK = process.env.NETWORK
@@ -49,6 +49,17 @@ const AUX_POW = process.env.AUX_POW === 'true' || process.env.AUX_POW === '1'
 // key scans). These methods fail closed (401) when no key is configured;
 // read-only UTXO/balance queries stay open for the encoder/indexer.
 const UTXO_TRACKER_API_KEY = process.env.UTXO_TRACKER_API_KEY || ''
+
+// Constant-time comparison for the admin Bearer key. A plain `!==` short-circuits
+// at the first mismatching byte, leaking the key through response-time
+// differences; timingSafeEqual needs equal-length buffers, so length is guarded
+// first (a length mismatch is not itself the secret).
+function keyEquals(provided, expected){
+    const a = Buffer.from(String(provided == null ? '' : provided))
+    const b = Buffer.from(String(expected == null ? '' : expected))
+    if(a.length !== b.length) return false
+    return timingSafeEqual(a, b)
+}
 const ADMIN_METHODS = new Set([
     'getbootstrap', 'getbootstrapstatus',
     'restorebootstrap', 'getbootstraprestorestatus',
@@ -182,7 +193,7 @@ async function startApi(){
             e && typeof e.method === 'string' && ADMIN_METHODS.has(e.method.toLowerCase()));
         if(wantsAdmin){
             let header = req.headers['authorization'];
-            if(!UTXO_TRACKER_API_KEY || !header || header !== 'Bearer ' + UTXO_TRACKER_API_KEY){
+            if(!UTXO_TRACKER_API_KEY || !header || !keyEquals(header, 'Bearer ' + UTXO_TRACKER_API_KEY)){
                 return res.status(401).json({
                     jsonrpc: '2.0', id: (!Array.isArray(body) && body && body.id) || null,
                     error: { code: -32001, message: 'Unauthorized' }
