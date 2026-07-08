@@ -21,11 +21,40 @@ const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 
 // We can't import api.js directly (it calls startApi and hits real env vars).
 // Instead, we construct the Express app with mocked tracker.
-function createTestApp(mockTracker) {
+//
+// adminApiKey (optional) mirrors api.js's admin-method auth middleware so the
+// batch-bypass regression can be exercised. ADMIN_METHODS is kept in sync with
+// api.js's set of privileged JSON-RPC methods.
+const ADMIN_METHODS = new Set([
+  'getbootstrap', 'getbootstrapstatus',
+  'restorebootstrap', 'getbootstraprestorestatus',
+  'get_input_from_key_pattern'
+]);
+
+function createTestApp(mockTracker, adminApiKey = '') {
   const app = express();
   app.use(helmet());
   app.use(bodyParser.json());
   app.use(cors());
+
+  // Same guard as src/api.js: gate the whole request when ANY entry (single or
+  // batch) names an admin method. Fails closed when no key is configured.
+  app.use((req, res, next) => {
+    const body = req.body;
+    const entries = Array.isArray(body) ? body : [body];
+    const wantsAdmin = entries.some(e =>
+      e && typeof e.method === 'string' && ADMIN_METHODS.has(e.method.toLowerCase()));
+    if (wantsAdmin) {
+      const header = req.headers['authorization'];
+      if (!adminApiKey || !header || header !== 'Bearer ' + adminApiKey) {
+        return res.status(401).json({
+          jsonrpc: '2.0', id: (!Array.isArray(body) && body && body.id) || null,
+          error: { code: -32001, message: 'Unauthorized' }
+        });
+      }
+    }
+    next();
+  });
 
   async function getUtxos(address) {
     return mockTracker.getUtxosAddress(address);
@@ -116,6 +145,12 @@ function createTestApp(mockTracker) {
       const results = await mockTracker.db.getValuesFromKeyPattern(pattern,
         { maxValues: XChainUtxoTracker.MAX_ADDRESS_OUTPUTS });
       return { result: results };
+    },
+    // Stand-in for the destructive bootstrap RPC; records execution so tests can
+    // assert the auth gate blocks it before the controller ever runs.
+    async getbootstrap() {
+      if (mockTracker.onAdminExecuted) mockTracker.onAdminExecuted();
+      return { task_id: 'stub' };
     }
   };
 
@@ -269,9 +304,17 @@ describe('API', function () {
   // ─── JSON-RPC ────────────────────────────────────────────────────────
 
   describe('POST / (JSON-RPC)', function () {
+    // get_input_from_key_pattern is an admin method, so this block runs against
+    // an authenticated app and rpcRequest sends the Bearer key. Public methods
+    // in the block are unaffected by the extra header.
+    let rpcApp;
+    beforeEach(function () {
+      rpcApp = createTestApp(mockTracker, 'secret-key');
+    });
     function rpcRequest(method, params = {}) {
-      return supertest(app)
+      return supertest(rpcApp)
         .post('/')
+        .set('Authorization', 'Bearer secret-key')
         .send({ jsonrpc: '2.0', method, params, id: 1 })
         .set('Content-Type', 'application/json');
     }
@@ -334,6 +377,72 @@ describe('API', function () {
       const res = await rpcRequest('nonexistent_method').expect(200);
       // express-json-rpc-router returns error for unknown methods
       expect(res.body.error).to.exist;
+    });
+  });
+
+  // ─── Admin-method authentication ─────────────────────────────────────────
+  // Admin JSON-RPC methods (bootstrap snapshot/restore, raw key scans) must be
+  // gated by the API key. The router executes JSON-RPC batches (array bodies)
+  // too, so the guard must inspect every entry, not just req.body.method.
+  // Regression: a batch [{"method":"getbootstrap"}] previously bypassed the
+  // key check entirely because req.body.method is undefined for an array.
+
+  describe('admin-method auth', function () {
+    let adminApp;
+
+    beforeEach(function () {
+      mockTracker.onAdminExecuted = sinon.stub();
+      mockTracker.db.getValuesFromKeyPattern = sinon.stub().resolves([]);
+      adminApp = createTestApp(mockTracker, 'secret-key');
+    });
+
+    it('rejects a single admin request with no key (401)', async function () {
+      const res = await supertest(adminApp)
+        .post('/')
+        .send({ jsonrpc: '2.0', method: 'getbootstrap', params: {}, id: 1 })
+        .expect(401);
+      expect(res.body.error.message).to.equal('Unauthorized');
+      expect(mockTracker.onAdminExecuted.called).to.equal(false);
+    });
+
+    it('rejects an admin method smuggled inside a BATCH with no key (401)', async function () {
+      const res = await supertest(adminApp)
+        .post('/')
+        .send([{ jsonrpc: '2.0', method: 'getbootstrap', params: {}, id: 1 }])
+        .expect(401);
+      expect(res.body.error.message).to.equal('Unauthorized');
+      // The controller must never run: the gate short-circuits before the router.
+      expect(mockTracker.onAdminExecuted.called).to.equal(false);
+    });
+
+    it('rejects an admin method mixed with a public method in a batch (401)', async function () {
+      const res = await supertest(adminApp)
+        .post('/')
+        .send([
+          { jsonrpc: '2.0', method: 'ping', id: 1 },
+          { jsonrpc: '2.0', method: 'getbootstrap', params: {}, id: 2 }
+        ])
+        .expect(401);
+      expect(res.body.error.message).to.equal('Unauthorized');
+      expect(mockTracker.onAdminExecuted.called).to.equal(false);
+    });
+
+    it('allows an admin batch with the correct Bearer key', async function () {
+      const res = await supertest(adminApp)
+        .post('/')
+        .set('Authorization', 'Bearer secret-key')
+        .send([{ jsonrpc: '2.0', method: 'getbootstrap', params: {}, id: 1 }])
+        .expect(200);
+      expect(res.body[0].result).to.deep.equal({ task_id: 'stub' });
+      expect(mockTracker.onAdminExecuted.calledOnce).to.equal(true);
+    });
+
+    it('still allows public methods in a batch with no key', async function () {
+      const res = await supertest(adminApp)
+        .post('/')
+        .send([{ jsonrpc: '2.0', method: 'ping', id: 1 }])
+        .expect(200);
+      expect(res.body[0].result).to.deep.equal({ status: 'success' });
     });
   });
 

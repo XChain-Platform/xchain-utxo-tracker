@@ -167,14 +167,24 @@ async function startApi(){
 
     // API key enforcement for admin JSON-RPC methods. Fails closed: without a
     // configured key these methods are rejected, never left open.
+    //
+    // Both a single request (body is an object) and a JSON-RPC batch (body is
+    // an array) reach the router below, and the router executes every entry of
+    // a batch. So the guard must inspect EVERY method in the request, not just
+    // req.body.method: for an array body req.body.method is undefined, which
+    // previously let an admin method smuggled inside a batch (e.g.
+    // [{"method":"restorebootstrap",...}]) skip the key check entirely and run
+    // unauthenticated. Gate the whole request when ANY entry is an admin method.
     app.use((req, res, next) => {
-        let method = req.body && req.body.method;
-        let normalized = method ? method.toLowerCase() : '';
-        if(method && ADMIN_METHODS.has(normalized)){
+        const body = req.body;
+        const entries = Array.isArray(body) ? body : [body];
+        const wantsAdmin = entries.some(e =>
+            e && typeof e.method === 'string' && ADMIN_METHODS.has(e.method.toLowerCase()));
+        if(wantsAdmin){
             let header = req.headers['authorization'];
             if(!UTXO_TRACKER_API_KEY || !header || header !== 'Bearer ' + UTXO_TRACKER_API_KEY){
                 return res.status(401).json({
-                    jsonrpc: '2.0', id: req.body.id || null,
+                    jsonrpc: '2.0', id: (!Array.isArray(body) && body && body.id) || null,
                     error: { code: -32001, message: 'Unauthorized' }
                 });
             }
