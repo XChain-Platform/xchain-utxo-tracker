@@ -32,6 +32,7 @@ const cors = require('cors');
 const XChainUtxoTracker  = require('./XChainUtxoTracker');
 const BlockchainConnector = require('./BlockchainConnector');
 const { resolveUndoBlocks } = require('./bulk-sync/merger/derive-keys.js')
+const { handleBootstrapFailure, handleRestoreFailure } = require('./bootstrap-recovery.js')
 const jsonRouter = require('express-json-rpc-router')
 const { randomUUID, timingSafeEqual } = require('crypto')
 const path = require('path')
@@ -164,6 +165,38 @@ async function startApi(){
         return infoAddress
     }
 
+    // Per-query freshness surface (seam finding M-11). UTXO/balance results are
+    // served from the last COMMITTED height, which can lag the node tip during
+    // catch-up or a reorg, so a caller (e.g. the encoder selecting inputs) can
+    // otherwise pick a UTXO from a view that is already stale without any signal
+    // on the response itself. Report the committed height, the cached node tip,
+    // the lag between them, and the synced verdict so callers can gate.
+    // Derived from a single LevelDB read plus the node tip the poll loop already
+    // caches, so it adds no per-query RPC. lag is null when nothing is indexed
+    // yet or the node tip is not yet known; callers must treat null as "unknown,
+    // do not assume fresh", never as lag 0.
+    async function getFreshnessMeta(){
+        let committedHeight = -1;
+        try { committedHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
+        const rawTip = (typeof tracker.latestKnownChainTip === 'number')
+            ? tracker.latestKnownChainTip
+            : (typeof tracker.blockchainInfoLastBlock === 'number' ? tracker.blockchainInfoLastBlock : -1);
+        return XChainUtxoTracker.computeFreshness(committedHeight, rawTip, tracker.isSynced());
+    }
+
+    // Stamp the freshness fields onto a REST response as headers, leaving the
+    // existing body shape untouched (additive, backward-compatible). X-Sync-Lag
+    // is omitted entirely when lag is unknown (null) rather than sent as a
+    // misleading 0.
+    async function setFreshnessHeaders(res){
+        const f = await getFreshnessMeta();
+        res.set('X-Tracker-Height', String(f.tracker_height));
+        res.set('X-Node-Height', String(f.node_height));
+        if (f.lag !== null) res.set('X-Sync-Lag', String(f.lag));
+        res.set('X-Synced', String(f.synced));
+        return f;
+    }
+
     // Create the app
     const app = express();
 
@@ -211,6 +244,9 @@ async function startApi(){
             // result from one served before the in-memory mempool has reconverged
             // after a restart. Body shape (a bare array) is left unchanged.
             res.set('X-Mempool-Ready', String(tracker.isSynced() && tracker.isMempoolReconverged()));
+            // Freshness surface: tip height / sync lag so callers can gate on
+            // how stale this committed view is (see setFreshnessHeaders).
+            await setFreshnessHeaders(res);
             // Continuation cursor for paginated requests (?limit=). Absent when not
             // paginating or when the final page has been reached.
             if (utxos && utxos.nextCursor) res.set('X-Next-Cursor', String(utxos.nextCursor));
@@ -224,6 +260,7 @@ async function startApi(){
         const address = req.params.address;
         try {
             const firstSeen = await getFirstSeen(address);
+            await setFreshnessHeaders(res);
             res.send(firstSeen);
         } catch (err) {
             sendAddressError(res, err);
@@ -237,6 +274,7 @@ async function startApi(){
             // See /utxos above: expose mempool readiness via header without altering
             // the existing bare-number body.
             res.set('X-Mempool-Ready', String(tracker.isSynced() && tracker.isMempoolReconverged()));
+            await setFreshnessHeaders(res);
             res.send(balance);
         } catch (err) {
             sendAddressError(res, err);
@@ -254,6 +292,10 @@ async function startApi(){
             const mempoolReady = tracker.isSynced() && tracker.isMempoolReconverged();
             res.set('X-Mempool-Ready', String(mempoolReady));
             if (info && typeof info === 'object') info.mempool_ready = mempoolReady;
+            // Freshness surface, both as headers and (since the body is already a
+            // JSON object) an additive `sync` field callers can gate on.
+            const freshness = await setFreshnessHeaders(res);
+            if (info && typeof info === 'object') info.sync = freshness;
             res.send(info);
         } catch (err) {
             sendAddressError(res, err);
@@ -326,6 +368,10 @@ async function startApi(){
             // frequent reorganizations and know the depth of the last one.
             result.reorg_count      = tracker.reorgCount;
             result.last_reorg_depth = tracker.lastReorgDepth;
+            // Surface an unrecoverable block-fetch desync (M-10) so a monitor can
+            // name the fault. Set just before the polling loop fails loud on a node
+            // pruned past our cursor; visible in the brief window before exit.
+            if (tracker.blockFetchDesync) result.block_fetch_desync = tracker.blockFetchDesync;
             return result;
         },
 
@@ -378,6 +424,9 @@ async function startApi(){
 
             const result = { utxos: utxos }
             if (utxos && utxos.nextCursor) result.nextCursor = utxos.nextCursor
+            // Freshness surface (M-11): additive sibling field so callers can gate
+            // on committed height / lag without a separate get_sync_status round-trip.
+            result.sync = await getFreshnessMeta()
             return result
         },
         // Function to retrieve the height of the block where an address was first seen
@@ -388,13 +437,16 @@ async function startApi(){
         async get_balance({address}) {
             let balance = await getBalance(address)
 
-            // Return balance
-            return { balance: balance}
+            // Return balance; sync is an additive freshness surface (M-11).
+            return { balance: balance, sync: await getFreshnessMeta() }
         },
-        
+
         // Function to retrieve the confirmed, pending balances of an address
         async get_info({address}) {
-            return await getInfo(address)
+            const info = await getInfo(address)
+            // Additive freshness surface (M-11); leaves existing fields intact.
+            if (info && typeof info === 'object') info.sync = await getFreshnessMeta()
+            return info
         },
         
         async get_input_from_key_pattern({pattern}) {
@@ -431,11 +483,12 @@ async function startApi(){
                     console.log("Starting the parsing again")
                     launchTracker(tracker)
                 }).catch(error => {
-                    tasks[taskId]["progress"] = -1
-                    console.log("Warning, compression was not succesful: "+error)
-                    delete tasks[taskId]
+                    // Compression failed but /data is untouched: resume indexing so a
+                    // failed snapshot never freezes the tracker, and keep the task
+                    // record so a status poll surfaces the failure (M-9).
+                    handleBootstrapFailure({ tasks, taskId, error, relaunch: () => launchTracker(tracker) })
                 })
-                
+
                 return {"task_id":taskId}
             } catch (err){
                 console.log("Warning compression was not succesful: "+err)
@@ -466,11 +519,13 @@ async function startApi(){
                     console.log("Starting the parsing")
                     launchTracker(tracker)
                 }).catch(error => {
-                    tasks[taskId]["progress"] = -1
-                    console.log("Warning, decompression was not succesful: "+error)
-                    delete tasks[taskId]
+                    // decompressPigz wipes /data BEFORE extracting, so a mid-restore
+                    // failure leaves the on-disk DB partially wiped and untrustworthy.
+                    // Do NOT silently resume indexing on a corrupt store: fail loud so
+                    // the supervisor restarts into a clean recovery path (M-9).
+                    handleRestoreFailure({ tasks, taskId, error, failLoud: () => process.exit(1) })
                 })
-                
+
                 return {"task_id":taskId}
             } catch (err){
                 console.log("Warning decompression was not succesful: "+err)

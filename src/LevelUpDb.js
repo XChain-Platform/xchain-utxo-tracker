@@ -37,7 +37,7 @@
  *   B: [height(4)][timestamp(4)][previousHash(32)]                   = 40 B
  *   T: [blockHash(32)]                                                = 32 B
  *   I: [txHash8(8)]                                                   =  8 B
- *   O: [value(8)][height(4)][fullTxHash(32)]                         = 44 B
+ *   O: [value(8)][height(4)][fullTxHash(32)]{[coinbase(1)]}          = 44/45 B
  *   H: [scriptPubKey(32)]                                             = 32 B
  *   S: [height(4)]                                                    =  4 B
  *   W: [scriptPubKey(32)]                                             = 32 B
@@ -324,11 +324,16 @@ function decodeTx(buf)          { return { bh: b2h(buf.slice(0, 32)) } }
 function encodeInputVal(txHash8Hex) { return h2b(txHash8Hex) }
 function decodeInputVal(buf)        { return { th: b2h(buf.slice(0, 8)) } }
 
-// O value: [value(8)][height(4)][fullTxHash(32)] = 44 bytes
+// O value: [value(8)][height(4)][fullTxHash(32)] = 44 bytes, plus an OPTIONAL
+// 45th coinbase-flag byte (0x01) appended only for coinbase outputs (L-4).
 // height = -1 stored as 0xFFFFFFFF (twos-complement Int32)
 const ZERO_HASH = '0'.repeat(64)
-function encodeOutput(value, height, fullTxHashHex) {
-    const buf = Buffer.alloc(44)
+function encodeOutput(value, height, fullTxHashHex, isCoinbase = false) {
+    // Non-coinbase outputs (the overwhelming majority) stay exactly 44 bytes, so
+    // existing records and encodings are byte-identical; only coinbase outputs
+    // grow by one flag byte. This keeps the change reindex-free: a legacy 44-byte
+    // record decodes as non-coinbase, which is the pre-L-4 behaviour.
+    const buf = Buffer.alloc(isCoinbase ? 45 : 44)
     buf.writeBigUInt64BE(BigInt(value), 0)
     buf.writeInt32BE(height != null ? height : -1, 8)
     // A falsy fullTxHashHex leaves bytes 12..44 as the alloc-zeroed 0x00…00,
@@ -338,6 +343,7 @@ function encodeOutput(value, height, fullTxHashHex) {
     // predates this field; such a LevelDB must be re-indexed before use, since
     // the 8-byte O-key prefix is not a spendable txid.
     if (fullTxHashHex) h2b(fullTxHashHex).copy(buf, 12)
+    if (isCoinbase) buf[44] = 1
     return buf
 }
 function decodeOutput(buf) {
@@ -346,7 +352,9 @@ function decodeOutput(buf) {
         v: buf.readBigUInt64BE(0).toString(),
         h: buf.readInt32BE(8),
         // ZERO_HASH is the "no full txid" sentinel (see encodeOutput).
-        t: fullTxHash === ZERO_HASH ? null : fullTxHash
+        t: fullTxHash === ZERO_HASH ? null : fullTxHash,
+        // Optional coinbase flag (L-4); legacy 44-byte records read as false.
+        cb: buf.length > 44 && buf[44] === 1
     }
 }
 
@@ -709,7 +717,7 @@ class LevelUpStore {
 
     // output.scriptPubKey may be a Buffer (hot path) or a hex string (mempool / legacy callers).
     async insertOutput(output) {
-        const oVal = encodeOutput(output.value, output.height, output.fullTxHash || null)
+        const oVal = encodeOutput(output.value, output.height, output.fullTxHash || null, output.coinbase === true)
 
         // Populate the recent-output cache so Phase 2 of removeOutputsWithInputsBatch
         // can absorb spends of this output without a DB read.
@@ -1311,7 +1319,8 @@ class LevelUpStore {
                 fullTxid: decoded.t || null,
                 vout:     n,
                 value:    decoded.v,
-                height:   decoded.h
+                height:   decoded.h,
+                coinbase: decoded.cb
             })
         }
 

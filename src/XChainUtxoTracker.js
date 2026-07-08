@@ -76,7 +76,25 @@ const MEMPOOL_INTER_BATCH_SLEEP = 1500
 // pass. The node going down mid-pass would otherwise spin this retry loop
 // forever, never reaching the outer finally that clears the busy flag.
 const MEMPOOL_MAX_TX_FETCH_RETRIES = 5
+// Consecutive block-fetch failures at the SAME height before the tracker treats
+// the node as unrecoverably desynced (pruned past our cursor, or a permanent
+// missing-block fault) and fails loud instead of retrying every 3s forever.
+// Generous by design so ordinary node restarts / transient RPC blips still
+// self-heal: at a 3s backoff this is ~1 minute of retrying before giving up.
+// Override via XCHAIN_MAX_BLOCK_FETCH_RETRIES for slow-recovering nodes.
+const BLOCK_FETCH_RETRY_SLEEP_MS = 3000
+const MAX_BLOCK_FETCH_RETRIES = Number(process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIES) > 0
+    ? Number(process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIES)
+    : 20
 const REMOVE_SPENT = true
+// Coinbase outputs are unspendable until they reach this many confirmations
+// (consensus rule: 100 on BTC/LTC/DOGE and their regtest/testnet variants).
+// Serving immature coinbase as spendable (L-4) hands a caller an input that
+// every node will reject, so getUtxosAddress withholds coinbase outputs below
+// this depth. Overridable for test harnesses that mine short chains.
+const COINBASE_MATURITY = Number(process.env.XCHAIN_COINBASE_MATURITY) > 0
+    ? Number(process.env.XCHAIN_COINBASE_MATURITY)
+    : 100
 const ETA_WINDOW_BLOCKS = 1000 //Rolling window size for ETA calculation
 const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node need to have to start parsing
 
@@ -168,6 +186,19 @@ class XChainUtxoTracker {
       // detect chains that reorg frequently and know how deep the last one was.
       this.reorgCount = 0
       this.lastReorgDepth = 0
+
+      // Unrecoverable block-fetch desync signal (M-10). Set just before the
+      // polling loop fails loud on a node that can no longer serve the next
+      // block (pruned past our cursor, or a permanent missing-block fault), so
+      // get_sync_status / an operator can name the fault instead of watching a
+      // silent 3s retry spin. Null until such a fault is detected.
+      this.blockFetchDesync = null
+
+      // Coinbase maturity depth used by getUtxosAddress to withhold immature
+      // coinbase outputs (L-4). Instance-scoped (not a bare const) so test
+      // harnesses that mine short chains can relax it; production keeps the
+      // consensus default. Setting it to 0 disables the gate.
+      this.coinbaseMaturity = COINBASE_MATURITY
     }
     
     async addToLastBlocks(blockHash){
@@ -211,7 +242,60 @@ class XChainUtxoTracker {
         await this.db.endTransaction()
         this.pendingKMCleanup = []
     }
-    
+
+    // Discard an in-flight (uncommitted) LevelDB batch before reorg recovery
+    // (M-1/M-2). A periodic blockchain-info refresh can land in the true tip
+    // regression branch of start() mid-batch, while an open transaction still
+    // holds staged writes for blocks recovery is about to roll back. verifyReorg
+    // opens its OWN transaction, so a retained stale batch either strands phantom
+    // UTXOs (committed at the next flush) or, once verifyReorg nulls
+    // transactionArray, routes later writes as unbatched direct puts while the
+    // batch counter stays > 0, breaking per-block atomicity. Rolling the batch
+    // back drops the P-key write that records aged-out blocks awaiting K/M
+    // cleanup, so persist that list out-of-band (standalone put, deliberately
+    // outside the rolled-back batch) so restart recovery still runs it. Returns
+    // true when a batch was discarded; the caller then zeroes its batch counters.
+    async discardInflightBatchForReorg(blocksQuantity){
+        if (blocksQuantity <= 0) return false
+        await this.db.endTransaction(false)
+        if (this.pendingKMCleanup.length > 0) {
+            await this.db.db.put(P_PENDING_CLEANUP_KEY,
+                Buffer.from(JSON.stringify(this.pendingKMCleanup)))
+        }
+        this.pendingKMCleanup = []
+        return true
+    }
+
+    // Evaluate a block-fetch failure at `height` (M-10). `streakHeight`/`streakCount`
+    // are the caller's running streak; the count increments while the SAME height
+    // keeps failing and resets to 1 on a height change (we advanced past the stuck
+    // block). Once MAX_BLOCK_FETCH_RETRIES consecutive failures accrue at one
+    // height, the node cannot serve that block (pruned past our cursor, or a
+    // permanent missing-block fault): record a diagnosable desync state on the
+    // instance (surfaced by get_sync_status) and THROW so the polling loop's
+    // top-level guard logs [fatal] and exits for a supervised restart, instead of
+    // retrying every few seconds forever with no signal. Returns the updated
+    // { height, count } streak for the caller to carry forward on a non-fatal miss.
+    noteBlockFetchFailure(height, streakHeight, streakCount, error){
+        const count = (streakHeight === height) ? streakCount + 1 : 1
+        const msg = error && error.message ? error.message : String(error)
+        console.error('Error fetching block at height ' + height + ' (attempt ' + count + '/' + MAX_BLOCK_FETCH_RETRIES + '): ' + msg, error)
+        if (count >= MAX_BLOCK_FETCH_RETRIES){
+            this.blockFetchDesync = {
+                height: height,
+                failures: count,
+                lastError: msg,
+                detectedAt: Date.now()
+            }
+            throw new Error("Block-fetch desync: the node failed to serve block " +
+                height + " after " + count + " consecutive attempts. " +
+                "The node is likely pruned past this height or permanently missing the block. " +
+                "Last error: " + msg + ". " +
+                "Recovery: point at a non-pruned node, or resync from a known-good snapshot.")
+        }
+        return { height: height, count: count }
+    }
+
     async removeFromLastBlocks(blockHash){
         // Guard against the empty-list edge case: when lastBlocks is empty,
         // indexOf returns -1 and length-1 is also -1, making the condition
@@ -481,8 +565,20 @@ class XChainUtxoTracker {
             let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
             if (mempoolInput != null) continue
 
+            const confirmations = this.blockchainInfoLastBlock - nextOutput.height + 1
+
+            // Withhold immature coinbase outputs (L-4): every node rejects a spend
+            // of a coinbase output below coinbaseMaturity confirmations, so serving
+            // it as spendable would hand a caller an input that can never confirm.
+            // When the tip height is not yet known, confirmations is not meaningful
+            // and stays below the threshold, so we withhold (the conservative
+            // direction for spendability). Legacy O-records carry coinbase=false and
+            // are unaffected. Coinbase outputs only exist in the confirmed store, so
+            // no equivalent filter is needed on the mempool loop below.
+            if (nextOutput.coinbase && this.coinbaseMaturity > 0 && confirmations < this.coinbaseMaturity) continue
+
             nextOutput.txid = txid
-            nextOutput.confirmations = this.blockchainInfoLastBlock - nextOutput.height + 1
+            nextOutput.confirmations = confirmations
             nextOutput.amount = satoshiToDecimalString(nextOutput.value)
             nextOutput.scriptPubKey = scriptPubKeyHex
             results.push(nextOutput)
@@ -549,7 +645,9 @@ class XChainUtxoTracker {
             inputsCount: 0,
             outputsCount: 0
         }
-    
+
+        const isCoinbase = XChainUtxoTracker.isCoinbaseTransaction(transaction)
+
         if (!removeSpent) {
             await db.insertTransaction({hash:nextTxId, blockHash:blockHash})
         }
@@ -600,7 +698,7 @@ class XChainUtxoTracker {
         await Promise.all(transaction.outs.map(async (nextOutput, txOutputIndex) => {
             const scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
 
-            await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, value:nextOutput.value, height:blockHeight, fullTxHash:nextTxId})
+            await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, value:nextOutput.value, height:blockHeight, fullTxHash:nextTxId, coinbase:isCoinbase})
 
             if (addHints || removeSpent){
                 await db.insertOutputHint({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex})
@@ -615,12 +713,33 @@ class XChainUtxoTracker {
         return resultInfo
     }
     
+    // A coinbase transaction is the block's generation tx: exactly one input
+    // whose prevout index is 0xFFFFFFFF (the same marker the input passes use to
+    // skip tracing it). Its outputs are unspendable until COINBASE_MATURITY
+    // confirmations, so they must be marked at insert time (L-4).
+    // Pure freshness computation shared by the API's per-query freshness surface
+    // (M-11) and its regression test, so the lag/synced contract cannot drift.
+    // lag is null when nothing is indexed yet or the node tip is unknown; callers
+    // must treat null as "unknown, do not assume fresh", never as lag 0.
+    static computeFreshness(committedHeight, nodeTip, synced){
+        const tracker_height = (typeof committedHeight === 'number') ? committedHeight : -1
+        const node_height    = (typeof nodeTip === 'number') ? nodeTip : -1
+        const lag = (node_height >= 0 && tracker_height >= 0) ? (node_height - tracker_height) : null
+        return { tracker_height, node_height, lag, synced: synced === true }
+    }
+
+    static isCoinbaseTransaction(transaction){
+        return Array.isArray(transaction.ins) && transaction.ins.length === 1
+            && transaction.ins[0] && transaction.ins[0].index === 4294967295
+    }
+
     // Pass 1 of two-pass block processing: insert all outputs (and the tx record).
     // Must complete for ALL transactions before parseTxInputs runs, so that
     // removeOutputWithInput can find same-block outputs in transactionArray.
     async parseTxOutputs(db, transaction, blockHash, blockHeight, addHints, removeSpent){
         const nextTxId  = "id" in transaction ? transaction["id"] : transaction.getId()
         const nextTxId8 = nextTxId.substring(0, 16)
+        const isCoinbase = XChainUtxoTracker.isCoinbaseTransaction(transaction)
         const _tt = XChainUtxoTracker.parseOutBuckets
 
         if (!removeSpent) {
@@ -641,7 +760,7 @@ class XChainUtxoTracker {
             if (DEBUG_TRACE) _tt.hash += Date.now() - _h0
 
             const _i0 = DEBUG_TRACE ? Date.now() : 0
-            await db.insertOutput({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex, value: nextOutput.value, height: blockHeight, fullTxHash: nextTxId})
+            await db.insertOutput({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex, value: nextOutput.value, height: blockHeight, fullTxHash: nextTxId, coinbase: isCoinbase})
             if (DEBUG_TRACE) _tt.ins += Date.now() - _i0
 
             if (addHints || removeSpent) {
@@ -939,7 +1058,15 @@ class XChainUtxoTracker {
         }
 
         let nodeSyncedProblem = false
-    
+
+        // Track consecutive block-fetch failures at the SAME height (M-10). A node
+        // pruned past our cursor (or any permanent fetch fault) otherwise retries
+        // every 3s forever with no fail-loud signal. Reset on any successful fetch
+        // or a height change so ordinary transient blips never accumulate toward
+        // the desync threshold.
+        let blockFetchFailures = 0
+        let blockFetchFailureHeight = null
+
         while (true){
             if (this.keepParsing){
                 // Refresh node tip when: no info yet, caught up to the previously-seen tip,
@@ -974,6 +1101,22 @@ class XChainUtxoTracker {
                     }
                     
                     if (lastProcessedBlockIndex > this.blockchainInfoLastBlock){
+                        // Discard any in-flight batch before recovery runs (M-1/M-2). A
+                        // periodic refresh can reach here mid-batch; leaving the staged
+                        // batch open would leak phantom UTXOs or break per-block atomicity
+                        // once verifyReorg opens its own transaction. Rationale in full at
+                        // discardInflightBatchForReorg(). Zero the local batch counters
+                        // here since they live in this closure, not on the instance.
+                        if (await this.discardInflightBatchForReorg(blocksQuantity)){
+                            blocksQuantity = 0
+                            blocksCount = 0
+                            transactionsCount = 0
+                            inputsCount = 0
+                            outputsCount = 0
+                            pendingMempoolTxCleanup = []
+                            blockTimestamps = []
+                        }
+
                         //This shouldn't happen, but let's try to find the real lastBlockIndex
                         console.log("The last processed block height are greater than the last block of the node. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
                         let lastBlockDb = await this.db.getLastBlock()
@@ -1080,10 +1223,20 @@ class XChainUtxoTracker {
                         }
                         nextBlockHash = fetched.hash
                         nextBlockHex = fetched.hex
+                        // Successful fetch: clear the desync streak so a future
+                        // transient blip starts counting from zero again.
+                        blockFetchFailures = 0
+                        blockFetchFailureHeight = null
                     } catch (e){
                         prefetchQueue = []
-                        console.error('Error fetching block at height ' + nextBlockHeight + ': ' + e.message, e)
-                        await this.sleep(3000)
+                        // noteBlockFetchFailure counts consecutive failures at this
+                        // height and THROWS a diagnosable desync error once the bound
+                        // is hit, so a node pruned past our cursor fails loud instead
+                        // of spinning every 3s forever (M-10).
+                        const _s = this.noteBlockFetchFailure(nextBlockHeight, blockFetchFailureHeight, blockFetchFailures, e)
+                        blockFetchFailureHeight = _s.height
+                        blockFetchFailures = _s.count
+                        await this.sleep(BLOCK_FETCH_RETRY_SLEEP_MS)
                         continue
                     }
                     
@@ -1475,3 +1628,5 @@ module.exports = XChainUtxoTracker
 module.exports.satoshiToDecimalString = satoshiToDecimalString
 module.exports.SYNCED_THRESHOLD = SYNCED_THRESHOLD
 module.exports.MAX_ADDRESS_OUTPUTS = MAX_ADDRESS_OUTPUTS
+module.exports.MAX_BLOCK_FETCH_RETRIES = MAX_BLOCK_FETCH_RETRIES
+module.exports.COINBASE_MATURITY = COINBASE_MATURITY

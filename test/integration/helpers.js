@@ -190,6 +190,11 @@ async function createTestTracker() {
   tracker.db = db;
   tracker.mempoolDb = mempoolDb;
   tracker.blockchainInfoLastBlock = 1000;
+  // These harnesses mine short synthetic chains and treat coinbase outputs as
+  // ordinary spendable coins; coinbase-maturity policy (L-4) is exercised in its
+  // own regression test, so disable the maturity gate here to keep the many
+  // low-height / low-tip indexing assertions valid.
+  tracker.coinbaseMaturity = 0;
 
   return tracker;
 }
