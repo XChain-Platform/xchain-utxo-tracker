@@ -96,6 +96,32 @@ describe('XChainUtxoTracker.verifyReorg retry budget', function () {
     }
     expect(threw, 'verifyReorg should abort after 10 consecutive failures').to.equal(true);
   });
+
+  it('throws a clear error (not a TypeError) when the block index is empty but a pointer is set', async function () {
+    // Corrupt state: LAST_BLOCK_HASH points at a block whose record is gone, and
+    // getLastBlock() returns null (B-prefix empty). The repair branch must not
+    // dereference null.height/.hash; it must abort with an actionable message.
+    const tracker = new XChainUtxoTracker(
+      'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
+    );
+    tracker.sleep = async () => {};
+    tracker.db = {
+      getLastBlockHeight: async () => 100,
+      getLastBlockHash: async () => 'db100',
+      getBlock: async () => null,          // pointer's block record is gone
+      getLastBlock: async () => null       // B-prefix is empty
+    };
+
+    let err = null;
+    try {
+      await tracker.verifyReorg();
+    } catch (e) {
+      err = e;
+    }
+    expect(err, 'verifyReorg should throw on a corrupt empty index').to.be.an('error');
+    expect(err).to.not.be.an.instanceof(TypeError);
+    expect(err.message).to.match(/corrupt|resync/i);
+  });
 });
 
 // Regression test for the node-tip-below-committed path (a node reset / reindex /

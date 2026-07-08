@@ -729,7 +729,18 @@ class XChainUtxoTracker {
                 console.log("The blocks height for the same hash are not equal. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
                 let lastBlockDb = await this.db.getLastBlock()
                 console.log("Last block from db is "+(lastBlockDb?lastBlockDb:"null"))
-                
+
+                // getLastBlock() scans the B-prefix and returns null when it is
+                // empty. If a last-block pointer is set but there are no block
+                // records, the DB is corrupt and cannot self-repair; guard before
+                // dereferencing lastBlockDb.height/.hash (a bare TypeError here
+                // otherwise crash-loops the recovery path with no actionable signal).
+                if (!lastBlockDb){
+                    throw new Error("verifyReorg: cannot repair the last-block pointer: the block index (B-prefix) " +
+                        "is empty while a last-block pointer is set. The DB is corrupt and cannot self-recover. " +
+                        "Recovery: full resync from a known-good snapshot.")
+                }
+
                 if (lastBlock && (lastBlockDb.height != lastBlock["h"])){
                     throw Error("There are inconsistents in a block height. It should be "+lastBlockIndex+" but "+lastBlock["h"]+" was found")
                 } else {
@@ -966,7 +977,18 @@ class XChainUtxoTracker {
                         //This shouldn't happen, but let's try to find the real lastBlockIndex
                         console.log("The last processed block height are greater than the last block of the node. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
                         let lastBlockDb = await this.db.getLastBlock()
-                        
+
+                        // getLastBlock() returns null when the B-prefix is empty. With
+                        // a committed height above the node tip but no block records,
+                        // the true tip can't be recovered; surface a clear, actionable
+                        // error instead of a bare TypeError on lastBlockDb.height below.
+                        if (!lastBlockDb){
+                            throw new Error("Tracker DB corrupt: committed height " + lastProcessedBlockIndex +
+                                " exceeds the node tip " + this.blockchainInfoLastBlock + " but the block index " +
+                                "(B-prefix) is empty, so the true tip cannot be recovered. Recovery: full resync " +
+                                "from a known-good snapshot.")
+                        }
+
                         if (lastBlockDb.height > this.blockchainInfoLastBlock){
                             // True regression: the node's tip is genuinely below our committed
                             // tip (node reset / reindex / invalidateblock). Roll back onto the
