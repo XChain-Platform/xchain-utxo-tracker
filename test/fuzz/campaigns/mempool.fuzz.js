@@ -143,11 +143,9 @@ describe('Fuzz: Mempool Operations (P2)', function () {
               });
               await addToMempool(t, spendTx);
 
-              // getInput with full txid now works (truncated internally to match stored key)
-              const inputByFullTxid = await t.mempoolDb.getInput(coinbaseTx._txid, 0);
-              expect(inputByFullTxid).to.not.be.null;
-
-              // getInput with txHash8 also works
+              // getInput takes the 8-byte (16-hex) txid prefix that the I-key stores;
+              // kInput asserts this contract (a full 64-hex txid throws by design), and
+              // every real caller in XChainUtxoTracker passes txid.substring(0,16).
               const txHash8 = coinbaseTx._txid.substring(0, 16);
               const inputByTxHash8 = await t.mempoolDb.getInput(txHash8, 0);
               expect(inputByTxHash8).to.not.be.null;
