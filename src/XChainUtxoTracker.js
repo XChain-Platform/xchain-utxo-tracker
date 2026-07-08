@@ -194,6 +194,17 @@ class XChainUtxoTracker {
       // silent 3s retry spin. Null until such a fault is detected.
       this.blockFetchDesync = null
 
+      // Halted state: set when an unrecoverable reorg (rolled back past the
+      // UNDO_BLOCKS recovery window, or an empty in-memory last-blocks window)
+      // is hit. Unlike blockFetchDesync this is NOT a "fail loud then exit for a
+      // supervised restart" signal: a restart re-hits the same on-disk stale tip
+      // and loops forever under Docker's unless-stopped policy. When set, the
+      // process stays up but stops polling; /status returns 503 and
+      // get_sync_status reports it, so an operator can resync (restorebootstrap)
+      // against a stable process instead of racing a restart loop.
+      this.halted = false
+      this.haltReason = null
+
       // Coinbase maturity depth used by getUtxosAddress to withhold immature
       // coinbase outputs (L-4). Instance-scoped (not a bare const) so test
       // harnesses that mine short chains can relax it; production keeps the
@@ -320,6 +331,21 @@ class XChainUtxoTracker {
         return { height: height, count: count }
     }
 
+    // Tag/detect the unrecoverable-reorg fault class: the tracker has rolled back
+    // past its UNDO_BLOCKS recovery window (or its in-memory last-blocks window is
+    // empty), so it cannot reconstruct the UTXO set at the fork point from the
+    // archived K/M records (already purged beyond the window). A process restart
+    // re-hits the identical on-disk stale tip, so this fault must halt in place
+    // rather than exit-for-restart (which crash-loops under Docker unless-stopped).
+    static markUnrecoverableReorg(err){
+        if (err && typeof err === 'object') err.unrecoverableReorg = true
+        return err
+    }
+
+    static isUnrecoverableReorg(err){
+        return !!(err && err.unrecoverableReorg === true)
+    }
+
     async removeFromLastBlocks(blockHash){
         // Guard against the empty-list edge case: when lastBlocks is empty,
         // indexOf returns -1 and length-1 is also -1, making the condition
@@ -327,7 +353,7 @@ class XChainUtxoTracker {
         // list means we have rolled back past the tracked window, which is an
         // error that should abort rather than silently corrupt state.
         if (this.lastBlocks.length === 0){
-            throw new Error("Can't delete a block from 'last blocks': list is empty (reorg exceeds tracked window)")
+            throw XChainUtxoTracker.markUnrecoverableReorg(new Error("Can't delete a block from 'last blocks': list is empty (reorg exceeds tracked window)"))
         }
         if (this.lastBlocks.indexOf(blockHash) == this.lastBlocks.length-1){
             this.lastBlocks.pop()
@@ -335,6 +361,23 @@ class XChainUtxoTracker {
         } else {
             throw new Error("Can't delete a block from the 'last blocks' if it's not the last one")
         }
+    }
+
+    // Enter a stable halted state instead of exiting on an unrecoverable reorg.
+    // Exiting lets Docker's restart policy relaunch us into the identical failure
+    // every ~15s forever (the observed 5000+ restart crash-loop). Halting keeps
+    // the process up so /status reports 503 (unhealthy, not falsely healthy) and
+    // get_sync_status carries the reason, and the operator can run restorebootstrap
+    // against a process that is not restarting under them. The tracker does NOT
+    // auto-wipe: rebuilding the UTXO set needs a resync from a known-good snapshot,
+    // an operator decision. Called from api.js's top-level start() guard.
+    haltForResync(reason){
+        this.halted = true
+        this.haltReason = reason || 'unrecoverable reorg (rolled back past the recovery window)'
+        if (this.mempoolInterval){ clearInterval(this.mempoolInterval); this.mempoolInterval = null }
+        console.error('[halted] xchain-utxo-tracker stopped polling: ' + this.haltReason
+            + ' - process kept alive for an operator resync (restorebootstrap); NOT auto-wiping. '
+            + '/status now returns 503 and get_sync_status.halted=true.')
     }
 
     // getLastStoredBlocks() returns the stored-block hashes in blockHash
@@ -965,7 +1008,7 @@ class XChainUtxoTracker {
                             + "under-counted. Aborting. Recovery: perform a full resync from a "
                             + "known-good snapshot."
                         console.error(msg)
-                        throw new Error(msg)
+                        throw XChainUtxoTracker.markUnrecoverableReorg(new Error(msg))
                     }
                     try {
                         await this.db.beginTransaction()
@@ -995,6 +1038,11 @@ class XChainUtxoTracker {
                         blocksDeleted.push({"block_index":lastBlockIndex, "block_hash":lastBlockHash})
                     } catch (err){
                         try { await this.db.endTransaction(false) } catch (_) {}
+                        // An unrecoverable reorg (rolled back past the tracked window)
+                        // re-throws identically on every retry (the reloaded window is
+                        // still empty), so fail out immediately, tagged, rather than
+                        // burn 10 pointless retries before aborting.
+                        if (XChainUtxoTracker.isUnrecoverableReorg(err)) throw err
                         // The rollback batch was discarded, so the block's on-disk N
                         // record still exists, but removeFromLastBlocks already pop()ed
                         // it from the in-memory this.lastBlocks before the commit failed.

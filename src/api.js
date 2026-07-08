@@ -107,15 +107,24 @@ var bootstrapBusy = false
 // awaited (the Express server must come up alongside it), so without this .catch() any
 // throw out of the loop (a malformed-block decode, a verifyReorg fail-stop, a transient
 // DB I/O fault) becomes a bare unhandledRejection: no clean rollback and an unclear log.
-// Roll back any open LevelDB batch and exit non-zero so the orchestrator restarts cleanly
-// with the reason in the logs. A persistent fatal (e.g. reorg depth exceeds the recovery
-// window) intentionally keeps failing here, loudly, until an operator resyncs. Used at
-// EVERY start() site (primary boot + bootstrap/restore restarts) so none can regress to a
-// bare unhandledRejection that skips the rollback + [fatal] log.
+// Roll back any open LevelDB batch, then split by fault class. TRANSIENT fatals
+// (malformed decode, DB I/O blip, block-fetch desync) exit non-zero so the
+// orchestrator restarts cleanly with the reason in the logs. An UNRECOVERABLE
+// reorg (rolled back past the UNDO_BLOCKS window) is NOT transient: a restart
+// re-hits the same on-disk stale tip and fails identically, so exiting just
+// crash-loops forever under Docker unless-stopped (the observed 5000+ restarts).
+// For that class, halt in place instead: the process stays up, /status returns
+// 503, and an operator resyncs (restorebootstrap) against a stable process. Used
+// at EVERY start() site (primary boot + bootstrap/restore restarts) so none can
+// regress to a bare unhandledRejection that skips the rollback.
 function launchTracker(tracker){
     tracker.start().catch((err) => {
-        console.error('[fatal] UTXO tracker polling loop terminated: ' + (err && err.message), err)
         try { if (tracker.db && tracker.db.endTransaction) tracker.db.endTransaction(false) } catch (_) {}
+        if (XChainUtxoTracker.isUnrecoverableReorg(err)) {
+            tracker.haltForResync(err && err.message)
+            return
+        }
+        console.error('[fatal] UTXO tracker polling loop terminated: ' + (err && err.message), err)
         process.exit(1)
     })
 }
@@ -398,6 +407,13 @@ async function startApi(){
             // name the fault. Set just before the polling loop fails loud on a node
             // pruned past our cursor; visible in the brief window before exit.
             if (tracker.blockFetchDesync) result.block_fetch_desync = tracker.blockFetchDesync;
+            // Halted (unrecoverable reorg): persists, since the tracker no longer
+            // exits on this fault but halts in place, so a monitor can alert and an
+            // operator can resync. /status also returns 503 while halted.
+            if (tracker.halted) {
+                result.halted = true;
+                result.halt_reason = tracker.haltReason;
+            }
             return result;
         },
 
@@ -610,6 +626,13 @@ async function startApi(){
             dbOk = true
         } catch (err) {
             // DB unreachable; fall through to 503
+        }
+        // Halted (unrecoverable reorg): report unhealthy so Docker/monitors see the
+        // degradation while the process stays up (no restart thrash; unless-stopped
+        // only restarts on exit). Recovery is an operator resync via restorebootstrap.
+        if (tracker.halted) {
+            res.status(503)
+            return res.json({ status: 'halted', halt_reason: tracker.haltReason, db: dbOk, committed_height: committedHeight })
         }
         const status = dbOk ? 'ok' : 'degraded'
         if (!dbOk) res.status(503)
