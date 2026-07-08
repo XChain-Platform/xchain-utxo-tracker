@@ -501,7 +501,17 @@ async function startApi(){
             catch (e) { return { error: e.message } }
             let taskId = randomUUID()
             bootstrapBusy = true
-            await tracker.stopParsing()
+            // stopParsing now leaves the tracker RUNNING when the stop times out
+            // (it restores keepParsing), rejecting the promise. Guard the await so a
+            // failed stop releases bootstrapBusy and surfaces the error, instead of
+            // leaving the mutex stuck true (all future bootstrap/restore RPCs wedged)
+            // while the tracker is in fact still indexing.
+            try {
+                await tracker.stopParsing()
+            } catch (e) {
+                bootstrapBusy = false
+                return { error: 'could not pause the tracker for bootstrap: ' + (e && e.message ? e.message : e) }
+            }
             try {
                 console.log("Compressing the data...")
                 let destination = "/bootstrap/xchain-utxo-tracker/"+filename
@@ -543,7 +553,15 @@ async function startApi(){
             catch (e) { return { error: e.message } }
             let taskId = randomUUID()
             bootstrapBusy = true
-            await tracker.stopParsing()
+            // See getbootstrap: a timed-out stop leaves the tracker running and
+            // rejects, so release the mutex and surface the error rather than
+            // wedging every future admin call with bootstrapBusy stuck true.
+            try {
+                await tracker.stopParsing()
+            } catch (e) {
+                bootstrapBusy = false
+                return { error: 'could not pause the tracker for restore: ' + (e && e.message ? e.message : e) }
+            }
             try {
                 let source = "/bootstrap/xchain-utxo-tracker/"+filename
                 tasks[taskId] = {"progress": 0, "filename": filename}

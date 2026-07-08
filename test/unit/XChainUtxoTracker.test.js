@@ -614,7 +614,14 @@ describe('XChainUtxoTracker', function () {
         await tracker.stopParsing();
         expect.fail('should have rejected');
       } catch (err) {
-        expect(err).to.include('error trying to stop');
+        // stopParsing now rejects with an Error and leaves the tracker RUNNING:
+        // it restores keepParsing and re-arms the mempool poller so a failed stop
+        // is a no-op, not a half-dead tracker that closes its DB on the next loop.
+        expect(err.message).to.include('error trying to stop');
+        expect(tracker.keepParsing).to.be.true;
+      } finally {
+        // Clear the re-armed mempool interval so it does not leak past the test.
+        if (tracker.mempoolInterval) { clearInterval(tracker.mempoolInterval); tracker.mempoolInterval = null; }
       }
     });
   });

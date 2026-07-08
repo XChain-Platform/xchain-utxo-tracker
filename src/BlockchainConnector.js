@@ -44,6 +44,38 @@ function sanitizeRpcError(error){
     return (error && error.message) ? error.message : String(error)
 }
 
+// Reorder a JSON-RPC batch response into an array indexed by request id (0..N-1).
+// The batch handlers below build requests with id:i and previously did
+// `response.data.sort((a,b)=>a.id-b.id)` then accessed the result POSITIONALLY,
+// which only corrects reordering: a response with a duplicated, missing, or
+// out-of-range id silently maps block hex to the WRONG height (positional index i
+// no longer equals request id i). The live sync loop self-heals via its prevHash
+// link check, but the bulk-sync dump consumer does not, so one Byzantine/buggy
+// node response corrupts a distributed bootstrap dump. Validate cardinality and id
+// bijection here so any deviation is a clean, diagnosable throw instead of a silent
+// mis-assignment (or a bare TypeError on an undefined element).
+function orderBatchResults(responseData, expectedCount, label){
+    if (!Array.isArray(responseData)){
+        throw new Error('Batch RPC ' + label + ': expected an array response, got ' + typeof responseData)
+    }
+    if (responseData.length !== expectedCount){
+        throw new Error('Batch RPC ' + label + ': expected ' + expectedCount + ' results, got ' + responseData.length)
+    }
+    const byId = new Array(expectedCount)
+    for (const item of responseData){
+        const id = item ? item.id : undefined
+        if (!Number.isInteger(id) || id < 0 || id >= expectedCount){
+            throw new Error('Batch RPC ' + label + ': response id ' + JSON.stringify(id) + ' out of range [0,' + expectedCount + ')')
+        }
+        if (byId[id] !== undefined){
+            throw new Error('Batch RPC ' + label + ': duplicate response id ' + id)
+        }
+        byId[id] = item
+    }
+    // Every slot is filled: length === expectedCount and all ids are unique in range.
+    return byId
+}
+
 // Decode a Bitcoin-style varint from `buf` at `offset`.
 // Returns { value, bytes } where `bytes` is the number of bytes consumed.
 function readVarint(buf, offset) {
@@ -195,7 +227,17 @@ class BlockchainConnector {
             id: 1
         }
 
-        const response = await this.client.post(this.url, data)
+        let response
+        try {
+            response = await this.client.post(this.url, data)
+        } catch (error) {
+            // Scrub error.config.auth in place before it escapes: RPC calls carry
+            // the node password in axios auth, and upstream sinks (the poll loop's
+            // console.error(..., err)) would otherwise serialize it into the logs.
+            // sanitizeRpcError mutates the error object, so even a raw rethrow is safe.
+            sanitizeRpcError(error)
+            throw error
+        }
 
         if (response.data.result) {
             return response.data.result;
@@ -221,7 +263,10 @@ class BlockchainConnector {
                 throw new Error('Error getting block hash');
             }
         } catch (error) {
-            console.error('Error:', error.message);
+            // sanitizeRpcError scrubs error.config.auth (the node RPC password) in
+            // place, so the rethrow cannot leak the credential through an upstream
+            // console.error(..., err) sink (noteBlockFetchFailure, verifyReorg).
+            console.error('Error:', sanitizeRpcError(error));
             throw error;
         }
     }
@@ -298,7 +343,9 @@ class BlockchainConnector {
                 throw new Error('Error getting raw mempool info');
             }
         } catch (error){
-            console.error('Error:', error.message);
+            // Scrub the node RPC password from error.config.auth in place before
+            // the rethrow reaches updateMempool's console.error(..., error) sink.
+            console.error('Error:', sanitizeRpcError(error));
             throw error;
         }
     }
@@ -417,7 +464,7 @@ class BlockchainConnector {
             id: i
         }))
         const hashResponse = await this.postWithRetry(hashBatch)
-        const hashResults  = hashResponse.data.sort((a, b) => a.id - b.id)
+        const hashResults  = orderBatchResults(hashResponse.data, heights.length, 'getblockhash')
         const hashes = hashResults.map(r => {
             if (!r.result) throw new Error('Error getting block hash in batch for id ' + r.id)
             return r.result
@@ -431,7 +478,7 @@ class BlockchainConnector {
             id: i
         }))
         const blockResponse = await this.postWithRetry(blockBatch)
-        const blockResults  = blockResponse.data.sort((a, b) => a.id - b.id)
+        const blockResults  = orderBatchResults(blockResponse.data, hashes.length, 'getblock')
 
         // Guard matches the hash batch above and the AuxPoW path: a JSON-RPC error
         // element returns result=null and would produce hex:undefined, causing an
@@ -461,7 +508,7 @@ class BlockchainConnector {
             id: i
         }))
         const hashResponse = await this.postWithRetry(hashBatch)
-        const hashes = hashResponse.data.sort((a, b) => a.id - b.id).map(r => {
+        const hashes = orderBatchResults(hashResponse.data, heights.length, 'getblockhash').map(r => {
             if (!r.result) throw new Error('Error getting block hash in batch for id ' + r.id)
             return r.result
         })
@@ -474,7 +521,7 @@ class BlockchainConnector {
             id: i
         }))
         const headerResponse = await this.postWithRetry(headerBatch)
-        const headers = headerResponse.data.sort((a, b) => a.id - b.id).map(r => {
+        const headers = orderBatchResults(headerResponse.data, hashes.length, 'getblockheader').map(r => {
             if (!r.result) throw new Error('Error getting block header in batch for id ' + r.id)
             return r.result
         })
@@ -487,7 +534,7 @@ class BlockchainConnector {
             id: i
         }))
         const blockResponse = await this.postWithRetry(blockBatch)
-        const blocks = blockResponse.data.sort((a, b) => a.id - b.id).map(r => {
+        const blocks = orderBatchResults(blockResponse.data, hashes.length, 'getblock').map(r => {
             if (!r.result) throw new Error('Error getting block in batch for id ' + r.id)
             return r.result
         })

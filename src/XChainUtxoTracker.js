@@ -222,9 +222,33 @@ class XChainUtxoTracker {
         // Called after endTransaction() so K/M entries are committed to disk and can be found
         if (this.pendingKMCleanup.length === 0) return
 
+        // Never purge recovery records for a block that is still inside the live
+        // reorg window (this.lastBlocks). Aging normally only shifts a hash into
+        // pendingKMCleanup AFTER it leaves the window, so this is a no-op on the
+        // happy path. But when an in-flight batch is discarded (mid-batch reorg),
+        // pendingKMCleanup was populated against the STALE in-memory window that
+        // still counted the now-discarded staged blocks, so it can contain hashes
+        // that are once again the live committed tip after lastBlocks is reloaded
+        // from disk. Purging those would delete K/M/W/N records (including the
+        // tip's own N record) inside the undo window, so the very next reorg
+        // reloads an empty/short N index and wedges verifyReorg into a crash-loop.
+        // A hash skipped here is simply re-queued by addToLastBlocks when it later
+        // ages out for real, so dropping it now loses nothing. Dedupe as well:
+        // P-key crash-recovery can replay a list that addToLastBlocks then
+        // re-shifts, yielding the same hash twice in one transaction.
+        const liveWindow = new Set(this.lastBlocks)
+        const seen = new Set()
+        const toClean = []
+        for (const blockHash of this.pendingKMCleanup){
+            if (liveWindow.has(blockHash)) continue
+            if (seen.has(blockHash)) continue
+            seen.add(blockHash)
+            toClean.push(blockHash)
+        }
+
         await this.db.beginTransaction()
 
-        for (let blockHash of this.pendingKMCleanup){
+        for (let blockHash of toClean){
             await this.db.processDeletedOutputs(blockHash, false)
             await this.db.removeLastStoredBlock(blockHash)
             // Prune the W creation-block reverse-index too. It is only read by the
@@ -371,15 +395,30 @@ class XChainUtxoTracker {
             }
 
             let triesCount = 10
-        
+
             while((!this.parsingStopped) && (triesCount > 0)){
                 await this.sleep(1000)
                 triesCount = triesCount - 1
             }
-            
+
             if ((triesCount == 0) && (!this.parsingStopped)){
-                reject("There was an error trying to stop the parsing")
-            } else {    
+                // The block loop did not reach its keepParsing check within the
+                // budget (parked in a 200-block commit or the multi-batch mempool
+                // wait). If we reject and leave keepParsing=false, the loop takes
+                // its else branch the moment it next checks, closes the LevelDB, and
+                // sets parsingStopped=true, so start() resolves and launchTracker's
+                // .catch never relaunches: every query then 500s on a closed store
+                // with no process exit for a restart policy to catch. A failed stop
+                // must be a no-op that leaves the tracker running: restore
+                // keepParsing so the loop continues, and re-arm the mempool poller
+                // (the loop also re-arms it once synced, but do it here in case the
+                // loop is parked in the synced branch's sleep).
+                this.keepParsing = true
+                if (this.mempoolInterval == null){
+                    this.mempoolInterval = setInterval(this.updateMempool.bind(this), MEMPOOL_INTERVAL)
+                }
+                reject(new Error("There was an error trying to stop the parsing"))
+            } else {
                 resolve(true)
             }
         })
@@ -598,8 +637,15 @@ class XChainUtxoTracker {
             }
 
             // Skip an outpoint already emitted from the confirmed store (just-mined
-            // tx still present in both stores during the cleanup window).
+            // tx still present in both stores during the cleanup window). confirmedKeys
+            // is a fast path but only holds THIS page's confirmed rows: in paged mode
+            // the confirmed twin of a both-stores outpoint can sit on a later page, so
+            // the page-scoped set misses it and the same outpoint would be returned
+            // twice across pages (handing the encoder a duplicate input). Fall back to
+            // a point-probe of the confirmed store's live H record, which is page
+            // independent, so the outpoint is emitted only from the confirmed store.
             if (confirmedKeys.has(txid + ':' + nextOutput.vout)) continue
+            if (paged && await this.db.hasOutputForTx(txid.substring(0, 16), nextOutput.vout)) continue
 
             // Skip mempool outputs that are also spent by another mempool tx
             let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
@@ -863,8 +909,18 @@ class XChainUtxoTracker {
                 if (lastBlock && (lastBlockDb.height != lastBlock["h"])){
                     throw Error("There are inconsistents in a block height. It should be "+lastBlockIndex+" but "+lastBlock["h"]+" was found")
                 } else {
+                    // Commit the pointer repair in its OWN batch so it reaches disk
+                    // before the loop re-reads getLastBlockHeight/Hash (which read disk
+                    // only). setLastBlockHash/Height stage into transactionArray; at
+                    // boot that is the still-open constructor Map that no flush ever
+                    // commits, so without an explicit endTransaction the re-read below
+                    // sees the unrepaired pointer and this branch spins forever. All
+                    // verifyReorg callers discard any prior batch first, so opening a
+                    // fresh one here strands nothing.
+                    await this.db.beginTransaction()
                     await this.db.setLastBlockHash(lastBlockDb.hash)
                     await this.db.setLastBlockHeight(lastBlockDb.height)
+                    await this.db.endTransaction()
                     console.log("The new last block hash in the db is "+lastBlockDb.hash)
                     console.log("The new last block index in the db is "+lastBlockDb.height)
                     console.log("Last block index was fixed!")
@@ -939,6 +995,16 @@ class XChainUtxoTracker {
                         blocksDeleted.push({"block_index":lastBlockIndex, "block_hash":lastBlockHash})
                     } catch (err){
                         try { await this.db.endTransaction(false) } catch (_) {}
+                        // The rollback batch was discarded, so the block's on-disk N
+                        // record still exists, but removeFromLastBlocks already pop()ed
+                        // it from the in-memory this.lastBlocks before the commit failed.
+                        // Left as-is, every retry re-reads the same lastBlockHash from disk
+                        // while lastBlocks no longer ends with it, so removeFromLastBlocks
+                        // throws deterministically on all 10 attempts and a single transient
+                        // I/O blip becomes a guaranteed process exit. Resync the in-memory
+                        // window from disk (which still holds the N records) so the retry
+                        // budget actually retries.
+                        try { this.lastBlocks = await this.loadLastBlocksSortedByHeight() } catch (_) {}
                         console.error(`verifyReorg: failed to delete block ${lastBlock["h"]} (${lastBlockHash}): ${err.message}`, err)
                         if (++retryCount >= 10) throw new Error('verifyReorg: deleteBlockByIndex failed after 10 attempts, aborting')
                         await this.sleep(3000); continue
@@ -1176,10 +1242,44 @@ class XChainUtxoTracker {
                         }
                         if (tipHashFromNode && tipHashFromNode != lastProcessedBlockHash){
                             console.log("A same-height tip reorg has been detected. Cleaning blocks...")
+                            prefetchQueue = []
+                            // Discard any in-flight batch before recovery, exactly as the
+                            // prev-hash-mismatch and true-regression reorg paths do. This
+                            // branch is reachable MID-BATCH: the in-memory cursor advances
+                            // per staged block while the tip pointer is only staged at flush,
+                            // so a periodic blockchain-info refresh can lower the node tip to
+                            // exactly the staged cursor height on a competing chain, landing
+                            // here with blocksQuantity > 0. verifyReorg opens its own
+                            // transaction, so leaving the stale batch open would either commit
+                            // orphan-chain records as phantom UTXOs at the next flush, or (once
+                            // verifyReorg nulls transactionArray) route later writes as unbatched
+                            // direct puts while blocksQuantity stays > 0. Rationale in full at
+                            // discardInflightBatchForReorg().
+                            await this.db.endTransaction(false)
+                            // The rolled-back batch dropped the P-key write recording aged-out
+                            // blocks awaiting K/M cleanup; persist it out-of-band so restart
+                            // recovery still runs it (same standalone put the prev-hash path uses).
+                            if (this.pendingKMCleanup.length > 0) {
+                                await this.db.db.put(P_PENDING_CLEANUP_KEY,
+                                    Buffer.from(JSON.stringify(this.pendingKMCleanup)))
+                            }
                             this.lastBlocks = await this.loadLastBlocksSortedByHeight()
                             await this.verifyReorg()
                             lastProcessedBlockIndex = await this.db.getLastBlockHeight()
                             lastProcessedBlockHash = await this.db.getLastBlockHash()
+                            // Run the deferred K/M/W cleanup now (cleanupAgedBlocks skips any
+                            // hash still in the reloaded live window) and delete the P key
+                            // atomically, then zero the loop-local batch counters that live in
+                            // this closure so the next block opens a fresh batch.
+                            await this.cleanupAgedBlocks()
+                            blocksQuantity = 0
+                            blocksCount = 0
+                            transactionsCount = 0
+                            inputsCount = 0
+                            outputsCount = 0
+                            this.pendingKMCleanup = []
+                            pendingMempoolTxCleanup = []
+                            blockTimestamps = []
                             continue
                         }
                     }

@@ -812,7 +812,11 @@ describe('XChainUtxoTracker (more)', function () {
                     .onSecondCall().resolves({ h: 99 }),  // second pass: match
                 getLastBlock: sinon.stub().resolves({ hash: 'hash99', height: 99 }),
                 setLastBlockHash: sinon.stub().resolves(),
-                setLastBlockHeight: sinon.stub().resolves()
+                setLastBlockHeight: sinon.stub().resolves(),
+                // The pointer-repair branch now commits its writes in its own batch
+                // so they reach disk before the loop re-reads the pointer.
+                beginTransaction: sinon.stub().resolves(),
+                endTransaction: sinon.stub().resolves()
             };
             tracker.connector = {
                 getBlockHash: sinon.stub().resolves('hash99')
@@ -864,7 +868,10 @@ describe('XChainUtxoTracker (more)', function () {
                     .onSecondCall().resolves({ h: 50 }),
                 getLastBlock: sinon.stub().resolves({ hash: 'hash50', height: 50 }),
                 setLastBlockHash: sinon.stub().resolves(),
-                setLastBlockHeight: sinon.stub().resolves()
+                setLastBlockHeight: sinon.stub().resolves(),
+                // Pointer-repair branch commits its writes in its own batch now.
+                beginTransaction: sinon.stub().resolves(),
+                endTransaction: sinon.stub().resolves()
             };
             tracker.connector = {
                 getBlockHash: sinon.stub().resolves('hash50')
@@ -932,14 +939,24 @@ describe('XChainUtxoTracker (more)', function () {
     // ── stopParsing additional ─────────────────────────────────────────────
 
     describe('stopParsing (mempoolInterval cleanup)', function () {
-        it('clears mempoolInterval when set', async function () {
-            // Simulate an interval being set
-            let cleared = false;
+        it('clears mempoolInterval on a successful stop', async function () {
+            const fakeInterval = setInterval(() => {}, 99999);
+            tracker.mempoolInterval = fakeInterval;
+            // parsingStopped already true: the stop succeeds immediately.
+            tracker.parsingStopped = true;
+            sinon.stub(tracker, 'sleep').resolves();
+
+            const result = await tracker.stopParsing();
+            expect(result).to.be.true;
+            // A successful stop tears the poller down and leaves it null.
+            expect(tracker.mempoolInterval).to.be.null;
+            clearInterval(fakeInterval);
+        });
+
+        it('re-arms the mempool poller and stays running on a failed (timed-out) stop', async function () {
             const fakeInterval = setInterval(() => {}, 99999);
             tracker.mempoolInterval = fakeInterval;
             tracker.parsingStopped = false;
-
-            // Stop before parsingStopped would naturally set (let it timeout quickly)
             sinon.stub(tracker, 'sleep').resolves();
 
             let rejected = false;
@@ -949,9 +966,14 @@ describe('XChainUtxoTracker (more)', function () {
                 rejected = true;
             }
 
-            // mempoolInterval should be cleared (null) regardless of parsingStopped outcome
-            expect(tracker.mempoolInterval).to.be.null;
-            clearInterval(fakeInterval); // cleanup in case not cleared
+            // A failed stop must NOT leave the tracker half-dead: keepParsing is
+            // restored and the mempool poller is re-armed (non-null) so the still-
+            // running loop keeps serving queries instead of closing its DB.
+            expect(rejected).to.be.true;
+            expect(tracker.keepParsing).to.be.true;
+            expect(tracker.mempoolInterval).to.not.be.null;
+            clearInterval(fakeInterval);
+            if (tracker.mempoolInterval) { clearInterval(tracker.mempoolInterval); tracker.mempoolInterval = null; }
         });
     });
 

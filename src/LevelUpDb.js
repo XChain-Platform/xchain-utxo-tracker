@@ -401,6 +401,12 @@ class LevelUpStore {
     constructor(dbName, inMemory = false) {
         this.dbName = dbName
         this.db = null
+        // A live staging Map from construction: the established contract is that a
+        // caller may write (addTransaction/setX) before an explicit beginTransaction
+        // and flush it with a single endTransaction(true). verifyReorg's boot-time
+        // pointer-repair branch instead needs its writes committed durably before it
+        // re-reads the on-disk pointer, so that branch opens its OWN begin/endTransaction
+        // rather than relying on this Map (which it would otherwise stage into and spin).
         this.transactionArray = new Map()
         this.deletedTransactionArray = new Map()
         this.inMemory = inMemory
@@ -440,7 +446,10 @@ class LevelUpStore {
     }
 
     // Returns the stored value for a key currently pending in transactionArray.
+    // Null-safe: with no open batch (transactionArray === null) there is nothing
+    // staged, so return null rather than throwing on a bare .get().
     getTransactionValue(key){
+        if (this.transactionArray == null) return null
         const item = this.transactionArray.get(toMapKey(key))
         return item != null ? item.value : null
     }
@@ -467,10 +476,22 @@ class LevelUpStore {
         }
     }
 
+    // Cancel a staged write for `key` if (and only if) it is a PUT created earlier
+    // in this same batch, i.e. a create+remove within one batch that nets to
+    // nothing. It must NOT cancel a staged DEL: doing so made a re-run of the same
+    // deletion idempotency-breaking. When the P-key crash-recovery replays a
+    // pendingKMCleanup list that also gets re-shifted by addToLastBlocks, a block
+    // hash can be cleaned twice in one transaction; a blind cancel of the first
+    // del left the N record on disk and the cleanup falsely reported success.
+    // Returning false for a staged del makes the caller fall through and re-stage
+    // the del (an idempotent no-op that still commits the deletion).
     removeTransactionIfExists(key){
         const mapKey = toMapKey(key)
         if (this.transactionArray && this.transactionArray.has(mapKey)){
-            return this.transactionArray.delete(mapKey)
+            const item = this.transactionArray.get(mapKey)
+            if (item && item.type === 'put'){
+                return this.transactionArray.delete(mapKey)
+            }
         }
         return false
     }
@@ -495,6 +516,18 @@ class LevelUpStore {
 
     async endTransaction(batch=true){
         try {
+            if (!batch){
+                // Discarding an in-flight batch (reorg rollback / mid-batch reorg).
+                // insertOutputScriptBlock adds a script to the static knownScripts
+                // existence cache as soon as it STAGES the S/Z puts, before they
+                // reach disk. When the batch is discarded those puts never commit,
+                // so a stale knownScripts entry would make the replacement chain's
+                // re-mined output Tier-0 hit and skip re-writing S/Z, permanently
+                // losing that script's first-seen height. Reset here (mirrors the
+                // reorg-path reset in removeOutputScriptsInBlock): the cache is a
+                // pure read-accelerator rebuilt from disk, so a reset is always safe.
+                LevelUpStore.knownScripts = new Set()
+            }
             if (batch){
                 let transactionArrayFromMap = Array.from(this.transactionArray.values())
                 if (DEBUG_TRACE) {
@@ -649,6 +682,17 @@ class LevelUpStore {
         return value === undefined ? null : value
     }
 
+    // True iff a LIVE output for (txHash8, outputIndex) exists in this store. The
+    // H (output hint) record is written for every confirmed output and deleted
+    // when it is spent, so its presence is a committed-state membership probe for
+    // a single outpoint, independent of any page boundary. Used by the paged
+    // getUtxosAddress path to dedupe a just-mined outpoint that still lives in both
+    // the confirmed and mempool stores, without materializing the full confirmed set.
+    async hasOutputForTx(txHash8, outputIndex){
+        const value = await this.db.get(kOutHint(txHash8, outputIndex))
+        return value !== undefined
+    }
+
     async deleteInputs(txids){
         if (txids.length == 0) return 0
 
@@ -740,14 +784,26 @@ class LevelUpStore {
         // The reorg path (removeCreatedOutputsInBlock) deletes O records for orphaned
         // outputs but does not evict the cache; stale entries from the orphaned block
         // are never re-read because the spending tx is also gone after the reorg.
-        const _oi = output.outputIndex
-        const cacheKey = output.txHash + String.fromCharCode((_oi >>> 16) & 0xFFFF, _oi & 0xFFFF)
-        const cache = LevelUpStore.outputCache
-        cache.set(cacheKey, oVal)
-        if (cache.size > OUTPUT_CACHE_MAX) {
-            // Recreate the Map to avoid V8 tombstone accumulation from
-            // constant add+delete patterns, which causes steady degradation.
-            LevelUpStore.outputCache = new Map()
+        // Never cache a mempool (unconfirmed) output. The mempool store shares this
+        // process-global static cache and is the ONLY caller that passes a negative
+        // height (blockHeight=-1). A concurrent updateMempool pass can re-cache a
+        // just-mined tx with height=-1 AFTER the confirming block's Pass 1 wrote the
+        // correct height, so the confirmed block's Pass 2 (removeOutputsWithInputsBatch)
+        // would then archive a K restore record with height=-1; a later reorg restores
+        // that output to the confirmed store with a bogus height (confirmations tip+2).
+        // The mempool store never READS this cache (removeOutputsWithInputsBatch runs
+        // only on the confirmed store), so skipping the write for height<0 removes the
+        // only writer of -1 heights while leaving the confirmed hot path unchanged.
+        if (output.height != null && output.height >= 0) {
+            const _oi = output.outputIndex
+            const cacheKey = output.txHash + String.fromCharCode((_oi >>> 16) & 0xFFFF, _oi & 0xFFFF)
+            const cache = LevelUpStore.outputCache
+            cache.set(cacheKey, oVal)
+            if (cache.size > OUTPUT_CACHE_MAX) {
+                // Recreate the Map to avoid V8 tombstone accumulation from
+                // constant add+delete patterns, which causes steady degradation.
+                LevelUpStore.outputCache = new Map()
+            }
         }
 
         const oKey = Buffer.isBuffer(output.scriptPubKey)
