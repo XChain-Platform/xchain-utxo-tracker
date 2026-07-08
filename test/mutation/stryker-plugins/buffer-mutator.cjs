@@ -138,7 +138,7 @@ function isInString(source, matchIdx) {
 function generateMutantsForFile(source, fileName) {
   const mutants = [];
 
-  // Endianness swaps — apply to all source files
+  // Endianness swaps - apply to all source files
   for (const rule of ENDIANNESS_RULES) {
     let searchFrom = 0;
     while (true) {
@@ -162,7 +162,7 @@ function generateMutantsForFile(source, fileName) {
     }
   }
 
-  // Key prefix swaps — only on lines declaring P_* constants
+  // Key prefix swaps - only on lines declaring P_* constants
   for (const rule of PREFIX_RULES) {
     let searchFrom = 0;
     while (true) {

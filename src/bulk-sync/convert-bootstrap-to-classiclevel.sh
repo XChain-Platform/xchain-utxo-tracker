@@ -3,7 +3,7 @@
 # convert-bootstrap-to-classiclevel.sh
 #
 # Convert a legacy RocksDB xchain-utxo-tracker *bootstrap tarball* into a
-# classic-level (LevelDB) bootstrap tarball — entirely offline, without
+# classic-level (LevelDB) bootstrap tarball - entirely offline, without
 # touching any running tracker. Output is byte-for-byte the bootstrap a
 # from-scratch classic-level resync + `bootstrap create` would produce, in
 # disk-IO time instead of a multi-day reparse.
@@ -56,7 +56,7 @@ if [ -f "$WORK/outer/data.sha256" ]; then
     [ "$want" = "$got" ] || { echo "FATAL: source inner checksum mismatch (want=$want got=$got)"; exit 1; }
     log "  source data.tar.gz checksum OK"
 else
-    log "  (no data.sha256 in source — skipping input checksum)"
+    log "  (no data.sha256 in source - skipping input checksum)"
 fi
 
 log "[3/7] extract rocksdb DB"
