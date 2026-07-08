@@ -22,6 +22,28 @@
 const axios = require('axios');
 const http  = require('http');
 
+// Sanitize an axios error before it is logged or re-thrown. RPC calls pass
+// auth:{username,password} to axios, which attaches the request config to the
+// thrown error, so logging the raw error serializes the node RPC password into
+// the tracker logs (util.inspect walks error.config.auth). Scrub the credential
+// fields in place so neither this logger nor any upstream handler leaks them, and
+// return a compact, credential-free string (error.message never carries auth).
+// Kept in sync with xchain-decoder/src/BlockchainConnector.js sanitizeRpcError.
+function sanitizeRpcError(error){
+    try {
+        if (error && error.config) {
+            error.config.auth = undefined
+            if (error.config.headers) delete error.config.headers.Authorization
+        }
+        if (error && error.request) error.request = undefined
+        if (error && error.response) {
+            const status = error.response.status
+            error.response = (status !== undefined) ? { status: status } : undefined
+        }
+    } catch (_) { /* sanitization must never mask the original failure */ }
+    return (error && error.message) ? error.message : String(error)
+}
+
 // Decode a Bitcoin-style varint from `buf` at `offset`.
 // Returns { value, bytes } where `bytes` is the number of bytes consumed.
 function readVarint(buf, offset) {
@@ -232,7 +254,7 @@ class BlockchainConnector {
                     // postWithRetry / getBlock retry cadence.
                     if (tries > 0) await this.sleep(500)
                 } else {
-                    console.error('Error:', error);
+                    console.error('Error:', sanitizeRpcError(error));
                     throw error;
                 }
             }
@@ -371,7 +393,7 @@ class BlockchainConnector {
                     console.log("Getting timeout on a batch RPC call, trying again...")
                     await this.sleep(500)
                 } else {
-                    console.error('Error:', error)
+                    console.error('Error:', sanitizeRpcError(error))
                     throw error
                 }
             }
