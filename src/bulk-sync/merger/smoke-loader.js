@@ -109,12 +109,17 @@ async function main() {
     // N: just H1
     buildFile(path.join(keysDir, 'N.dat'), [rec(kN(H1), Buffer.alloc(0))])
 
-    // O: 1 live UTXO on scriptY @ T0:1 value=200 height=0
-    const oVal = Buffer.alloc(44)
-    oVal.writeBigUInt64BE(200n, 0)
-    oVal.writeInt32BE(0, 8)
-    T0_FULL.copy(oVal, 12)
-    buildFile(path.join(keysDir, 'O.dat'), [rec(kO(SY, T0_8, 1), oVal)])
+    // O: 1 live UTXO on scriptY @ T0:1 value=200 height=0. The intermediate
+    // O.dat value is 45 bytes (value8+height4+fullTxHash32+coinbase1); the loader
+    // re-encodes it to the live path's on-disk form, so a non-coinbase output
+    // reads back as the 44-byte oValOnDisk (the coinbase byte is dropped, L-4).
+    const oValIntermediate = Buffer.alloc(45)
+    oValIntermediate.writeBigUInt64BE(200n, 0)
+    oValIntermediate.writeInt32BE(0, 8)
+    T0_FULL.copy(oValIntermediate, 12)
+    oValIntermediate[44] = 0 // non-coinbase
+    const oValOnDisk = oValIntermediate.subarray(0, 44)
+    buildFile(path.join(keysDir, 'O.dat'), [rec(kO(SY, T0_8, 1), oValIntermediate)])
 
     // H: scriptY hint on T0:1
     buildFile(path.join(keysDir, 'H.dat'), [rec(kH(T0_8, 1), SY)])
@@ -164,7 +169,7 @@ async function main() {
         assert.strictEqual(Buffer.from(got_B_H0).compare(bVal0), 0, 'B[H0] round-trip')
 
         const got_O = await db.get(kO(SY, T0_8, 1))
-        assert.strictEqual(Buffer.from(got_O).compare(oVal), 0, 'O[Y,T0,1] round-trip')
+        assert.strictEqual(Buffer.from(got_O).compare(oValOnDisk), 0, 'O[Y,T0,1] round-trip')
 
         const got_H = await db.get(kH(T0_8, 1))
         assert.strictEqual(Buffer.from(got_H).compare(SY), 0, 'H[T0:1] round-trip')

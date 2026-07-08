@@ -26,8 +26,12 @@
  *   B.dat   33+40 =  73B  (key: 'B'+blockHash32;        val: heightBE(4)+tsBE(4)+prevHash32)
  *   T.dat    9+32 =  41B  (key: 'T'+txHash8(8);         val: blockHash32)
  *   I.dat   13+ 8 =  21B  (key: 'I'+prevTxHash8+voutBE; val: spenderTxHash8)
- *   O.dat   45+44 =  89B  (key: 'O'+script32+txHash8+voutBE;
- *                           val: valueBE(8)+heightBE(4)+fullTxHash32)
+ *   O.dat   45+45 =  90B  (key: 'O'+script32+txHash8+voutBE;
+ *                           val: valueBE(8)+heightBE(4)+fullTxHash32+coinbase(1))
+ *                           The coinbase byte (L-4) is always present in this
+ *                           intermediate so the record stays fixed-width for the
+ *                           external sort; the loader re-encodes it to the live
+ *                           path's optional-byte form (44B normal / 45B coinbase).
  *   H.dat   13+32 =  45B  (key: 'H'+txHash8+voutBE;     val: script32)
  *   J.dat   21+ 0 =  21B  (key: 'J'+spenderTxHash8+prevTxHash8+prevVoutBE)
  *   N.dat   33+ 0 =  33B  (key: 'N'+blockHash32)
@@ -62,7 +66,11 @@ const P_STORED_BLK = 0x4E // 'N'
 const P_SCRIPT_BLK = 0x53 // 'S'
 const P_BLK_SCRIPT = 0x5A // 'Z'
 
+// Legacy outputs record size. New dumps are 121 bytes (trailing coinbase flag,
+// L-4); callers pass opts.outputsRecordSize (read from the dump header) so both
+// widths merge. Kept as the default for legacy callers that omit it.
 const OUTPUTS_RECORD_SIZE = 120
+const OUTPUTS_RECORD_SIZE_CB = 121
 const SPENDS_RECORD_SIZE  = 20
 const OUTPUTS_HEADER_SIZE = 64
 const SPENDS_HEADER_SIZE  = 64
@@ -95,7 +103,7 @@ const LAYOUT = {
     B: { keySize: 33, valSize: 40, recordSize:  73 },
     T: { keySize:  9, valSize: 32, recordSize:  41 },
     I: { keySize: 13, valSize:  8, recordSize:  21 },
-    O: { keySize: 45, valSize: 44, recordSize:  89 },
+    O: { keySize: 45, valSize: 45, recordSize:  90 },
     H: { keySize: 13, valSize: 32, recordSize:  45 },
     J: { keySize: 21, valSize:  0, recordSize:  21 },
     N: { keySize: 33, valSize:  0, recordSize:  33 },
@@ -159,6 +167,13 @@ async function sortByKey(inputPath, outputPath, recordSize, keySize, tmpDir, ram
  * @param {string}  opts.spendsByPrevPath  spends-by-prevtx.dat (sorted)
  * @param {string}  opts.outDir            where to write final per-prefix files
  * @param {string}  opts.tmpDir            temp scratch
+ * @param {number}  opts.outputsRecordSize width of records in outputsPath /
+ *                                          liveUtxosPath. 121 for dumps that
+ *                                          carry the coinbase flag (L-4), 120
+ *                                          for legacy dumps. Defaults to 120 so
+ *                                          legacy callers keep working. The
+ *                                          orchestrator reads it from the dump
+ *                                          header's record_size field.
  * @param {number}  opts.ramBudgetBytes    sort RAM cap (default 1 GiB)
  * @param {string}  opts.network           network string e.g. 'dogecoin-mainnet'.
  *                                          Used to resolve per-chain undoBlocks
@@ -185,6 +200,12 @@ async function deriveKeys(opts) {
     const undoBlocks     = resolveUndoBlocks(opts.network, opts.undoBlocks)
     const removeSpent    = Boolean(opts.removeSpent)
     const onProgress     = opts.onProgress     || noop
+    const outputsRecordSize = opts.outputsRecordSize || OUTPUTS_RECORD_SIZE
+    if (outputsRecordSize !== OUTPUTS_RECORD_SIZE && outputsRecordSize !== OUTPUTS_RECORD_SIZE_CB) {
+        throw new Error(`deriveKeys: unsupported outputsRecordSize ${outputsRecordSize} (expected 120 or 121)`)
+    }
+    // Coinbase flag lives at byte 120, present only in 121-byte (L-4) records.
+    const hasCoinbaseByte = outputsRecordSize === OUTPUTS_RECORD_SIZE_CB
 
     if (!metaPath || !outputsPath || !liveUtxosPath || !spendsByPrevPath) {
         throw new Error('deriveKeys: metaPath, outputsPath, liveUtxosPath, spendsByPrevPath are required')
@@ -282,7 +303,7 @@ async function deriveKeys(opts) {
     // live-utxos.dat has no header (produced by streaming-join). Records are
     // 120B outputs, sorted by (txHash8, vout). That happens to be H's sort
     // order already → emit H directly with no re-sort.
-    const liveReader = new RecordReader(liveUtxosPath, 0, OUTPUTS_RECORD_SIZE)
+    const liveReader = new RecordReader(liveUtxosPath, 0, outputsRecordSize)
     const hOut       = new RecordWriter(path.join(outDir, 'H.dat'), LAYOUT.H.recordSize)
     const oRawPath   = path.join(tmpDir, 'O-raw.dat')
     const oRaw       = new FlatWriter(oRawPath, LAYOUT.O.recordSize)
@@ -309,6 +330,9 @@ async function deriveKeys(opts) {
             const heightBE     = rec.subarray(20, 24)
             const fullTxHash   = rec.subarray(24, 56)
             const scriptPubKey = rec.subarray(56, 88)
+            // Byte 120 exists only in 121-byte (L-4) records; legacy 120-byte
+            // records have no flag and are treated as non-coinbase.
+            const coinbase     = hasCoinbaseByte && rec[120] === 1
 
             // H record: 'H' + txHash8(8) + voutBE(4) | scriptPubKey(32)
             const hBuf = Buffer.allocUnsafe(LAYOUT.H.recordSize)
@@ -319,7 +343,10 @@ async function deriveKeys(opts) {
             hOut.writeRecord(hBuf)
 
             // O record: 'O' + scriptPubKey(32) + txHash8(8) + voutBE(4)
-            //          | value(8) + height(4) + fullTxHash(32)
+            //          | value(8) + height(4) + fullTxHash(32) + coinbase(1)
+            // The coinbase byte keeps the record fixed-width for the external
+            // sort; the loader collapses it to the live path's optional-byte
+            // form so a non-coinbase O-value stays 44 bytes on disk (L-4).
             oRaw.write((buf, off) => {
                 buf[off] = P_OUTPUT
                 scriptPubKey.copy(buf, off + 1, 0, 32)
@@ -328,6 +355,7 @@ async function deriveKeys(opts) {
                 valBE       .copy(buf, off + 45, 0, 8)
                 heightBE    .copy(buf, off + 53, 0, 4)
                 fullTxHash  .copy(buf, off + 57, 0, 32)
+                buf[off + 89] = coinbase ? 1 : 0
             })
         }
     } finally {
@@ -355,7 +383,7 @@ async function deriveKeys(opts) {
     const CAND_REC_SIZE = 104
     const CAND_KEY_SIZE = 36
     const candRawPath   = path.join(tmpDir, 'script-cand-raw.dat')
-    const outputsReader = new RecordReader(outputsPath, OUTPUTS_HEADER_SIZE, OUTPUTS_RECORD_SIZE)
+    const outputsReader = new RecordReader(outputsPath, OUTPUTS_HEADER_SIZE, outputsRecordSize)
     const candRaw       = new FlatWriter(candRawPath, CAND_REC_SIZE)
     let rowId = 0
 

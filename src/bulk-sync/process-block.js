@@ -68,6 +68,13 @@ function processBlock(block, height, blockHash, writers) {
         const txHash8 = fullTxHash.slice(0, 8)
         txHash8List[i] = txHash8
 
+        // Coinbase = the block's generation tx: exactly one input whose prevout
+        // index is 0xFFFFFFFF (same marker the input loop below skips). Mirrors
+        // XChainUtxoTracker.isCoinbaseTransaction so bulk-sync flags coinbase
+        // outputs identically to the live path, driving maturity gating (L-4).
+        const ins = tx.ins
+        const isCoinbase = ins.length === 1 && ins[0] && ins[0].index === 0xFFFFFFFF
+
         const outs = tx.outs
         for (let vout = 0; vout < outs.length; vout++) {
             const o = outs[vout]
@@ -80,11 +87,11 @@ function processBlock(block, height, blockHash, writers) {
                 fullTxHash,
                 scriptHash,
                 blockHash,
+                isCoinbase,
             )
             outputsEmitted++
         }
 
-        const ins = tx.ins
         for (let k = 0; k < ins.length; k++) {
             const inp = ins[k]
             if (inp.index === 0xFFFFFFFF) continue

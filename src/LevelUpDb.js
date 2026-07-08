@@ -1463,3 +1463,8 @@ class LevelUpStore {
 module.exports = LevelUpStore
 module.exports.AddressTooLargeError = AddressTooLargeError
 module.exports.InvalidCursorError  = InvalidCursorError
+// Exported so the bulk-sync loader can write O-record values byte-identically
+// to the live path (optional 45th coinbase byte, L-4), reusing this single
+// source of the encoding instead of duplicating the format.
+module.exports.encodeOutput = encodeOutput
+module.exports.decodeOutput = decodeOutput

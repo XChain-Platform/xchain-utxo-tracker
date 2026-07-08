@@ -307,6 +307,29 @@ function concatFilesWithHeader(inputPaths, outputPath, headerSize) {
 }
 
 /**
+ * Read the record_size field (offset 28, u32 LE) from a dump/intermediate
+ * header. This is the explicit width discriminator between the legacy 120-byte
+ * outputs record and the 121-byte coinbase-flagged record (L-4). Falls back to
+ * the compiled OUTPUTS_RECORD_SIZE if the field is absent (0) or unreadable, so
+ * a pre-record_size dump still parses at the current width.
+ */
+function readOutputsRecordSize(filePath) {
+    let fd
+    try {
+        fd = fs.openSync(filePath, 'r')
+        const buf = Buffer.alloc(4)
+        const n = fs.readSync(fd, buf, 0, 4, 28)
+        if (n < 4) return OUTPUTS_RECORD_SIZE
+        const rs = buf.readUInt32LE(0)
+        return rs > 0 ? rs : OUTPUTS_RECORD_SIZE
+    } catch (_) {
+        return OUTPUTS_RECORD_SIZE
+    } finally {
+        if (fd !== undefined) { try { fs.closeSync(fd) } catch (_) {} }
+    }
+}
+
+/**
  * Find files matching a glob-like prefix+suffix in a directory.
  * Returns paths sorted by name (which sorts by height range).
  */
@@ -389,6 +412,15 @@ async function phaseMerge(args, dirs, cleanup) {
 
     const ramBudgetBytes = args.ramBudget * 1024 * 1024
 
+    // The dump header's record_size field (offset 28, u32 LE) is the explicit
+    // format discriminator: new dumps report 121 (trailing coinbase flag, L-4),
+    // legacy dumps report 120. Threading it through the sort, anti-join and
+    // deriveKeys lets both widths merge; a legacy dump carries no flag and its
+    // outputs are treated as non-coinbase. Fall back to the compiled constant if
+    // the field is absent (0), so a pre-record_size dump still parses.
+    const outputsRecordSize = readOutputsRecordSize(allOutputsPath)
+    log('MERGE', `outputs record size = ${outputsRecordSize}B (${outputsRecordSize === OUTPUTS_RECORD_SIZE ? 'coinbase-flagged' : 'legacy'})`)
+
     // Expected sorted file size = input size minus its header (externalSort
     // strips the header from its output). Used as the resume guard.
     function expectedSortedSize(inputPath) {
@@ -405,7 +437,7 @@ async function phaseMerge(args, dirs, cleanup) {
         const outSortResult = await externalSort({
             inputPath:   allOutputsPath,
             outputPath:  sortedOutputsPath,
-            recordSize:  OUTPUTS_RECORD_SIZE,
+            recordSize:  outputsRecordSize,
             keySize:     OUTPUTS_KEY_SIZE,
             tmpDir:      dirs.sortTmp,
             headerSize:  HEADER_SIZE,
@@ -454,7 +486,7 @@ async function phaseMerge(args, dirs, cleanup) {
         leftPath:        sortedOutputsPath,
         rightPath:       sortedSpendsPath,
         outputPath:      liveUtxosPath,
-        leftRecordSize:  OUTPUTS_RECORD_SIZE,
+        leftRecordSize:  outputsRecordSize,
         rightRecordSize: SPENDS_RECORD_SIZE,
         keySize:         OUTPUTS_KEY_SIZE,
         leftHeaderSize:  0,   // sorted output has no header (externalSort strips it)
@@ -481,6 +513,7 @@ async function phaseMerge(args, dirs, cleanup) {
         ramBudgetBytes,
         network:          args.network,
         removeSpent:      args.removeSpent,
+        outputsRecordSize,
         onProgress(ev) {
             if (ev.phase && ev.phase.includes('done')) {
                 log('MERGE', `  derive: ${ev.phase}`)
@@ -598,7 +631,7 @@ async function main() {
 
 // Export pure helpers for unit testing; only auto-run the pipeline when invoked
 // directly (node orchestrator.js), not when required by a test.
-module.exports = { parseArgs, effectiveTipSafety, resolveUndoBlocks }
+module.exports = { parseArgs, effectiveTipSafety, resolveUndoBlocks, readOutputsRecordSize }
 
 if (require.main === module) {
     main().catch(err => {

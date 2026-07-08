@@ -35,6 +35,21 @@ const path = require('path')
 
 const { LAYOUT }       = require('./derive-keys.js')
 const { RecordReader } = require('./streaming-join.js')
+const { encodeOutput } = require('../../LevelUpDb.js')
+
+// The intermediate O.dat value is fixed-width (value8 + height4 + fullTxHash32 +
+// coinbase1 = 45B) so the external sort can treat it as a plain record. On the
+// way into LevelDB we collapse it to the live path's exact bytes via
+// encodeOutput: a normal output stays 44 bytes, a coinbase output keeps its
+// optional 45th flag byte (L-4). This keeps bulk-seeded O-records byte-identical
+// to incrementally-indexed ones, so maturity gating reads the flag the same way.
+function transformOValue(value) {
+    const sat        = value.readBigUInt64BE(0)
+    const height     = value.readInt32BE(8)
+    const fullTxHash = value.subarray(12, 44).toString('hex')
+    const isCoinbase = value.length > 44 && value[44] === 1
+    return encodeOutput(sat, height, fullTxHash, isCoinbase)
+}
 
 // File name → prefix letter. Load order doesn't affect correctness for
 // LevelDB (keys end up sorted internally). We go alphabetical which is
@@ -50,7 +65,7 @@ function openDb(dbPath) {
     return new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' })
 }
 
-async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize) {
+async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize, valueTransform) {
     const reader = new RecordReader(filePath, 0, recordSize)
     let total = 0
     let ops   = []
@@ -61,7 +76,8 @@ async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize) {
             if (!rec) break
             // Buffer.from copies; views are invalidated on next read.
             const key   = Buffer.from(rec.subarray(0, keySize))
-            const value = Buffer.from(rec.subarray(keySize, recordSize))
+            let   value = Buffer.from(rec.subarray(keySize, recordSize))
+            if (valueTransform) value = valueTransform(value)
             ops.push({ type: 'put', key, value })
             total++
             if (ops.length >= batchSize) {
@@ -118,7 +134,8 @@ async function loadKeys(opts) {
                 continue
             }
             const t0 = Date.now()
-            const count = await loadPrefixFile(db, filePath, keySize, recordSize, batchSize)
+            const valueTransform = (pfx === 'O') ? transformOValue : null
+            const count = await loadPrefixFile(db, filePath, keySize, recordSize, batchSize, valueTransform)
             stats[pfx] = count
             onProgress({
                 phase: 'prefix-done', prefix: pfx,

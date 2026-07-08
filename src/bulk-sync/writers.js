@@ -41,7 +41,11 @@ const MAGIC_OUTPUTS      = Buffer.from('XCHNOUT1', 'ascii')
 const MAGIC_SPENDS       = Buffer.from('XCHNSPD1', 'ascii')
 const MAGIC_META         = Buffer.from('XCHNMTA1', 'ascii')
 
-const OUTPUTS_RECORD_SIZE = 120
+// 121 bytes: the 120-byte body plus a trailing coinbase-flag byte (L-4). The
+// record_size header field (offset 28) is the explicit format discriminator: a
+// legacy dump reports 120 and its outputs carry no flag; the merger reads the
+// header size and treats missing-byte as non-coinbase, so old dumps still merge.
+const OUTPUTS_RECORD_SIZE = 121
 const SPENDS_RECORD_SIZE  = 20
 
 const FLUSH_BATCH_BYTES   = 256 * 1024 // ~256 KB per syscall
@@ -134,7 +138,7 @@ class FixedRecordWriter {
 }
 
 /**
- * outputs-*.dat: 120 bytes/record.
+ * outputs-*.dat: 121 bytes/record.
  *
  *   [0..8]     txHash8        8B raw
  *   [8..12]    vout           uint32 BE
@@ -143,13 +147,14 @@ class FixedRecordWriter {
  *   [24..56]   fullTxHash     32B raw
  *   [56..88]   scriptPubKey   32B raw
  *   [88..120]  blockHash      32B raw
+ *   [120]      coinbase       uint8 (1 = coinbase output, 0 = normal) (L-4)
  */
 class OutputsWriter extends FixedRecordWriter {
     constructor(finalPath, chain, netName, firstHeight, lastHeight) {
         super(finalPath, MAGIC_OUTPUTS, chain, netName, firstHeight, lastHeight, OUTPUTS_RECORD_SIZE)
     }
 
-    append(txHash8, vout, value, height, fullTxHash, scriptPubKey, blockHash) {
+    append(txHash8, vout, value, height, fullTxHash, scriptPubKey, blockHash, isCoinbase) {
         const off = this._slotOffset()
         const b   = this._batch
         txHash8.copy(b, off + 0, 0, 8)
@@ -159,6 +164,9 @@ class OutputsWriter extends FixedRecordWriter {
         fullTxHash.copy(b, off + 24, 0, 32)
         scriptPubKey.copy(b, off + 56, 0, 32)
         blockHash.copy(b, off + 88, 0, 32)
+        // Coinbase flag rides the value byte-for-byte through the sort and the
+        // anti-join into the O-record, where it drives maturity gating (L-4).
+        b.writeUInt8(isCoinbase ? 1 : 0, off + 120)
         this._advance()
     }
 }

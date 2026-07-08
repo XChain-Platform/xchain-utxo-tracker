@@ -105,7 +105,7 @@ async function main() {
 
     await externalSort({
         inputPath: outputsPath, outputPath: outputsByTx,
-        headerSize: 64, recordSize: 120, keySize: 12,
+        headerSize: 64, recordSize: 121, keySize: 12,
         ramBudgetBytes: 1024 * 1024, tmpDir: path.join(sortTmp, 'o'),
     })
     await externalSort({
@@ -118,7 +118,7 @@ async function main() {
     const liveUtxos = path.join(TMP, 'live-utxos.dat')
     const joinRes = await leftAntiJoin({
         leftPath: outputsByTx, rightPath: spendsByPrevTx, outputPath: liveUtxos,
-        leftRecordSize: 120, rightRecordSize: 20, keySize: 12,
+        leftRecordSize: 121, rightRecordSize: 20, keySize: 12,
     })
     assert.strictEqual(joinRes.emitted, 2, 'expected 2 live UTXOs')
     assert.strictEqual(joinRes.canceled, 1)
@@ -131,6 +131,7 @@ async function main() {
         metaPath, outputsPath, liveUtxosPath: liveUtxos, spendsByPrevPath: spendsByPrevTx,
         outDir, tmpDir: derTmp,
         ramBudgetBytes: 1024 * 1024,
+        outputsRecordSize: 121,
     })
 
     // ── Asserts: counts per prefix ──

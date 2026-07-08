@@ -51,22 +51,33 @@ A file whose count is still 0 at open time signals a crashed/partial worker; re-
 that range. `record_size` documents the fixed record size inline (0 for variable-length
 streams like `meta-*.dat`).
 
-## outputs-*.dat  (magic `XCHNOUT1`, record_size = 120)
+## outputs-*.dat  (magic `XCHNOUT1`, record_size = 121)
 
 One record per TxOut in the block range. Coinbases included. Unsorted, append-only.
 
 ```
-offset   size  field
-[0..8]     8   txHash8         first 8B of the containing tx's txid
-[8..12]    4   vout            uint32 BE
-[12..20]   8   value           uint64 BE (satoshis)
-[20..24]   4   height          int32 BE  (always ≥0 in bulk-sync; -1 reserved for mempool)
-[24..56]  32   fullTxHash      full 32B txid
-[56..88]  32   scriptPubKey    32B sha256(script)  (matches LevelUpDb O-key format)
-[88..120] 32   blockHash       containing block hash
+offset    size  field
+[0..8]      8   txHash8         first 8B of the containing tx's txid
+[8..12]     4   vout            uint32 BE
+[12..20]    8   value           uint64 BE (satoshis)
+[20..24]    4   height          int32 BE  (always ≥0 in bulk-sync; -1 reserved for mempool)
+[24..56]   32   fullTxHash      full 32B txid
+[56..88]   32   scriptPubKey    32B sha256(script)  (matches LevelUpDb O-key format)
+[88..120]  32   blockHash       containing block hash
+[120]       1   coinbase        uint8 (1 = coinbase output, 0 = normal) (L-4)
 ```
 
 `blockHash` is included so the merger can emit Z/S records directly from a re-sort of this stream without cross-referencing `meta-*.dat`.
+
+**Version compatibility.** The `coinbase` byte (L-4) is the only field ever added to this
+record. The header's `record_size` field (offset 28) is the explicit discriminator: a
+legacy dump reports 120 with no flag byte, a current dump reports 121. The merger reads
+`record_size` from the header and threads it through the outputs sort, the anti-join, and
+`derive-keys`, so both widths merge; a 120-byte record carries no flag and its output is
+treated as non-coinbase (matching the LevelUpDb legacy-decode rule). The coinbase fact is
+re-derived from the block bytes at parse time (the generation tx's single 0xFFFFFFFF-index
+input), so even a `.xdmp` produced before L-4 yields correctly-flagged outputs when
+re-parsed by a current worker.
 
 ## spends-*.dat  (magic `XCHNSPD1`, record_size = 20)
 
