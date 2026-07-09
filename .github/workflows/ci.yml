@@ -1,6 +1,11 @@
 name: CI
 
-# Hermetic unit-test gate (`npm run ci`). No live services required.
+# Hermetic unit-test gate (`npm run ci`) plus a dedicated perf job. Both are
+# infra-free: the perf suite runs against an in-process LevelDB + a JSON-RPC
+# mock, so no `services:` container is needed (unlike the hub perf job, which
+# requires a MariaDB service). Perf runs at PERF_SCALE=small to bound CI
+# runtime (~20s); its assertions are relative-ratio / scale-derived memory
+# caps, so they hold across runner noise.
 on:
   push:
     branches: [master]
@@ -28,3 +33,22 @@ jobs:
 
       - name: Run test gate
         run: npm run ci
+
+  perf:
+    # Only spend the perf runtime once the unit gate is green.
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run performance suite
+        run: npm run test:perf:quick
