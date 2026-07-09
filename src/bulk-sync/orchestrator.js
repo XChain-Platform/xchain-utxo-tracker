@@ -34,6 +34,7 @@ const { externalSort }  = require('./merger/external-sort.js')
 const { leftAntiJoin }  = require('./merger/streaming-join.js')
 const { deriveKeys, resolveUndoBlocks } = require('./merger/derive-keys.js')
 const { loadKeys }      = require('./merger/loader.js')
+const { validateChainFiles } = require('./validate-chain.js')
 const { HEADER_SIZE, OUTPUTS_RECORD_SIZE, SPENDS_RECORD_SIZE } = require('./writers.js')
 
 // --------------- constants ---------------
@@ -116,6 +117,7 @@ function parseArgs(argv) {
         // files, but trips before the next sort can ENOSPC on a tight disk.
         cleanupThresholdMb: 100 * 1024,
         skipDump:    false,
+        verifyChain: false,
         skipParse:   false,
         // Default matches XChainUtxoTracker.REMOVE_SPENT = true. Skipping
         // I/J cuts ~130 GB of disk and ~30-60 min on mainnet because the
@@ -140,6 +142,7 @@ function parseArgs(argv) {
             case '--batch-size':      args.batchSize   = parseInt(argv[++i], 10); break
             case '--cleanup-threshold-mb': args.cleanupThresholdMb = parseInt(argv[++i], 10); break
             case '--skip-dump':       args.skipDump    = true; break
+            case '--verify-chain':    args.verifyChain = true; break
             case '--skip-parse':      args.skipParse   = true; break
             case '--remove-spent':    args.removeSpent = true; break
             case '--no-remove-spent': args.removeSpent = false; break
@@ -194,6 +197,8 @@ Options:
                         free consumed merge/ files when free disk drops below
                         this threshold (default 102400 = 100 GB; 0 disables)
   --skip-dump           skip dump phase (reuse existing .xdmp files)
+  --verify-chain        recompute each block hash and check prevHash linkage
+                        across the dump before parsing (fail-loud on a break)
   --skip-parse          skip dump+parse phases (reuse existing .dat files)
   --no-remove-spent     force emission of I/J prefixes (default: skip them
                         to match XChainUtxoTracker.REMOVE_SPENT=true)
@@ -609,6 +614,19 @@ async function main() {
         log('DUMP', `skipped (reusing ${xdmpFiles.length} existing .xdmp files)`)
     } else {
         xdmpFiles = await phaseDump(args, dirs)
+    }
+
+    // Phase 1.5: optional chain-continuity gate. Off by default (adds a full
+    // read pass over the dump); when on, recompute every block hash and confirm
+    // prevHash linkage before committing CPU to parse/merge, so a Byzantine node
+    // or a corrupted .xdmp fails the bootstrap loudly instead of poisoning the DB.
+    if (args.verifyChain) {
+        log('VERIFY', `checking chain continuity across ${xdmpFiles.length} .xdmp files`)
+        const res = validateChainFiles(xdmpFiles)
+        if (!res.ok) {
+            throw new Error(`chain-continuity check failed after ${res.blocksChecked} blocks: ${res.error}`)
+        }
+        log('VERIFY', `OK: ${res.blocksChecked} blocks, heights ${res.firstHeight}..${res.lastHeight}`)
     }
 
     // Phase 2: Parse
