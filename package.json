@@ -20,6 +20,7 @@
     "ecpair": "2.1.0",
     "express": "^5.2.1",
     "express-json-rpc-router": "^1.4.0",
+    "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
     "mariadb": "3.5.2",
     "memory-level": "^3.0.0",

@@ -29,6 +29,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const helmet = require('helmet');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const XChainUtxoTracker  = require('./XChainUtxoTracker');
 const BlockchainConnector = require('./BlockchainConnector');
 const { resolveUndoBlocks } = require('./bulk-sync/merger/derive-keys.js')
@@ -235,6 +236,24 @@ async function startApi(){
 
     // CORS disabled by default; set CORS_ORIGIN to allow a specific origin
     app.use(cors({ origin: process.env.CORS_ORIGIN || false }));
+
+    // Trust only the first proxy hop so the rate limiter keys on the real client
+    // IP rather than the fronting proxy (and to satisfy express-rate-limit's
+    // proxy validation).
+    app.set('trust proxy', 1);
+
+    // Per-IP rate limit on every route (REST reads + JSON-RPC). The REST read
+    // routes below carry no auth of their own, so anything that can reach the
+    // port could otherwise drive unbounded backing-DB work. Mirrors the per-IP
+    // limiter every peer service front-loads (explorer/hub/decoder/encoder);
+    // override the 500 rpm default with UTXO_TRACKER_RATE_LIMIT_RPM.
+    app.use(rateLimit({
+        windowMs:        60 * 1000,
+        limit:           parseInt(process.env.UTXO_TRACKER_RATE_LIMIT_RPM, 10) || 500,
+        standardHeaders: true,
+        legacyHeaders:   false,
+        message:         { error: 'Too many requests', code: 'RATE_LIMITED' },
+    }));
 
     // API key enforcement for admin JSON-RPC methods. Fails closed: without a
     // configured key these methods are rejected, never left open.
