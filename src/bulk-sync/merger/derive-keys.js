@@ -35,7 +35,7 @@
  *   H.dat   13+32 =  45B  (key: 'H'+txHash8+voutBE;     val: script32)
  *   J.dat   21+ 0 =  21B  (key: 'J'+spenderTxHash8+prevTxHash8+prevVoutBE)
  *   N.dat   33+ 0 =  33B  (key: 'N'+blockHash32)
- *   S.dat   33+68 = 101B  (key: 'S'+script32;           val: blockHash32+heightBE(4)+fullTxHash32)
+ *   S.dat   33+ 4 =  37B  (key: 'S'+script32;           val: heightBE(4))
  *   Z.dat   65+ 0 =  65B  (key: 'Z'+blockHash32+script32)
  *
  *   L.json             { LAST_BLOCK_HEIGHT: "<hex>", LAST_BLOCK_HASH: "<hex>" }

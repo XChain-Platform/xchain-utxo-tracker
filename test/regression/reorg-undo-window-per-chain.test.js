@@ -18,11 +18,19 @@
 // inside the cross-chain confirmation gate auto-recovers instead of forcing a
 // manual resync. The window is resolved at construction into this.undoBlocks,
 // with an env override (XCHAIN_UNDO_BLOCKS_<COIN>) and a 12-block fallback for
-// unknown coins. A reversion to a flat constant would silently shrink DOGE/LTC
-// headroom; this pins each coin's value and the override/fallback behaviour.
+// a coin the window map does not name. A reversion to a flat constant would
+// silently shrink DOGE/LTC headroom; this pins each coin's value and the
+// override/fallback behaviour.
+//
+// An unrecognised NETWORK is a separate case: the constructor rejects it
+// outright, because bitcoinjs-lib silently treats an undefined network as BTC
+// mainnet, so a typo would run under the wrong network parameters. The window
+// fallback therefore guards only a coin bitcoinjs resolves but the window map
+// omits, never an unknown network name.
 
 const { expect } = require('chai');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
+const { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS } = require('../../src/undo-blocks');
 
 // Construct a tracker WITHOUT starting it (mirrors createTestTracker) so we only
 // exercise the constructor's window resolution.
@@ -48,8 +56,13 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
     expect(undoBlocksFor('dogecoin-mainnet')).to.not.equal(10);
   });
 
-  it('falls back to 12 for an unrecognised coin', function () {
-    expect(undoBlocksFor('unknowncoin-mainnet')).to.equal(12);
+  it('rejects an unrecognised network at construction', function () {
+    expect(() => undoBlocksFor('unknowncoin-mainnet')).to.throw(/unknown network/i);
+  });
+
+  it('keeps a 12-block fallback for a coin the window map omits', function () {
+    expect(FALLBACK_UNDO_BLOCKS).to.equal(12);
+    expect(DEFAULT_UNDO_BLOCKS).to.not.have.property('XXX');
   });
 
   describe('env override XCHAIN_UNDO_BLOCKS_<COIN>', function () {

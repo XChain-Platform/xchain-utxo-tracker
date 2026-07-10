@@ -95,6 +95,26 @@ describe('XChainUtxoTracker', function () {
       expect(tracker.synced).to.be.false;
       expect(tracker.auxPow).to.be.false;
     });
+
+    it('forces auxPow on for a dogecoin network regardless of the passed flag', function () {
+      const dogeTracker = new XChainUtxoTracker(
+        'dogecoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
+      );
+      expect(dogeTracker.auxPow).to.be.true;
+    });
+
+    it('leaves auxPow on the caller-supplied flag for a non-dogecoin network', function () {
+      const btcTracker = new XChainUtxoTracker(
+        'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', true
+      );
+      expect(btcTracker.auxPow).to.be.true;
+    });
+
+    it('throws for an unresolvable network name instead of decoding under a default network', function () {
+      expect(() => new XChainUtxoTracker(
+        'not-a-real-network', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
+      )).to.throw(/unknown network/);
+    });
   });
 
   // ─── isSynced ──────────────────────────────────────────────────────────

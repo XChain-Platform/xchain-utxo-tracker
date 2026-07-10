@@ -149,9 +149,13 @@ describe('XChainUtxoTracker (more)', function () {
             expect(t.undoBlocks).to.equal(120);
         });
 
-        it('unknown network falls back to 12', function () {
-            const t = new XChainUtxoTracker('unknown-mainnet', '127.0.0.1', '1234', 'u', 'p', 'db', false);
-            expect(t.undoBlocks).to.equal(12);
+        it('unknown network fails loud at construction instead of decoding under a default network', function () {
+            // getBitcoinJsNetwork returns undefined for an unresolvable network name;
+            // the constructor now asserts on that before it would otherwise reach
+            // resolveUndoBlocks' own fallback, so an unknown network never gets far
+            // enough to silently decode addresses under bitcoinjs's BTC-mainnet default.
+            expect(() => new XChainUtxoTracker('unknown-mainnet', '127.0.0.1', '1234', 'u', 'p', 'db', false))
+                .to.throw(/unknown network/);
         });
     });
 

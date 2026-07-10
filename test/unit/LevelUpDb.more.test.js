@@ -138,57 +138,9 @@ describe('LevelUpDb (extended coverage)', function () {
 
     // ─── deleteInputs ────────────────────────────────────────────────────────
 
-    describe('deleteInputs()', function () {
-        let db;
-        beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
-        afterEach(async function () { try { await db.close(); } catch (e) {} });
-
-        it('returns 0 for an empty txid list', async function () {
-            const count = await db.deleteInputs([]);
-            expect(count).to.equal(0);
-        });
-
-        it('deletes inputs whose spending tx is NOT in the keep list', async function () {
-            const prevTxHash = randHash();
-            const spendingTx8 = randHash8(); // this one will NOT be in the keep list
-
-            await db.insertInput({ prevTxHash, prevOutputIndex: 0, txHash: spendingTx8 });
-            await db.endTransaction(true);
-
-            // Verify input exists
-            const before = await db.getInput(prevTxHash.substring(0, 16), 0);
-            expect(before).to.not.be.null;
-
-            // deleteInputs keeps inputs whose txHash IS in the list.
-            // Our spendingTx8 is NOT in the list, so it should be deleted.
-            await db.beginTransaction();
-            const count = await db.deleteInputs([randHash8()]); // unrelated tx in keep list
-            await db.endTransaction(true);
-
-            expect(count).to.equal(1);
-            const after = await db.getInput(prevTxHash.substring(0, 16), 0);
-            expect(after).to.be.null;
-        });
-
-        it('keeps inputs whose spending tx IS in the keep list (Buffer form)', async function () {
-            const prevTxHash = randHash();
-            const spendingTx8 = randHash8();
-
-            await db.insertInput({ prevTxHash, prevOutputIndex: 0, txHash: spendingTx8 });
-            await db.endTransaction(true);
-
-            // Pass spendingTx8 as a Buffer (covers the Buffer.isBuffer branch in deleteInputs).
-            await db.beginTransaction();
-            const txBuf = Buffer.from(spendingTx8, 'hex');
-            const count = await db.deleteInputs([txBuf]);
-            await db.endTransaction(true);
-
-            // Input should be kept (its tx IS in the list)
-            expect(count).to.equal(0);
-            const after = await db.getInput(prevTxHash.substring(0, 16), 0);
-            expect(after).to.not.be.null;
-        });
-    });
+    // deleteInputs() removed 2026-07-10: dead code with zero src/ callers,
+    // a byte-for-byte second implementation of the I-key scan pattern used
+    // elsewhere. See uuid:340641ec.
 
     // ─── insertOutput with Buffer scriptPubKey ────────────────────────────────
 
@@ -546,7 +498,7 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(outputs).to.be.empty;
         });
 
-        it('falls through to del-without-oVal when output has no matching value', async function () {
+        it('leaves H record intact (no undo-less delete) when output has no matching value', async function () {
             // Insert hint only (no O record) to force the oVal==null branch in Phase 3
             const scriptBuf = randBuf32();
             const txHash8   = randHash8();
@@ -568,6 +520,14 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.endTransaction(true);
 
             expect(count).to.equal(1);
+
+            // Regression guard for the "H present, O missing" branch: deleting the
+            // H record here with no K/M undo record would make a subsequent reorg
+            // unwind unable to restore it. The store must leave it intact instead,
+            // matching removeOutputWithInput()'s "do nothing" behavior for the same
+            // store state.
+            const stillPresent = await db.hasOutputForTx(txHash8, 0);
+            expect(stillPresent).to.equal(true);
         });
     });
 
@@ -997,48 +957,11 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── recoverDeletedOutputsHints: standalone M recovery ───────────────────
-
-    describe('recoverDeletedOutputsHints(): standalone M recovery', function () {
-        let db;
-        beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
-        afterEach(async function () { try { await db.close(); } catch (e) {} });
-
-        it('no-ops gracefully when no M entries exist for the block', async function () {
-            await db.beginTransaction();
-            await db.recoverDeletedOutputsHints(randHash());
-            await db.endTransaction(true);
-            // Just confirming no throw
-        });
-
-        it('restores H entries from M prefix after a committed spend', async function () {
-            const scriptHex = randHash();
-            const txHash8   = randHash8();
-            const blockHash = randHash();
-
-            // Insert and commit output + hint
-            await db.insertOutput({ scriptPubKey: scriptHex, txHash: txHash8, outputIndex: 0, value: BigInt(6000), height: 30 });
-            await db.insertOutputHint({ scriptPubKey: scriptHex, txHash: txHash8, outputIndex: 0 });
-            await db.endTransaction(true);
-
-            // Spend (creates M and K entries on disk)
-            await db.beginTransaction();
-            await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
-            await db.endTransaction(true);
-
-            // Recover just the hints
-            await db.beginTransaction();
-            await db.recoverDeletedOutputsHints(blockHash);
-            await db.endTransaction(true);
-
-            // H entry should be visible (check by trying deleteOutputsByHint)
-            await db.beginTransaction();
-            const count = await db.deleteOutputsByHint(txHash8 + randHash().substring(16));
-            await db.endTransaction(true);
-            // count may be 0 (no O entry) or 1; just confirm no throw
-            expect(count).to.be.gte(0);
-        });
-    });
+    // recoverDeletedOutputsHints() removed 2026-07-10: dead code with zero
+    // src/ callers, byte-for-byte identical to the processOutputHints=true
+    // half of processDeletedOutputsInDb(). See uuid:340641ec. Equivalent
+    // coverage of that restore path lives in the processDeletedOutputs(...)
+    // suites below.
 
     // ─── getLastStoredBlocks with empty DB ───────────────────────────────────
 

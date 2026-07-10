@@ -137,7 +137,7 @@ function resolveUndoBlocks(network){
 const PREFETCH_SIZE = 10 //Number of blocks to pre-fetch concurrently while processing the current one
 
 // Single-byte key used to persist pendingKMCleanup across restarts.
-// 0x50 ('P') is unused by LevelUpDb's key schema (B/T/I/O/H/J/S/Z/K/M/N).
+// 0x50 ('P') is unused by LevelUpDb's key schema (B/T/I/O/H/J/S/Z/K/M/N/W).
 const P_PENDING_CLEANUP_KEY = Buffer.from([0x50])
 
 class XChainUtxoTracker {
@@ -145,6 +145,14 @@ class XChainUtxoTracker {
 
     constructor(network, nodeUrl, nodePort, nodeUser, nodePassword, dbName, auxPow) {
       this.network = CryptoNetworks.getBitcoinJsNetwork(network)
+      // getBitcoinJsNetwork returns undefined for an unrecognized coin/network
+      // name (e.g. a typo in the NETWORK env var). Left unguarded, bitcoinjs-lib
+      // silently defaults an undefined network to BTC mainnet at address/script
+      // decode time, so a misconfiguration would run under the wrong network
+      // parameters instead of failing. Fail loud at construction instead.
+      if (!this.network) {
+        throw new Error(`XChainUtxoTracker: unknown network "${network}" -- no bitcoinjs network config resolved. Check the configured network name.`)
+      }
       this.connector = new BlockchainConnector(nodeUrl, nodePort, nodeUser, nodePassword)
       this.dbName = dbName
       
@@ -169,7 +177,14 @@ class XChainUtxoTracker {
       this.mempoolInterval = null
       this.mempoolBusy = false
       
-      this.auxPow = auxPow
+      // AuxPoW stripping must be keyed on coin identity, not trusted purely to
+      // the caller's env-driven flag (which defaults OFF): a Dogecoin
+      // deployment started without AUX_POW=true would otherwise parse every
+      // DOGE block as a plain Bitcoin block. Force it on for dogecoin-* networks
+      // regardless of the passed-in flag, mirroring the bulk seeder's
+      // coin-keyed gate (bulk-sync/dump.js), and leave other coins on the
+      // caller-supplied flag unchanged.
+      this.auxPow = coinFromNetwork(network) === 'DOGE' ? true : auxPow
       this.undoBlocks = resolveUndoBlocks(network)
       this.lastBlocks = []
       
@@ -385,7 +400,8 @@ class XChainUtxoTracker {
     // lastBlocks to be in ascending HEIGHT order with the chain tip last.
     // Without sorting, a reorg throws "Can't delete a block from the 'last
     // blocks'…" and wedges the sync loop. Each block's height comes from its
-    // B-prefix record; this is at most UNDO_BLOCKS (10) lookups.
+    // B-prefix record; this is at most UNDO_BLOCKS lookups (per-chain
+    // DEFAULT_UNDO_BLOCKS, e.g. BTC=12/LTC=48/DOGE=120, not a fixed 10).
     async loadLastBlocksSortedByHeight(){
         const storedHashes = await this.db.getLastStoredBlocks()
         const withHeight = []

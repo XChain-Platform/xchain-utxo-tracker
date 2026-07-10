@@ -58,8 +58,9 @@ const { MemoryLevel } = require('memory-level')
 const bs = require("binary-search")
 
 // String-keyed metadata entries. The DB is opened with keyEncoding:'buffer',
-// so these are stored as their UTF-8 byte Buffers (lexicographically after the
-// single-byte binary prefixes, which never collide with these ASCII keys).
+// so these are stored as their UTF-8 byte Buffers, first byte 'L' = 0x4C.
+// 0x4C is reserved and unused by any k* builder: it sits between
+// P_OUT_DEL ('K' = 0x4B) and P_HINT_DEL ('M' = 0x4D), not after everything.
 const PREFIX_LAST_BLOCK_HEIGHT = Buffer.from("LAST_BLOCK_HEIGHT")
 const PREFIX_LAST_BLOCK_HASH   = Buffer.from("LAST_BLOCK_HASH")
 
@@ -199,6 +200,15 @@ function kInput(prevTxHash8Hex, idx) {
     return buf
 }
 function kOutput(scriptHex, txHash8Hex, idx) {
+    // Same overrun-coincidence hazard kInput() guards against: a wrong-length
+    // scriptHex would overrun into the txHash8Hex field, which the next
+    // .write() then silently overwrites back to a well-formed (wrong) key.
+    if (scriptHex.length !== 64) {
+        throw new Error(`kOutput expects a 64-hex (32-byte) scriptPubKey, got ${scriptHex.length} chars`)
+    }
+    if (txHash8Hex.length !== 16) {
+        throw new Error(`kOutput expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(45)
     buf[0] = P_OUTPUT
     buf.write(scriptHex, 1, 'hex')
@@ -207,6 +217,9 @@ function kOutput(scriptHex, txHash8Hex, idx) {
     return buf
 }
 function kOutHint(txHash8Hex, idx) {
+    if (txHash8Hex.length !== 16) {
+        throw new Error(`kOutHint expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(13)
     buf[0] = P_OUT_HINT
     buf.write(txHash8Hex, 1, 'hex')
@@ -214,6 +227,12 @@ function kOutHint(txHash8Hex, idx) {
     return buf
 }
 function kInHint(txHash8Hex, prevTxHash8Hex, idx) {
+    if (txHash8Hex.length !== 16) {
+        throw new Error(`kInHint expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+    }
+    if (prevTxHash8Hex.length !== 16) {
+        throw new Error(`kInHint expects a 16-hex (8-byte) prevTxHash prefix, got ${prevTxHash8Hex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(21)
     buf[0] = P_IN_HINT
     buf.write(txHash8Hex, 1, 'hex')
@@ -248,6 +267,15 @@ function kBlkScriptFromBuf(blockHashHex, scriptBuf) {
     return buf
 }
 function kOutDel(blockHashHex, scriptHex, txHash8Hex, idx) {
+    if (blockHashHex.length !== 64) {
+        throw new Error(`kOutDel expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
+    }
+    if (scriptHex.length !== 64) {
+        throw new Error(`kOutDel expects a 64-hex (32-byte) scriptPubKey, got ${scriptHex.length} chars`)
+    }
+    if (txHash8Hex.length !== 16) {
+        throw new Error(`kOutDel expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(77)
     buf[0] = P_OUT_DEL
     buf.write(blockHashHex, 1, 'hex')
@@ -257,6 +285,12 @@ function kOutDel(blockHashHex, scriptHex, txHash8Hex, idx) {
     return buf
 }
 function kHintDel(blockHashHex, txHash8Hex, idx) {
+    if (blockHashHex.length !== 64) {
+        throw new Error(`kHintDel expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
+    }
+    if (txHash8Hex.length !== 16) {
+        throw new Error(`kHintDel expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(45)
     buf[0] = P_HINT_DEL
     buf.write(blockHashHex, 1, 'hex')
@@ -275,6 +309,12 @@ function kStoredBlk(blockHashHex) {
 // produced. Mirrors the K layout but keyed on the creation block rather than the
 // spend block. Value is the 32-byte scriptPubKey needed to rebuild the O key.
 function kOutBlk(blockHashHex, txHash8Hex, idx) {
+    if (blockHashHex.length !== 64) {
+        throw new Error(`kOutBlk expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
+    }
+    if (txHash8Hex.length !== 16) {
+        throw new Error(`kOutBlk expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(45)
     buf[0] = P_OUT_BLK
     buf.write(blockHashHex, 1, 'hex')
@@ -327,7 +367,6 @@ function decodeTx(buf)          { return { bh: b2h(buf.slice(0, 32)) } }
 
 // I value: [txHash8(8)] = 8 bytes
 function encodeInputVal(txHash8Hex) { return h2b(txHash8Hex) }
-function decodeInputVal(buf)        { return { th: b2h(buf.slice(0, 8)) } }
 
 // O value: [value(8)][height(4)][fullTxHash(32)] = 44 bytes, plus an OPTIONAL
 // 45th coinbase-flag byte (0x01) appended only for coinbase outputs (L-4).
@@ -693,30 +732,6 @@ class LevelUpStore {
         return value !== undefined
     }
 
-    async deleteInputs(txids){
-        if (txids.length == 0) return 0
-
-        const options = {
-            gte: pb(P_INPUT),
-            lte: rangeEnd(pb(P_INPUT)),
-            keys: true,
-            values: true,
-        }
-
-        const txids8 = txids.map(t => (Buffer.isBuffer(t) ? b2h(t) : t))
-        let inputsCount = 0
-
-        for await (const [key, value] of this.db.iterator(options)) {
-            const txHash = decodeInputVal(value).th
-            if (!txids8.includes(txHash)) {
-                await this.addTransaction("del", key, null)
-                inputsCount++
-            }
-        }
-
-        return inputsCount
-    }
-
     // ─── Input hint (J prefix) ───────────────────────────────────────────────
 
     async insertInputHint(input) {
@@ -1064,8 +1079,13 @@ class LevelUpStore {
                 if (DEBUG_TRACE) {
                     console.log(`TRACE delOutput db=${this.dbName} path=noOval sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
                 }
-                await this.addTransaction("del", r.oKey)
-                await this.addTransaction("del", r.hKey)
+                // H present, O missing on disk: the single-input path
+                // (removeOutputWithInput) treats this as "do nothing" rather than
+                // deleting, because deleting here would drop the live H record
+                // with no K/M undo record to restore it on reorg unwind. Match
+                // that: leave both records intact and log loudly instead of
+                // silently creating an unrecoverable-on-reorg spend.
+                console.log("Warning: Missing output value for input " + JSON.stringify(inp) + " while its outputHintKey is present - leaving O/H records intact, not deleting without an undo record")
                 continue
             }
 
@@ -1170,24 +1190,6 @@ class LevelUpStore {
                 await this.addTransaction("put", restoreKey, value)
             }
 
-            await this.addTransaction("del", key)
-        }
-    }
-
-    async recoverDeletedOutputsHints(blockHash){
-        const prefixBuf = Buffer.concat([pb(P_HINT_DEL), h2b(blockHash)])
-
-        const options = {
-            gte: prefixBuf,
-            lte: rangeEnd(prefixBuf),
-            keys: true,
-            values: true
-        }
-
-        for await (const [key, value] of this.db.iterator(options)) {
-            const suffix  = key.slice(33)  // skip [M(1)][blockHash(32)]
-            const hKey = Buffer.concat([pb(P_OUT_HINT), suffix])
-            await this.addTransaction("put", hKey, value)
             await this.addTransaction("del", key)
         }
     }

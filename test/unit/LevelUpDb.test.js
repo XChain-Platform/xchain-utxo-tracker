@@ -757,37 +757,7 @@ describe('LevelUpDb', function () {
     });
   });
 
-  // ─── recoverDeletedOutputsHints ───────��────────────────────────────���──────
-
-  describe('recoverDeletedOutputsHints', function () {
-    it('recovers H-prefix entries from M-prefix records', async function () {
-      const scriptHash = randHash();
-      const txHash8 = randHash8();
-      const blockHash = randHash();
-
-      // Insert output + hint, commit
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: BigInt(3000), height: 15 });
-      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
-      await db.endTransaction(true);
-
-      // Spend (creates K/M entries on disk)
-      await db.beginTransaction();
-      await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
-      await db.endTransaction(true);
-
-      // Recover just the hints
-      await db.beginTransaction();
-      await db.recoverDeletedOutputsHints(blockHash);
-      await db.endTransaction(true);
-
-      // The H entry should be back; verify by trying to delete outputs by hint
-      // which reads the H entry to find and delete the O entry
-      // Since the O entry was deleted, this should just succeed without error
-      await db.beginTransaction();
-      const count = await db.deleteOutputsByHint(txHash8 + randHash().substring(16));
-      // count may be 0 or 1 depending on whether O was recovered too
-      // The key thing is it doesn't throw
-      await db.endTransaction(true);
-    });
-  });
+  // recoverDeletedOutputsHints() removed 2026-07-10: dead code with zero
+  // src/ callers, byte-for-byte identical to the processOutputHints=true
+  // half of processDeletedOutputsInDb(). See uuid:340641ec.
 });
