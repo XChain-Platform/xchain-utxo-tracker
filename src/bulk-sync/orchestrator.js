@@ -36,6 +36,8 @@ const { deriveKeys, resolveUndoBlocks } = require('./merger/derive-keys.js')
 const { loadKeys }      = require('./merger/loader.js')
 const { validateChainFiles } = require('./validate-chain.js')
 const { HEADER_SIZE, OUTPUTS_RECORD_SIZE, SPENDS_RECORD_SIZE } = require('./writers.js')
+const { networkToCodes, validateConcatArtifact, parseDatHeader,
+        writeSortedManifest, checkSortedManifest } = require('./merger/resume-manifest.js')
 
 // --------------- constants ---------------
 
@@ -443,8 +445,35 @@ async function phaseMerge(args, dirs, cleanup) {
     const allSpendsPath  = path.join(dirs.merge, 'all-spends.dat')
     const allMetaPath    = path.join(dirs.merge, 'all-meta.dat')
 
-    // Skip concat if prior crash (or prior run) already produced the three concatenated files.
-    if (fs.existsSync(allOutputsPath) && fs.existsSync(allSpendsPath) && fs.existsSync(allMetaPath)) {
+    // Skip concat if prior crash (or prior run) already produced the three
+    // concatenated files AND their self-describing headers prove they belong
+    // to THIS run. Bare existence left a stale-artifact window: a merge dir
+    // reused across runs could hold same-named files from a different
+    // range/network and the pipeline would silently seed the DB from them.
+    // On mismatch we log why and rebuild from the parsed inputs (concat fails
+    // loud if those are gone, pointing the operator at a re-parse).
+    let concatReusable = fs.existsSync(allOutputsPath) && fs.existsSync(allSpendsPath) && fs.existsSync(allMetaPath)
+    if (concatReusable) {
+        const expectedIdentity = { ...networkToCodes(args.network), from: args.from, to: args.to }
+        const checks = [allOutputsPath, allSpendsPath, allMetaPath].map(p => validateConcatArtifact(p, expectedIdentity))
+        const bad = checks.find(c => !c.ok)
+        if (bad) {
+            log('MERGE', `stale concat artifact, rebuilding: ${bad.reason}`)
+            concatReusable = false
+        } else {
+            // The three artifacts must also agree with EACH OTHER on the range
+            // (a partial earlier crash can leave one file from an older run).
+            const [outH, spdH, metaH] = checks.map(c => c.header)
+            for (const [name, h] of [['spends', spdH], ['meta', metaH]]) {
+                if (h.firstHeight !== outH.firstHeight || h.lastHeight !== outH.lastHeight) {
+                    log('MERGE', `stale concat artifact, rebuilding: all-${name}.dat range ${h.firstHeight}..${h.lastHeight} != all-outputs.dat ${outH.firstHeight}..${outH.lastHeight}`)
+                    concatReusable = false
+                    break
+                }
+            }
+        }
+    }
+    if (concatReusable) {
         const outMB = (fs.statSync(allOutputsPath).size / 1024 / 1024).toFixed(1)
         const spdMB = (fs.statSync(allSpendsPath).size / 1024 / 1024).toFixed(1)
         log('MERGE', `concat skipped (reusing: outputs=${outMB}MB, spends=${spdMB}MB)`)
@@ -476,15 +505,27 @@ async function phaseMerge(args, dirs, cleanup) {
     log('MERGE', `outputs record size = ${outputsRecordSize}B (${outputsRecordSize === OUTPUTS_RECORD_SIZE ? 'coinbase-flagged' : 'legacy'})`)
 
     // Expected sorted file size = input size minus its header (externalSort
-    // strips the header from its output). Used as the resume guard.
+    // strips the header from its output). Size alone left a same-size
+    // stale-artifact window (a sorted file from an earlier run over an
+    // equally-sized input), so reuse additionally requires the sidecar
+    // manifest written after a completed sort to match the CURRENT source
+    // header (see merger/resume-manifest.js). Pre-manifest artifacts are
+    // simply re-sorted.
     function expectedSortedSize(inputPath) {
         return fs.statSync(inputPath).size - HEADER_SIZE
+    }
+    function sortedReusable(sortedPath, expSize, sourceHeader) {
+        if (!(fs.existsSync(sortedPath) && fs.statSync(sortedPath).size === expSize)) return false
+        const check = checkSortedManifest(sortedPath, sourceHeader)
+        if (!check.ok) log('MERGE', `stale sorted artifact, re-sorting: ${check.reason}`)
+        return check.ok
     }
 
     // Sort outputs by (txHash8 + vout)
     const sortedOutputsPath = path.join(dirs.merge, 'outputs-sorted.dat')
+    const allOutputsHeader = parseDatHeader(allOutputsPath)
     const expOutSize = expectedSortedSize(allOutputsPath)
-    if (fs.existsSync(sortedOutputsPath) && fs.statSync(sortedOutputsPath).size === expOutSize) {
+    if (sortedReusable(sortedOutputsPath, expOutSize, allOutputsHeader)) {
         log('MERGE', `sort-outputs skipped (reusing ${(expOutSize / 1024 / 1024).toFixed(1)}MB)`)
     } else {
         log('MERGE', 'sorting outputs by txHash8+vout')
@@ -503,12 +544,14 @@ async function phaseMerge(args, dirs, cleanup) {
             }
         })
         log('MERGE', `outputs sorted: ${outSortResult.recordsSorted} records`)
+        writeSortedManifest(sortedOutputsPath, allOutputsHeader)
     }
 
     // Sort spends by (prevTxHash8 + prevVout)
     const sortedSpendsPath = path.join(dirs.merge, 'spends-sorted.dat')
+    const allSpendsHeader = parseDatHeader(allSpendsPath)
     const expSpdSize = expectedSortedSize(allSpendsPath)
-    if (fs.existsSync(sortedSpendsPath) && fs.statSync(sortedSpendsPath).size === expSpdSize) {
+    if (sortedReusable(sortedSpendsPath, expSpdSize, allSpendsHeader)) {
         log('MERGE', `sort-spends skipped (reusing ${(expSpdSize / 1024 / 1024).toFixed(1)}MB)`)
     } else {
         log('MERGE', 'sorting spends by prevTxHash8+prevVout')
@@ -527,6 +570,7 @@ async function phaseMerge(args, dirs, cleanup) {
             }
         })
         log('MERGE', `spends sorted: ${spdSortResult.recordsSorted} records`)
+        writeSortedManifest(sortedSpendsPath, allSpendsHeader)
     }
 
     // all-spends.dat is no longer read after spends-sorted.dat is built.

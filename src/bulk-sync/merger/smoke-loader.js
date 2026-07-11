@@ -63,6 +63,11 @@ function kH(txh8, vout) {
 function kS(script) {
     const b = Buffer.alloc(33); b[0] = 0x53; script.copy(b, 1); return b
 }
+function kW(blockHash, txh8, vout) {
+    const b = Buffer.alloc(45); b[0] = 0x57
+    blockHash.copy(b, 1); txh8.copy(b, 33); b.writeUInt32BE(vout, 41)
+    return b
+}
 function kZ(blockHash, script) {
     const b = Buffer.alloc(65); b[0] = 0x5A; blockHash.copy(b, 1); script.copy(b, 33); return b
 }
@@ -133,6 +138,10 @@ async function main() {
         .map(([k, v]) => rec(k, v))
     buildFile(path.join(keysDir, 'S.dat'), sRecs)
 
+    // W: creation-block reverse index for the live output T0:1 born in H0
+    // (mandatory since the seeder emits it; loader parity-checks each record).
+    buildFile(path.join(keysDir, 'W.dat'), [rec(kW(H0, T0_8, 1), SY)])
+
     // Z
     const zRecs = [[kZ(H0, SX), Buffer.alloc(0)], [kZ(H0, SY), Buffer.alloc(0)]]
         .sort((a, b) => Buffer.compare(a[0], b[0]))
@@ -155,6 +164,7 @@ async function main() {
     assert.strictEqual(res.stats.O, 1)
     assert.strictEqual(res.stats.H, 1)
     assert.strictEqual(res.stats.S, 2)
+    assert.strictEqual(res.stats.W, 1)
     assert.strictEqual(res.stats.Z, 2)
     assert.strictEqual(res.stats.L, 2)
     console.log('[smoke/loader] load counts OK, elapsed', res.elapsed_ms, 'ms')
