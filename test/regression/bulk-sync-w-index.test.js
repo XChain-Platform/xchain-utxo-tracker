@@ -213,3 +213,89 @@ describe('Regression (bulk-sync): W creation-block index parity and reorg unwind
         }
     });
 });
+
+describe('Regression (bulk-sync): W index is windowed to undoBlocks', function () {
+    this.timeout(20000);
+
+    let tmp;
+    beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bulk-wwin-')); });
+    afterEach(function () { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {} });
+
+    // The reorg unwind can never reach past the undoBlocks window and the live
+    // tracker prunes W as blocks age out of it (TP-19), but seeded blocks below
+    // the window never re-enter that aging path. An unwindowed seed therefore
+    // leaves one PERMANENT 77-byte record per output ever created (~hundreds of
+    // GB on a from-genesis BTC mainnet run). derive-keys must emit W only for
+    // outputs created in the last undoBlocks seeded blocks.
+    it('emits W only for outputs created in the last undoBlocks seeded blocks', async function () {
+        const script = Buffer.alloc(32, 0xcd);
+        const nBlocks = 5, startH = 100, endH = startH + nBlocks - 1;
+        const undoBlocks = 2;
+
+        const blocks = [];
+        for (let i = 0; i < nBlocks; i++) {
+            blocks.push({
+                height:    startH + i,
+                blockHash: Buffer.alloc(32, 0x30 + i),
+                txid:      fullTxid((0xa0 + i).toString(16)),
+            });
+        }
+
+        const outputsPath = path.join(tmp, 'outputs.dat');
+        const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', startH, endH);
+        for (const b of blocks) {
+            w.append(b.txid.subarray(0, 8), 0, 5000000000n, b.height, b.txid, script, b.blockHash, false);
+        }
+        w.close();
+
+        const spendsPath = path.join(tmp, 'spends.dat');
+        new SpendsWriter(spendsPath, 'bitcoin', 'regtest', startH, endH).close();
+
+        const metaPath = path.join(tmp, 'meta.dat');
+        const meta = new MetaWriter(metaPath, 'bitcoin', 'regtest', startH, endH);
+        let prev = Buffer.alloc(32);
+        for (const b of blocks) {
+            meta.writeBlock(b.height, 1700000000 + b.height, b.blockHash, prev, [b.txid.subarray(0, 8)]);
+            prev = b.blockHash;
+        }
+        meta.close();
+
+        const rs = readOutputsRecordSize(outputsPath);
+        const outputsSorted = path.join(tmp, 'outputs-sorted.dat');
+        const spendsSorted  = path.join(tmp, 'spends-sorted.dat');
+        await externalSort({ inputPath: outputsPath, outputPath: outputsSorted, headerSize: HEADER_SIZE, recordSize: rs, keySize: OUTPUTS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'so') });
+        await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 20, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
+        const liveUtxos = path.join(tmp, 'live-utxos.dat');
+        await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 20, keySize: OUTPUTS_KEY_SIZE });
+
+        const keysDir = path.join(tmp, 'keys');
+        await deriveKeys({
+            metaPath, outputsPath, liveUtxosPath: liveUtxos, spendsByPrevPath: spendsSorted,
+            outDir: keysDir, tmpDir: path.join(tmp, 'derive'),
+            ramBudgetBytes: 1 << 20, network: 'bitcoin-regtest', removeSpent: true,
+            outputsRecordSize: rs, undoBlocks,
+        });
+
+        const dbPath = path.join(tmp, 'db');
+        await loadKeys({ keysDir, dbPath, removeSpent: true });
+
+        const db = new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' });
+        await db.open();
+        try {
+            const seededW = await collectWRecords(db);
+            // Only the last undoBlocks blocks (heights 103, 104) get W records.
+            expect(seededW).to.have.length(undoBlocks);
+            const wBlockHashes = seededW.map(r => r.slice(2, 66)).sort();
+            const expected = blocks.slice(nBlocks - undoBlocks).map(b => b.blockHash.toString('hex')).sort();
+            expect(wBlockHashes).to.deep.equal(expected);
+
+            // Every O record survives regardless of the W window: windowing W
+            // must not touch the live-UTXO set itself.
+            let oCount = 0;
+            for await (const k of db.keys({ gte: Buffer.from([P_OUTPUT]), lt: Buffer.from([P_OUTPUT + 1]) })) oCount++;
+            expect(oCount).to.equal(nBlocks);
+        } finally {
+            await db.close();
+        }
+    });
+});

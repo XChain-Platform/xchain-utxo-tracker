@@ -45,6 +45,10 @@
  *                           calls insertOutputBlock. This is the ONLY index the
  *                           reorg unwind (removeCreatedOutputsInBlock) scans to
  *                           purge outputs created in a rolled-back seeded block.
+ *                           Windowed to the last undoBlocks seeded blocks: the
+ *                           unwind can't reach deeper, and the live tracker
+ *                           prunes W past that window (TP-19), so deeper seeded
+ *                           records would be permanent dead weight.
  *   Z.dat   65+ 0 =  65B  (key: 'Z'+blockHash32+script32)
  *
  *   L.json             { LAST_BLOCK_HEIGHT: "<hex>", LAST_BLOCK_HASH: "<hex>" }
@@ -403,6 +407,14 @@ async function deriveKeys(opts) {
     const CAND_KEY_SIZE = 36
     const candRawPath   = path.join(tmpDir, 'script-cand-raw.dat')
     const wRawPath      = path.join(tmpDir, 'W-raw.dat')
+    // W is windowed like the live index: the reorg unwind can never reach past
+    // the undoBlocks window, and the live tracker prunes W as blocks age out of
+    // it (removeCreatedOutputsBlockIndexOnly, TP-19). Seeded blocks below the
+    // window never re-enter that aging path, so an unwindowed seed would leave
+    // one permanent 77B record per output ever created (~hundreds of GB on a
+    // from-genesis BTC run). Only outputs created in the last undoBlocks seeded
+    // blocks get a W record - byte parity with a live tracker at the same tip.
+    const wMinHeight = Math.max(0, lastHeight - undoBlocks + 1)
     const outputsReader = new RecordReader(outputsPath, OUTPUTS_HEADER_SIZE, outputsRecordSize)
     const candRaw       = new FlatWriter(candRawPath, CAND_REC_SIZE)
     const wRaw          = new FlatWriter(wRawPath, LAYOUT.W.recordSize)
@@ -431,7 +443,9 @@ async function deriveKeys(opts) {
             })
 
             // W record: 'W' + blockHash(32) + txHash8(8) + voutBE(4) | script32.
-            // Byte-identical to LevelUpDb.kOutBlk / insertOutputBlock.
+            // Byte-identical to LevelUpDb.kOutBlk / insertOutputBlock. Skipped
+            // below the undo window (see wMinHeight above).
+            if (heightBE.readUInt32BE(0) < wMinHeight) continue
             wRaw.write((buf, off) => {
                 buf[off] = P_OUT_BLK
                 blockHash   .copy(buf, off + 1,  0, 32)

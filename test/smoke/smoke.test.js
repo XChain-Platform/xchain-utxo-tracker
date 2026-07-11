@@ -105,7 +105,9 @@ describe('UTXO Tracker Smoke Tests', function () {
       expect(utxos).to.be.an('array').with.lengthOf(1);
       expect(utxos[0].vout).to.equal(0);
       expect(utxos[0].value).to.equal('5000000000');
-      expect(utxos[0].amount).to.equal(50);
+      // amount is a BigInt-formatted decimal string (cc7576d): float math is
+      // unsafe above ~90M coins, so the API returns '50.00000000', not 50.
+      expect(utxos[0].amount).to.equal('50.00000000');
       expect(utxos[0].scriptPubKey).to.be.a('string').that.is.not.empty;
     });
 
