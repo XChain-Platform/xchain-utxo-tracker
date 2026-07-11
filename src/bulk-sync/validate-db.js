@@ -150,7 +150,9 @@ async function main() {
     let itOpts = { keyEncoding: 'buffer', valueEncoding: 'buffer' }
     if (args.prefixByte != null) {
         itOpts.gte = Buffer.from([args.prefixByte])
-        itOpts.lt  = Buffer.from([args.prefixByte + 1])
+        // 0xFF has no single-byte upper bound (0xFF+1 truncates to 0x00 and
+        // yields an empty range = vacuous OK); leave lt unset to scan to end.
+        if (args.prefixByte !== 0xFF) itOpts.lt = Buffer.from([args.prefixByte + 1])
     }
 
     const itA = makeIterator(truthDb, itOpts)

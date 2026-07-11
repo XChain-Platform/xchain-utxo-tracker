@@ -129,9 +129,11 @@ async function loadKeys(opts) {
             const { keySize, recordSize } = LAYOUT[pfx]
             const filePath = path.join(keysDir, pfx + '.dat')
             if (!fs.existsSync(filePath)) {
-                onProgress({ phase: 'skip', prefix: pfx, reason: 'file missing' })
-                stats[pfx] = 0
-                continue
+                // Every selected prefix file is produced by a completed
+                // deriveKeys run. A missing one means a partial derive; a
+                // silent skip would still write LAST_* markers below and
+                // produce a DB that claims full sync with missing records.
+                throw new Error(`loadKeys: missing ${pfx}.dat in ${keysDir} (partial derive-keys output; re-run derive)`)
             }
             const t0 = Date.now()
             const valueTransform = (pfx === 'O') ? transformOValue : null

@@ -195,8 +195,9 @@ async function main() {
             keyEncoding:   'buffer',
             valueEncoding: 'buffer',
             gte:           Buffer.from([p]),
-            lt:            Buffer.from([p + 1]),
         }
+        // 0xFF+1 truncates to 0x00 and empties the range (vacuous pass).
+        if (p !== 0xFF) itOpts.lt = Buffer.from([p + 1])
         const rng = makeRng(seed ^ (p << 24))
         const { reservoir, total } = await reservoirSample(candDb, itOpts, args.samples, rng)
 

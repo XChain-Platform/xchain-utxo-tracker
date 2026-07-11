@@ -55,6 +55,15 @@ class RecordReader {
         this._end        = fs.statSync(filePath).size
         this._recordSize = recordSize
 
+        // A non-record-aligned tail (truncated writer crash) would otherwise
+        // pad the final record with stale scratch-buffer bytes and yield it
+        // as a plausible-looking garbage record.
+        const dataBytes = this._end - headerSize
+        if (dataBytes < 0 || dataBytes % recordSize !== 0) {
+            try { fs.closeSync(this._fd) } catch (_) {}
+            throw new Error(`RecordReader: ${filePath} data (${dataBytes} bytes after header) is not a multiple of recordSize ${recordSize} (truncated file?)`)
+        }
+
         const cap = Math.max(1, Math.floor(IO_CHUNK_BYTES / recordSize))
         this._buf     = Buffer.alloc(cap * recordSize)
         this._bufLen  = 0

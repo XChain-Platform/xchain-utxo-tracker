@@ -259,8 +259,14 @@ function concatFilesWithHeader(inputPaths, outputPath, headerSize) {
     const hdrBuf = Buffer.alloc(headerSize)
     let totalRecordCount = 0n
     let maxLastHeight = 0
+    let firstHdr = null       // magic/chain/net/record_size of the first input
+    let prevLastHeight = null // cross-file contiguity check
 
-    const fd = fs.openSync(outputPath, 'w+')
+    // Write to a .tmp and rename only after the header patch, so a crashed
+    // concat can never satisfy phaseMerge's existence-based resume guard with
+    // a half-written (or first-input-header-only) file.
+    const tmpPath = outputPath + '.tmp'
+    const fd = fs.openSync(tmpPath, 'w+')
     const BUF_SIZE = 256 * 1024
     const buf = Buffer.alloc(BUF_SIZE)
     let totalBytes = 0
@@ -279,8 +285,43 @@ function concatFilesWithHeader(inputPaths, outputPath, headerSize) {
                     if (n === 0) throw new Error(`short header read in ${inputPaths[i]}`)
                     hRead += n
                 }
-                totalRecordCount += hdrBuf.readBigUInt64LE(20)
-                const lastH = hdrBuf.readUInt32LE(16)
+
+                // Every input must agree on magic, chain, net and record_size.
+                // Mixed record widths (legacy 120B vs coinbase-flagged 121B
+                // outputs surviving a resume across a code upgrade) would
+                // misframe every record after the first width transition, and
+                // the sort's divisibility check cannot always catch it.
+                const thisHdr = {
+                    magic:      hdrBuf.toString('ascii', 0, 8),
+                    chain:      hdrBuf.readUInt8(8),
+                    net:        hdrBuf.readUInt8(9),
+                    recordSize: hdrBuf.readUInt32LE(28),
+                }
+                const recordCount = hdrBuf.readBigUInt64LE(20)
+                const firstH      = hdrBuf.readUInt32LE(12)
+                const lastH       = hdrBuf.readUInt32LE(16)
+                if (recordCount === 0n && stat.size !== headerSize) {
+                    // SPEC: count 0 marks a crashed/partial worker file (data
+                    // present, backfill never ran). A header-only file with
+                    // count 0 is a legitimately empty stream (e.g. a spends
+                    // range with no non-coinbase inputs).
+                    throw new Error(`${inputPaths[i]} has record_count 0 but ${stat.size} bytes (crashed/partial worker output); re-run the parse for this range`)
+                }
+                if (firstHdr === null) {
+                    firstHdr = thisHdr
+                } else {
+                    for (const f of ['magic', 'chain', 'net', 'recordSize']) {
+                        if (thisHdr[f] !== firstHdr[f]) {
+                            throw new Error(`${inputPaths[i]} header ${f}=${thisHdr[f]} differs from first input's ${firstHdr[f]}; refusing to concatenate mixed files`)
+                        }
+                    }
+                    if (prevLastHeight !== null && firstH !== prevLastHeight + 1) {
+                        throw new Error(`${inputPaths[i]} starts at height ${firstH}, expected ${prevLastHeight + 1} (gap or overlap in parsed ranges)`)
+                    }
+                }
+                prevLastHeight = lastH
+
+                totalRecordCount += recordCount
                 if (lastH > maxLastHeight) maxLastHeight = lastH
 
                 // First file: copy entirely. Others: skip header.
@@ -288,10 +329,13 @@ function concatFilesWithHeader(inputPaths, outputPath, headerSize) {
                 while (pos < stat.size) {
                     const toRead = Math.min(BUF_SIZE, stat.size - pos)
                     const n = fs.readSync(fdIn, buf, 0, toRead, pos)
-                    if (n === 0) break
+                    if (n === 0) throw new Error(`short read in ${inputPaths[i]} at offset ${pos} (file shrank mid-copy?)`)
                     fs.writeSync(fd, buf, 0, n)
                     totalBytes += n
                     pos += n
+                }
+                if (pos !== stat.size) {
+                    throw new Error(`${inputPaths[i]}: copied ${pos} of ${stat.size} bytes`)
                 }
             } finally {
                 fs.closeSync(fdIn)
@@ -305,9 +349,14 @@ function concatFilesWithHeader(inputPaths, outputPath, headerSize) {
         fs.writeSync(fd, patch, 0, 4, 16)
         patch.writeBigUInt64LE(totalRecordCount, 0)
         fs.writeSync(fd, patch, 0, 8, 20)
-    } finally {
-        fs.closeSync(fd)
+        fs.fsyncSync(fd)
+    } catch (err) {
+        try { fs.closeSync(fd) } catch (_) {}
+        try { fs.unlinkSync(tmpPath) } catch (_) {}
+        throw err
     }
+    fs.closeSync(fd)
+    fs.renameSync(tmpPath, outputPath)
     return totalBytes
 }
 
@@ -497,10 +546,18 @@ async function phaseMerge(args, dirs, cleanup) {
         leftHeaderSize:  0,   // sorted output has no header (externalSort strips it)
         rightHeaderSize: 0,   // sorted output has no header
         onProgress(ev) {
-            if (ev.phase === 'done') log('MERGE', `  anti-join: ${ev.emitted} live, ${ev.canceled} spent`)
+            if (ev.phase === 'done') log('MERGE', `  anti-join: ${ev.emitted} live, ${ev.canceled} spent, ${ev.orphanSpends} orphan spends`)
         }
     })
-    log('MERGE', `live UTXOs: ${joinResult.emitted}`)
+    log('MERGE', `live UTXOs: ${joinResult.emitted} (orphan spends: ${joinResult.orphanSpends})`)
+
+    // An orphan spend is a spend whose (prevTxHash8, prevVout) matched no
+    // output. With --from > 0 these are expected (spends of pre-range
+    // outputs); from genesis they mean the outputs stream is incomplete
+    // (missing/partial parsed range) and the DB would silently lack UTXOs.
+    if (joinResult.orphanSpends > 0 && args.from === 0) {
+        throw new Error(`anti-join found ${joinResult.orphanSpends} orphan spends on a from-genesis run: outputs stream is incomplete, aborting before load`)
+    }
 
     // outputs-sorted.dat is only read by the anti-join above.
     cleanup.enqueue(sortedOutputsPath, 'merge/outputs-sorted.dat')
@@ -649,7 +706,7 @@ async function main() {
 
 // Export pure helpers for unit testing; only auto-run the pipeline when invoked
 // directly (node orchestrator.js), not when required by a test.
-module.exports = { parseArgs, effectiveTipSafety, resolveUndoBlocks, readOutputsRecordSize }
+module.exports = { parseArgs, effectiveTipSafety, resolveUndoBlocks, readOutputsRecordSize, concatFilesWithHeader }
 
 if (require.main === module) {
     main().catch(err => {

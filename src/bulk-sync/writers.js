@@ -72,6 +72,10 @@ function backfillRecordCount(fd, count) {
     const buf = Buffer.alloc(8)
     buf.writeBigUInt64LE(BigInt(count), 0)
     fs.writeSync(fd, buf, 0, 8, 20)
+    // Durability before the tmp->final rename: without the fsync a power loss
+    // can persist the rename but not the data tail or the count backfill,
+    // leaving a FINAL-named file that defeats the SPEC's count-0 crash sentinel.
+    fs.fsyncSync(fd)
 }
 
 function openTmp(finalPath) {

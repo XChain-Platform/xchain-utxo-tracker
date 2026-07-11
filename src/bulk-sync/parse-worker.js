@@ -106,6 +106,38 @@ function outPaths(outDir, firstHeight, lastHeight) {
     }
 }
 
+/**
+ * Header sanity for an existing intermediate .dat: record_count (offset 20,
+ * u64 LE) must be non-zero (SPEC: 0 = crashed/partial worker), and for
+ * fixed-record streams (record_size at offset 28 non-zero) the file size must
+ * equal header + count * record_size. Variable streams (meta, record_size 0)
+ * only get the count check.
+ */
+function existingDatLooksComplete(filePath) {
+    if (!fs.existsSync(filePath)) return false
+    let fd
+    try {
+        fd = fs.openSync(filePath, 'r')
+        const hdr = Buffer.alloc(64)
+        if (fs.readSync(fd, hdr, 0, 64, 0) !== 64) return false
+        const count      = hdr.readBigUInt64LE(20)
+        const recordSize = hdr.readUInt32LE(28)
+        const size       = BigInt(fs.fstatSync(fd).size)
+        if (recordSize > 0) {
+            // count 0 with a header-only size is a legitimately empty stream
+            // (e.g. no spends in the range); count 0 with data is a crash.
+            return size === 64n + count * BigInt(recordSize)
+        }
+        // Variable-length stream (meta): every range has blocks, so count 0
+        // is always the crash sentinel.
+        return count !== 0n
+    } catch (_) {
+        return false
+    } finally {
+        if (fd !== undefined) { try { fs.closeSync(fd) } catch (_) {} }
+    }
+}
+
 function main() {
     const args = parseArgs(process.argv)
     validateArgs(args)
@@ -121,8 +153,13 @@ function main() {
     console.log(`[parse-worker] chain=${reader.chain}-${reader.network}, heights ${reader.firstHeight}..${reader.lastHeight} (${reader.blockCount} blocks)`)
     console.log(`[parse-worker] out=${args.out}`)
 
-    // Skip if all three outputs already exist (idempotent re-runs).
-    if (fs.existsSync(paths.outputs) && fs.existsSync(paths.spends) && fs.existsSync(paths.meta)) {
+    // Skip if all three outputs already exist AND each passes the header
+    // sanity check (record_count != 0 is the SPEC's crashed-worker sentinel;
+    // for fixed-record streams the size must match count * record_size).
+    // Existence alone would resurrect a partial file from a crashed run.
+    if (existingDatLooksComplete(paths.outputs) &&
+        existingDatLooksComplete(paths.spends) &&
+        existingDatLooksComplete(paths.meta)) {
         console.log(`[parse-worker] all outputs already exist for this range, skipping`)
         reader.close()
         return
@@ -201,10 +238,14 @@ function main() {
     console.log(`  duration=${fmtDuration(elapsed)} rate=${((totalBlocks * 1000) / elapsed).toFixed(1)} blk/s`)
 }
 
-try {
-    main()
-} catch (err) {
-    console.error('[parse-worker] FATAL:', err.message)
-    if (err.stack) console.error(err.stack)
-    process.exit(1)
+module.exports = { existingDatLooksComplete }
+
+if (require.main === module) {
+    try {
+        main()
+    } catch (err) {
+        console.error('[parse-worker] FATAL:', err.message)
+        if (err.stack) console.error(err.stack)
+        process.exit(1)
+    }
 }

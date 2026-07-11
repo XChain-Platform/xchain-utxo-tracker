@@ -43,6 +43,7 @@ dotenv.config()
 const fs   = require('fs')
 const path = require('path')
 const BlockchainConnector = require('../BlockchainConnector.js')
+const { XdmpReader } = require('./xdmp-reader.js')
 
 const MAGIC               = Buffer.from('XCHNDMP1', 'ascii')
 const HEADER_SIZE         = 64
@@ -152,14 +153,48 @@ function fmtDuration(ms) {
     return `${h}h${String(m).padStart(2, '0')}m${String(sec).padStart(2, '0')}s`
 }
 
+/**
+ * True when an existing chunk file covers exactly [chunkStart, chunkEnd] and
+ * its last block's stored hash equals the node's getblockhash(chunkEnd).
+ * Any read/parse failure (bad magic, truncation, wrong range) counts as a
+ * mismatch so the chunk gets re-dumped. Costs one file read pass + one RPC,
+ * and only runs for reused chunks.
+ */
+async function existingChunkMatchesChain(connector, filePath, chunkStart, chunkEnd) {
+    let reader
+    try {
+        reader = new XdmpReader(filePath)
+        if (reader.firstHeight !== chunkStart || reader.lastHeight !== chunkEnd) return false
+        let lastHash = null
+        for (const { blockHash } of reader.blocks()) lastHash = blockHash
+        if (!lastHash) return false
+        const nodeHash = await connector.getBlockHash(chunkEnd)
+        return lastHash.toString('hex') === nodeHash
+    } catch (err) {
+        console.log(`[dump] existing chunk ${path.basename(filePath)} unreadable (${err.message}); treating as stale`)
+        return false
+    } finally {
+        if (reader) reader.close()
+    }
+}
+
 async function dumpChunk(connector, args, chunkStart, chunkEnd, chainTipAtDump) {
     const fileName  = chunkFileName(args.chain, args.netName, chunkStart, chunkEnd)
     const finalPath = path.join(args.out, fileName)
     const tmpPath   = finalPath + '.tmp'
 
     if (fs.existsSync(finalPath)) {
-        console.log(`[skip] ${fileName} already exists`)
-        return { skipped: true, bytes: 0, blocks: 0 }
+        // Reuse is keyed on the filename (chain/net/range) only, so an
+        // existing chunk may be from a pre-reorg run or a different node.
+        // Anchor it to the current chain: its last block hash must equal
+        // getblockhash(chunkEnd). On mismatch, re-dump instead of silently
+        // seeding orphaned-chain blocks.
+        if (await existingChunkMatchesChain(connector, finalPath, chunkStart, chunkEnd)) {
+            console.log(`[skip] ${fileName} already exists (last hash matches node)`)
+            return { skipped: true, bytes: 0, blocks: 0 }
+        }
+        console.log(`[redo] ${fileName} exists but does not match the node's chain (reorg or wrong node?); re-dumping`)
+        fs.unlinkSync(finalPath)
     }
     if (fs.existsSync(tmpPath)) {
         fs.unlinkSync(tmpPath)
@@ -206,6 +241,9 @@ async function dumpChunk(connector, args, chunkStart, chunkEnd, chainTipAtDump) 
 
             cursor = batchEnd + 1
         }
+        // Durability before the tmp->final rename (see writers.js): a power
+        // loss must not persist the rename without the data.
+        fs.fsyncSync(fd)
     } finally {
         fs.closeSync(fd)
     }
@@ -284,8 +322,12 @@ async function main() {
     }
 }
 
-main().catch(err => {
-    console.error('[bulk-sync/dump] FATAL:', err.message)
-    if (err.stack) console.error(err.stack)
-    process.exit(1)
-})
+module.exports = { existingChunkMatchesChain }
+
+if (require.main === module) {
+    main().catch(err => {
+        console.error('[bulk-sync/dump] FATAL:', err.message)
+        if (err.stack) console.error(err.stack)
+        process.exit(1)
+    })
+}

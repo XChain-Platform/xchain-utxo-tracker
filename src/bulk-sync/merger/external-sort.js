@@ -37,20 +37,32 @@ const path = require('path')
 function noop() {}
 
 /**
- * Simple binary min-heap keyed by a Buffer comparator.
- * Each node carries arbitrary payload.
+ * Simple binary min-heap keyed by a Buffer comparator, with an optional
+ * numeric `seq` tie-break for equal keys. The tie-break makes the k-way
+ * merge deterministic on duplicate keys: runs are created in input order
+ * (ascending height) and phase-1's Array.sort is stable, so seq = runIdx
+ * yields chronological order for equal keys. Without it, which duplicate
+ * (e.g. BIP30 duplicate coinbase txids) the loader's last-write-wins keeps
+ * would be heap-shape-dependent, diverging from the live tracker's
+ * deterministic "later block wins".
  */
 class MinHeap {
     constructor() { this._nodes = [] }
     get size() { return this._nodes.length }
 
-    push(key, payload) {
+    _less(a, b) {
+        const cmp = Buffer.compare(a.key, b.key)
+        if (cmp !== 0) return cmp < 0
+        return (a.seq || 0) < (b.seq || 0)
+    }
+
+    push(key, payload, seq) {
         const nodes = this._nodes
-        nodes.push({ key, payload })
+        nodes.push({ key, payload, seq })
         let i = nodes.length - 1
         while (i > 0) {
             const parent = (i - 1) >> 1
-            if (Buffer.compare(nodes[i].key, nodes[parent].key) < 0) {
+            if (this._less(nodes[i], nodes[parent])) {
                 const tmp = nodes[i]; nodes[i] = nodes[parent]; nodes[parent] = tmp
                 i = parent
             } else break
@@ -70,8 +82,8 @@ class MinHeap {
                 const l = 2 * i + 1
                 const r = 2 * i + 2
                 let smallest = i
-                if (l < n && Buffer.compare(nodes[l].key, nodes[smallest].key) < 0) smallest = l
-                if (r < n && Buffer.compare(nodes[r].key, nodes[smallest].key) < 0) smallest = r
+                if (l < n && this._less(nodes[l], nodes[smallest])) smallest = l
+                if (r < n && this._less(nodes[r], nodes[smallest])) smallest = r
                 if (smallest === i) break
                 const tmp = nodes[i]; nodes[i] = nodes[smallest]; nodes[smallest] = tmp
                 i = smallest
@@ -265,7 +277,7 @@ async function externalSort(opts) {
         try {
             for (let i = 0; i < runPaths.length; i++) {
                 const rec = readOne(i)
-                if (rec) heap.push(rec.subarray(0, keySize), { runIdx: i, record: rec })
+                if (rec) heap.push(rec.subarray(0, keySize), { runIdx: i, record: rec }, i)
             }
 
             const flushCap = Math.max(1, Math.floor((256 * 1024) / recordSize))
@@ -284,7 +296,7 @@ async function externalSort(opts) {
                     flushLen = 0
                 }
                 const nextRec = readOne(payload.runIdx)
-                if (nextRec) heap.push(nextRec.subarray(0, keySize), { runIdx: payload.runIdx, record: nextRec })
+                if (nextRec) heap.push(nextRec.subarray(0, keySize), { runIdx: payload.runIdx, record: nextRec }, payload.runIdx)
             }
 
             if (flushLen > 0) {

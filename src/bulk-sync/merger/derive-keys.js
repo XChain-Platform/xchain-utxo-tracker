@@ -378,8 +378,9 @@ async function deriveKeys(opts) {
     //                             | heightBE(4) | fullTxHash(32)  = 104B.
     // Sort by scriptHash+rowIdBE (36B) → for each scriptHash, the record with
     // the smallest rowId (earliest file position = earliest block/tx/vout) is
-    // the first occurrence. rowId is just a running counter; 32 bits covers
-    // ~4B outputs, enough for Bitcoin mainnet many times over.
+    // the first occurrence. rowId is a running counter over ALL outputs in the
+    // range; BTC mainnet is already past 3B created outputs, so the u32 field
+    // bound is enforced below (a silent wrap would corrupt S/Z first-seen order).
     const CAND_REC_SIZE = 104
     const CAND_KEY_SIZE = 36
     const candRawPath   = path.join(tmpDir, 'script-cand-raw.dat')
@@ -396,9 +397,12 @@ async function deriveKeys(opts) {
             const scriptPubKey = rec.subarray(56, 88)
             const blockHash    = rec.subarray(88, 120)
             const rid          = rowId++
+            if (rid > 0xFFFFFFFF) {
+                throw new Error('deriveKeys: output rowId exceeds u32 (' + rid + '); widen the script-candidate rowId field before bulk-syncing this range')
+            }
             candRaw.write((buf, off) => {
                 scriptPubKey.copy(buf, off + 0, 0, 32)
-                buf.writeUInt32BE(rid >>> 0, off + 32)
+                buf.writeUInt32BE(rid, off + 32)
                 blockHash   .copy(buf, off + 36, 0, 32)
                 heightBE    .copy(buf, off + 68, 0, 4)
                 fullTxHash  .copy(buf, off + 72, 0, 32)

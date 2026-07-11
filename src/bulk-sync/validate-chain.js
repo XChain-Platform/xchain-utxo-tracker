@@ -21,13 +21,20 @@
  * block hash in each .xdmp record header but never recomputes it, and the
  * pipeline never checks that consecutive blocks actually link. orderBatchResults
  * (BlockchainConnector) guarantees the right block hex maps to the right height
- * WITHIN a batch RPC, but a Byzantine/buggy node returning valid-looking-but-
- * wrong block bytes, or on-disk .xdmp corruption, would still silently poison a
- * bootstrap. This pass closes that gap: for every block it recomputes the
+ * WITHIN a batch RPC, but a Byzantine/buggy node returning a wrong HEADER, or
+ * header-level .xdmp corruption, would still silently poison a bootstrap. This
+ * pass closes the header half of that gap: for every block it recomputes the
  * canonical id (sha256d over the 80-byte header - correct for BTC, LTC scrypt,
  * and DOGE AuxPoW alike, since the block id is always header-based) and confirms
  * it equals the stored hash, then confirms each header's prevHash links to the
  * previous height's block hash across the whole contiguous dump.
+ *
+ * SCOPE LIMIT: only the 80-byte header is hashed. The tx bytes after the
+ * header are NOT verified against the header's merkle root, so a substituted
+ * tx list under a genuine header passes this check. That matches the live
+ * tracker's trust model (it never verifies merkle roots either, so bulk and
+ * live builds diverge identically under such a node), but it means this tool
+ * proves header-chain integrity, not full block-body integrity.
  *
  * Read-only: opens the .xdmp files, computes hashes, reports. It mutates nothing
  * and is safe to run against a live dump directory before the parse phase.
