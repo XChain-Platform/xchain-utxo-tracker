@@ -29,12 +29,20 @@
  * it equals the stored hash, then confirms each header's prevHash links to the
  * previous height's block hash across the whole contiguous dump.
  *
- * SCOPE LIMIT: only the 80-byte header is hashed. The tx bytes after the
- * header are NOT verified against the header's merkle root, so a substituted
- * tx list under a genuine header passes this check. That matches the live
- * tracker's trust model (it never verifies merkle roots either, so bulk and
- * live builds diverge identically under such a node), but it means this tool
- * proves header-chain integrity, not full block-body integrity.
+ * With --merkle the tx bytes are verified too: every tx in each block is
+ * parsed (via XChainBlockDecoder, so Litecoin HogEx/MWEB stripping matches
+ * the parse phase), its txid recomputed, and the merkle root rebuilt and
+ * compared against the header. This closes the body half of the gap: a
+ * substituted tx list under a genuine header now fails loudly. The rebuild
+ * also rejects CVE-2012-2459 duplicate-pair mutations (two different tx
+ * lists that hash to the same root). Litecoin MWEB txs live outside the
+ * merkle tree by design (only the HogEx integration tx is committed), so a
+ * lying node could still add/remove pure-MWEB data; bulk-sync never reads
+ * MWEB payloads, so that residual cannot affect the built DB.
+ *
+ * Without --merkle only the 80-byte header is hashed (header-chain
+ * integrity, not block-body integrity), matching the live tracker's trust
+ * model.
  *
  * Read-only: opens the .xdmp files, computes hashes, reports. It mutates nothing
  * and is safe to run against a live dump directory before the parse phase.
@@ -66,6 +74,64 @@ function reverse32(src) {
     return out
 }
 
+const MERKLE_OFF = 36           // merkleRoot field offset inside the 80-byte header
+
+/**
+ * Rebuild a bitcoin merkle root from txids (internal byte order, as
+ * Transaction.getHash() returns them). Returns { root, mutated }: `mutated`
+ * flags the CVE-2012-2459 ambiguity (two identical hashes paired at any
+ * level), where distinct tx lists produce the same root. Self-duplication of
+ * an odd trailing element is the normal rule and does NOT set the flag; only
+ * a genuine adjacent-equal pair does (mirrors Bitcoin Core's mutation check).
+ */
+function computeMerkleRoot(txHashes) {
+    let mutated = false
+    let level = txHashes
+    while (level.length > 1) {
+        const next = []
+        for (let i = 0; i < level.length; i += 2) {
+            const left  = level[i]
+            const right = (i + 1 < level.length) ? level[i + 1] : left
+            if (i + 1 < level.length && left.equals(right)) mutated = true
+            next.push(hash256(Buffer.concat([left, right])))
+        }
+        level = next
+    }
+    return { root: level[0], mutated }
+}
+
+/**
+ * Verify a block's tx section against its header merkle root. blockBytes is
+ * header + tx data as stored in the .xdmp (AuxPoW already stripped at dump
+ * time). Decoding goes through XChainBlockDecoder so Litecoin HogEx/MWEB
+ * handling is byte-identical to the parse phase: after its marker/flag strip
+ * getHash() yields the true txid (marker/flag and MWEB payload are excluded
+ * from txids the same way segwit witnesses are).
+ * Returns null on success, an error string on failure.
+ */
+function verifyMerkleRoot(blockBytes, decoder) {
+    let transactions
+    try {
+        const block = decoder.blockFromBuffer(blockBytes)
+        transactions = block.transactions || []
+    } catch (err) {
+        return `tx section failed to parse: ${err.message}`
+    }
+    if (transactions.length === 0) {
+        return 'block has no transactions (a real block always has a coinbase)'
+    }
+    const txids = transactions.map(tx => tx.getHash(false))
+    const { root, mutated } = computeMerkleRoot(txids)
+    if (mutated) {
+        return 'duplicate-pair merkle mutation detected (CVE-2012-2459); tx list is ambiguous'
+    }
+    const headerRoot = blockBytes.slice(MERKLE_OFF, MERKLE_OFF + 32)
+    if (!root.equals(headerRoot)) {
+        return `merkle root mismatch: header=${reverse32(headerRoot).toString('hex')} recomputed=${reverse32(root).toString('hex')}`
+    }
+    return null
+}
+
 /**
  * Core check, factored out of file I/O so it is unit-testable with hand-built
  * blocks. Consumes an iterable of { height, blockHash, blockBytes } in ascending
@@ -73,10 +139,22 @@ function reverse32(src) {
  * that the producer invalidates on the next step, so every read happens before
  * the iterator advances.
  *
+ * @param {Object} [opts]
+ * @param {boolean} [opts.merkle]  also rebuild each block's merkle root from
+ *                                 its tx bytes and compare to the header
+ * @param {string}  [opts.coin]    coin name for the tx decoder ('bitcoin',
+ *                                 'litecoin', 'dogecoin'); required with merkle
  * @returns {{ ok:boolean, blocksChecked:number, firstHeight:(number|null),
  *             lastHeight:(number|null), error:(string|null) }}
  */
-function verifyBlockSequence(blocks) {
+function verifyBlockSequence(blocks, opts = {}) {
+    let decoder = null
+    if (opts.merkle) {
+        if (!opts.coin) throw new Error('verifyBlockSequence: opts.coin is required when opts.merkle is set')
+        // Lazy require so --help and header-only runs work without bitcoinjs-lib.
+        const XChainBlockDecoder = require('../XChainBlockDecoder.js')
+        decoder = new XChainBlockDecoder(`${opts.coin}-any`)
+    }
     let blocksChecked = 0
     let firstHeight   = null
     let lastHeight    = null
@@ -96,6 +174,11 @@ function verifyBlockSequence(blocks) {
         if (!computed.equals(blockHash)) {
             return fail(height,
                 `block hash mismatch: record=${blockHash.toString('hex')} recomputed=${computed.toString('hex')}`)
+        }
+
+        if (decoder) {
+            const merkleErr = verifyMerkleRoot(blockBytes, decoder)
+            if (merkleErr) return fail(height, merkleErr)
         }
 
         const headerPrev = reverse32(header.slice(PREV_OFF, PREV_OFF + 32))
@@ -135,7 +218,7 @@ function verifyBlockSequence(blocks) {
 // Peek a file's dump range without holding the fd open for the whole walk.
 function readRange(file) {
     const r = new XdmpReader(file)
-    const range = { file, firstHeight: r.firstHeight, lastHeight: r.lastHeight }
+    const range = { file, firstHeight: r.firstHeight, lastHeight: r.lastHeight, chain: r.chain }
     r.close()
     return range
 }
@@ -145,8 +228,11 @@ function readRange(file) {
  * Files are ordered by their dump firstHeight (filename order is lexical and
  * misorders unpadded ranges, e.g. 10000 sorts before 9999), then walked as one
  * stream. Cross-file gaps/overlaps are rejected before hashing.
+ *
+ * opts.merkle additionally rebuilds every block's merkle root from its tx
+ * bytes; the coin is taken from the dump header (opts.coin overrides).
  */
-function validateChainFiles(files) {
+function validateChainFiles(files, opts = {}) {
     if (!files || files.length === 0) {
         return { ok: false, blocksChecked: 0, firstHeight: null, lastHeight: null, error: 'no .xdmp files given' }
     }
@@ -171,7 +257,8 @@ function validateChainFiles(files) {
                 yield* reader.blocks()
             }
         }
-        return verifyBlockSequence(allBlocks())
+        const coin = opts.coin || ranges[0].chain
+        return verifyBlockSequence(allBlocks(), { merkle: !!opts.merkle, coin })
     } catch (err) {
         // A reader throws on a bad magic/version/short-read/height-gap; surface it
         // as a validation failure rather than an unhandled crash.
@@ -197,6 +284,9 @@ header's prevHash links to the previous height's block hash.
 Options:
   --dumps <dir>        Directory of blocks-*.xdmp files (required unless --file)
   --file <path>        A single .xdmp file (repeatable); overrides --dumps
+  --merkle             Also rebuild every block's merkle root from its tx bytes
+                       and compare to the header (full block-body integrity;
+                       slower: parses every transaction)
   --from <n>           Assert the dump starts at this height
   --to <n>             Assert the dump ends at this height
   -h, --help           Show this help
@@ -215,6 +305,7 @@ function parseArgs(argv) {
         switch (argv[i]) {
             case '--dumps':  args.dumps = argv[++i]; break
             case '--file':   args.files.push(argv[++i]); break
+            case '--merkle': args.merkle = true; break
             case '--from':   args.from = parseInt(argv[++i], 10); break
             case '--to':     args.to = parseInt(argv[++i], 10); break
             case '-h':
@@ -234,9 +325,9 @@ function main() {
         if (files.length === 0) throw new Error(`no blocks-*.xdmp files in ${args.dumps}`)
     }
 
-    console.log(`[validate-chain] checking ${files.length} .xdmp file(s)`)
+    console.log(`[validate-chain] checking ${files.length} .xdmp file(s)${args.merkle ? ' (headers + merkle roots)' : ' (headers only)'}`)
     const startedAt = Date.now()
-    const res = validateChainFiles(files)
+    const res = validateChainFiles(files, { merkle: args.merkle })
     const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1)
 
     if (!res.ok) {
@@ -268,4 +359,4 @@ if (require.main === module) {
     }
 }
 
-module.exports = { verifyBlockSequence, validateChainFiles, findXdmpFiles }
+module.exports = { verifyBlockSequence, validateChainFiles, findXdmpFiles, computeMerkleRoot, verifyMerkleRoot }

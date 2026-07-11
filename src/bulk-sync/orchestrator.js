@@ -120,6 +120,7 @@ function parseArgs(argv) {
         cleanupThresholdMb: 100 * 1024,
         skipDump:    false,
         verifyChain: false,
+        verifyMerkle: false,   // implies verifyChain; adds tx-body merkle rebuild
         skipParse:   false,
         // Default matches XChainUtxoTracker.REMOVE_SPENT = true. Skipping
         // I/J cuts ~130 GB of disk and ~30-60 min on mainnet because the
@@ -145,6 +146,7 @@ function parseArgs(argv) {
             case '--cleanup-threshold-mb': args.cleanupThresholdMb = parseInt(argv[++i], 10); break
             case '--skip-dump':       args.skipDump    = true; break
             case '--verify-chain':    args.verifyChain = true; break
+            case '--verify-merkle':   args.verifyMerkle = true; args.verifyChain = true; break
             case '--skip-parse':      args.skipParse   = true; break
             case '--remove-spent':    args.removeSpent = true; break
             case '--no-remove-spent': args.removeSpent = false; break
@@ -201,6 +203,9 @@ Options:
   --skip-dump           skip dump phase (reuse existing .xdmp files)
   --verify-chain        recompute each block hash and check prevHash linkage
                         across the dump before parsing (fail-loud on a break)
+  --verify-merkle       --verify-chain plus rebuild every block's merkle root
+                        from its tx bytes (full block-body integrity; parses
+                        every transaction, so the gate pass is slower)
   --skip-parse          skip dump+parse phases (reuse existing .dat files)
   --no-remove-spent     force emission of I/J prefixes (default: skip them
                         to match XChainUtxoTracker.REMOVE_SPENT=true)
@@ -722,8 +727,8 @@ async function main() {
     // prevHash linkage before committing CPU to parse/merge, so a Byzantine node
     // or a corrupted .xdmp fails the bootstrap loudly instead of poisoning the DB.
     if (args.verifyChain) {
-        log('VERIFY', `checking chain continuity across ${xdmpFiles.length} .xdmp files`)
-        const res = validateChainFiles(xdmpFiles)
+        log('VERIFY', `checking chain continuity across ${xdmpFiles.length} .xdmp files${args.verifyMerkle ? ' (headers + merkle roots)' : ''}`)
+        const res = validateChainFiles(xdmpFiles, { merkle: args.verifyMerkle })
         if (!res.ok) {
             throw new Error(`chain-continuity check failed after ${res.blocksChecked} blocks: ${res.error}`)
         }
