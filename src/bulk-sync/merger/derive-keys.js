@@ -17,7 +17,7 @@
  * XChain UTXO Tracker - Bulk Sync Derive-Keys
  *
  * Consumes the merger's intermediate streams and emits one fixed-record
- * file per LevelUpDb prefix (B/T/I/O/H/J/N/S/Z) + a small L.json. The
+ * file per LevelUpDb prefix (B/T/I/O/H/J/N/S/W/Z) + a small L.json. The
  * loader streams each file and issues db.batch() writes.
  *
  * Record layout per output file: concatenated (key || value) records, no
@@ -36,6 +36,15 @@
  *   J.dat   21+ 0 =  21B  (key: 'J'+spenderTxHash8+prevTxHash8+prevVoutBE)
  *   N.dat   33+ 0 =  33B  (key: 'N'+blockHash32)
  *   S.dat   33+ 4 =  37B  (key: 'S'+script32;           val: heightBE(4))
+ *   W.dat   45+32 =  77B  (key: 'W'+blockHash32+txHash8+voutBE; val: script32)
+ *                           Creation-block reverse index. One record per output
+ *                           in the pre-cancellation outputs stream (i.e. at
+ *                           output-creation time, before spends are applied) so
+ *                           an output later spent within the seeded range still
+ *                           gets a creation record - exactly where the live path
+ *                           calls insertOutputBlock. This is the ONLY index the
+ *                           reorg unwind (removeCreatedOutputsInBlock) scans to
+ *                           purge outputs created in a rolled-back seeded block.
  *   Z.dat   65+ 0 =  65B  (key: 'Z'+blockHash32+script32)
  *
  *   L.json             { LAST_BLOCK_HEIGHT: "<hex>", LAST_BLOCK_HASH: "<hex>" }
@@ -64,6 +73,7 @@ const P_OUT_HINT   = 0x48 // 'H'
 const P_IN_HINT    = 0x4A // 'J'
 const P_STORED_BLK = 0x4E // 'N'
 const P_SCRIPT_BLK = 0x53 // 'S'
+const P_OUT_BLK    = 0x57 // 'W' - creation-block reverse index for outputs
 const P_BLK_SCRIPT = 0x5A // 'Z'
 
 // Legacy outputs record size. New dumps are 121 bytes (trailing coinbase flag,
@@ -108,6 +118,7 @@ const LAYOUT = {
     J: { keySize: 21, valSize:  0, recordSize:  21 },
     N: { keySize: 33, valSize:  0, recordSize:  33 },
     S: { keySize: 33, valSize:  4, recordSize:  37 },
+    W: { keySize: 45, valSize: 32, recordSize:  77 },
     Z: { keySize: 65, valSize:  0, recordSize:  65 },
 }
 
@@ -381,17 +392,28 @@ async function deriveKeys(opts) {
     // the first occurrence. rowId is a running counter over ALL outputs in the
     // range; BTC mainnet is already past 3B created outputs, so the u32 field
     // bound is enforced below (a silent wrap would corrupt S/Z first-seen order).
+    // The same pre-cancellation pass also emits the W creation-block reverse
+    // index (one record per created output, keyed by the block it was created
+    // in). This mirrors the live path, which calls insertOutputBlock for every
+    // output at creation time regardless of whether it is later spent, and is
+    // the only index the reorg unwind uses to purge outputs created in a
+    // rolled-back seeded block. Emitting it here (rather than off the live-utxos
+    // stream) is what keeps spent-within-range outputs covered.
     const CAND_REC_SIZE = 104
     const CAND_KEY_SIZE = 36
     const candRawPath   = path.join(tmpDir, 'script-cand-raw.dat')
+    const wRawPath      = path.join(tmpDir, 'W-raw.dat')
     const outputsReader = new RecordReader(outputsPath, OUTPUTS_HEADER_SIZE, outputsRecordSize)
     const candRaw       = new FlatWriter(candRawPath, CAND_REC_SIZE)
+    const wRaw          = new FlatWriter(wRawPath, LAYOUT.W.recordSize)
     let rowId = 0
 
     try {
         while (true) {
             const rec = outputsReader.next()
             if (!rec) break
+            const txHash8      = rec.subarray(0, 8)
+            const voutBE       = rec.subarray(8, 12)
             const heightBE     = rec.subarray(20, 24)
             const fullTxHash   = rec.subarray(24, 56)
             const scriptPubKey = rec.subarray(56, 88)
@@ -407,18 +429,37 @@ async function deriveKeys(opts) {
                 heightBE    .copy(buf, off + 68, 0, 4)
                 fullTxHash  .copy(buf, off + 72, 0, 32)
             })
+
+            // W record: 'W' + blockHash(32) + txHash8(8) + voutBE(4) | script32.
+            // Byte-identical to LevelUpDb.kOutBlk / insertOutputBlock.
+            wRaw.write((buf, off) => {
+                buf[off] = P_OUT_BLK
+                blockHash   .copy(buf, off + 1,  0, 32)
+                txHash8     .copy(buf, off + 33, 0, 8)
+                voutBE      .copy(buf, off + 41, 0, 4)
+                scriptPubKey.copy(buf, off + 45, 0, 32)
+            })
         }
     } finally {
         outputsReader.close()
         candRaw.close()
+        wRaw.close()
     }
     stats.outputsSeen = candRaw.count
+    stats.W           = wRaw.count
     onProgress({ phase: 'script-cand-raw-done', outputs: stats.outputsSeen })
 
     const candSortedPath = path.join(tmpDir, 'script-cand-sorted.dat')
     await sortByKey(candRawPath, candSortedPath, CAND_REC_SIZE, CAND_KEY_SIZE, path.join(tmpDir, 'sort-cand'), ramBudgetBytes)
     try { fs.unlinkSync(candRawPath) } catch (_) {}
     onProgress({ phase: 'sort-cand-done' })
+
+    // Sort W by its 45-byte key so the loader streams it in key order (matching
+    // every other prefix file) and removeCreatedOutputsInBlock's prefix scan
+    // sees a contiguous per-block run.
+    await sortByKey(wRawPath, path.join(outDir, 'W.dat'), LAYOUT.W.recordSize, LAYOUT.W.keySize, path.join(tmpDir, 'sort-W'), ramBudgetBytes)
+    try { fs.unlinkSync(wRawPath) } catch (_) {}
+    onProgress({ phase: 'sort-W-done', W: stats.W })
 
     // ─── Phase 6: dedup by scriptHash → S.dat (sorted), Z-raw (unsorted) ─────
     // Because we sorted by (scriptHash, rowId), the first record per

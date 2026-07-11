@@ -35,7 +35,7 @@ const path = require('path')
 
 const { LAYOUT }       = require('./derive-keys.js')
 const { RecordReader } = require('./streaming-join.js')
-const { encodeOutput } = require('../../LevelUpDb.js')
+const { encodeOutput, kOutBlk } = require('../../LevelUpDb.js')
 
 // The intermediate O.dat value is fixed-width (value8 + height4 + fullTxHash32 +
 // coinbase1 = 45B) so the external sort can treat it as a plain record. On the
@@ -54,7 +54,31 @@ function transformOValue(value) {
 // File name → prefix letter. Load order doesn't affect correctness for
 // LevelDB (keys end up sorted internally). We go alphabetical which is
 // also ascending prefix-byte order.
-const PREFIX_FILES = ['B', 'H', 'I', 'J', 'N', 'O', 'S', 'T', 'Z']
+const PREFIX_FILES = ['B', 'H', 'I', 'J', 'N', 'O', 'S', 'T', 'W', 'Z']
+
+// Parity guard for the W (creation-block reverse index) prefix. Byte-exactness
+// across the whole merger pipeline is the hazard: a W key the live unwind can't
+// match silently re-introduces the phantom-UTXO corruption the index exists to
+// prevent. For every seeded W record we decompose the key, rebuild it through
+// the live insertOutputBlock key-builder (LevelUpDb.kOutBlk), and assert the
+// rebuilt key is byte-identical to what derive-keys emitted, plus that the value
+// is the 32-byte scriptPubKey the live path stores. A single mismatch aborts the
+// load rather than shipping a subtly-wrong reorg window.
+function validateWRecord(key, value) {
+    if (key.length !== 45) {
+        throw new Error(`loadKeys: W key must be 45 bytes, got ${key.length}`)
+    }
+    if (value.length !== 32) {
+        throw new Error(`loadKeys: W value (scriptPubKey) must be 32 bytes, got ${value.length}`)
+    }
+    const blockHashHex = key.subarray(1, 33).toString('hex')
+    const txHash8Hex   = key.subarray(33, 41).toString('hex')
+    const idx          = key.readUInt32BE(41)
+    const liveKey      = kOutBlk(blockHashHex, txHash8Hex, idx)
+    if (!liveKey.equals(key)) {
+        throw new Error(`loadKeys: W key mismatch vs live insertOutputBlock encoding at block ${blockHashHex} tx ${txHash8Hex} idx ${idx}`)
+    }
+}
 
 function noop() {}
 
@@ -65,7 +89,7 @@ function openDb(dbPath) {
     return new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' })
 }
 
-async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize, valueTransform) {
+async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize, valueTransform, recordValidator) {
     const reader = new RecordReader(filePath, 0, recordSize)
     let total = 0
     let ops   = []
@@ -77,6 +101,7 @@ async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize, valu
             // Buffer.from copies; views are invalidated on next read.
             const key   = Buffer.from(rec.subarray(0, keySize))
             let   value = Buffer.from(rec.subarray(keySize, recordSize))
+            if (recordValidator) recordValidator(key, value)
             if (valueTransform) value = valueTransform(value)
             ops.push({ type: 'put', key, value })
             total++
@@ -136,8 +161,9 @@ async function loadKeys(opts) {
                 throw new Error(`loadKeys: missing ${pfx}.dat in ${keysDir} (partial derive-keys output; re-run derive)`)
             }
             const t0 = Date.now()
-            const valueTransform = (pfx === 'O') ? transformOValue : null
-            const count = await loadPrefixFile(db, filePath, keySize, recordSize, batchSize, valueTransform)
+            const valueTransform  = (pfx === 'O') ? transformOValue : null
+            const recordValidator = (pfx === 'W') ? validateWRecord : null
+            const count = await loadPrefixFile(db, filePath, keySize, recordSize, batchSize, valueTransform, recordValidator)
             stats[pfx] = count
             onProgress({
                 phase: 'prefix-done', prefix: pfx,

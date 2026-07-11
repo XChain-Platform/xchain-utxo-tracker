@@ -1531,3 +1531,7 @@ module.exports.InvalidCursorError  = InvalidCursorError
 // source of the encoding instead of duplicating the format.
 module.exports.encodeOutput = encodeOutput
 module.exports.decodeOutput = decodeOutput
+// Exported so the bulk-sync loader can assert its seeded W (creation-block
+// reverse index) keys are byte-identical to the live insertOutputBlock path,
+// reusing this single source of the key encoding instead of duplicating it.
+module.exports.kOutBlk = kOutBlk
