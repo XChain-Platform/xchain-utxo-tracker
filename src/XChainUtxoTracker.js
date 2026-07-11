@@ -116,7 +116,7 @@ const MAX_ADDRESS_OUTPUTS = Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS) > 0
 // reorg inside the trust window is auto-recovered, never a manual resync). On
 // 1-minute DOGE blocks the old flat value of 10 was only ~10 minutes of headroom.
 // Single-sourced in undo-blocks.js so the live worker and the bulk seeder can never drift.
-const { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS } = require('./undo-blocks.js')
+const { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS } = require('./undo-blocks.js')
 
 // Map a network string ('dogecoin-mainnet', 'litecoin-testnet', ...) to its coin.
 function coinFromNetwork(network){
@@ -132,7 +132,21 @@ function coinFromNetwork(network){
 function resolveUndoBlocks(network){
     const coin = coinFromNetwork(network)
     const envKey = coin ? ('XCHAIN_UNDO_BLOCKS_' + coin) : ''
-    return parseInt(process.env[envKey], 10) || DEFAULT_UNDO_BLOCKS[coin] || FALLBACK_UNDO_BLOCKS
+    const resolved = parseInt(process.env[envKey], 10) || DEFAULT_UNDO_BLOCKS[coin] || FALLBACK_UNDO_BLOCKS
+    // Loud warning (do NOT clamp or throw: the override is a deliberate operator knob)
+    // when the resolved window exceeds the decoder's dispenser-expiry safe depth. Past
+    // that ceiling the decoder aborts reorg recovery while the tracker keeps auto-
+    // recovering, silently splitting the two components' effective reorg windows.
+    if (resolved > MAX_SAFE_UNDO_BLOCKS) {
+        console.error(
+            'WARNING: resolved undo-blocks window for ' + (coin || network) + ' is ' + resolved +
+            ', which exceeds the decoder dispenser-expiry safe depth (' + MAX_SAFE_UNDO_BLOCKS + '). ' +
+            'The decoder will abort reorg recovery past ' + MAX_SAFE_UNDO_BLOCKS + ' blocks while this ' +
+            'tracker auto-recovers, splitting the two effective reorg windows. Raise ' +
+            'DISPENSER_EXPIRE_SAFE_DEPTH in the decoder to match, or lower ' + envKey + '.'
+        )
+    }
+    return resolved
 }
 const PREFETCH_SIZE = 10 //Number of blocks to pre-fetch concurrently while processing the current one
 

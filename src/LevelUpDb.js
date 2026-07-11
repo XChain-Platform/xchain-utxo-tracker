@@ -152,7 +152,16 @@ function rangeEnd(prefix) {
     // first-seen (S) record. 64 bytes covers the current maximum (44) with margin; a
     // longer all-0xFF upper bound never bleeds into the next prefix (the differing
     // prefix byte is compared first) and never excludes a valid key.
-    return Buffer.concat([prefix, Buffer.alloc(64, 0xFF)])
+    //
+    // The suffix is sized so that prefix.length + suffix.length is at least the
+    // longest key in the schema (77 bytes: K/P_OUT_DEL). The internal fixed-prefix
+    // scans always leave >= 33-byte prefixes, but getValuesFromKeyPattern accepts
+    // patterns as short as 2 bytes, which over a 77-byte K key leaves a 75-byte
+    // suffix that a fixed 64-byte 0xFF bound would under-cover. Deriving the length
+    // from the prefix keeps the bound valid for every scan while retaining the
+    // 64-byte floor for the common fixed-prefix cases.
+    const MAX_KEY_LEN = 77
+    return Buffer.concat([prefix, Buffer.alloc(Math.max(64, MAX_KEY_LEN - prefix.length), 0xFF)])
 }
 
 // Normalize a key to a string for use as a JavaScript Map key.
@@ -247,6 +256,12 @@ function kScriptBlk(scriptHex) {
     return buf
 }
 function kScriptBlkFromBuf(scriptBuf) {
+    // Same overrun-coincidence hazard the hex builders guard against: .copy()
+    // silently caps at the source length instead of throwing, so a short
+    // scriptBuf would leave uninitialized allocUnsafe garbage in the key.
+    if (scriptBuf.length !== 32) {
+        throw new Error(`kScriptBlkFromBuf expects a 32-byte scriptPubKey buffer, got ${scriptBuf.length} bytes`)
+    }
     const buf = Buffer.allocUnsafe(33)
     buf[0] = P_SCRIPT_BLK
     scriptBuf.copy(buf, 1, 0, 32)
@@ -260,6 +275,15 @@ function kBlkScript(blockHashHex, scriptHex) {
     return buf
 }
 function kBlkScriptFromBuf(blockHashHex, scriptBuf) {
+    if (blockHashHex.length !== 64) {
+        throw new Error(`kBlkScriptFromBuf expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
+    }
+    // Same overrun-coincidence hazard the hex builders guard against: .copy()
+    // silently caps at the source length instead of throwing, so a short
+    // scriptBuf would leave uninitialized allocUnsafe garbage in the key.
+    if (scriptBuf.length !== 32) {
+        throw new Error(`kBlkScriptFromBuf expects a 32-byte scriptPubKey buffer, got ${scriptBuf.length} bytes`)
+    }
     const buf = Buffer.allocUnsafe(65)
     buf[0] = P_BLK_SCRIPT
     buf.write(blockHashHex, 1, 'hex')
@@ -325,6 +349,15 @@ function kOutBlk(blockHashHex, txHash8Hex, idx) {
 // Build an O-prefixed output key from an already-binary scriptPubKey buffer
 // (used in the input-removal path where the script is fetched from the H index).
 function kOutputFromBuf(scriptPubKeyBuf, txHash8Hex, idx) {
+    // Same overrun-coincidence hazard the hex builders guard against: .copy()
+    // silently caps at the source length instead of throwing, so a short
+    // scriptPubKeyBuf would leave uninitialized allocUnsafe garbage in the key.
+    if (scriptPubKeyBuf.length !== 32) {
+        throw new Error(`kOutputFromBuf expects a 32-byte scriptPubKey buffer, got ${scriptPubKeyBuf.length} bytes`)
+    }
+    if (txHash8Hex.length !== 16) {
+        throw new Error(`kOutputFromBuf expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(45)
     buf[0] = P_OUTPUT
     scriptPubKeyBuf.copy(buf, 1, 0, 32)
@@ -334,6 +367,18 @@ function kOutputFromBuf(scriptPubKeyBuf, txHash8Hex, idx) {
 }
 // Build a K-prefixed deleted-output key from a binary scriptPubKey buffer.
 function kOutDelFromBuf(blockHashHex, scriptPubKeyBuf, txHash8Hex, idx) {
+    if (blockHashHex.length !== 64) {
+        throw new Error(`kOutDelFromBuf expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
+    }
+    // Same overrun-coincidence hazard the hex builders guard against: .copy()
+    // silently caps at the source length instead of throwing, so a short
+    // scriptPubKeyBuf would leave uninitialized allocUnsafe garbage in the key.
+    if (scriptPubKeyBuf.length !== 32) {
+        throw new Error(`kOutDelFromBuf expects a 32-byte scriptPubKey buffer, got ${scriptPubKeyBuf.length} bytes`)
+    }
+    if (txHash8Hex.length !== 16) {
+        throw new Error(`kOutDelFromBuf expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(77)
     buf[0] = P_OUT_DEL
     buf.write(blockHashHex, 1, 'hex')
@@ -1535,3 +1580,9 @@ module.exports.decodeOutput = decodeOutput
 // reverse index) keys are byte-identical to the live insertOutputBlock path,
 // reusing this single source of the key encoding instead of duplicating it.
 module.exports.kOutBlk = kOutBlk
+// Exported so the Buffer-based key builders' length guards can be exercised
+// directly in unit tests, mirroring their hex-string counterparts.
+module.exports.kOutputFromBuf = kOutputFromBuf
+module.exports.kOutDelFromBuf = kOutDelFromBuf
+module.exports.kScriptBlkFromBuf = kScriptBlkFromBuf
+module.exports.kBlkScriptFromBuf = kBlkScriptFromBuf

@@ -142,18 +142,22 @@ for that stream:
 | I                    | `(prevTxHash8, prevVout)`            | spends          |
 | J                    | `(spenderTxHash8, prevTxHash8, v)`   | spends          |
 | S / Z                | `scriptPubKey` then `height`         | outputs (all)   |
+| W                    | `(blockHash, txHash8, vout)`         | outputs (pre-cancel) |
 | T                    | `txHash8`                            | meta (tx list)  |
 | B / N                | `blockHash`                          | meta (blocks)   |
 | LAST_BLOCK_{HEIGHT,HASH} | max height                       | meta (blocks)   |
 
-The `W`, `K`, and `M` reorg-recovery reverse indices are skipped entirely. The design
+The `K` and `M` reorg-recovery reverse indices are skipped entirely. The `W`
+creation-block reverse index IS seeded (one record per output in the pre-cancellation
+outputs stream, matching where the live path calls `insertOutputBlock`; see the W.dat
+layout in `merger/derive-keys.js` and `validateWRecord` in `loader.js`). The design
 relies on bulk-sync stopping at least `UNDO_BLOCKS` before the tip so the regular
 incremental worker builds W/K/M for every block inside the reorg window. The
 orchestrator enforces this: it clamps `--tip-safety` up to `resolveUndoBlocks(network)`
 (the same per-chain value that sizes the seeded `N` window), so no bulk-seeded block can
 fall inside the active reorg window. If this invariant is broken (tip-safety below
-`UNDO_BLOCKS`), a reorg into the bulk range finds no W/K/M and leaves phantom (unspent,
-never-deleted) or missing (spent, never-restored) UTXOs until a full re-index (#4634).
+`UNDO_BLOCKS`), a reorg into the bulk range finds no K/M and leaves missing (spent,
+never-restored) UTXOs until a full re-index (#4634).
 
 ## Endianness rationale
 
