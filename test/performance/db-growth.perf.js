@@ -74,12 +74,22 @@ describe('Perf: Database Growth Degradation', function () {
       const sampleSize = Math.min(SCALE.addresses, 50);
       const sampleAddresses = addressPool.slice(0, sampleSize);
 
-      const { durationMs: serialMs } = await measureAsync(async () => {
-        for (const key of sampleAddresses) {
-          const utxos = await tracker.getUtxosAddress(key.address);
-          totalUtxos += utxos.length;
-        }
-      });
+      // Best-of-3: a single pass is at the mercy of shared-runner scheduler
+      // jitter, and the 25% checkpoint's small baseline amplifies any blip
+      // straight into the degradation ratio. The minimum reflects intrinsic
+      // per-query cost, which is what the sub-linear-growth assertion is about.
+      let serialMs = Infinity;
+      for (let rep = 0; rep < 3; rep++) {
+        let repUtxos = 0;
+        const { durationMs } = await measureAsync(async () => {
+          for (const key of sampleAddresses) {
+            const utxos = await tracker.getUtxosAddress(key.address);
+            repUtxos += utxos.length;
+          }
+        });
+        serialMs = Math.min(serialMs, durationMs);
+        if (rep === 0) totalUtxos += repUtxos;
+      }
 
       // Measure concurrent query time
       const { durationMs: concurrentMs } = await measureAsync(async () => {
