@@ -88,33 +88,40 @@ describe('Perf: Sustained Indexing Throughput', function () {
     const mid = Math.floor(chain.length / 2);
     const batchSize = 100;
 
-    // First half
-    const { durationMs: firstHalfMs } = await measureAsync(async () => {
-      for (let i = 0; i < mid; i += batchSize) {
-        const batch = chain.slice(i, Math.min(i + batchSize, mid));
-        await processBlocksAndCommit(tracker, batch);
+    // Per-batch timings, compared by median: a whole-half wall-clock ratio is
+    // one sample per side, so a single GC pause or LevelDB compaction in either
+    // half swings it across the threshold on shared runners. The median batch
+    // time still degrades if indexing genuinely slows with database size.
+    async function timeBatches(start, end) {
+      const times = [];
+      for (let i = start; i < end; i += batchSize) {
+        const batch = chain.slice(i, Math.min(i + batchSize, end));
+        const { durationMs } = await measureAsync(() => processBlocksAndCommit(tracker, batch));
+        times.push(durationMs);
       }
-    });
+      const sorted = times.slice().sort((a, b) => a - b);
+      return {
+        totalMs:  times.reduce((a, b) => a + b, 0),
+        medianMs: sorted[Math.floor(sorted.length / 2)]
+      };
+    }
 
-    // Second half
-    const { durationMs: secondHalfMs } = await measureAsync(async () => {
-      for (let i = mid; i < chain.length; i += batchSize) {
-        const batch = chain.slice(i, Math.min(i + batchSize, chain.length));
-        await processBlocksAndCommit(tracker, batch);
-      }
-    });
+    const first  = await timeBatches(0, mid);
+    const second = await timeBatches(mid, chain.length);
+    const firstHalfMs  = first.totalMs;
+    const secondHalfMs = second.totalMs;
 
-    const ratio = secondHalfMs / firstHalfMs;
+    const ratio = second.medianMs / first.medianMs;
 
     metrics.record('first-half', firstHalfMs);
     metrics.record('second-half', secondHalfMs);
 
-    console.log(`    First half:  ${formatMs(firstHalfMs)}`);
-    console.log(`    Second half: ${formatMs(secondHalfMs)}`);
-    console.log(`    Degradation ratio: ${ratio.toFixed(2)}x`);
+    console.log(`    First half:  ${formatMs(firstHalfMs)} (median batch ${formatMs(first.medianMs)})`);
+    console.log(`    Second half: ${formatMs(secondHalfMs)} (median batch ${formatMs(second.medianMs)})`);
+    console.log(`    Degradation ratio (median batch): ${ratio.toFixed(2)}x`);
 
     expect(ratio).to.be.lessThan(2.0,
-      `Second half was ${ratio.toFixed(2)}x slower than first half (threshold: 2.0x)`);
+      `Second-half median batch was ${ratio.toFixed(2)}x slower than first half (threshold: 2.0x)`);
   });
 
   it('does not leak memory during sustained indexing', async function () {
@@ -177,14 +184,23 @@ describe('Perf: Spike Load', function () {
     const spikeTxsPerBlock = SCALE.txsPerBlock * 5;
     const phaseBlocks = Math.max(20, Math.floor(SCALE.blocks / 5));
 
+    // Per-block medians, not phase averages: small blocks index in well under a
+    // millisecond, so one GC pause or compaction inside either phase swings a
+    // single-sample average across the threshold on shared runners. A genuine
+    // failure to recover still shifts the whole recovery distribution.
+    async function medianPerBlock(blocks) {
+      const times = [];
+      for (const block of blocks) {
+        const { durationMs } = await measureAsync(() => processAndCommit(tracker, block));
+        times.push(durationMs);
+      }
+      const sorted = times.slice().sort((a, b) => a - b);
+      return sorted[Math.floor(sorted.length / 2)];
+    }
+
     // Phase 1: Baseline (small blocks)
     const baselineChain = buildDenseChain(phaseBlocks, addressPool, baselineTxsPerBlock);
-    const { durationMs: baselineMs } = await measureAsync(async () => {
-      for (const block of baselineChain) {
-        await processAndCommit(tracker, block);
-      }
-    });
-    const baselinePerBlock = baselineMs / phaseBlocks;
+    const baselinePerBlock = await medianPerBlock(baselineChain);
 
     // Phase 2: Spike (large blocks)
     const spikeCount = Math.max(5, Math.floor(phaseBlocks / 4));
@@ -205,12 +221,7 @@ describe('Perf: Spike Load', function () {
     const recoveryChain = buildDenseChain(phaseBlocks, addressPool, baselineTxsPerBlock);
     recoveryChain.forEach((b, i) => { b.height = phaseBlocks + spikeCount + i; });
 
-    const { durationMs: recoveryMs } = await measureAsync(async () => {
-      for (const block of recoveryChain) {
-        await processAndCommit(tracker, block);
-      }
-    });
-    const recoveryPerBlock = recoveryMs / phaseBlocks;
+    const recoveryPerBlock = await medianPerBlock(recoveryChain);
 
     metrics.record('baseline-phase (per block)', baselinePerBlock);
     metrics.record('recovery-phase (per block)', recoveryPerBlock);
