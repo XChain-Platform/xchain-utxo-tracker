@@ -82,6 +82,20 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
       process.env.XCHAIN_UNDO_BLOCKS_DOGE = 'not-a-number';
       expect(undoBlocksFor('dogecoin-mainnet')).to.equal(120);
     });
+
+    // uuid:65309b82: the live resolver used to honor a non-positive override
+    // (`parseInt(...) || default` treats a negative as truthy), yielding a
+    // negative window that mass-purged undo records, while the seeder rejected
+    // it via `> 0`. Both share the single resolver now, so a non-positive
+    // override falls back to the per-chain default on BOTH paths, in agreement.
+    const { resolveUndoBlocks: seederResolveNP } = require('../../src/bulk-sync/merger/derive-keys.js');
+    for (const bad of ['-5', '0']) {
+      it('a non-positive override (' + bad + ') falls back to the default on live AND seeder', function () {
+        process.env.XCHAIN_UNDO_BLOCKS_DOGE = bad;
+        expect(undoBlocksFor('dogecoin-mainnet')).to.equal(120);
+        expect(seederResolveNP('dogecoin-mainnet')).to.equal(120);
+      });
+    }
   });
 
   // #4903: the live worker and the bulk seeder must agree on the per-chain window, or the

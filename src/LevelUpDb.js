@@ -182,12 +182,21 @@ function toMapKey(key) {
 // batch flush this is the largest single contributor to GC pressure.
 
 function kBlock(blockHashHex) {
+    // Same overrun-coincidence hazard the other builders guard against: a wrong-
+    // length hash leaves uninitialized allocUnsafe garbage in the key (buf.write
+    // stops at the first invalid nibble), yielding a nondeterministic key.
+    if (blockHashHex.length !== 64) {
+        throw new Error(`kBlock expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(33)
     buf[0] = P_BLOCK
     buf.write(blockHashHex, 1, 'hex')
     return buf
 }
 function kTx(txHash8Hex) {
+    if (txHash8Hex.length !== 16) {
+        throw new Error(`kTx expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(9)
     buf[0] = P_TX
     buf.write(txHash8Hex, 1, 'hex')
@@ -250,6 +259,11 @@ function kInHint(txHash8Hex, prevTxHash8Hex, idx) {
     return buf
 }
 function kScriptBlk(scriptHex) {
+    // Same overrun-coincidence hazard kScriptBlkFromBuf() guards against, and
+    // reachable with caller-supplied hex via getOutputScriptBlock().
+    if (scriptHex.length !== 64) {
+        throw new Error(`kScriptBlk expects a 64-hex (32-byte) scriptPubKey, got ${scriptHex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(33)
     buf[0] = P_SCRIPT_BLK
     buf.write(scriptHex, 1, 'hex')
@@ -268,6 +282,14 @@ function kScriptBlkFromBuf(scriptBuf) {
     return buf
 }
 function kBlkScript(blockHashHex, scriptHex) {
+    // Same overrun-coincidence hazard kBlkScriptFromBuf() guards against on both
+    // fields: a wrong-length arg leaves allocUnsafe garbage in the key.
+    if (blockHashHex.length !== 64) {
+        throw new Error(`kBlkScript expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
+    }
+    if (scriptHex.length !== 64) {
+        throw new Error(`kBlkScript expects a 64-hex (32-byte) scriptPubKey, got ${scriptHex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(65)
     buf[0] = P_BLK_SCRIPT
     buf.write(blockHashHex, 1, 'hex')
@@ -323,6 +345,9 @@ function kHintDel(blockHashHex, txHash8Hex, idx) {
     return buf
 }
 function kStoredBlk(blockHashHex) {
+    if (blockHashHex.length !== 64) {
+        throw new Error(`kStoredBlk expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
+    }
     const buf = Buffer.allocUnsafe(33)
     buf[0] = P_STORED_BLK
     buf.write(blockHashHex, 1, 'hex')
@@ -583,6 +608,14 @@ class LevelUpStore {
     removeTransaction(key, deletedKey){
         const mapKey    = toMapKey(key)
         const delMapKey = toMapKey(deletedKey)
+
+        // Guard first: if the staged put is absent, return false instead of
+        // dereferencing undefined (`this.transactionArray.get(mapKey).value` threw
+        // a bare, outpoint-less TypeError). Placing the guard before touching
+        // deletedTransactionArray also avoids staging an undefined undo value.
+        if (!this.transactionArray.has(mapKey)){
+            return false
+        }
 
         if (!this.deletedTransactionArray.has(delMapKey)){
             this.deletedTransactionArray.set(delMapKey, new Map())
@@ -1114,8 +1147,15 @@ class LevelUpStore {
                 // spend writes durable K/M restore records (see
                 // writeCrossBlockSpendRecovery). Same-block spends write nothing.
                 const inMemOVal = this.getTransactionValue(inMemOKey)
-                this.removeTransaction(inMemOKey, inp.blockHash)
-                this.removeTransaction(r.hKey, inp.blockHash)
+                // Check both removals and fail with the same outpoint-naming
+                // diagnostic the single-input path (removeOutputWithInput) throws,
+                // instead of an opaque TypeError / a silently-ignored false return.
+                if (!this.removeTransaction(inMemOKey, inp.blockHash)){
+                    throw Error("Missing output match for input "+JSON.stringify(inp))
+                }
+                if (!this.removeTransaction(r.hKey, inp.blockHash)){
+                    throw Error("Missing outputHintKey match for input "+JSON.stringify(inp))
+                }
                 await this.writeCrossBlockSpendRecovery(inp, r.scriptPubKeyBuf, inMemOVal)
                 continue
             }
@@ -1586,3 +1626,9 @@ module.exports.kOutputFromBuf = kOutputFromBuf
 module.exports.kOutDelFromBuf = kOutDelFromBuf
 module.exports.kScriptBlkFromBuf = kScriptBlkFromBuf
 module.exports.kBlkScriptFromBuf = kBlkScriptFromBuf
+// Exported so the hex-string key builders' length guards can be exercised
+// directly in unit tests, mirroring their *FromBuf counterparts.
+module.exports.kBlock = kBlock
+module.exports.kTx = kTx
+module.exports.kScriptBlk = kScriptBlk
+module.exports.kBlkScript = kBlkScript

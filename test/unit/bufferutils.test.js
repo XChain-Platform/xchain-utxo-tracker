@@ -214,6 +214,20 @@ describe('bufferutils', function () {
       expect(Number(val)).to.equal(100000000);
     });
 
+    it('local patched readUInt64 decodes a high-bit-set value as a large positive BigInt', function () {
+      // Regression: the wire tx output value is UNSIGNED. The signed reader would
+      // decode a value >= 2^63 as a negative BigInt. Use the local patched reader.
+      const LocalReader = localBufferutils.BufferReader;
+
+      const maxBuf = Buffer.from('ffffffffffffffff', 'hex'); // 2^64 - 1
+      expect(new LocalReader(maxBuf).readUInt64()).to.equal(18446744073709551615n);
+
+      const highBit = Buffer.from('0000000000000080', 'hex'); // 2^63 LE
+      const val = new LocalReader(highBit).readUInt64();
+      expect(val).to.equal(9223372036854775808n);
+      expect(val > 0n).to.equal(true);
+    });
+
     it('readSlice returns exact bytes and advances', function () {
       const reader = new BufferReader(Buffer.from([1, 2, 3, 4, 5]));
       const slice = reader.readSlice(3);

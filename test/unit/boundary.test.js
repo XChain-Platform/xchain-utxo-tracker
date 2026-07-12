@@ -600,4 +600,22 @@ describe('Boundary: Stored blocks tracking', function () {
     const stored = await db.getLastStoredBlocks();
     expect(stored).to.not.include(hash);
   });
+
+  it('rejects a wrong-length block hash instead of writing an unmatchable key', async function () {
+    const shortHash = 'deadbeef'; // 8 hex chars, not 64
+
+    await db.beginTransaction();
+    let threw = false;
+    try {
+      await db.addLastStoredBlock(shortHash);
+    } catch (e) {
+      threw = true;
+      expect(e.message).to.match(/kStoredBlk expects a 64-hex/);
+    }
+    expect(threw).to.equal(true);
+    await db.endTransaction();
+
+    const stored = await db.getLastStoredBlocks();
+    expect(stored).to.not.include(shortHash);
+  });
 });

@@ -35,6 +35,5 @@ license does not grant any rights to these marks. See the Trademark Policy:
 ## Third-Party Components
 
 This software includes third-party open-source dependencies, each governed by
-its own license, predominantly MIT, ISC, Apache-2.0, and BSD. The MariaDB
-Node.js connector (`mariadb`) is licensed under LGPL-2.1-or-later. All
-third-party components retain their original license notices.
+its own license, predominantly MIT, ISC, Apache-2.0, and BSD. All third-party
+components retain their original license notices.

@@ -156,7 +156,10 @@ class BufferReader {
     return result;
   }
   readUInt64() {
-    const result = this.buffer.readBigInt64LE(this.offset);
+    // Bitcoin wire tx output value is an UNSIGNED 64-bit LE integer; the signed
+    // reader would decode a value >= 2^63 as a negative BigInt instead of a large
+    // positive one. Use the unsigned reader (matches LevelUpDb readBigUInt64BE).
+    const result = this.buffer.readBigUInt64LE(this.offset);
     this.offset += 8;
     return result;
   }

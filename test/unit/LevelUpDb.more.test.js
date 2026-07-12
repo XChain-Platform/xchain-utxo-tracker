@@ -430,6 +430,41 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(outputs).to.be.empty;
         });
 
+        it('removeTransaction returns false (no TypeError) for an unstaged key', async function () {
+            await db.beginTransaction();
+            // Previously this dereferenced undefined and threw a bare, context-less
+            // TypeError; it must now return false so callers can react diagnostically.
+            const result = db.removeTransaction(Buffer.from('aa', 'hex'), Buffer.from('bb', 'hex'));
+            expect(result).to.equal(false);
+            await db.endTransaction(true);
+        });
+
+        it('throws the outpoint-naming diagnostic when a staged output is already gone (duplicate outpoint in one batch)', async function () {
+            const scriptBuf = randBuf32();
+            const txHash8   = randHash8();
+            const blockHash = randHash();
+
+            await db.beginTransaction();
+            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0, value: BigInt(2000), height: 5 });
+            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
+
+            // The same outpoint listed twice: the first removal deletes the staged O,
+            // the second finds it missing and must throw with outpoint context rather
+            // than silently ignoring removeTransaction's false return.
+            let threw = false;
+            try {
+                await db.removeOutputsWithInputsBatch([
+                    { prevTxHash: txHash8, prevOutputIndex: 0, blockHash },
+                    { prevTxHash: txHash8, prevOutputIndex: 0, blockHash },
+                ]);
+            } catch (e) {
+                threw = true;
+                expect(e.message).to.match(/Missing output match for input/);
+            }
+            expect(threw).to.equal(true);
+            await db.endTransaction(false);
+        });
+
         it('warns and skips when hint is missing (pre-REMOVE_SPENT data)', async function () {
             const txHash8   = randHash8();
             const blockHash = randHash();
@@ -1172,6 +1207,41 @@ describe('LevelUpDb (extended coverage)', function () {
 
         it('kBlkScriptFromBuf succeeds with correctly-sized inputs', () => {
             expect(() => LevelUpStore.kBlkScriptFromBuf(randHash(), randBuf32())).to.not.throw();
+        });
+    });
+
+    describe('Hex-string key builder length guards (uuid:d59a4d11)', () => {
+        // kBlock/kTx/kScriptBlk/kBlkScript previously used allocUnsafe with no
+        // length guard, so a short/odd-length hash left uninitialized memory in
+        // the key (buf.write stops at the first invalid nibble). Guard them like
+        // their siblings so malformed hex fails loud instead of producing a
+        // nondeterministic key.
+        it('kBlock throws on a wrong-length blockHash', () => {
+            expect(() => LevelUpStore.kBlock('abcd')).to.throw(/64-hex \(32-byte\) blockHash/);
+        });
+        it('kBlock succeeds with a 64-hex blockHash', () => {
+            expect(() => LevelUpStore.kBlock(randHash())).to.not.throw();
+        });
+        it('kTx throws on a wrong-length txid prefix', () => {
+            expect(() => LevelUpStore.kTx(randHash())).to.throw(/16-hex \(8-byte\) txid prefix/);
+        });
+        it('kTx succeeds with a 16-hex prefix', () => {
+            expect(() => LevelUpStore.kTx(randHash8())).to.not.throw();
+        });
+        it('kScriptBlk throws on a wrong-length scriptPubKey', () => {
+            expect(() => LevelUpStore.kScriptBlk('ab')).to.throw(/64-hex \(32-byte\) scriptPubKey/);
+        });
+        it('kScriptBlk succeeds with a 64-hex scriptPubKey', () => {
+            expect(() => LevelUpStore.kScriptBlk(randHash())).to.not.throw();
+        });
+        it('kBlkScript throws on a wrong-length blockHash', () => {
+            expect(() => LevelUpStore.kBlkScript('ab', randHash())).to.throw(/64-hex \(32-byte\) blockHash/);
+        });
+        it('kBlkScript throws on a wrong-length scriptPubKey', () => {
+            expect(() => LevelUpStore.kBlkScript(randHash(), 'ab')).to.throw(/64-hex \(32-byte\) scriptPubKey/);
+        });
+        it('kBlkScript succeeds with two 64-hex inputs', () => {
+            expect(() => LevelUpStore.kBlkScript(randHash(), randHash())).to.not.throw();
         });
     });
 

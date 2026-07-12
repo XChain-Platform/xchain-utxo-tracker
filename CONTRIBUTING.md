@@ -32,7 +32,7 @@ xchain-utxo-tracker/
 
 ### Prerequisites
 
-- **Node.js 22** exactly. The platform pins Node 22 fleet-wide: the `mariadb` driver is ESM-only (Node 18 fails with `ERR_REQUIRE_ESM`), and newer majors are not validated against the stack. `engines.node` declares `>=22.0.0`; use 22.
+- **Node.js 22** exactly. The platform standardizes on Node 22 fleet-wide, and newer majors are not validated against the stack. `engines.node` declares `>=22.0.0`; use 22.
 - No compiler toolchain is required for LevelDB: `classic-level` ships prebuilt binaries for Node 22 and `npm install` handles it automatically.
 - A coin node (`bitcoind` / `litecoind` / `dogecoind`) for integration and e2e runs. For local work, the `xchain-regtest-miner` plus a regtest stack is the easiest path.
 

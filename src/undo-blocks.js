@@ -19,4 +19,51 @@ const FALLBACK_UNDO_BLOCKS = 12
 // requires raising both, in lockstep.
 const MAX_SAFE_UNDO_BLOCKS = 126
 
-module.exports = { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS }
+// Map a network string ('bitcoin-mainnet', 'dogecoin-regtest', ...) to a coin code.
+function coinFromNetwork(network){
+    const n = String(network || '').toLowerCase()
+    if (n.startsWith('bitcoin'))  return 'BTC'
+    if (n.startsWith('litecoin')) return 'LTC'
+    if (n.startsWith('dogecoin')) return 'DOGE'
+    return null
+}
+
+// SINGLE-SOURCED env-override resolver, shared by the live worker
+// (XChainUtxoTracker.js), the bulk seeder (derive-keys.js), the orchestrator,
+// and api.js. Two hand-coded copies had diverged: the live one honored a
+// non-positive override via `parseInt(...) || default` (a negative value is
+// truthy, so `XCHAIN_UNDO_BLOCKS_DOGE=-5` yielded -5 and degenerated the aging
+// loop into a mass K/M-undo purge), while the seeder rejected it via `> 0`,
+// letting the seeded N-window drift from the live undo window under the identical
+// env. This single resolver rejects non-positive/non-integer overrides (falls
+// back to the per-chain default) and applies the MAX_SAFE warning uniformly.
+// Resolution order: explicit optsUndoBlocks → positive env override → per-chain
+// default → global fallback.
+function resolveUndoBlocks(network, optsUndoBlocks){
+    if (optsUndoBlocks) return optsUndoBlocks
+    const coin = coinFromNetwork(network)
+    const envKey = coin ? ('XCHAIN_UNDO_BLOCKS_' + coin) : ''
+    const envVal = parseInt(process.env[envKey], 10)
+    let resolved
+    if (Number.isInteger(envVal) && envVal > 0) {
+        resolved = envVal
+    } else {
+        resolved = (coin && DEFAULT_UNDO_BLOCKS[coin]) || FALLBACK_UNDO_BLOCKS
+    }
+    // Loud warning (do NOT clamp or throw: the override is a deliberate operator
+    // knob) when the resolved window exceeds the decoder's dispenser-expiry safe
+    // depth. Past that ceiling the decoder aborts reorg recovery while the tracker
+    // keeps auto-recovering, silently splitting the two effective reorg windows.
+    if (resolved > MAX_SAFE_UNDO_BLOCKS) {
+        console.error(
+            'WARNING: resolved undo-blocks window for ' + (coin || network) + ' is ' + resolved +
+            ', which exceeds the decoder dispenser-expiry safe depth (' + MAX_SAFE_UNDO_BLOCKS + '). ' +
+            'The decoder will abort reorg recovery past ' + MAX_SAFE_UNDO_BLOCKS + ' blocks while this ' +
+            'tracker auto-recovers, splitting the two effective reorg windows. Raise ' +
+            'DISPENSER_EXPIRE_SAFE_DEPTH in the decoder to match, or lower ' + (envKey || 'the override') + '.'
+        )
+    }
+    return resolved
+}
+
+module.exports = { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS, coinFromNetwork, resolveUndoBlocks }

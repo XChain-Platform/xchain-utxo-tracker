@@ -92,25 +92,11 @@ const SPENDS_HEADER_SIZE  = 64
 // Per-chain N-window defaults, single-sourced in undo-blocks.js so the bulk-seeded
 // N-prefix always covers at least as many blocks as the live reorg depth guard allows
 // (a hand-copied second table previously risked re-opening the per-chain reorg gap).
-const { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS } = require('../../undo-blocks.js')
-
-// Resolve the N-window size: explicit opts.undoBlocks wins, then
-// XCHAIN_UNDO_BLOCKS_<COIN> env var, then per-chain default, then fallback.
-// network is a string like 'bitcoin-mainnet', 'dogecoin-regtest', etc.
-function resolveUndoBlocks(network, optsUndoBlocks) {
-    if (optsUndoBlocks) return optsUndoBlocks
-    const n = String(network || '').toLowerCase()
-    let coin = null
-    if (n.startsWith('bitcoin'))  coin = 'BTC'
-    else if (n.startsWith('litecoin')) coin = 'LTC'
-    else if (n.startsWith('dogecoin')) coin = 'DOGE'
-    if (coin) {
-        const envVal = parseInt(process.env['XCHAIN_UNDO_BLOCKS_' + coin], 10)
-        if (envVal > 0) return envVal
-        return DEFAULT_UNDO_BLOCKS[coin]
-    }
-    return FALLBACK_UNDO_BLOCKS
-}
+// resolveUndoBlocks is single-sourced in undo-blocks.js so the seeded N-window,
+// the live undo window, the orchestrator tip-safety clamp, and api.js can never
+// drift under the same env (uuid:65309b82). Re-exported below so existing
+// callers (orchestrator.js, api.js) keep importing it from here unchanged.
+const { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS, resolveUndoBlocks } = require('../../undo-blocks.js')
 
 // Per-prefix (keySize, valueSize, recordSize).
 const LAYOUT = {
