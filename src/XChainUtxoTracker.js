@@ -86,6 +86,14 @@ const BLOCK_FETCH_RETRY_SLEEP_MS = 3000
 const MAX_BLOCK_FETCH_RETRIES = Number(process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIES) > 0
     ? Number(process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIES)
     : 20
+// After this many consecutive fetch failures at one height on an AuxPoW chain,
+// treat the failure as deterministic (e.g. an AuxPoW section skipAuxPow cannot
+// traverse,  / decoder ) and switch to getBlockReassembled, which
+// rebuilds the pure block from getblockheader + verbose getblock + per-txid
+// getrawtransaction and so never reads the AuxPoW bytes at all. Must stay well
+// below MAX_BLOCK_FETCH_RETRIES so the fallback gets attempts in before the
+// streak is misdiagnosed as a pruned-node desync and halts the tracker.
+const AUXPOW_REASSEMBLE_AFTER = 5
 const REMOVE_SPENT = true
 // Coinbase outputs are unspendable until they reach this many confirmations
 // (consensus rule: 100 on BTC/LTC/DOGE and their regtest/testnet variants).
@@ -313,6 +321,14 @@ class XChainUtxoTracker {
     // top-level guard logs [fatal] and exits for a supervised restart, instead of
     // retrying every few seconds forever with no signal. Returns the updated
     // { height, count } streak for the caller to carry forward on a non-fatal miss.
+    // : whether the block-fetch loop should stop retrying the AuxPoW strip
+    // path for this height and rebuild the block per-tx instead (a failure streak
+    // this long at ONE height on an AuxPoW chain reads as deterministic, e.g. an
+    // AuxPoW section skipAuxPow cannot traverse, not a transient RPC blip).
+    shouldReassembleBlock(height, streakHeight, streakCount){
+        return !!this.auxPow && streakHeight === height && streakCount >= AUXPOW_REASSEMBLE_AFTER
+    }
+
     noteBlockFetchFailure(height, streakHeight, streakCount, error){
         const count = (streakHeight === height) ? streakCount + 1 : 1
         const msg = error && error.message ? error.message : String(error)
@@ -1365,7 +1381,17 @@ class XChainUtxoTracker {
                     let nextBlockHex = null
                     try {
                         let fetched
-                        if (prefetchQueue.length > 0 && prefetchQueue[0].height === nextBlockHeight) {
+                        if (this.shouldReassembleBlock(nextBlockHeight, blockFetchFailureHeight, blockFetchFailures)) {
+                            // Deterministic-looking failure streak at this height on an
+                            // AuxPoW chain : bypass the prefetch queue (its batch
+                            // strip would just fail the same way) and rebuild the pure
+                            // block per-tx, never reading the AuxPoW bytes.
+                            console.error('Block fetch at height ' + nextBlockHeight + ' failed ' + blockFetchFailures +
+                                ' consecutive times; falling back to per-tx block reassembly (malformed-AuxPoW recovery, ).')
+                            prefetchQueue = []
+                            const hash = await this.connector.getBlockHash(nextBlockHeight)
+                            fetched = { hash, hex: await this.connector.getBlockReassembled(hash) }
+                        } else if (prefetchQueue.length > 0 && prefetchQueue[0].height === nextBlockHeight) {
                             fetched = await prefetchQueue.shift().promise
                         } else {
                             // Queue is out of sync (e.g. after reorg), fetch directly
@@ -1780,4 +1806,6 @@ module.exports.satoshiToDecimalString = satoshiToDecimalString
 module.exports.SYNCED_THRESHOLD = SYNCED_THRESHOLD
 module.exports.MAX_ADDRESS_OUTPUTS = MAX_ADDRESS_OUTPUTS
 module.exports.MAX_BLOCK_FETCH_RETRIES = MAX_BLOCK_FETCH_RETRIES
+// Exported for the  malformed-AuxPoW fallback regression test.
+module.exports.AUXPOW_REASSEMBLE_AFTER = AUXPOW_REASSEMBLE_AFTER
 module.exports.COINBASE_MATURITY = COINBASE_MATURITY

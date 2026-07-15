@@ -76,6 +76,28 @@ function orderBatchResults(responseData, expectedCount, label){
     return byId
 }
 
+// Encode a Bitcoin-style varint as lowercase hex (inverse of readVarint).
+// Keep in sync with xchain-decoder/src/BlockchainConnector.js encodeVarintHex.
+function encodeVarintHex(value) {
+    if (value < 0xFD) {
+        return value.toString(16).padStart(2, '0')
+    }
+    if (value <= 0xFFFF) {
+        const buf = Buffer.alloc(3)
+        buf[0] = 0xFD
+        buf.writeUInt16LE(value, 1)
+        return buf.toString('hex')
+    }
+    if (value <= 0xFFFFFFFF) {
+        const buf = Buffer.alloc(5)
+        buf[0] = 0xFE
+        buf.writeUInt32LE(value, 1)
+        return buf.toString('hex')
+    }
+    // A block can never hold 2^32 txs; refuse rather than emit a wrong varint.
+    throw new Error('encodeVarintHex: value out of supported range: ' + value)
+}
+
 // Decode a Bitcoin-style varint from `buf` at `offset`.
 // Returns { value, bytes } where `bytes` is the number of bytes consumed.
 function readVarint(buf, offset) {
@@ -306,6 +328,62 @@ class BlockchainConnector {
         }
 
         throw new Error("There were problems getting a block hex. ")
+    }
+
+    // Recovery path for a block whose AuxPoW section skipAuxPow cannot traverse
+    // (, sibling of decoder ): rebuild the pure (AuxPoW-free) block
+    // from RPC parts instead of stripping the raw block hex. getblockheader
+    // gives the 80-byte header, verbose getblock gives the in-block txid order,
+    // and getrawtransaction gives each tx's canonical serialization, so the
+    // result is byte-identical to what getBlockWithoutAuxPow would have
+    // produced. Dogecoin 1.14 has no verbosity-2 getblock, so per-txid fetches
+    // are the portable route. Deterministic across instances: the output
+    // depends only on chain content.
+    // Keep in sync with xchain-decoder/src/BlockchainConnector.js getBlockReassembled.
+    async getBlockReassembled(blockhash) {
+        try {
+            // Older daemons append the AuxPoW bytes to getblockheader; the pure
+            // header is always the first 80 bytes either way.
+            const headerHex = (await this.getBlockHeader(blockhash, true)).substring(0, 160)
+            const verboseBlock = await this.getBlockVerbose(blockhash)
+            if (!verboseBlock || !Array.isArray(verboseBlock.tx)) {
+                throw new Error('verbose getblock returned no tx array')
+            }
+            const txHexes = []
+            for (const txid of verboseBlock.tx) {
+                // getRawTransaction resolves null for a missing tx (mempool-eviction
+                // tolerance); for a confirmed in-block tx that is an RPC fault, and
+                // assembling without it would emit a corrupt block. Fail instead.
+                const txHex = await this.getRawTransaction(txid)
+                if (!txHex) throw new Error('no raw tx for in-block txid ' + txid)
+                txHexes.push(txHex)
+            }
+            return headerHex + encodeVarintHex(txHexes.length) + txHexes.join('')
+        } catch (err) {
+            throw new Error("There were problems reassembling a block without auxpow. " + err.message)
+        }
+    }
+
+    async getBlockVerbose(blockhash) {
+        try {
+            const data = {
+                jsonrpc: '2.0',
+                method: 'getblock',
+                params: [blockhash, true],  // true = JSON with the in-block txid list (boolean verbose; Dogecoin 1.14 rejects integer verbosity)
+                id: 1,
+            }
+
+            const response = await this.postWithRetry(data)
+
+            if (response.data.result) {
+                return response.data.result;
+            } else {
+                throw new Error('Error getting verbose block');
+            }
+        } catch (error) {
+            console.error('Error:', sanitizeRpcError(error));
+            throw error;
+        }
     }
 
     async getBlockWithoutAuxPow(blockhash) {
@@ -555,3 +633,5 @@ class BlockchainConnector {
 }
 
 module.exports = BlockchainConnector
+// Exported for the  malformed-AuxPoW reassembly regression test.
+module.exports.encodeVarintHex = encodeVarintHex
