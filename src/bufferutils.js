@@ -103,7 +103,9 @@ class BufferWriter {
     this.offset = this.buffer.writeUInt32LE(i, this.offset);
   }
   writeUInt64(value) {
-    this.offset = this.buffer.writeBigInt64LE(value, this.offset);
+    // Accept Number (bitcoinjs-lib serializes tx output values as Number) as
+    // well as BigInt; unsigned write matches the unsigned readUInt64 below.
+    this.offset = this.buffer.writeBigUInt64LE(BigInt(value), this.offset);
   }
   writeVarInt(i) {
     varuint.encode(i, this.buffer, this.offset);
