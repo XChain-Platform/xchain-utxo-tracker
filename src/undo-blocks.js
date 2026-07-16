@@ -1,3 +1,17 @@
+/*********************************************************************
+ *
+ * Copyright © 2025-2026 Dankest, LLC
+ * Based on XChain Platform by Dankest, LLC - https://dankest.llc
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * This file is part of XChain Platform. Licensed under the GNU Affero
+ * General Public License v3.0 or later; see LICENSE.md. A commercial
+ * license (without AGPL source-disclosure terms) is available -
+ * contact legal@dankest.llc.
+ *
+ *********************************************************************/
+
 // Per-chain reorg-recovery window (the "undo blocks" depth), block-time-scaled so each
 // chain keeps roughly 120 minutes of reorg headroom: DOGE's ~1-minute blocks need a far
 // deeper window than BTC's ~10-minute blocks for the same wall-clock protection.
