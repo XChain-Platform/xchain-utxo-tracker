@@ -1632,3 +1632,16 @@ module.exports.kBlock = kBlock
 module.exports.kTx = kTx
 module.exports.kScriptBlk = kScriptBlk
 module.exports.kBlkScript = kBlkScript
+// Exported so the key-schema invariant test can assert, in ONE place, that
+// every key any builder emits sorts at or below rangeEnd(prefix) (the
+// dropped-key hazard fixed twice: 1-byte then 12-byte 0xFF suffixes), that
+// prefix bytes stay unique, and that hex/Buffer builder pairs stay
+// byte-identical. A new or widened key type must pass that suite.
+module.exports.kInput = kInput
+module.exports.kOutput = kOutput
+module.exports.kOutHint = kOutHint
+module.exports.kInHint = kInHint
+module.exports.kOutDel = kOutDel
+module.exports.kHintDel = kHintDel
+module.exports.kStoredBlk = kStoredBlk
+module.exports.rangeEnd = rangeEnd

@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Route the bootstrap/restore restart paths through the same guarded `launchTracker()` helper as the primary boot, so a polling-loop throw after a snapshot/restore still rolls back and logs `[fatal]` instead of surfacing as a bare unhandled rejection.
 
+## [1.0.11] - 2026-07-16
+
+### Fixed
+- LevelUpDb exports the remaining key builders and rangeEnd; new key-schema invariant suite pins binary key layouts, prefix uniqueness, rangeEnd coverage, and registry completeness against scan-bounds drift ().
+
+
 ## [1.0.10] - 2026-06-20
 
 ### Added
