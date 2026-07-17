@@ -52,6 +52,12 @@ const AUX_POW = process.env.AUX_POW === 'true' || process.env.AUX_POW === '1'
 // read-only UTXO/balance queries stay open for the encoder/indexer.
 const UTXO_TRACKER_API_KEY = process.env.UTXO_TRACKER_API_KEY || ''
 
+// Platform-wide no-API-key posture : running keyless is allowed, but the
+// service must say so loudly at boot instead of failing silently open/closed.
+if(!UTXO_TRACKER_API_KEY){
+    console.warn('WARNING: UTXO_TRACKER_API_KEY is not set. Admin JSON-RPC methods (bootstrap snapshot/restore, raw key scans) are DISABLED (fail closed); read-only UTXO/balance queries remain open. Set a key to enable admin methods.')
+}
+
 // Constant-time comparison for the admin Bearer key. A plain `!==` short-circuits
 // at the first mismatching byte, leaking the key through response-time
 // differences; timingSafeEqual needs equal-length buffers, so length is guarded
