@@ -119,8 +119,11 @@ function parseArgs(argv) {
         // files, but trips before the next sort can ENOSPC on a tight disk.
         cleanupThresholdMb: 100 * 1024,
         skipDump:    false,
-        verifyChain: false,
-        verifyMerkle: false,   // implies verifyChain; adds tx-body merkle rebuild
+        // null = unset; resolveVerifyDefaults() turns null into ON for
+        // mainnet networks (safety over read-pass cost, ) and OFF
+        // everywhere else. Explicit --[no-]verify-* flags always win.
+        verifyChain: null,
+        verifyMerkle: null,    // implies verifyChain; adds tx-body merkle rebuild
         skipParse:   false,
         // Default matches XChainUtxoTracker.REMOVE_SPENT = true. Skipping
         // I/J cuts ~130 GB of disk and ~30-60 min on mainnet because the
@@ -145,8 +148,10 @@ function parseArgs(argv) {
             case '--batch-size':      args.batchSize   = parseInt(argv[++i], 10); break
             case '--cleanup-threshold-mb': args.cleanupThresholdMb = parseInt(argv[++i], 10); break
             case '--skip-dump':       args.skipDump    = true; break
-            case '--verify-chain':    args.verifyChain = true; break
-            case '--verify-merkle':   args.verifyMerkle = true; args.verifyChain = true; break
+            case '--verify-chain':     args.verifyChain  = true;  break
+            case '--no-verify-chain':  args.verifyChain  = false; break
+            case '--verify-merkle':    args.verifyMerkle = true;  break
+            case '--no-verify-merkle': args.verifyMerkle = false; break
             case '--skip-parse':      args.skipParse   = true; break
             case '--remove-spent':    args.removeSpent = true; break
             case '--no-remove-spent': args.removeSpent = false; break
@@ -161,6 +166,26 @@ function parseArgs(argv) {
     if (!args.network) throw new Error('--network is required')
     if (!args.out)     throw new Error('--out is required')
     if (!args.db)      throw new Error('--db is required')
+    resolveVerifyDefaults(args)
+    return args
+}
+
+// A mainnet bootstrap seeds the production UTXO set, so a silently corrupt
+// dump (truncated .xdmp, disk bitrot, node fed a bad block) is a
+// consensus-facing hazard: verification defaults ON there .
+// Non-mainnet (regtest/testnet) keeps the fast path.
+function isMainnetNetwork(network) {
+    return /-mainnet$/.test(String(network))
+}
+
+// Resolve null (unset) verify flags per network, then enforce the
+// merkle-implies-chain invariant: merkle verification walks the header
+// chain anyway, so verifyMerkle without verifyChain is not a real mode.
+function resolveVerifyDefaults(args) {
+    const mainnet = isMainnetNetwork(args.network)
+    if (args.verifyMerkle === null) args.verifyMerkle = mainnet
+    if (args.verifyChain  === null) args.verifyChain  = mainnet
+    if (args.verifyMerkle) args.verifyChain = true
     return args
 }
 
@@ -206,6 +231,11 @@ Options:
   --verify-merkle       --verify-chain plus rebuild every block's merkle root
                         from its tx bytes (full block-body integrity; parses
                         every transaction, so the gate pass is slower)
+                        Both verifications default ON for *-mainnet networks
+                        and OFF elsewhere.
+  --no-verify-chain     opt out of chain verification (mainnet: also pass
+                        --no-verify-merkle, since merkle implies chain)
+  --no-verify-merkle    opt out of merkle verification
   --skip-parse          skip dump+parse phases (reuse existing .dat files)
   --no-remove-spent     force emission of I/J prefixes (default: skip them
                         to match XChainUtxoTracker.REMOVE_SPENT=true)
@@ -755,7 +785,7 @@ async function main() {
 
 // Export pure helpers for unit testing; only auto-run the pipeline when invoked
 // directly (node orchestrator.js), not when required by a test.
-module.exports = { parseArgs, effectiveTipSafety, resolveUndoBlocks, readOutputsRecordSize, concatFilesWithHeader }
+module.exports = { parseArgs, effectiveTipSafety, resolveUndoBlocks, readOutputsRecordSize, concatFilesWithHeader, resolveVerifyDefaults, isMainnetNetwork }
 
 if (require.main === module) {
     main().catch(err => {
