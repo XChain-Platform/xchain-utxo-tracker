@@ -34,8 +34,9 @@ const XChainUtxoTracker  = require('./XChainUtxoTracker');
 const BlockchainConnector = require('./BlockchainConnector');
 const { resolveUndoBlocks } = require('./bulk-sync/merger/derive-keys.js')
 const { handleBootstrapFailure, handleRestoreFailure } = require('./bootstrap-recovery.js')
+const { isWrapperArchive, parseSha256Sidecar } = require('./restore-validation.js')
 const jsonRouter = require('express-json-rpc-router')
-const { randomUUID, timingSafeEqual } = require('crypto')
+const { randomUUID, timingSafeEqual, createHash } = require('crypto')
 const path = require('path')
 
 const NETWORK = process.env.NETWORK
@@ -836,7 +837,88 @@ async function getGzipJsonMetadata(filePath) {
 }
 
 
+// List the first `limit` member paths of a (pigz/gzip) tar archive without a full
+// extract: tar streams members in order, so we read the head and kill it early.
+function listArchiveMembers(source, limit) {
+    return new Promise((resolve, reject) => {
+        const names = []
+        const proc = spawn('tar', ['-tzf', source])
+        let done = false
+        let buf = ''
+        const finish = (err) => {
+            if (done) return
+            done = true
+            try { proc.kill('SIGKILL') } catch (e) { /* already gone */ }
+            if (err) reject(err); else resolve(names)
+        }
+        proc.stdout.on('data', (d) => {
+            buf += d.toString()
+            let nl
+            while ((nl = buf.indexOf('\n')) !== -1) {
+                const line = buf.slice(0, nl).trim()
+                buf = buf.slice(nl + 1)
+                if (line) names.push(line)
+                if (names.length >= limit) return finish(null)
+            }
+        })
+        let stderr = ''
+        proc.stderr.on('data', (d) => { stderr += d.toString() })
+        proc.on('error', (e) => finish(e))
+        proc.on('close', (code) => {
+            // A short archive closes before `limit` lines: success. A nonzero exit with
+            // no members means tar could not read it as a gzip tar at all.
+            if (names.length > 0 || code === 0) return finish(null)
+            finish(new Error(`tar could not list "${source}" (exit ${code}): ${stderr.trim()}`))
+        })
+    })
+}
+
+// Streaming sha256 of a file, returned as lowercase hex.
+function sha256File(source) {
+    return new Promise((resolve, reject) => {
+        const hash = createHash('sha256')
+        const rs = fs.createReadStream(source)
+        rs.on('error', reject)
+        rs.on('data', (chunk) => hash.update(chunk))
+        rs.on('end', () => resolve(hash.digest('hex')))
+    })
+}
+
+// Validate a restore archive BEFORE the destructive /data wipe. Throws (aborting the
+// restore with the live DB intact) when the archive is the BootstrapService wrapper
+// layout this single-layer restore cannot unwrap (#2445) or fails the producer's
+// published sha256 sidecar (#2604). A missing sidecar cannot be verified: warn loud
+// and proceed rather than block restores that predate sidecar publication.
+async function validateBootstrapArchiveOrThrow(source) {
+    const members = await listArchiveMembers(source, 10)
+    if (isWrapperArchive(members))
+        throw new Error(`Refusing to restore "${source}": it is a BootstrapService wrapper archive `
+            + `(members: ${members.slice(0, 3).join(', ')}), which the single-layer restore would `
+            + `extract as literal files into /data and crash on relaunch. Unwrap the inner `
+            + `data.tar.gz first, or feed a single-layer tracker archive.`)
+
+    const sidecarPath = source + '.sha256'
+    if (fs.existsSync(sidecarPath)) {
+        const expected = parseSha256Sidecar(fs.readFileSync(sidecarPath, 'utf8'))
+        if (!expected)
+            throw new Error(`Refusing to restore "${source}": checksum sidecar ${sidecarPath} has no valid sha256 digest.`)
+        const actual = await sha256File(source)
+        if (actual !== expected)
+            throw new Error(`Refusing to restore "${source}": sha256 mismatch vs ${sidecarPath} `
+                + `(expected ${expected}, got ${actual}) - archive is truncated, stale, or tampered.`)
+        console.log(`Restore archive sha256 verified against ${sidecarPath}`)
+    } else {
+        console.warn(`WARNING: no checksum sidecar at ${sidecarPath}; restoring "${source}" UNVERIFIED `
+            + `(truncation/tampering cannot be detected). Publish a .sha256 next to the archive.`)
+    }
+}
+
 async function decompressPigz(taskId, source, destination) {
+    // Validate BEFORE the destructive wipe: a wrong-layout or checksum-failing archive
+    // must abort with the live DB intact, never delete /data then restore a corrupt or
+    // empty store (#2445 / #2604).
+    await validateBootstrapArchiveOrThrow(source)
+
     console.log("Deleting data directory")
     deleteFilesInDirectorySync(destination)
     //fs.mkdirSync(destination, { recursive: true })
