@@ -1029,6 +1029,13 @@ class LevelUpStore {
                     throw Error("Missing outputHintKey match for input "+JSON.stringify(input))
                 }
                 await this.writeCrossBlockSpendRecovery(input, inMemScript, inMemOVal)
+            } else if (scriptPubKeyBuf !== undefined && oVal === undefined) {
+                // H present on disk, O missing: a live-store divergence, NOT the benign
+                // pre-REMOVE_SPENT legacy case (the hint key is present, not missing). Mirror
+                // the batch path (delOutput) message VERBATIM so an operator grepping for the
+                // divergence signal catches occurrences on both code paths. Leave O/H intact -
+                // deleting H with no K/M undo record would be unrecoverable on reorg unwind.
+                console.log("Warning: Missing output value for input " + JSON.stringify(input) + " while its outputHintKey is present - leaving O/H records intact, not deleting without an undo record")
             } else {
                 console.log("Warning: Missing outputHintKey for input "+JSON.stringify(input)+" - output may have been indexed before REMOVE_SPENT was enabled")
             }
