@@ -159,6 +159,73 @@ fall inside the active reorg window. If this invariant is broken (tip-safety bel
 `UNDO_BLOCKS`), a reorg into the bulk range finds no K/M and leaves missing (spent,
 never-restored) UTXOs until a full re-index (#4634).
 
+## Resume manifests (stale-artifact gates)
+
+A merge dir can be reused across runs, so every resume path must prove an
+existing artifact belongs to THIS run (same chain, net, and height range)
+before reusing it. Two gates, matched to what each artifact can prove about
+itself (implementation: `merger/resume-manifest.js`):
+
+- **Concat artifacts (`all-outputs.dat`, `all-spends.dat`, `all-meta.dat`)
+  are self-describing.** Their 64-byte header (layout above) carries
+  magic/chain/net/firstHeight/lastHeight/recordCount/recordSize.
+  `validateConcatArtifact` re-derives identity from the header and checks it
+  against the run's requested `{chain, net, from, to}` plus internal
+  consistency (`fileSize - 64 == recordCount * recordSize`; a
+  `recordSize` of 0 is treated as a legacy/foreign artifact and rejected).
+  In tip mode `to` is resolved dynamically, so only the start height is
+  checked. The orchestrator additionally cross-checks that the three concat
+  files agree on the range with each other, since a partial crash can leave
+  one file from an older run. No sidecar needed.
+- **Sorted intermediates (`*-sorted.dat`) are headerless** (the external
+  sort strips the 64-byte header), so each gets a JSON sidecar
+  `<artifact>.manifest.json` written tmp -> fsync -> rename only AFTER the
+  sort completes; a crash mid-write can never leave a manifest that blesses
+  a partial artifact. The manifest binds the artifact to the source header
+  fields (magic, chain, net, firstHeight, lastHeight, recordCount,
+  recordSize) plus the artifact's own `sortedSize`. `checkSortedManifest`
+  permits reuse only when the manifest exists, is parseable, every bound
+  field matches the CURRENT source header, and the on-disk size equals the
+  recorded `sortedSize`.
+
+Reuse denial is advisory: the orchestrator logs the specific staleness
+reason and rebuilds the artifact. If the parsed inputs needed for a rebuild
+are gone, concat fails loud ("no input files") pointing at a re-parse.
+Pre-manifest sorted artifacts are simply re-sorted; there is no
+compatibility shim. Regression coverage:
+`test/regression/bulk-sync-resume-manifest.test.js`.
+
+## Chain and merkle verification gate
+
+Before the parse phase, the orchestrator can verify the `.xdmp` dumps
+themselves (implementation: `validate-chain.js`; orchestrator flags
+`--verify-chain` / `--verify-merkle`, both defaulting ON for mainnet and
+OFF elsewhere; `--verify-merkle` implies `--verify-chain`):
+
+- **Header verification (`--verify-chain`)** recomputes each block's hash
+  from its 80-byte header and checks prevHash linkage across the whole
+  dump sequence. This catches truncation, reordering, and header
+  corruption, but hashes only the header: the tx section is unchecked.
+- **Merkle verification (`--verify-merkle` / `validate-chain --merkle`)**
+  additionally parses every block's tx section via `XChainBlockDecoder`
+  (byte-identical LTC HogEx/MWEB handling to the parse phase), recomputes
+  each txid, rebuilds the merkle root, and compares it against header
+  bytes 36..68. This closes the header-only scope limit: a Byzantine or
+  buggy node (or on-disk corruption past byte 80) can no longer substitute
+  the tx list under a genuine header. Failure is loud: exit 2 on root
+  mismatch, unparseable tx section, or an empty tx list. CVE-2012-2459
+  duplicate-pair mutations are rejected (a genuine adjacent-equal pair at
+  any tree level fails the block; the normal odd-tail self-duplication
+  does not). The coin for the decoder is auto-derived from the `.xdmp`
+  header.
+
+Chain specifics: for LTC the decoder's HogEx marker/flag strip means the
+hash of the stripped tx IS the true txid; pure-MWEB txs live outside the
+merkle tree by protocol design, and bulk-sync never reads MWEB payload
+bytes, so they cannot affect the built DB. For DOGE, AuxPoW is stripped at
+dump time, so `.xdmp` blocks are always header + tx section. Regression
+coverage: `test/regression/bulk-sync-merkle.test.js`.
+
 ## Endianness rationale
 
 **Header fields are LE** to match `dump.js` byte-for-byte on the shared prefix. Headers
