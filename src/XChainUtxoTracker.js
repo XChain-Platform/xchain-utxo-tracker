@@ -1686,15 +1686,37 @@ class XChainUtxoTracker {
             let outputsCount = 0
             
             
-            try {
-                await this.mempoolDb.beginTransaction()
-                //This deletes the txs that are in the database but not longer in the mempool. Also, it removes
-                //the transactions that already exist in the database, leaving rawMempool only with the new transactions from the mempool
-                let deletedInfo = await this.mempoolDb.deleteAndCompareTxsNotInList(rawMempool)
+            let deletedTransactionsCount = 0
+            let deletedInputsCount = 0
+            let deletedOutputsCount = 0
 
-                let deletedTransactionsCount = deletedInfo.transactionsDeleted
-                let deletedInputsCount = deletedInfo.inputsDeleted
-                let deletedOutputsCount = deletedInfo.outputsDeleted
+            try {
+                // Phase 1: prune txs no longer in the node mempool and dedup
+                // rawMempool down to only-new txids. This is a DB-only step
+                // (no RPC, no sleep), so its write transaction opens and commits
+                // immediately. : the old single begin/endTransaction
+                // spanned the ENTIRE multi-batch fetch/sleep loop below, so on a
+                // large mempool (50k txs -> tens of batches, ~1.5s sleep each)
+                // the mempool write path stayed uncommitted for >75s. Pending
+                // balances read from disk saw the previous pass's stale snapshot
+                // for that whole window, and the batch commit landed all-or-
+                // nothing at the very end. Scoping the transaction per-batch lets
+                // each committed batch become queryable as soon as it lands.
+                await this.mempoolDb.beginTransaction()
+                try {
+                    //This deletes the txs that are in the database but not longer in the mempool. Also, it removes
+                    //the transactions that already exist in the database, leaving rawMempool only with the new transactions from the mempool
+                    let deletedInfo = await this.mempoolDb.deleteAndCompareTxsNotInList(rawMempool)
+                    await this.mempoolDb.endTransaction()
+                    deletedTransactionsCount = deletedInfo.transactionsDeleted
+                    deletedInputsCount = deletedInfo.inputsDeleted
+                    deletedOutputsCount = deletedInfo.outputsDeleted
+                } catch (err){
+                    // Close the prune transaction before rethrowing so the batch
+                    // loop below never starts on top of a half-open transaction.
+                    try { await this.mempoolDb.endTransaction(false) } catch (_) {}
+                    throw err
+                }
 
                 // Multi-batch passes are throttled by an inter-batch sleep; on a
                 // large mempool the cumulative sleep dominates the wall-clock cost
@@ -1707,6 +1729,13 @@ class XChainUtxoTracker {
                     console.log("Mempool update: "+batchCount+" batches required, estimated minimum reconvergence "+estimatedSeconds+"s")
                 }
 
+                // Phase 2: fetch each batch's raw txs (RPC) and the inter-batch
+                // sleep OUTSIDE any open write transaction; only the parse/stage of
+                // the already-fetched batch runs inside its own short-lived
+                // begin/endTransaction. The write path is released between batches,
+                // so mid-pass pending-balance reads and block-confirmation cleanup
+                // see each batch as soon as it commits instead of waiting for the
+                // whole reconvergence.
                 let i = 0
                 let consecutiveTxFetchFailures = 0
                 while(i<rawMempool.length){
@@ -1732,6 +1761,8 @@ class XChainUtxoTracker {
                         // updates and block sync until a process restart. Bail out
                         // after a bounded number of consecutive failures so the
                         // finally fires and the next interval tick can recover.
+                        // The fetch runs before beginTransaction, so bailing here
+                        // never strands an open transaction.
                         if (consecutiveTxFetchFailures >= MEMPOOL_MAX_TX_FETCH_RETRIES){
                             console.warn("Giving up on this mempool pass after "+consecutiveTxFetchFailures+" consecutive getRawTransactions failures; will retry on the next interval.", err)
                             break
@@ -1741,22 +1772,33 @@ class XChainUtxoTracker {
                         continue
                     }
 
-                    for (let nextTxHexIndex in nextTxsHex){
-                        let nextTxHex = nextTxsHex[nextTxHexIndex]
+                    // Parse + stage this fetched batch inside its own transaction,
+                    // committed before the inter-batch sleep so readers see it.
+                    await this.mempoolDb.beginTransaction()
+                    try {
+                        for (let nextTxHexIndex in nextTxsHex){
+                            let nextTxHex = nextTxsHex[nextTxHexIndex]
 
-                        if (nextTxHex != null){
-                            let nextTx = this.xchainBlockDecoder.txFromHex(nextTxHex)
+                            if (nextTxHex != null){
+                                let nextTx = this.xchainBlockDecoder.txFromHex(nextTxHex)
 
-                            let countInfo = await this.parseTransaction(this.mempoolDb, nextTx, null, -1, true)
+                                let countInfo = await this.parseTransaction(this.mempoolDb, nextTx, null, -1, true)
 
-                            if (transactionsCount % MEMPOOL_BATCH_SIZE == 0){
-                                console.log(""+transactionsCount+" parsed txs of "+rawMempool.length)
+                                if (transactionsCount % MEMPOOL_BATCH_SIZE == 0){
+                                    console.log(""+transactionsCount+" parsed txs of "+rawMempool.length)
+                                }
+
+                                transactionsCount = transactionsCount + 1
+                                inputsCount = inputsCount + countInfo["inputsCount"]
+                                outputsCount = outputsCount + countInfo["outputsCount"]
                             }
-
-                            transactionsCount = transactionsCount + 1
-                            inputsCount = inputsCount + countInfo["inputsCount"]
-                            outputsCount = outputsCount + countInfo["outputsCount"]
                         }
+                        await this.mempoolDb.endTransaction()
+                    } catch (err){
+                        // Discard this batch's staged writes and rethrow to the
+                        // outer handler; mempoolBusy is cleared in finally.
+                        try { await this.mempoolDb.endTransaction(false) } catch (_) {}
+                        throw err
                     }
 
                     i = i + MEMPOOL_BATCH_SIZE
@@ -1770,11 +1812,10 @@ class XChainUtxoTracker {
                     }
                 }
 
-                await this.mempoolDb.endTransaction()
-                // A successful commit means the in-memory mempool DB now reflects
-                // the node mempool: readiness can be asserted. Reset to false on
-                // any synced=false transition (see above) and on mempool errors,
-                // which take the catch path below and skip this line.
+                // Every batch that was fetched has been committed, so the in-memory
+                // mempool DB now reflects the node mempool: readiness can be
+                // asserted. Reset to false on any synced=false transition (see
+                // above) and on mempool errors, which take the catch path below.
                 this.mempoolReconverged = true
                 let mempoolEndTime = Date.now()
                 let timeString = this.millisecondsToTimeString(mempoolEndTime-mempoolStartTime)
@@ -1784,13 +1825,14 @@ class XChainUtxoTracker {
                     +" Inputs ("+inputsCount+" more, "+deletedInputsCount+" less) "
                     +" Outputs("+outputsCount+" more, "+deletedOutputsCount+" less) ["+timeString+"]")
             } catch (error){
-                // Any failure in the parse/commit path (txFromHex on malformed
-                // hex, a parseTransaction error, or a DB I/O fault) must not
-                // leave mempoolBusy stuck true; otherwise every subsequent
+                // Any failure in the prune/parse/commit path (txFromHex on
+                // malformed hex, a parseTransaction error, or a DB I/O fault) must
+                // not leave mempoolBusy stuck true; otherwise every subsequent
                 // setInterval tick bails with "Mempool is still busy" and the
-                // mempool silently stagnates for the lifetime of the process.
+                // mempool silently stagnates for the lifetime of the process. Each
+                // phase above already closes its own transaction on error, so there
+                // is nothing left open to roll back here.
                 console.error('Error during mempool update: ' + error.message, error)
-                try { await this.mempoolDb.endTransaction(false) } catch (_) {}
             } finally {
                 this.mempoolBusy = false
             }
