@@ -54,12 +54,13 @@ function coinFromNetwork(network){
 // Resolution order: explicit optsUndoBlocks → positive env override → per-chain
 // default → global fallback.
 function resolveUndoBlocks(network, optsUndoBlocks){
-    if (optsUndoBlocks) return optsUndoBlocks
     const coin = coinFromNetwork(network)
     const envKey = coin ? ('XCHAIN_UNDO_BLOCKS_' + coin) : ''
     const envVal = parseInt(process.env[envKey], 10)
     let resolved
-    if (Number.isInteger(envVal) && envVal > 0) {
+    if (Number.isInteger(optsUndoBlocks) && optsUndoBlocks > 0) {
+        resolved = optsUndoBlocks
+    } else if (Number.isInteger(envVal) && envVal > 0) {
         resolved = envVal
     } else {
         resolved = (coin && DEFAULT_UNDO_BLOCKS[coin]) || FALLBACK_UNDO_BLOCKS

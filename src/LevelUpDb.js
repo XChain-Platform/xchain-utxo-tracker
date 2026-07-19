@@ -417,6 +417,9 @@ function kOutDelFromBuf(blockHashHex, scriptPubKeyBuf, txHash8Hex, idx) {
 
 // B value: [height(4)][timestamp(4)][previousHash(32)] = 40 bytes
 function encodeBlock(height, timestamp, previousHashHex) {
+    if (previousHashHex.length !== 64) {
+        throw new Error(`encodeBlock expects a 64-hex (32-byte) previousHash, got ${previousHashHex.length} chars`)
+    }
     const buf = Buffer.alloc(40)
     buf.writeUInt32BE(height, 0)
     buf.writeUInt32BE(timestamp, 4)
@@ -432,11 +435,22 @@ function decodeBlock(buf) {
 }
 
 // T value: [blockHash(32)] = 32 bytes
-function encodeTx(blockHashHex) { return h2b(blockHashHex || ZERO_HASH) }
+function encodeTx(blockHashHex) {
+    const hex = blockHashHex || ZERO_HASH
+    if (hex.length !== 64) {
+        throw new Error(`encodeTx expects a 64-hex (32-byte) blockHash, got ${hex.length} chars`)
+    }
+    return h2b(hex)
+}
 function decodeTx(buf)          { return { bh: b2h(buf.slice(0, 32)) } }
 
 // I value: [txHash8(8)] = 8 bytes
-function encodeInputVal(txHash8Hex) { return h2b(txHash8Hex) }
+function encodeInputVal(txHash8Hex) {
+    if (txHash8Hex.length !== 16) {
+        throw new Error(`encodeInputVal expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+    }
+    return h2b(txHash8Hex)
+}
 
 // O value: [value(8)][height(4)][fullTxHash(32)] = 44 bytes, plus an OPTIONAL
 // 45th coinbase-flag byte (0x01) appended only for coinbase outputs (L-4).
@@ -456,7 +470,12 @@ function encodeOutput(value, height, fullTxHashHex, isCoinbase = false) {
     // insertion paths supply fullTxHash, so a zero hash on read means the record
     // predates this field; such a LevelDB must be re-indexed before use, since
     // the 8-byte O-key prefix is not a spendable txid.
-    if (fullTxHashHex) h2b(fullTxHashHex).copy(buf, 12)
+    if (fullTxHashHex) {
+        if (fullTxHashHex.length !== 64) {
+            throw new Error(`encodeOutput expects a 64-hex (32-byte) fullTxHash, got ${fullTxHashHex.length} chars`)
+        }
+        h2b(fullTxHashHex).copy(buf, 12)
+    }
     if (isCoinbase) buf[44] = 1
     return buf
 }
@@ -473,7 +492,12 @@ function decodeOutput(buf) {
 }
 
 // H value: [scriptPubKey(32)] = 32 bytes
-function encodeOutHint(scriptHex) { return h2b(scriptHex) }
+function encodeOutHint(scriptHex) {
+    if (scriptHex.length !== 64) {
+        throw new Error(`encodeOutHint expects a 64-hex (32-byte) scriptPubKey, got ${scriptHex.length} chars`)
+    }
+    return h2b(scriptHex)
+}
 
 // S value: [height(4)] = 4 bytes
 function encodeScriptBlk(height) {
@@ -1623,6 +1647,12 @@ module.exports.InvalidCursorError  = InvalidCursorError
 // source of the encoding instead of duplicating the format.
 module.exports.encodeOutput = encodeOutput
 module.exports.decodeOutput = decodeOutput
+// Exported so the value encoders' width guards can be exercised directly in unit
+// tests, mirroring the key builders' length-guard coverage.
+module.exports.encodeBlock = encodeBlock
+module.exports.encodeTx = encodeTx
+module.exports.encodeInputVal = encodeInputVal
+module.exports.encodeOutHint = encodeOutHint
 // Exported so the bulk-sync loader can assert its seeded W (creation-block
 // reverse index) keys are byte-identical to the live insertOutputBlock path,
 // reusing this single source of the key encoding instead of duplicating it.

@@ -22,7 +22,8 @@
 const dotenv = require('dotenv')
 dotenv.config()
 
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const os = require('os')
 const LevelUpStore = require('./LevelUpDb.js')
 const fs = require('fs')
 const express = require('express');
@@ -884,18 +885,66 @@ function sha256File(source) {
     })
 }
 
-// Validate a restore archive BEFORE the destructive /data wipe. Throws (aborting the
-// restore with the live DB intact) when the archive is the BootstrapService wrapper
-// layout this single-layer restore cannot unwrap (#2445) or fails the producer's
-// published sha256 sidecar (#2604). A missing sidecar cannot be verified: warn loud
-// and proceed rather than block restores that predate sidecar publication.
+// Locate a member by basename inside an already-extracted directory tree.
+function findMemberByBasename(rootDir, wantBase) {
+    const stack = [rootDir]
+    while (stack.length) {
+        const dir = stack.pop()
+        for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, ent.name)
+            if (ent.isDirectory()) { stack.push(full); continue }
+            if (ent.name === wantBase) return full
+        }
+    }
+    return null
+}
+
+// Unwrap a BootstrapService two-layer wrapper archive (outer gzip tar whose members
+// are `data.tar.gz` + `data.sha256`) into a temp working dir, verify the inner
+// payload against its published checksum, and return the inner `data.tar.gz` path as
+// the effective source for the rest of the restore pipeline. Throws (aborting with the
+// live DB intact, since this runs BEFORE the /data wipe) on any extraction, layout, or
+// checksum failure. The caller must remove `tmpDir` when done.
+async function unwrapBootstrapArchive(source) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-restore-unwrap-'))
+    try {
+        const ex = spawnSync('tar', ['-xzf', source, '-C', tmpDir], { encoding: 'utf8' })
+        if (ex.status !== 0)
+            throw new Error(`Refusing to restore "${source}": failed to extract the wrapper archive `
+                + `(tar exit ${ex.status}): ${(ex.stderr || '').trim()}`)
+
+        const innerTarGz = findMemberByBasename(tmpDir, 'data.tar.gz')
+        const innerSha   = findMemberByBasename(tmpDir, 'data.sha256')
+        if (!innerTarGz || !innerSha)
+            throw new Error(`Refusing to restore "${source}": wrapper archive is missing its inner `
+                + `data.tar.gz and/or data.sha256 member after extraction.`)
+
+        const expected = parseSha256Sidecar(fs.readFileSync(innerSha, 'utf8'))
+        if (!expected)
+            throw new Error(`Refusing to restore "${source}": inner data.sha256 has no valid sha256 digest.`)
+        const actual = await sha256File(innerTarGz)
+        if (actual !== expected)
+            throw new Error(`Refusing to restore "${source}": inner data.tar.gz sha256 mismatch `
+                + `(expected ${expected}, got ${actual}) - archive is truncated, stale, or tampered.`)
+        console.log(`Wrapper archive unwrapped; inner data.tar.gz sha256 verified against data.sha256`)
+        return { effectiveSource: innerTarGz, tmpDir }
+    } catch (err) {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch (_) {}
+        throw err
+    }
+}
+
+// Validate a restore archive BEFORE the destructive /data wipe. Returns the effective
+// source to feed the pigz/tar pipeline plus an optional temp dir the caller must clean
+// up. When the archive is the BootstrapService wrapper layout (#2445), it is unwrapped
+// and its inner payload checksum-verified in place (the inner data.tar.gz becomes the
+// effective source) rather than refused. A single-layer archive is verified against its
+// published sha256 sidecar (#2604); a missing sidecar fails closed (#2725) unless the
+// operator sets BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED=1.
 async function validateBootstrapArchiveOrThrow(source) {
     const members = await listArchiveMembers(source, 10)
     if (isWrapperArchive(members))
-        throw new Error(`Refusing to restore "${source}": it is a BootstrapService wrapper archive `
-            + `(members: ${members.slice(0, 3).join(', ')}), which the single-layer restore would `
-            + `extract as literal files into /data and crash on relaunch. Unwrap the inner `
-            + `data.tar.gz first, or feed a single-layer tracker archive.`)
+        return await unwrapBootstrapArchive(source)
 
     const sidecarPath = source + '.sha256'
     if (fs.existsSync(sidecarPath)) {
@@ -907,23 +956,40 @@ async function validateBootstrapArchiveOrThrow(source) {
             throw new Error(`Refusing to restore "${source}": sha256 mismatch vs ${sidecarPath} `
                 + `(expected ${expected}, got ${actual}) - archive is truncated, stale, or tampered.`)
         console.log(`Restore archive sha256 verified against ${sidecarPath}`)
-    } else {
+    } else if (process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED === '1') {
         console.warn(`WARNING: no checksum sidecar at ${sidecarPath}; restoring "${source}" UNVERIFIED `
-            + `(truncation/tampering cannot be detected). Publish a .sha256 next to the archive.`)
+            + `(truncation/tampering cannot be detected) because BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED=1 is set. `
+            + `Publish a .sha256 next to the archive to restore integrity checking.`)
+    } else {
+        throw new Error(`Refusing to restore "${source}": no checksum sidecar at ${sidecarPath}, so the `
+            + `archive cannot be verified against truncation or tampering before the destructive /data wipe. `
+            + `Publish a .sha256 next to the archive, or set BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED=1 to proceed `
+            + `unverified at your own risk.`)
     }
+    return { effectiveSource: source, tmpDir: null }
 }
 
 async function decompressPigz(taskId, source, destination) {
     // Validate BEFORE the destructive wipe: a wrong-layout or checksum-failing archive
     // must abort with the live DB intact, never delete /data then restore a corrupt or
-    // empty store (#2445 / #2604).
-    await validateBootstrapArchiveOrThrow(source)
+    // empty store (#2445 / #2604). A wrapper archive is unwrapped+verified here and its
+    // inner data.tar.gz becomes the effective source (#2726); tmpDir (outside /data) is
+    // cleaned up after the pipeline completes.
+    const { effectiveSource, tmpDir } = await validateBootstrapArchiveOrThrow(source)
+    const cleanupTmp = () => { if (tmpDir) { try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch (_) {} } }
+    try {
+        return await decompressPigzInner(taskId, effectiveSource, destination)
+    } finally {
+        cleanupTmp()
+    }
+}
 
+async function decompressPigzInner(taskId, source, destination) {
     console.log("Deleting data directory")
     deleteFilesInDirectorySync(destination)
     //fs.mkdirSync(destination, { recursive: true })
     console.log("Decompressing the data...")
-                
+
     // Read the comment in the GZIP file
     const comment = await getGzipJsonMetadata(source)
     let totalUncompressedBytes = null
@@ -1118,10 +1184,22 @@ async function runBulkSyncIfEmpty() {
     }
 }
 
-runBulkSyncIfEmpty()
-    .then(() => startApi())
-    .catch(err => {
-        console.error('[fatal]', err.message)
-        if (err.stack) console.error(err.stack)
-        process.exit(1)
-    })
+// Only auto-start when run as the process entry point. When api.js is required by a
+// unit test, skip the bulk-sync/startApi boot so the pure helpers below can be
+// exercised in isolation.
+if (require.main === module) {
+    runBulkSyncIfEmpty()
+        .then(() => startApi())
+        .catch(err => {
+            console.error('[fatal]', err.message)
+            if (err.stack) console.error(err.stack)
+            process.exit(1)
+        })
+}
+
+module.exports = {
+    validateBootstrapArchiveOrThrow,
+    unwrapBootstrapArchive,
+    listArchiveMembers,
+    sha256File,
+}

@@ -570,6 +570,23 @@ describe('XChainUtxoTracker', function () {
       expect(stored).to.include(blockHash);
     });
 
+    it('addToLastBlocks rejects (not an unhandled rejection) on a malformed block hash', async function () {
+      // #2440: the db write is now awaited, so a synchronous kStoredBlk guard failure
+      // surfaces as a rejected promise the caller can catch rather than an escaped
+      // unhandled rejection.
+      await db.beginTransaction();
+      let threw = false;
+      try {
+        await tracker.addToLastBlocks('not-a-valid-64-hex-hash');
+      } catch (err) {
+        threw = true;
+        expect(err.message).to.match(/kStoredBlk expects a 64-hex/);
+      } finally {
+        try { await db.endTransaction(false); } catch (_) {}
+      }
+      expect(threw, 'expected addToLastBlocks to reject on a malformed hash').to.equal(true);
+    });
+
     it('removeFromLastBlocks removes last element', async function () {
       const h1 = randHash();
       const h2 = randHash();

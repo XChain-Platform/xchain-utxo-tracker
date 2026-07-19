@@ -50,7 +50,6 @@ const HEAP_FLUSH_THRESHOLD_MB = 2048
 const PARSE_MODE_FILES = 0
 const PARSE_MODE_BULK_INSERTS = 1
 const SYNCED_THRESHOLD = 3
-const SATOSHI_UNIT = 100000000.0
 const SATOSHI_BIGINT = 100000000n
 const DEBUG_TRACE = process.env.DEBUG_TRACE === 'true' || process.env.DEBUG_TRACE === '1'
 
@@ -224,7 +223,7 @@ class XChainUtxoTracker {
     
     async addToLastBlocks(blockHash){
         this.lastBlocks.push(blockHash)
-        this.db.addLastStoredBlock(blockHash)
+        await this.db.addLastStoredBlock(blockHash)
 
         while (this.lastBlocks.length > this.undoBlocks){
             let nextBlockHash = this.lastBlocks.shift()
