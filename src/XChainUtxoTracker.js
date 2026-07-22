@@ -277,6 +277,13 @@ class XChainUtxoTracker {
             // records are dead weight; without this the W index grows with every
             // output ever created instead of the live-UTXO set (TP-19).
             await this.db.removeCreatedOutputsBlockIndexOnly(blockHash)
+            // Same rationale for the Z block->script reverse-index: its only
+            // reader is the reorg unwind (removeOutputScriptsInBlock), which is
+            // depth-guarded to the undoBlocks window, so an aged-out block's Z
+            // records are unreachable dead weight (one per first-seen script,
+            // growing forever). S (first-seen) is deliberately left intact - it
+            // backs the live getFirstSeen query.
+            await this.db.removeOutputScriptsBlockIndexOnly(blockHash)
         }
 
         // Remove the crash-recovery marker atomically with the cleanup writes so

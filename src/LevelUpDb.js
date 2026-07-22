@@ -1398,6 +1398,32 @@ class LevelUpStore {
         }
     }
 
+    // Delete ONLY the Z block->script reverse-index records for an aged-out block.
+    // Unlike removeOutputScriptsInBlock (the reorg path, which also deletes the
+    // paired S first-seen records), this leaves S intact: S backs the live
+    // getFirstSeen/getOutputScriptBlock query and must survive for the life of
+    // the store. Z's only reader is the reorg unwind, which can never reach past
+    // the undoBlocks window, so Z records beyond that window are permanently dead
+    // weight (the index otherwise grows with every distinct script ever seen,
+    // not the live set). Mirrors removeCreatedOutputsBlockIndexOnly for W.
+    // Queues into the caller's open transaction batch. knownScripts is NOT reset
+    // here: the S records the cache fronts are untouched, so the cache stays
+    // truthful.
+    async removeOutputScriptsBlockIndexOnly(blockHash){
+        const prefixBuf = Buffer.concat([pb(P_BLK_SCRIPT), h2b(blockHash)])
+
+        const options = {
+            gte: prefixBuf,
+            lte: rangeEnd(prefixBuf),
+            keys: true,
+            values: false
+        }
+
+        for await (const [key] of this.db.iterator(options)) {
+            await this.addTransaction("del", key)
+        }
+    }
+
     // Delete the O/H entries for every output CREATED in the given block, using
     // the W creation-block reverse index. Called during a reorg to purge outputs
     // born in a rolled-back block that were never spent (K/M recovery only

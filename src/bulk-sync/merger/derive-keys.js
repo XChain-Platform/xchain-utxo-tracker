@@ -50,6 +50,12 @@
  *                           prunes W past that window (TP-19), so deeper seeded
  *                           records would be permanent dead weight.
  *   Z.dat   65+ 0 =  65B  (key: 'Z'+blockHash32+script32)
+ *                           Block->script reverse index. Windowed to the last
+ *                           undoBlocks seeded blocks like W: its only reader is
+ *                           the reorg unwind (removeOutputScriptsInBlock), which
+ *                           can't reach deeper, and the live tracker prunes Z as
+ *                           blocks age out (removeOutputScriptsBlockIndexOnly).
+ *                           S is NOT windowed: it backs the live first-seen query.
  *
  *   L.json             { LAST_BLOCK_HEIGHT: "<hex>", LAST_BLOCK_HASH: "<hex>" }
  *
@@ -491,7 +497,14 @@ async function deriveKeys(opts) {
             heightBE  .copy(sBuf, 33, 0, 4)
             sOut.writeRecord(sBuf)
 
-            // Z record: 'Z' + blockHash(32) + scriptHash(32) | (empty)
+            // Z record: 'Z' + blockHash(32) + scriptHash(32) | (empty).
+            // Windowed like W: only first-seen blocks inside the undoBlocks
+            // window get a Z record. The reorg unwind is the sole Z reader and
+            // is depth-guarded to that window; deeper seeded records would be
+            // permanently unreachable dead weight (the live tracker prunes Z on
+            // aging via removeOutputScriptsBlockIndexOnly). S above is emitted
+            // unconditionally - it backs the live getFirstSeen query.
+            if (heightBE.readUInt32BE(0) < wMinHeight) continue
             zRaw.write((buf, off) => {
                 buf[off] = P_BLK_SCRIPT
                 blockHash .copy(buf, off + 1, 0, 32)
@@ -506,7 +519,7 @@ async function deriveKeys(opts) {
     try { fs.unlinkSync(candSortedPath) } catch (_) {}
 
     stats.S = uniqueScripts
-    stats.Z = uniqueScripts
+    stats.Z = zRaw.count // may be < S: Z is windowed to undoBlocks, S is not
     onProgress({ phase: 'SZ-dedup-done', uniqueScripts })
 
     // ─── Phase 7: sort Z by key ──────────────────────────────────────────────
