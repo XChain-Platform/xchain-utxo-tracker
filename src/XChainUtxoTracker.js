@@ -125,6 +125,11 @@ const MAX_ADDRESS_OUTPUTS = Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS) > 0
 // Single-sourced in undo-blocks.js so the live worker and the bulk seeder can never drift.
 const { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS, coinFromNetwork, resolveUndoBlocks } = require('./undo-blocks.js')
 
+// Per-coin block/tx wire-serialization family from the canonical coin registry
+// (src/coins). Used to gate AuxPoW stripping on the coin's declared wireFormat
+// ('auxpow') instead of a coin-name literal.
+const { WIRE_FORMAT } = require('./coins')
+
 // coinFromNetwork and resolveUndoBlocks are single-sourced in undo-blocks.js
 // (imported above) so the live worker, seeder, orchestrator, and api.js share
 // one env-override resolution semantics and can never drift (uuid:65309b82).
@@ -174,11 +179,13 @@ class XChainUtxoTracker {
       // AuxPoW stripping must be keyed on coin identity, not trusted purely to
       // the caller's env-driven flag (which defaults OFF): a Dogecoin
       // deployment started without AUX_POW=true would otherwise parse every
-      // DOGE block as a plain Bitcoin block. Force it on for dogecoin-* networks
-      // regardless of the passed-in flag, mirroring the bulk seeder's
-      // coin-keyed gate (bulk-sync/dump.js), and leave other coins on the
+      // DOGE block as a plain Bitcoin block. Force it on for any merge-mined
+      // ('auxpow') chain by its declared wireFormat in the canonical coin
+      // registry (src/coins) rather than a coin-name literal, matching the
+      // decoder and the bulk seeder (bulk-sync/dump.js) so onboarding a
+      // merge-mined chain is a registry edit; leave other coins on the
       // caller-supplied flag unchanged.
-      this.auxPow = coinFromNetwork(network) === 'DOGE' ? true : auxPow
+      this.auxPow = WIRE_FORMAT[coinFromNetwork(network)] === 'auxpow' ? true : auxPow
       this.undoBlocks = resolveUndoBlocks(network)
       this.lastBlocks = []
       

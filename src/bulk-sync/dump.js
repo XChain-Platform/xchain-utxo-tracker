@@ -44,6 +44,7 @@ const fs   = require('fs')
 const path = require('path')
 const BlockchainConnector = require('../BlockchainConnector.js')
 const { XdmpReader } = require('./xdmp-reader.js')
+const coins = require('../coins')
 
 const MAGIC               = Buffer.from('XCHNDMP1', 'ascii')
 const HEADER_SIZE         = 64
@@ -215,7 +216,13 @@ async function dumpChunk(connector, args, chunkStart, chunkEnd, chainTipAtDump) 
             const heights  = []
             for (let h = cursor; h <= batchEnd; h++) heights.push(h)
 
-            const blocks = args.chain === 'dogecoin'
+            // Merge-mined ('auxpow') chains carry an AuxPoW section between the
+            // 80-byte header and the tx count; strip it via the without-AuxPoW
+            // fetch. Keyed on the coin's declared wireFormat in the canonical coin
+            // registry (src/coins), matching the live worker and decoder, not a
+            // coin-name literal. args.chain is validated in CHAIN_CODES above.
+            const auxPow = coins.WIRE_FORMAT[coins.FULL_NAME_TO_TICK[args.chain]] === 'auxpow'
+            const blocks = auxPow
                 ? await connector.getBlocksBatchWithoutAuxPow(heights)
                 : await connector.getBlocksBatch(heights)
 

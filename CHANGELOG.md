@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Gate AuxPoW block-stripping on the coin's declared `wireFormat` in the canonical coin registry (`src/coins`) in both the live worker and the bulk seeder, instead of hardcoded coin-name checks, so onboarding a merge-mined chain is a registry edit; conformance now asserts every coin declares a handled `wireFormat`.
 - Single-source the per-chain reorg `undoBlocks` table in `src/undo-blocks.js` (imported by the live worker and the bulk seeder) so a per-chain re-tune can no longer drift between them and re-open the per-chain UTXO reorg gap.
 - Correct the bulk-sync reorg-invariant comments and operator log: K and M are skipped, W is seeded and windowed ().
 

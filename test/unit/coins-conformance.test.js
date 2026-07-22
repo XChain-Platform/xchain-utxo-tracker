@@ -62,6 +62,24 @@ describe('coin-registry conformance (vendored copy) @regression', function(){
         });
     });
 
+    // Every registered coin must declare a block/tx wire-serialization family
+    // (wireFormat). The tracker keys AuxPoW stripping on it ('auxpow') and the
+    // decoder keys its parse path on it. A coin file missing the field makes
+    // WIRE_FORMAT[tick] undefined, which silently leaves the AuxPoW fetch path
+    // OFF for a merge-mined chain (a plain-parser wedge on its first merged-mined
+    // block), so require it declared as a handled family here — the same class of
+    // per-coin capability guard as supportsSegwit.
+    describe('every coin declares a handled wireFormat', function(){
+        const HANDLED_WIRE_FORMATS = new Set(['default', 'mweb', 'auxpow']);
+        for(const tick of coins.ALLOWED_COINS){
+            it(`${tick} declares a handled wireFormat`, function(){
+                const wf = coins.WIRE_FORMAT[tick];
+                assert.ok(HANDLED_WIRE_FORMATS.has(wf),
+                    `${tick} must declare wireFormat as one of default/mweb/auxpow (got ${JSON.stringify(wf)})`);
+            });
+        }
+    });
+
     describe('byte-identity to canonical xchain-hub/src/coins', function(){
         before(function(){
             if(!CANON_PRESENT){
