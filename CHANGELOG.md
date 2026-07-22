@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Single-source the per-chain reorg `undoBlocks` table in `src/undo-blocks.js` (imported by the live worker and the bulk seeder) so a per-chain re-tune can no longer drift between them and re-open the per-chain UTXO reorg gap.
+- Correct the bulk-sync reorg-invariant comments and operator log: K and M are skipped, W is seeded and windowed ().
 
 ### Fixed
 - Route the bootstrap/restore restart paths through the same guarded `launchTracker()` helper as the primary boot, so a polling-loop throw after a snapshot/restore still rolls back and logs `[fatal]` instead of surfacing as a bare unhandled rejection.

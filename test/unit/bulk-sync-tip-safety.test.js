@@ -12,7 +12,8 @@
 
 // ─── Regression #4634: bulk-sync tip-safety must cover the reorg window ────────
 //
-// The bulk-sync merger emits no W/K/M reorg-recovery indices (SPEC.md). The
+// The bulk-sync merger emits no K/M reorg-recovery indices (SPEC.md; W IS seeded,
+// windowed to the derive-keys range, but W alone cannot recover a reorg). The
 // design relies on bulk-sync stopping at least undoBlocks below the tip so the
 // live incremental worker builds W/K/M for every block inside the reorg window.
 // The orchestrator default tip-safety was 10, below the per-chain undoBlocks
@@ -45,7 +46,7 @@ describe('bulk-sync tip-safety clamp (#4634) @regression', function () {
 
     it('guarantees the clamped stop point covers the seeded N-window for every chain', function () {
         // The clamp and the N-window must use the SAME undoBlocks, or a bulk-seeded
-        // N entry could fall inside the live reorg window with no W/K/M behind it.
+        // N entry could fall inside the live reorg window with no K/M behind it.
         for (const net of ['bitcoin-mainnet', 'litecoin-mainnet', 'dogecoin-mainnet',
                            'bitcoin-testnet', 'dogecoin-regtest']) {
             const undo = resolveUndoBlocks(net);

@@ -189,12 +189,14 @@ function resolveVerifyDefaults(args) {
     return args
 }
 
-// Reorg-recovery invariant (SPEC.md, "W, K, M reverse indices are skipped"): the merger
-// emits no W/K/M reorg-recovery indices, so any block bulk-sync seeds directly is
-// un-recoverable on reorg. The design stops bulk-sync at least undoBlocks below the tip
-// and lets the live incremental worker build W/K/M for every block inside the reorg
+// Reorg-recovery invariant (SPEC.md: "The `K` and `M` reorg-recovery reverse indices are
+// skipped entirely. The `W` creation-block reverse index IS seeded"): the merger emits no
+// K/M reorg-recovery indices, so any block bulk-sync seeds directly is un-recoverable on
+// reorg. W alone is not enough, and it is itself only seeded for the windowed range
+// derive-keys emits. The design stops bulk-sync at least undoBlocks below the tip and lets
+// the live incremental worker build W/K/M for every block inside the reorg
 // window. With tip-safety < undoBlocks the seeded N-window includes bulk-synced blocks
-// with no W/K/M, so a reorg into that range leaves phantom (unspent, never-deleted) or
+// with no K/M, so a reorg into that range leaves phantom (unspent, never-deleted) or
 // missing (spent, never-restored) UTXOs until a full re-index (#4634). When --to is not
 // pinned we clamp tip-safety up to undoBlocks (the same per-chain value derive-keys uses
 // to size the N-window, so the stop point and the seeded window stay in lockstep). Clamp
@@ -731,11 +733,11 @@ async function main() {
 
     // Enforce the reorg-recovery invariant before the dump phase reads tip-safety
     // (see effectiveTipSafety): clamp tip-safety up to undoBlocks so no bulk-seeded
-    // block lands inside the active reorg window with no W/K/M indices (#4634).
+    // block lands inside the active reorg window with no K/M indices (#4634).
     const undoBlocks = resolveUndoBlocks(args.network)
     const clampedTipSafety = effectiveTipSafety(args.tipSafety, args.to, args.network)
     if (args.to !== null) {
-        log('ORCHESTRATOR', `explicit --to ${args.to} set: ensure it is <= tip-${undoBlocks}, or a reorg into the bulk range will find no W/K/M reorg-recovery indices (#4634)`)
+        log('ORCHESTRATOR', `explicit --to ${args.to} set: ensure it is <= tip-${undoBlocks}, or a reorg into the bulk range will find no K/M reorg-recovery indices (#4634)`)
     } else if (clampedTipSafety !== args.tipSafety) {
         log('ORCHESTRATOR', `tip-safety ${args.tipSafety} < undo-blocks ${undoBlocks} for ${args.network}; raising tip-safety to ${clampedTipSafety} so the reorg window stays inside the live-built W/K/M range (#4634)`)
         args.tipSafety = clampedTipSafety
