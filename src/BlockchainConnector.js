@@ -100,6 +100,7 @@ function encodeVarintHex(value) {
 
 // Decode a Bitcoin-style varint from `buf` at `offset`.
 // Returns { value, bytes } where `bytes` is the number of bytes consumed.
+// Keep in sync with xchain-decoder/src/BlockchainConnector.js readVarint.
 function readVarint(buf, offset) {
     const first = buf[offset]
     if (first < 0xFD) return { value: first, bytes: 1 }
@@ -119,6 +120,7 @@ function readVarint(buf, offset) {
 //                chain merge-mining branch (same layout) |
 //                parent block header (80 B)
 // Throws if the buffer is too short or structurally invalid.
+// Keep in sync with xchain-decoder/src/BlockchainConnector.js skipAuxPow.
 function skipAuxPow(buf, start) {
     let offset = start
 
@@ -202,6 +204,9 @@ function skipAuxPow(buf, start) {
 // the block hex (skipAuxPow). Non-AuxPoW blocks pass through unchanged. Shared by the
 // single-block (getBlockWithoutAuxPow) and batch (getBlocksBatchWithoutAuxPow) paths
 // so a strip correction can never land in one and silently miss the other.
+// Keep in sync with xchain-decoder/src/BlockchainConnector.js stripAuxPowFromBlockHex;
+// xchain-decoder/test/unit/auxpowStripParity.test.js asserts byte identity of the two
+// function bodies , so a strip correction here must land there too.
 function stripAuxPowFromBlockHex(headerHex, blockHex) {
     const dataToRemove = headerHex.length - 160  // 160 hex chars = 80-byte standard header
     if (dataToRemove > 0) {
