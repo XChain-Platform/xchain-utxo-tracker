@@ -40,8 +40,21 @@ function handleBootstrapFailure({ tasks, taskId, error, relaunch, log = console.
 // silently resume indexing on a corrupt store: record the failure and fail loud
 // via `failLoud` so the supervisor restarts the process into a clean recovery
 // path (empty /data -> bulk-sync, or an operator resync).
-function handleRestoreFailure({ tasks, taskId, error, failLoud, log = console.error }) {
+//
+// EXCEPTION: pre-wipe validation aborts (error.preWipe) happen BEFORE /data is
+// touched - a wrong-layout, unverifiable, or checksum-failing archive rejected by
+// validateBootstrapArchiveOrThrow. The live DB is intact and indexing can simply
+// resume, so these must NOT fail loud (that would kill the process with a factually
+// wrong "AFTER /data was wiped" message). Resume via `relaunch`, like a bootstrap
+// failure. `relaunch` is optional for back-compat; without it a pre-wipe error
+// still records the failure and returns without exiting.
+function handleRestoreFailure({ tasks, taskId, error, failLoud, relaunch, log = console.error }) {
     recordFailure(tasks, taskId, error)
+    if (error && error.preWipe) {
+        log('Bootstrap restore aborted before the /data wipe (archive rejected by validation); the DB is intact, resuming indexing:', error)
+        if (typeof relaunch === 'function') relaunch()
+        return
+    }
     log('[fatal] Bootstrap restore failed AFTER /data was wiped; the DB is now incomplete. Exiting for a supervised restart.', error)
     failLoud()
 }

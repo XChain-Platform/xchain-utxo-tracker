@@ -94,4 +94,26 @@ describe('Regression (M-9): bootstrap/restore recovery handlers', function () {
     expect(tasks.t2.progress).to.equal(-1);
     expect(tasks.t2.error).to.equal('tar truncated');
   });
+
+  // #3192: a pre-wipe validation abort (error.preWipe) happens BEFORE /data is
+  // touched, so the DB is intact and indexing can resume. It must NOT fail loud
+  // (which would kill the process with a factually wrong "AFTER /data was wiped"
+  // message) - it resumes via relaunch, exactly like a bootstrap failure.
+  it('restore PRE-wipe validation abort resumes indexing and does not fail loud', function () {
+    const tasks = { t3: { progress: 0, filename: 'snap.tar.gz' } };
+    let failedLoud = 0;
+    let relaunched = 0;
+    const err = new Error('Refusing to restore: no checksum sidecar');
+    err.preWipe = true;
+    handleRestoreFailure({
+      tasks, taskId: 't3', error: err,
+      failLoud: () => { failedLoud++; },
+      relaunch: () => { relaunched++; },
+      log: () => {}
+    });
+    expect(failedLoud, 'a DB-intact pre-wipe abort must NOT exit the process').to.equal(0);
+    expect(relaunched, 'must resume indexing since /data was never wiped').to.equal(1);
+    expect(tasks.t3.progress).to.equal(-1);
+    expect(tasks.t3.error).to.equal('Refusing to restore: no checksum sidecar');
+  });
 });

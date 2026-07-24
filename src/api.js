@@ -614,12 +614,16 @@ async function startApi(){
                     bootstrapBusy = false
                     launchTracker(tracker)
                 }).catch(error => {
-                    // decompressPigz wipes /data BEFORE extracting, so a mid-restore
-                    // failure leaves the on-disk DB partially wiped and untrustworthy.
-                    // Do NOT silently resume indexing on a corrupt store: fail loud so
-                    // the supervisor restarts into a clean recovery path (M-9).
+                    // decompressPigz wipes /data BEFORE extracting, so a POST-wipe
+                    // failure leaves the on-disk DB partially wiped and untrustworthy:
+                    // fail loud so the supervisor restarts into a clean recovery path
+                    // (M-9). A PRE-wipe validation abort (error.preWipe) never touched
+                    // /data, so handleRestoreFailure resumes indexing via relaunch
+                    // instead of killing the process (#3192).
                     bootstrapBusy = false
-                    handleRestoreFailure({ tasks, taskId, error, failLoud: () => process.exit(1) })
+                    handleRestoreFailure({ tasks, taskId, error,
+                        failLoud: () => process.exit(1),
+                        relaunch: () => launchTracker(tracker) })
                 })
 
                 return {"task_id":taskId}
@@ -757,7 +761,18 @@ async function compressDirPigz(taskId, source, destination) {
                 reject(tarError || pvError || pigzError)
             } else {
                 //console.log(`\nProcess completed. File: ${destination}`)
-                resolve(destination)
+                // Write the .sha256 sidecar the single-layer restore path verifies
+                // against (#2725). Without it, restorebootstrap fails closed on our
+                // OWN getbootstrap snapshot unless BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED=1,
+                // i.e. the default round trip could only complete by disabling the very
+                // integrity check. sha256sum format (`<hex>  <name>`) so both
+                // parseSha256Sidecar and a plain `sha256sum -c` accept it.
+                sha256File(destination)
+                    .then((digest) => fs.promises.writeFile(
+                        destination + '.sha256',
+                        `${digest}  ${path.basename(destination)}\n`))
+                    .then(() => resolve(destination))
+                    .catch(reject)
             }
         })
 
@@ -975,7 +990,18 @@ async function decompressPigz(taskId, source, destination) {
     // empty store (#2445 / #2604). A wrapper archive is unwrapped+verified here and its
     // inner data.tar.gz becomes the effective source (#2726); tmpDir (outside /data) is
     // cleaned up after the pipeline completes.
-    const { effectiveSource, tmpDir } = await validateBootstrapArchiveOrThrow(source)
+    // Pre-wipe validation runs with the live DB still intact, so any error escaping
+    // it (missing/invalid sidecar, checksum mismatch, wrapper unwrap failure) is a
+    // recoverable abort, NOT the post-wipe fail-loud regime. Tag it so the caller's
+    // failure handler resumes indexing instead of exiting the process (the /data
+    // store was never touched). Only decompressPigzInner, below, is post-wipe.
+    let effectiveSource, tmpDir
+    try {
+        ({ effectiveSource, tmpDir } = await validateBootstrapArchiveOrThrow(source))
+    } catch (err) {
+        if (err && typeof err === 'object') err.preWipe = true
+        throw err
+    }
     const cleanupTmp = () => { if (tmpDir) { try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch (_) {} } }
     try {
         return await decompressPigzInner(taskId, effectiveSource, destination)

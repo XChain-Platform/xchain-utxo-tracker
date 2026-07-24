@@ -382,7 +382,10 @@ async function deriveKeys(opts) {
 
     // ─── Phase 5: outputs (pre-cancellation) → script candidates ─────────────
     // Emit one record per output: scriptHash(32) | rowIdBE(4) | blockHash(32)
-    //                             | heightBE(4) | fullTxHash(32)  = 104B.
+    //                             | heightBE(4)  = 72B. Phase 6 reads only
+    // scriptHash/blockHash/heightBE to build the S and Z records (neither S nor Z
+    // carries a txid, matching the live insertOutputScriptBlock/encodeScriptBlk
+    // path), so no per-output txHash is seeded here.
     // Sort by scriptHash+rowIdBE (36B) → for each scriptHash, the record with
     // the smallest rowId (earliest file position = earliest block/tx/vout) is
     // the first occurrence. rowId is a running counter over ALL outputs in the
@@ -395,7 +398,7 @@ async function deriveKeys(opts) {
     // the only index the reorg unwind uses to purge outputs created in a
     // rolled-back seeded block. Emitting it here (rather than off the live-utxos
     // stream) is what keeps spent-within-range outputs covered.
-    const CAND_REC_SIZE = 104
+    const CAND_REC_SIZE = 72
     const CAND_KEY_SIZE = 36
     const candRawPath   = path.join(tmpDir, 'script-cand-raw.dat')
     const wRawPath      = path.join(tmpDir, 'W-raw.dat')
@@ -419,7 +422,6 @@ async function deriveKeys(opts) {
             const txHash8      = rec.subarray(0, 8)
             const voutBE       = rec.subarray(8, 12)
             const heightBE     = rec.subarray(20, 24)
-            const fullTxHash   = rec.subarray(24, 56)
             const scriptPubKey = rec.subarray(56, 88)
             const blockHash    = rec.subarray(88, 120)
             const rid          = rowId++
@@ -431,7 +433,6 @@ async function deriveKeys(opts) {
                 buf.writeUInt32BE(rid, off + 32)
                 blockHash   .copy(buf, off + 36, 0, 32)
                 heightBE    .copy(buf, off + 68, 0, 4)
-                fullTxHash  .copy(buf, off + 72, 0, 32)
             })
 
             // W record: 'W' + blockHash(32) + txHash8(8) + voutBE(4) | script32.

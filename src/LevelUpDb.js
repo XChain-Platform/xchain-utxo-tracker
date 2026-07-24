@@ -12,7 +12,7 @@
  *
  **********************************************************************
  *
- * XChain UTXO Tracker - FileManager Class
+ * XChain UTXO Tracker - LevelUpStore Class
  *
  * This file handles reading and writing UTXO tracker data to LevelDB database
  *
