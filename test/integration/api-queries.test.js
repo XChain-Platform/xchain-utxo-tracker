@@ -19,8 +19,9 @@ const {
   SATOSHI, TEST_KEYS,
   makeOutput, makeSpendInput, makeTx, makeCoinbaseTx,
   makeBlock, processAndCommit, processBlocksAndCommit,
-  createTestTracker, closeTracker
+  createTestTracker, closeTracker, coinAmount
 } = require('./helpers');
+const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 
 describe('Integration: API Queries', function () {
   let tracker;
@@ -40,11 +41,13 @@ describe('Integration: API Queries', function () {
       res.json(utxos);
     });
 
+    // Mirrors src/api.js getBalance(): sum the BigInt satoshi values, format once.
+    // Summing the reported `amount` strings with + concatenates them.
     app.get('/balance/:address', async (req, res) => {
       const utxos = await tracker.getUtxosAddress(req.params.address);
-      let balance = 0;
-      for (const u of utxos) { balance += u.amount; }
-      res.json(balance);
+      let balance = 0n;
+      for (const u of utxos) { balance += BigInt(u.value); }
+      res.json(XChainUtxoTracker.satoshiToDecimalString(balance));
     });
 
     app.get('/firstseen/:address', async (req, res) => {
@@ -62,11 +65,12 @@ describe('Integration: API Queries', function () {
       async get_utxos({ address }) {
         return { utxos: await tracker.getUtxosAddress(address) };
       },
+      // Mirrors src/api.js get_balance (see the REST route above).
       async get_balance({ address }) {
         const utxos = await tracker.getUtxosAddress(address);
-        let balance = 0;
-        for (const u of utxos) { balance += u.amount; }
-        return { balance };
+        let balance = 0n;
+        for (const u of utxos) { balance += BigInt(u.value); }
+        return { balance: XChainUtxoTracker.satoshiToDecimalString(balance) };
       },
       async get_first_seen({ address }) {
         return await tracker.getFirstSeen(address);
@@ -99,14 +103,15 @@ describe('Integration: API Queries', function () {
       await seedData();
       const res = await request.get('/utxos/' + TEST_KEYS[0].address).expect(200);
       expect(res.body).to.be.an('array').with.length(3);
-      const amounts = res.body.map(u => u.amount).sort((a, b) => a - b);
-      expect(amounts).to.deep.equal([10, 20, 30]);
+      // amount is a fixed-8 decimal string, so sort numerically on the parsed value.
+      const amounts = res.body.map(u => u.amount).sort((a, b) => parseFloat(a) - parseFloat(b));
+      expect(amounts).to.deep.equal([coinAmount(10), coinAmount(20), coinAmount(30)]);
     });
 
     it('GET /balance/:address returns total balance', async function () {
       await seedData();
       const res = await request.get('/balance/' + TEST_KEYS[0].address).expect(200);
-      expect(res.body).to.equal(60); // 10+20+30
+      expect(res.body).to.equal(coinAmount(60)); // 10+20+30
     });
 
     it('GET /firstseen/:address returns first-seen height', async function () {
@@ -148,7 +153,7 @@ describe('Integration: API Queries', function () {
     it('get_balance returns correct balance', async function () {
       await seedData();
       const res = await rpcCall('get_balance', { address: TEST_KEYS[0].address });
-      expect(res.body.result.balance).to.equal(60);
+      expect(res.body.result.balance).to.equal(coinAmount(60));
     });
 
     it('get_first_seen returns height', async function () {
@@ -176,7 +181,7 @@ describe('Integration: API Queries', function () {
     it('REST /balance returns 0', async function () {
       await seedData();
       const res = await request.get('/balance/' + TEST_KEYS[5].address).expect(200);
-      expect(res.body).to.equal(0);
+      expect(res.body).to.equal(coinAmount(0));
     });
 
     it('REST /info returns zero balances', async function () {
@@ -203,7 +208,7 @@ describe('Integration: API Queries', function () {
       await seedData();
 
       const res1 = await request.get('/balance/' + TEST_KEYS[0].address).expect(200);
-      expect(res1.body).to.equal(60);
+      expect(res1.body).to.equal(coinAmount(60));
 
       // Process one more block
       const lastHash = (await tracker.db.getLastBlockHash());
@@ -211,7 +216,7 @@ describe('Integration: API Queries', function () {
       await processAndCommit(tracker, block3);
 
       const res2 = await request.get('/balance/' + TEST_KEYS[0].address).expect(200);
-      expect(res2.body).to.equal(100); // 60 + 40
+      expect(res2.body).to.equal(coinAmount(100)); // 60 + 40
     });
   });
 });

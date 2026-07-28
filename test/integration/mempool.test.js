@@ -15,7 +15,8 @@ const {
   SATOSHI, TEST_KEYS,
   makeOutput, makeSpendInput, makeTx, makeCoinbaseTx,
   makeBlock, processAndCommit, processBlocksAndCommit,
-  createTestTracker, closeTracker
+  createTestTracker, closeTracker,
+  coinAmount, sumAmounts
 } = require('./helpers');
 
 describe('Integration: Mempool', function () {
@@ -72,7 +73,10 @@ describe('Integration: Mempool', function () {
       // Address 0: mempool change appears as pending
       const info0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info0.balances.confirmed).to.equal('50.00000000');
-      expect(parseFloat(info0.balances.pending)).to.be.greaterThan(0); // mempool change output
+      // pending is the signed net movement: -50 spent + 39.99 change back.
+      expect(info0.balances.pending).to.equal(coinAmount('-10.01'));
+      // The change output itself is still counted as a pending UTXO.
+      expect(info0.utxos.pending).to.equal(1);
     });
   });
 
@@ -207,7 +211,7 @@ describe('Integration: Mempool', function () {
       const utxos3 = await tracker.getUtxosAddress(TEST_KEYS[3].address);
       expect(utxos3).to.have.length(1);
       expect(utxos3[0].confirmations).to.equal(0);
-      expect(utxos3[0].amount).to.equal(7);
+      expect(utxos3[0].amount).to.equal(coinAmount(7));
     });
   });
 });

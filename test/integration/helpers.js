@@ -41,6 +41,43 @@ for (let i = 1; i <= 10; i++) {
   });
 }
 
+// ─── Amount formatting ───────────────────────────────────────────────────────
+//
+// The tracker reports every UTXO `amount` and every balance as a fixed-8 DECIMAL
+// STRING, not a Number: plain `value / 1e8` loses precision once a total passes
+// Number.MAX_SAFE_INTEGER (DOGE balances above ~90M), so the whole formatting path
+// is BigInt. Tests that compared `amount` against a JS number were written before
+// that change and silently stopped asserting anything real. Compare against
+// coinAmount(...) instead, and sum with sumAmounts(...) rather than `+` (which
+// concatenates strings).
+
+// '50' / 50 / '39.99' -> '50.00000000' / '39.99000000'. Exact: no float math.
+function coinAmount(coins) {
+  const s = String(coins);
+  const neg = s.startsWith('-');
+  const [whole, frac = ''] = (neg ? s.slice(1) : s).split('.');
+  return (neg ? '-' : '') + (whole || '0') + '.' + (frac + '00000000').slice(0, 8);
+}
+
+// Decimal string -> BigInt satoshis.
+function amountToSatoshi(amount) {
+  const s = String(amount);
+  const neg = s.startsWith('-');
+  const [whole, frac = ''] = (neg ? s.slice(1) : s).split('.');
+  const sats = BigInt(whole || '0') * BigInt(100000000) + BigInt((frac + '00000000').slice(0, 8));
+  return neg ? -sats : sats;
+}
+
+// Total of a UTXO list's amounts, returned in the same decimal-string form.
+function sumAmounts(utxos) {
+  let total = BigInt(0);
+  for (const u of utxos) total += amountToSatoshi(u.amount);
+  const neg = total < BigInt(0);
+  const abs = neg ? -total : total;
+  return (neg ? '-' : '') + (abs / BigInt(100000000)).toString() + '.' +
+    (abs % BigInt(100000000)).toString().padStart(8, '0');
+}
+
 // ─── Random hash helpers ─────────────────────────────────────────────────────
 
 function randHash() { return crypto.randomBytes(32).toString('hex'); }
@@ -182,6 +219,13 @@ async function createTestTracker() {
     'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
   );
 
+  // LevelUpStore.knownScripts is a PROCESS-GLOBAL (static) existence cache, not a
+  // per-store one: insertOutputScriptBlock returns early on a hit and writes no S
+  // record. Every test here builds a brand-new empty store, so without this reset
+  // the second and later tests inherit the first test's script set, skip the S
+  // write, and every getFirstSeen / getOutputScriptBlock assertion reads null.
+  LevelUpStore.knownScripts = new Set();
+
   const db = new LevelUpStore('tracker-int-' + Date.now() + '-' + Math.random(), true);
   const mempoolDb = new LevelUpStore('mempool-int-' + Date.now() + '-' + Math.random(), true);
   await db.createDatabase();
@@ -208,6 +252,9 @@ module.exports = {
   NETWORK,
   SATOSHI,
   TEST_KEYS,
+  coinAmount,
+  amountToSatoshi,
+  sumAmounts,
   randHash,
   randHash8,
   makeTxId,

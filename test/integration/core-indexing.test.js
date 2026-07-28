@@ -15,7 +15,8 @@ const {
   SATOSHI, TEST_KEYS,
   makeOutput, makeCoinbaseInput, makeSpendInput, makeTx, makeCoinbaseTx,
   makeBlock, processAndCommit, processBlocksAndCommit,
-  createTestTracker, closeTracker, randHash
+  createTestTracker, closeTracker, randHash,
+  coinAmount, sumAmounts
 } = require('./helpers');
 
 describe('Integration: Core Indexing', function () {
@@ -41,7 +42,7 @@ describe('Integration: Core Indexing', function () {
       // Verify via getUtxosAddress
       const utxos = await tracker.getUtxosAddress(TEST_KEYS[0].address);
       expect(utxos).to.have.length(1);
-      expect(utxos[0].amount).to.equal(50);
+      expect(utxos[0].amount).to.equal(coinAmount(50));
       expect(utxos[0].vout).to.equal(0);
 
       // Verify via getBalanceInfo
@@ -130,7 +131,7 @@ describe('Integration: Core Indexing', function () {
 
       const utxos0 = await tracker.getUtxosAddress(TEST_KEYS[0].address);
       expect(utxos0).to.have.length(1);
-      expect(utxos0[0].amount).to.equal(39.99);
+      expect(utxos0[0].amount).to.equal(coinAmount('39.99'));
 
       // Address 1: received 10 BTC
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
@@ -182,7 +183,7 @@ describe('Integration: Core Indexing', function () {
       for (let i = 0; i < 5; i++) {
         const utxos = await tracker.getUtxosAddress(TEST_KEYS[i + 1].address);
         expect(utxos, `address ${i + 1}`).to.have.length(1);
-        expect(utxos[0].amount, `address ${i + 1} amount`).to.equal(amounts[i]);
+        expect(utxos[0].amount, `address ${i + 1} amount`).to.equal(coinAmount(amounts[i]));
         expect(utxos[0].vout, `address ${i + 1} vout`).to.equal(i);
       }
     });
@@ -221,7 +222,7 @@ describe('Integration: Core Indexing', function () {
       // Address 2: received 24 BTC from tx2
       const utxos2 = await tracker.getUtxosAddress(TEST_KEYS[2].address);
       expect(utxos2).to.have.length(1);
-      expect(utxos2[0].amount).to.equal(24);
+      expect(utxos2[0].amount).to.equal(coinAmount(24));
     });
   });
 
@@ -241,8 +242,7 @@ describe('Integration: Core Indexing', function () {
       const utxos = await tracker.getUtxosAddress(TEST_KEYS[0].address);
       expect(utxos).to.have.length(3);
 
-      const totalAmount = utxos.reduce((sum, u) => sum + u.amount, 0);
-      expect(totalAmount).to.equal(60); // 10 + 20 + 30
+      expect(sumAmounts(utxos)).to.equal(coinAmount(60)); // 10 + 20 + 30
 
       const info = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info.balances.confirmed).to.equal('60.00000000');
@@ -288,8 +288,7 @@ describe('Integration: Core Indexing', function () {
       const utxos = await tracker.getUtxosAddress(TEST_KEYS[0].address);
       expect(utxos).to.have.length(2);
 
-      const totalAmount = utxos.reduce((sum, u) => sum + u.amount, 0);
-      expect(totalAmount).to.equal(40);
+      expect(sumAmounts(utxos)).to.equal(coinAmount(40));
 
       const info = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info.balances.confirmed).to.equal('40.00000000');
