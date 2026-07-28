@@ -48,6 +48,8 @@
     "test:perf": "mocha --timeout 0 --recursive test/performance/**/*.perf.js --exit",
     "test:perf:quick": "PERF_SCALE=small mocha --timeout 0 --recursive test/performance/**/*.perf.js --exit",
     "test:perf:deep": "PERF_SCALE=large node --max-old-space-size=4096 ./node_modules/.bin/mocha --timeout 0 --recursive test/performance/**/*.perf.js --exit",
+    "test:perf:scale": "UTXO_PERF_DB_SCALE=large node --max-old-space-size=4096 ./node_modules/.bin/mocha --timeout 0 --exit test/performance/mainnet-scale-queries.perf.js",
+    "test:perf:mainnet": "UTXO_PERF_DB_SCALE=mainnet node --max-old-space-size=6144 ./node_modules/.bin/mocha --timeout 0 --exit test/performance/mainnet-scale-queries.perf.js",
     "test:chaos": "mocha --timeout 0 --recursive test/chaos/**/*.chaos.js",
     "test:all": "mocha --timeout 0 --recursive test/**/*.test.js --exit",
     "mutate": "stryker run test/mutation/stryker.config.json",
@@ -60,8 +62,8 @@
     "mutate:custom:p1": "node test/mutation/stryker-plugins/run-custom-mutants.js --spec 'test/unit/**/*.test.js' --spec 'test/integration/**/*.test.js' src/LevelUpDb.js src/XChainUtxoTracker.js src/bufferutils.js"
   },
   "devDependencies": {
-    "@stryker-mutator/core": "^8.6.0",
-    "@stryker-mutator/mocha-runner": "^8.6.0",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/mocha-runner": "^9.6.1",
     "autocannon": "^7.15.0",
     "c8": "^11.0.0",
     "chai": "^4.5.0",

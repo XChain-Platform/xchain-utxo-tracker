@@ -36,7 +36,9 @@ const BlockchainConnector = require('./BlockchainConnector');
 const { resolveUndoBlocks } = require('./bulk-sync/merger/derive-keys.js')
 const { handleBootstrapFailure, handleRestoreFailure } = require('./bootstrap-recovery.js')
 const { isWrapperArchive, parseSha256Sidecar } = require('./restore-validation.js')
+const { installObservability } = require('./observability');   // : default-off /metrics + structured log shim
 const jsonRouter = require('express-json-rpc-router')
+const concurrencyGate = require('./concurrencyGate.js')
 const { randomUUID, timingSafeEqual, createHash } = require('crypto')
 const path = require('path')
 
@@ -262,6 +264,56 @@ async function startApi(){
         legacyHeaders:   false,
         message:         { error: 'Too many requests', code: 'RATE_LIMITED' },
     }));
+
+    // Global in-flight concurrency cap . The limiter above keys on the
+    // client IP, so a stampede spread across thousands of distinct IPs never
+    // trips it while still driving unbounded concurrent LevelDB scans (an
+    // /utxos/:address read walks the address index). This caps how many
+    // requests are being served at any instant across ALL callers and sheds
+    // the excess with an immediate 429 instead of queueing it behind an
+    // already-saturated store. Override with
+    // UTXO_TRACKER_MAX_CONCURRENT_REQUESTS; 0 disables the cap.
+    //
+    // GET /status is the readiness probe Docker and the monitors poll, so it
+    // must stay answerable while the main gate sheds: a tracker that 429s its
+    // own healthcheck gets restarted instead of being allowed to shed. It gets
+    // a small private reserve rather than a blanket exemption, because it still
+    // does a LevelDB read and an uncapped exempt route is just where the
+    // stampede would move next.
+    const isProbe = (req) => req.method === 'GET' && req.path === '/status';
+    const BUSY_BODY = { error: 'Server busy, retry shortly', code: 'SERVER_BUSY' };
+
+    const probeGate = concurrencyGate.createConcurrencyGate({
+        limit:      concurrencyGate.resolveLimit(process.env.UTXO_TRACKER_MAX_CONCURRENT_PROBES, 16),
+        retryAfter: 1,
+        skip:       (req) => !isProbe(req),
+        body:       BUSY_BODY
+    });
+    app.use(probeGate);
+
+    const requestGate = concurrencyGate.createConcurrencyGate({
+        limit:      concurrencyGate.resolveLimit(process.env.UTXO_TRACKER_MAX_CONCURRENT_REQUESTS, 100),
+        retryAfter: 1,
+        skip:       isProbe,
+        body:       BUSY_BODY
+    });
+    app.use(requestGate);
+
+    // : Prometheus /metrics plus a structured log shim, both DEFAULT OFF.
+    // Nothing is registered and no timer starts unless METRICS_ENABLED (and, for
+    // log shipping, LOG_SHIP_ENABLED + LOG_SHIP_URL) are set. Wired AFTER the
+    // rate limiter and concurrency gates on purpose: an enabled scrape endpoint
+    // sheds like every other route. The request-timing middleware hoists itself
+    // to the front of the stack so it still measures the routes above.
+    // See src/observability/README.md.
+    let trackerVersion = '';
+    try { trackerVersion = require('../package.json').version; } catch { /* version label is cosmetic */ }
+    installObservability(app, {
+        service: 'xchain-utxo-tracker',
+        version: trackerVersion,
+        coin:    process.env.COIN || '',
+        network: NETWORK || ''
+    });
 
     // API key enforcement for admin JSON-RPC methods. Fails closed: without a
     // configured key these methods are rejected, never left open.
@@ -667,7 +719,10 @@ async function startApi(){
         }
         const status = dbOk ? 'ok' : 'degraded'
         if (!dbOk) res.status(503)
-        res.json({ status, db: dbOk, committed_height: committedHeight })
+        // request_gate exposes the global concurrency cap and how many requests
+        // it has shed ; a climbing shed count is the only outward sign
+        // that a distinct-IP stampede is being refused.
+        res.json({ status, db: dbOk, committed_height: committedHeight, request_gate: requestGate.getStats(), probe_gate: probeGate.getStats() })
     })
 
     // Express 5 / body-parser 2.x leaves req.body undefined when a request carries
