@@ -4,8 +4,8 @@
 # XChain Platform UTXO Tracker
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.10-blue" alt="Version">
-  <img src="https://img.shields.io/badge/tests-618%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/version-1.0.11-blue" alt="Version">
+  <img src="https://img.shields.io/badge/tests-990%2B%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/node-%3E%3D22-green" alt="Node">
   <img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue" alt="License">
 </p>
@@ -32,7 +32,7 @@ UTXO indexing service for the XChain Platform. Continuously polls cryptocurrency
 - **AuxPoW/HogEx header stripping**: Dogecoin AuxPoW headers and Litecoin HogEx witness flag stripped before block decoding
 - **Bootstrap support**: compressed tar archive backup and restore for fast initial sync
 - **REST + JSON-RPC API**: dual interface for UTXO queries, balance lookups, address info, and bootstrap operations
-- **618 tests**: unit, integration, e2e, boundary, security, fuzz, chaos, mutation, regression, performance, and smoke testing
+- **990+ tests**: unit, integration, e2e, boundary, security, fuzz, chaos, mutation, regression, performance, and smoke testing
 
 ## Documentation
 
@@ -41,9 +41,9 @@ Full UTXO tracker documentation is available in the [xchain-documentation](https
 | Document | Description |
 |---|---|
 | [README](https://github.com/XChain-Platform/xchain-documentation/blob/master/components/utxo-tracker/README.md) | Overview, features, installation, quick start, scripts, dependencies |
-| [Architecture](https://github.com/XChain-Platform/xchain-documentation/blob/master/components/utxo-tracker/ARCHITECTURE.md) | Data pipeline position, LevelDB key schema, block processing loop, reorg handling, mempool tracking |
-| [Configuration](https://github.com/XChain-Platform/xchain-documentation/blob/master/components/utxo-tracker/CONFIGURATION.md) | Environment variables, internal constants, database paths |
-| [Operations](https://github.com/XChain-Platform/xchain-documentation/blob/master/components/utxo-tracker/OPERATIONS.md) | Running, Docker, REST and JSON-RPC API reference, resilience, troubleshooting |
+| [Architecture](https://github.com/XChain-Platform/xchain-documentation/blob/master/components/utxo-tracker/architecture.md) | Data pipeline position, LevelDB key schema, block processing loop, reorg handling, mempool tracking |
+| [Configuration](https://github.com/XChain-Platform/xchain-documentation/blob/master/components/utxo-tracker/configuration.md) | Environment variables, internal constants, database paths |
+| [Operations](https://github.com/XChain-Platform/xchain-documentation/blob/master/components/utxo-tracker/operations.md) | Running, Docker, REST and JSON-RPC API reference, resilience, troubleshooting |
 
 ## Quick Start
 
@@ -115,15 +115,18 @@ parity gate in `bin/check-observability-parity.js`.
 | `npm run api` | Start the tracker and API server |
 | `npm test` | Unit tests (~247 tests) |
 | `npm run test:smoke` | Smoke tests (11 tests) |
-| `npm run test:integration` | Integration tests (~131 tests) |
-| `npm run test:e2e` | End-to-end tests (33 tests) |
-| `npm run test:fuzz` | Fuzz tests (12 campaigns, 1000 iterations each) |
+| `npm run test:integration` | Integration tests (~69 tests) |
+| `npm run test:e2e` | End-to-end tests (~36 tests) |
+| `npm run test:boundary` | Boundary condition tests (~20 tests) |
+| `npm run test:security` | Security tests (~27 tests) |
+| `npm run test:regression` | Regression tests (~120 tests) |
+| `npm run test:fuzz` | Fuzz tests (13 campaigns, 1000 iterations each) |
 | `npm run test:fuzz:quick` | Quick fuzz (100 iterations) |
 | `npm run test:fuzz:deep` | Deep fuzz (10,000 iterations) |
-| `npm run test:perf` | Performance tests (36 tests) |
+| `npm run test:perf` | Performance tests (~29 tests) |
 | `npm run test:perf:quick` | Quick performance (small scale) |
 | `npm run test:perf:deep` | Deep performance (large scale, 4 GB heap) |
-| `npm run test:chaos` | Chaos engineering tests (41 tests) |
+| `npm run test:chaos` | Chaos engineering tests (~31 tests) |
 | `npm run test:all` | All unit + integration + e2e tests |
 | `npm run mutate` | Mutation testing (Stryker Mutator) |
 | `npm run mutate:quick` | Quick mutation testing |
@@ -135,15 +138,18 @@ parity gate in `bin/check-observability-parity.js`.
 
 | Type | Tests | Description |
 |---|---|---|
-| Unit | ~247 | `LevelUpDb.test.js`, `XChainUtxoTracker.test.js`, `BlockchainConnector.test.js`, `api.test.js`, `XChainBlockDecoder.test.js`, `bufferutils.test.js`, `CryptoNetworks.test.js`, `util.test.js`, `boundary.test.js` |
-| Integration | ~131 | `core-indexing.test.js`, `reorg.test.js`, `mempool.test.js`, `api-queries.test.js`, `batch-boundaries.test.js`, `boundary.test.js` |
-| E2E | 33 | `lifecycle.test.js`, `persistence.test.js`, `reorg.test.js`, `api.test.js`, `mempool.test.js` |
-| Smoke | 11 | `smoke.test.js`: module loading, config, API liveness |
-| Fuzz | ~119 | 12 campaigns: blockDecoder, txProcessing, connector, addressValidation, balanceCalc, outputEncoding, leveldbKeys, apiEndpoints, bootstrap, config, reorgHandling, mempool |
-| Performance | 36 | Indexing throughput, query load, mempool stress, DB growth, reorg under load |
-| Chaos | 41 | RPC faults, storage faults, concurrency, state corruption |
+| Unit | ~544 | `LevelUpDb.test.js`, `XChainUtxoTracker.test.js`, `BlockchainConnector.test.js`, `api.test.js`, `XChainBlockDecoder.test.js`, `bufferutils.test.js`, `CryptoNetworks.test.js`, `util.test.js`, `boundary.test.js` |
+| Integration | ~69 | `core-indexing.test.js`, `reorg.test.js`, `mempool.test.js`, `api-queries.test.js`, `batch-boundaries.test.js`, `boundary.test.js` |
+| E2E | ~36 | `lifecycle.test.js`, `persistence.test.js`, `reorg.test.js`, `api.test.js`, `mempool.test.js` |
+| Smoke | 9 | `smoke.test.js`: module loading, config, API liveness |
+| Boundary | ~20 | `confirmations.test.js`, `key-range-scan.test.js`, `varint-thresholds.test.js` |
+| Security | ~27 | `address-validation.test.js`, `concurrency-gate.test.js`, `key-pattern-injection.test.js`, `rest-route-surface.test.js` |
+| Fuzz | ~105 | 13 campaigns: blockDecoder, txProcessing, connector, addressValidation, balanceCalc, outputEncoding, leveldbKeys, apiEndpoints, bootstrap, config, reorgHandling, mempool, keySchema |
+| Regression | ~120 | Curated critical-path suite: bulk-sync chain continuity/coinbase/merkle/resume, reorg/undo-window, coinbase maturity, connector cred scrub, satoshi precision |
+| Performance | ~29 | Indexing throughput, query load, mempool stress, DB growth, reorg under load, mainnet-scale queries |
+| Chaos | ~31 | RPC faults, storage faults, concurrency, state corruption |
 | Mutation | (Stryker) | Stryker Mutator: P1/P2/P3 tiers + custom Buffer/encoding mutations |
-| **Total** | **618+** | |
+| **Total** | **990+** | |
 
 ---
 
