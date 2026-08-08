@@ -208,6 +208,13 @@ function kInput(prevTxHash8Hex, idx) {
     // purely by buffer-overrun coincidence (write caps at the 12 free bytes,
     // then writeUInt32BE(idx,9) overwrites the overrun), so any future change to
     // this layout would silently make every getInput miss. Assert the contract.
+    //
+    // Two prev-txids sharing a 64-bit prefix alias to one I-key, and that stays
+    // bounded: REMOVE_SPENT=true keeps I records out of the on-disk store entirely
+    // (derive-keys skips I.dat for the same reason), so they exist only in the
+    // ephemeral in-memory mempool store. Every getInput caller reads presence, never
+    // the value, so an alias costs one outpoint a wrong pending-balance flag until
+    // the next mempool poll, not a confirmed-balance error.
     if (prevTxHash8Hex.length !== 16) {
         throw new Error(`kInput expects a 16-hex (8-byte) txid prefix, got ${prevTxHash8Hex.length} chars`)
     }
