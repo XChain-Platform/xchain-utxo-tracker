@@ -39,6 +39,7 @@ const { isWrapperArchive, parseSha256Sidecar } = require('./restore-validation.j
 const { installObservability } = require('./observability');   // : default-off /metrics + structured log shim
 const jsonRouter = require('express-json-rpc-router')
 const concurrencyGate = require('./concurrencyGate.js')
+const { parseCorsOrigin } = require('./corsOrigin.js')
 const { randomUUID, timingSafeEqual, createHash } = require('crypto')
 const path = require('path')
 
@@ -244,8 +245,12 @@ async function startApi(){
     // Allow JSON requests
     app.use(bodyParser.json());
 
-    // CORS disabled by default; set CORS_ORIGIN to allow a specific origin
-    app.use(cors({ origin: process.env.CORS_ORIGIN || false }));
+    // CORS disabled by default. CORS_ORIGIN is a comma-separated ALLOWLIST, not a
+    // single origin: handing `cors` the raw string makes it echo that string
+    // verbatim to every caller, a multi-value header no browser accepts, so every
+    // listed origin is blocked while the header reads as configured. Parsing is
+    // what makes the list work; see src/corsOrigin.js .
+    app.use(cors({ origin: parseCorsOrigin(process.env.CORS_ORIGIN) }));
 
     // Trust only the first proxy hop so the rate limiter keys on the real client
     // IP rather than the fronting proxy (and to satisfy express-rate-limit's

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Production-scale perf harness (`test/performance/mainnet-scale-queries.perf.js`) that builds an on-disk LevelDB up to BTC-mainnet size and asserts exact address-scan and coin-selection results inside a flat time budget.
 
 ### Fixed
+- `CORS_ORIGIN` now accepts a comma-separated allowlist matched per-origin, instead of echoing a multi-value header that no browser accepts .
 - Pre-wipe restore aborts routed to resume (not fail-loud post-wipe path), getbootstrap writes the .sha256 sidecar, derive-keys drops the dead fullTxHash field, legacy fm.js removed.
 
 ### Changed
