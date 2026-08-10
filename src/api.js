@@ -141,6 +141,18 @@ function launchTracker(tracker){
     })
 }
 
+// Derives the `health` status word from reachability and halt state only, never
+// from lag. Consumers own their own lag budget (xchain-node's bootstrap gate
+// allows 100 blocks against the tracker's SYNCED_THRESHOLD of 3), so folding lag
+// into `status` would refuse a source the caller would otherwise accept; lag
+// travels as its own field for the caller to judge. Mirrors xchain-decoder's
+// health(), which likewise keeps its durable halt marker out of `status`. Pure
+// and exported so the policy is unit-testable without a running server.
+function deriveHealthStatus({ halted = false, dbOk = false } = {}) {
+    if (halted) return 'halted'
+    return dbOk ? 'healthy' : 'unhealthy'
+}
+
 async function startApi(){
     //Start the tracker
     const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
@@ -499,6 +511,24 @@ async function startApi(){
                 result.halt_reason = tracker.haltReason;
             }
             return result;
+        },
+
+        // Health probe: the richest surface a consumer gates on (lag plus halt
+        // markers), matching xchain-decoder's and xchain-indexer's health().
+        // Delegates to get_sync_status so the lag math and SYNCED_THRESHOLD stay
+        // defined in one place. xchain-node's BootstrapHealthGate probes this
+        // method first and falls back to GET /status, which carries no lag field
+        // at all; without this method that gate's lag refusal silently never
+        // fired and a badly lagging tracker certified as a bootstrap source
+        // ().
+        async health() {
+            const sync = await jsonRpcController.get_sync_status();
+            // Same reachability read GET /status runs: a missing or unreachable
+            // store throws here, so it reports unhealthy instead of passing a
+            // bare committed_height of -1 off as a healthy empty tracker.
+            let dbOk = false;
+            try { await tracker.db.getLastBlockHeight(); dbOk = true; } catch (e) {}
+            return { status: deriveHealthStatus({ halted: !!tracker.halted, dbOk }), db: dbOk, ...sync };
         },
 
         // Quiescence probe: returns ready=true iff every previously-broadcast
@@ -1284,6 +1314,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+    deriveHealthStatus,
     validateBootstrapArchiveOrThrow,
     unwrapBootstrapArchive,
     listArchiveMembers,

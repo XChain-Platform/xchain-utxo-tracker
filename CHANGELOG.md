@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A `health` JSON-RPC method exposing lag, synced and halt state, so the bootstrap health gate can no longer certify a badly lagging tracker as a source ().
 - Production-scale perf harness (`test/performance/mainnet-scale-queries.perf.js`) that builds an on-disk LevelDB up to BTC-mainnet size and asserts exact address-scan and coin-selection results inside a flat time budget.
 
 ### Fixed
