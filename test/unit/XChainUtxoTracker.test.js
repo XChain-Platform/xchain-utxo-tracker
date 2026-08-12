@@ -103,11 +103,18 @@ describe('XChainUtxoTracker', function () {
       expect(dogeTracker.auxPow).to.be.true;
     });
 
-    it('leaves auxPow on the caller-supplied flag for a non-dogecoin network', function () {
+    // : BTC/LTC carry no AuxPoW section, so the strip path must be
+    // unreachable for them no matter what the caller or AUX_POW says.
+    it('forces auxPow off for a non-dogecoin network regardless of the passed flag', function () {
       const btcTracker = new XChainUtxoTracker(
         'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', true
       );
-      expect(btcTracker.auxPow).to.be.true;
+      expect(btcTracker.auxPow).to.be.false;
+
+      const ltcTracker = new XChainUtxoTracker(
+        'litecoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', true
+      );
+      expect(ltcTracker.auxPow).to.be.false;
     });
 
     it('throws for an unresolvable network name instead of decoding under a default network', function () {

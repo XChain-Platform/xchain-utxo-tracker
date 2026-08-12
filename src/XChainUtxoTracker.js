@@ -176,16 +176,19 @@ class XChainUtxoTracker {
       this.mempoolInterval = null
       this.mempoolBusy = false
       
-      // AuxPoW stripping must be keyed on coin identity, not trusted purely to
-      // the caller's env-driven flag (which defaults OFF): a Dogecoin
-      // deployment started without AUX_POW=true would otherwise parse every
-      // DOGE block as a plain Bitcoin block. Force it on for any merge-mined
-      // ('auxpow') chain by its declared wireFormat in the canonical coin
-      // registry (src/coins) rather than a coin-name literal, matching the
-      // decoder and the bulk seeder (bulk-sync/dump.js) so onboarding a
-      // merge-mined chain is a registry edit; leave other coins on the
-      // caller-supplied flag unchanged.
-      this.auxPow = WIRE_FORMAT[coinFromNetwork(network)] === 'auxpow' ? true : auxPow
+      // AuxPoW stripping is keyed on coin identity ALONE, never on the caller's
+      // env-driven flag, in BOTH directions: a Dogecoin deployment started without
+      // AUX_POW=true would otherwise parse every DOGE block as a plain Bitcoin
+      // block, and a BTC/LTC deployment started WITH it would strip a section those
+      // chains never carry, truncating any block whose version signals bit 0x100
+      // (). The answer comes from the coin's declared wireFormat in the
+      // canonical registry (src/coins) rather than a coin-name literal, matching the
+      // decoder and the bulk seeder (bulk-sync/dump.js), so onboarding a merge-mined
+      // chain is a registry edit. LTC's MWEB handling is unaffected: that is the
+      // 'mweb' wireFormat branch inside XChainBlockDecoder, not this fetch path. The
+      // `auxPow` parameter is retained for call-site stability and is deliberately no
+      // longer consulted.
+      this.auxPow = WIRE_FORMAT[coinFromNetwork(network)] === 'auxpow'
       this.undoBlocks = resolveUndoBlocks(network)
       this.lastBlocks = []
       
@@ -842,11 +845,41 @@ class XChainUtxoTracker {
     // (M-11) and its regression test, so the lag/synced contract cannot drift.
     // lag is null when nothing is indexed yet or the node tip is unknown; callers
     // must treat null as "unknown, do not assume fresh", never as lag 0.
-    static computeFreshness(committedHeight, nodeTip, synced){
+    // `state` carries the two readiness facts block-sync alone does not cover, so the
+    // RPC freshness sibling says what REST's X-Mempool-Ready and get_sync_status's halt
+    // marker already say and a consumer needs no second round-trip to learn them:
+    //   mempool_ready - synced AND the mempool has reconverged at least once. synced
+    //     flips true before the first (unawaited) updateMempool repopulates mempoolDb,
+    //     so during that window a confirmed output already spent in the node mempool
+    //     cannot be filtered out and reaches input selection ().
+    //   halted / halt_reason - the tracker stopped polling on an unrecoverable reorg.
+    //     Emitted only when halted, matching get_sync_status, so the field's presence
+    //     is itself the signal ().
+    static computeFreshness(committedHeight, nodeTip, synced, state = {}){
+        const { mempoolReconverged = false, halted = false, haltReason = null } = state
         const tracker_height = (typeof committedHeight === 'number') ? committedHeight : -1
         const node_height    = (typeof nodeTip === 'number') ? nodeTip : -1
         const lag = (node_height >= 0 && tracker_height >= 0) ? (node_height - tracker_height) : null
-        return { tracker_height, node_height, lag, synced: synced === true }
+        // Negative lag floors BOTH verdicts here, not only get_sync_status's. A committed
+        // tip above the node's is the node-reset/reindex regression this class rolls back
+        // from, so the outputs this sibling would authorize sit in blocks the node no
+        // longer recognizes. The raw isSynced() flag is height-catchup state and knows
+        // nothing of that regression, so without the floor get_utxos published
+        // {lag:-100, synced:true, mempool_ready:true} for the same instant get_sync_status
+        // published synced:false, and create_tx gates on THIS sibling ().
+        // Same floor deriveSyncedVerdict applies in api.js, so the two cannot disagree.
+        const orphaned  = (lag !== null && lag < 0)
+        const isSynced  = (synced === true) && !orphaned
+        const freshness = {
+            tracker_height, node_height, lag,
+            synced: isSynced,
+            mempool_ready: (isSynced && mempoolReconverged === true)
+        }
+        if (halted === true){
+            freshness.halted      = true
+            freshness.halt_reason = haltReason
+        }
+        return freshness
     }
 
     static isCoinbaseTransaction(transaction){
@@ -1133,6 +1166,12 @@ class XChainUtxoTracker {
 
         let lastBlockchainInfo = null
         let lastBlockchainInfoRefreshAt = 0
+        // Instance-visible twin of lastBlockchainInfoRefreshAt, read by GET /status.
+        // The loop below retries a failing getBlockchainInfo forever, so a coin node
+        // that is down or unsynced stalls block tracking while LevelDB stays perfectly
+        // readable and the DB-only probe kept reporting 'ok' (). Seeded here
+        // rather than in the constructor so the window starts when tracking starts.
+        this.lastNodeRpcOkAt = Date.now()
         this.blockchainInfoLastBlock = -1
         let blocksQuantity = 0
         // Transactions confirmed in this batch that need their mempool records
@@ -1240,6 +1279,11 @@ class XChainUtxoTracker {
 
                         this.blockchainInfoLastBlock = lastBlockchainInfo["blocks"]
                         lastBlockchainInfoRefreshAt = Date.now()
+                        // Stamped only here, past the verification-progress gate, so
+                        // "node RPC ok" means a USABLE tip: an unsynced node that answers
+                        // and a node that does not answer both age this timestamp out.
+                        // Never stamped in the catch below.
+                        this.lastNodeRpcOkAt = lastBlockchainInfoRefreshAt
                     } catch (e){
                         console.error('Error fetching blockchain info from node: ' + e.message, e)
                         await this.sleep(3000)
@@ -1776,9 +1820,17 @@ class XChainUtxoTracker {
                         // finally fires and the next interval tick can recover.
                         // The fetch runs before beginTransaction, so bailing here
                         // never strands an open transaction.
+                        // Throw rather than break: Phase 1's prune already COMMITTED, so
+                        // abandoning the fetch here leaves a snapshot that is missing the
+                        // new mempool spends, and a plain break fell through to the
+                        // unconditional readiness assignment below and published it as
+                        // reconverged. getUtxosAddress then served the confirmed inputs of
+                        // spends it could not see (). The outer catch de-asserts
+                        // readiness for this and every other mid-pass fault, and finally
+                        // still clears mempoolBusy so the next tick recovers.
                         if (consecutiveTxFetchFailures >= MEMPOOL_MAX_TX_FETCH_RETRIES){
                             console.warn("Giving up on this mempool pass after "+consecutiveTxFetchFailures+" consecutive getRawTransactions failures; will retry on the next interval.", err)
-                            break
+                            throw new Error("mempool fetch incomplete after "+consecutiveTxFetchFailures+" consecutive getRawTransactions failures")
                         }
                         console.log("There was an error trying to get raw transactions from the mempool. Trying again...", err)
                         await this.sleep(1000)
@@ -1846,6 +1898,11 @@ class XChainUtxoTracker {
                 // phase above already closes its own transaction on error, so there
                 // is nothing left open to roll back here.
                 console.error('Error during mempool update: ' + error.message, error)
+                // Every route into this catch leaves a post-prune snapshot that is
+                // missing some advertised mempool txs, so readiness must be withdrawn
+                // rather than left asserted from an earlier good pass (). The
+                // next successful pass re-asserts it at the end of the try block.
+                this.mempoolReconverged = false
             } finally {
                 this.mempoolBusy = false
             }

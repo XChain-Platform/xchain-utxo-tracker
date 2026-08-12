@@ -19,7 +19,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { createHash } = require('crypto');
+const { createHash, generateKeyPairSync, sign: signAsymmetric } = require('crypto');
 
 const { validateBootstrapArchiveOrThrow } = require('../../src/api.js');
 
@@ -27,32 +27,79 @@ function sha256Hex(buf) {
     return createHash('sha256').update(buf).digest('hex');
 }
 
-// Build a single-layer archive: a gzip tar whose members are plain store files
-// (CURRENT, MANIFEST-...) so isWrapperArchive does NOT flag it.
-function buildSingleLayerArchive(dir) {
-    const storeDir = path.join(dir, 'store');
-    fs.mkdirSync(storeDir, { recursive: true });
-    fs.writeFileSync(path.join(storeDir, 'CURRENT'), 'MANIFEST-000001\n');
-    fs.writeFileSync(path.join(storeDir, 'MANIFEST-000001'), 'x'.repeat(64));
-    const archive = path.join(dir, 'single.tar.gz');
-    const r = spawnSync('tar', ['-czf', archive, '-C', storeDir, '.']);
-    if (r.status !== 0) throw new Error('tar failed building single-layer fixture');
+function sha256File(file) {
+    return sha256Hex(fs.readFileSync(file));
+}
+
+// Tar a directory's contents into a gzip archive, the layout every fixture below
+// builds on.
+function tarDir(sourceDir, archive) {
+    const r = spawnSync('tar', ['-czf', archive, '-C', sourceDir, '.']);
+    if (r.status !== 0) throw new Error(`tar failed building fixture ${archive}`);
     return archive;
 }
 
+// Write a minimal but valid-looking classic-level store: `CURRENT` plus the
+// `MANIFEST-<n>` it names, which is exactly what the content gate requires.
+function writeStoreFiles(dir, { extraMembers = 0 } = {}) {
+    fs.mkdirSync(dir, { recursive: true });
+    // Members that sort BEFORE CURRENT, so a limit-10 member listing would miss the
+    // real store files: the regression guard for the #4368 full-scan requirement.
+    for (let i = 0; i < extraMembers; i++)
+        fs.writeFileSync(path.join(dir, `00000${i}.ldb`), 'ldb');
+    fs.writeFileSync(path.join(dir, 'CURRENT'), 'MANIFEST-000001\n');
+    fs.writeFileSync(path.join(dir, 'MANIFEST-000001'), 'x'.repeat(64));
+    return dir;
+}
+
+// Build a single-layer archive: a gzip tar whose members are plain store files
+// (CURRENT, MANIFEST-...) so isWrapperArchive does NOT flag it.
+function buildSingleLayerArchive(dir, opts = {}) {
+    return tarDir(writeStoreFiles(path.join(dir, 'store'), opts), path.join(dir, 'single.tar.gz'));
+}
+
+// Build a single-layer archive that is correctly formed but holds no LevelDB store:
+// the #4368 case that used to pass validation and then wipe /data.
+function buildNonStoreArchive(dir) {
+    const junkDir = path.join(dir, 'junk');
+    fs.mkdirSync(junkDir, { recursive: true });
+    fs.writeFileSync(path.join(junkDir, 'README.txt'), 'not a leveldb store');
+    fs.writeFileSync(path.join(junkDir, 'payload.bin'), 'x'.repeat(128));
+    return tarDir(junkDir, path.join(dir, 'nonstore.tar.gz'));
+}
+
 // Build a two-layer wrapper archive: outer gzip tar containing data.tar.gz +
-// data.sha256, mirroring xchain-node's BootstrapService output.
-function buildWrapperArchive(dir, { corruptChecksum = false } = {}) {
-    const inner = path.join(dir, 'data.tar.gz');
-    // The inner payload need only be a real gzip tar for later pipeline stages; here we
-    // only exercise validation/unwrap, so any bytes with a matching checksum suffice.
-    fs.writeFileSync(inner, Buffer.from('inner-payload-bytes'));
-    const digest = corruptChecksum ? '0'.repeat(64) : sha256Hex(fs.readFileSync(inner));
-    fs.writeFileSync(path.join(dir, 'data.sha256'), `${digest}  data.tar.gz\n`);
+// data.sha256, mirroring xchain-node's BootstrapService output. The inner payload is
+// a real store archive so the content gate sees what the restore pipeline would.
+function buildWrapperArchive(dir, { corruptChecksum = false, innerIsStore = true } = {}) {
+    const stageDir = fs.mkdtempSync(path.join(dir, 'wrap-'));
+    const inner = path.join(stageDir, 'data.tar.gz');
+    const payloadDir = path.join(dir, innerIsStore ? 'wrapper-store' : 'wrapper-junk');
+    if (innerIsStore) writeStoreFiles(payloadDir);
+    else { fs.mkdirSync(payloadDir, { recursive: true }); fs.writeFileSync(path.join(payloadDir, 'README.txt'), 'no store here'); }
+    tarDir(payloadDir, inner);
+    const digest = corruptChecksum ? '0'.repeat(64) : sha256File(inner);
+    fs.writeFileSync(path.join(stageDir, 'data.sha256'), `${digest}  data.tar.gz\n`);
     const archive = path.join(dir, 'wrapper.tar.gz');
-    const r = spawnSync('tar', ['-czf', archive, '-C', dir, 'data.tar.gz', 'data.sha256']);
+    const r = spawnSync('tar', ['-czf', archive, '-C', stageDir, 'data.tar.gz', 'data.sha256']);
     if (r.status !== 0) throw new Error('tar failed building wrapper fixture');
     return archive;
+}
+
+// Pin a throwaway ed25519 key as the trust anchor and sign an archive the way
+// xchain-node's publisher does (`v1 ed25519 <base64>` over the raw sha256 digest).
+function pinTestSigningKey(dir) {
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+    const pubPath = path.join(dir, 'test_pubkey.pem');
+    fs.writeFileSync(pubPath, publicKey.export({ type: 'spki', format: 'pem' }));
+    process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY = pubPath;
+    return { privateKey, pubPath };
+}
+
+function writeDetachedSig(archive, privateKey) {
+    const sig = signAsymmetric(null, Buffer.from(sha256File(archive), 'hex'), privateKey);
+    fs.writeFileSync(archive + '.sig', `v1 ed25519 ${sig.toString('base64')}\n`);
+    return archive + '.sig';
 }
 
 describe('validateBootstrapArchiveOrThrow', function () {
@@ -60,9 +107,17 @@ describe('validateBootstrapArchiveOrThrow', function () {
     beforeEach(function () {
         tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bootstrap-test-'));
         delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED;
+        delete process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY;
+        // The integrity and layout suites below predate the provenance gate (#4426) and
+        // exercise the checksum layer on unsigned fixtures, so they take the same
+        // unsigned opt-out an operator restoring a local getbootstrap snapshot uses.
+        // The provenance suite clears it and asserts the fail-closed default itself.
+        process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED = '1';
     });
     afterEach(function () {
         delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED;
+        delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED;
+        delete process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY;
         try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
     });
 
@@ -120,6 +175,109 @@ describe('validateBootstrapArchiveOrThrow', function () {
             try { await validateBootstrapArchiveOrThrow(archive); }
             catch (e) { threw = true; expect(e.message).to.match(/sha256 mismatch/); }
             expect(threw, 'expected a throw on corrupt inner checksum').to.equal(true);
+        });
+    });
+
+    // Finding #4426: the archive's own checksums travel with it, so provenance comes
+    // from the detached signature checked against the repo-pinned key, fail-closed.
+    describe('detached signature provenance gating (#4426)', function () {
+        beforeEach(function () { delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED; });
+
+        it('a self-consistent single-layer archive with no .sig is refused by default', async function () {
+            const archive = buildSingleLayerArchive(tmp);
+            fs.writeFileSync(archive + '.sha256', `${sha256File(archive)}  single.tar.gz\n`);
+            let threw = false;
+            try { await validateBootstrapArchiveOrThrow(archive); }
+            catch (e) { threw = true; expect(e.message).to.match(/no signature file found/); }
+            expect(threw, 'expected a fail-closed refusal on a missing .sig').to.equal(true);
+        });
+
+        it('a self-consistent WRAPPER archive with no .sig is refused by default', async function () {
+            const archive = buildWrapperArchive(tmp);
+            let threw = false;
+            try { await validateBootstrapArchiveOrThrow(archive); }
+            catch (e) { threw = true; expect(e.message).to.match(/no signature file found/); }
+            expect(threw, 'expected the wrapper branch to be gated too').to.equal(true);
+        });
+
+        it('an attacker-authored archive signed by the WRONG key is refused', async function () {
+            const archive = buildWrapperArchive(tmp);
+            const { privateKey } = generateKeyPairSync('ed25519');   // not the pinned key
+            pinTestSigningKey(tmp);
+            writeDetachedSig(archive, privateKey);
+            let threw = false;
+            try { await validateBootstrapArchiveOrThrow(archive); }
+            catch (e) { threw = true; expect(e.message).to.match(/does not verify against the pinned/); }
+            expect(threw, 'expected a refusal on a foreign signing key').to.equal(true);
+        });
+
+        it('a tampered archive whose .sig covers the ORIGINAL bytes is refused', async function () {
+            const archive = buildWrapperArchive(tmp);
+            const { privateKey } = pinTestSigningKey(tmp);
+            writeDetachedSig(archive, privateKey);
+            fs.appendFileSync(archive, 'tampered');
+            let threw = false;
+            try { await validateBootstrapArchiveOrThrow(archive); }
+            catch (e) { threw = true; expect(e.message).to.match(/does not verify against the pinned/); }
+            expect(threw, 'expected a refusal once the signed bytes changed').to.equal(true);
+        });
+
+        it('a malformed .sig is refused rather than skipped', async function () {
+            const archive = buildWrapperArchive(tmp);
+            pinTestSigningKey(tmp);
+            fs.writeFileSync(archive + '.sig', 'not-a-signature\n');
+            let threw = false;
+            try { await validateBootstrapArchiveOrThrow(archive); }
+            catch (e) { threw = true; expect(e.message).to.match(/is malformed/); }
+            expect(threw, 'expected a malformed signature to fail closed').to.equal(true);
+        });
+
+        it('a correctly signed wrapper archive passes and is unwrapped', async function () {
+            const archive = buildWrapperArchive(tmp);
+            const { privateKey } = pinTestSigningKey(tmp);
+            writeDetachedSig(archive, privateKey);
+            const res = await validateBootstrapArchiveOrThrow(archive);
+            expect(res.effectiveSource).to.match(/data\.tar\.gz$/);
+            fs.rmSync(res.tmpDir, { recursive: true, force: true });
+        });
+
+        it('the unsigned opt-out lets a local getbootstrap snapshot round-trip', async function () {
+            const archive = buildSingleLayerArchive(tmp);
+            fs.writeFileSync(archive + '.sha256', `${sha256File(archive)}  single.tar.gz\n`);
+            process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED = '1';
+            const res = await validateBootstrapArchiveOrThrow(archive);
+            expect(res.effectiveSource).to.equal(archive);
+        });
+    });
+
+    // Finding #4368: a checksum says "this is the published archive", never "this is a
+    // LevelDB store". Without a content gate the wipe still fires and the tracker
+    // reopens onto an empty DB.
+    describe('LevelDB content gating (#4368)', function () {
+        it('refuses a correctly-checksummed single-layer archive holding no store', async function () {
+            const archive = buildNonStoreArchive(tmp);
+            fs.writeFileSync(archive + '.sha256', `${sha256File(archive)}  nonstore.tar.gz\n`);
+            let threw = false;
+            try { await validateBootstrapArchiveOrThrow(archive); }
+            catch (e) { threw = true; expect(e.message).to.match(/does not contain a LevelDB store/); }
+            expect(threw, 'expected a refusal before the destructive wipe').to.equal(true);
+        });
+
+        it('refuses a wrapper whose verified inner payload holds no store', async function () {
+            const archive = buildWrapperArchive(tmp, { innerIsStore: false });
+            let threw = false;
+            try { await validateBootstrapArchiveOrThrow(archive); }
+            catch (e) { threw = true; expect(e.message).to.match(/does not contain a LevelDB store/); }
+            expect(threw, 'expected the unwrapped inner archive to be gated too').to.equal(true);
+        });
+
+        it('accepts a store whose CURRENT/MANIFEST sort past the first ten members', async function () {
+            // The limit-10 listing used for wrapper detection would not see them, so this
+            // pins the full-member scan rather than a reused short list.
+            const archive = buildSingleLayerArchive(tmp, { extraMembers: 9 });
+            fs.writeFileSync(archive + '.sha256', `${sha256File(archive)}  single.tar.gz\n`);
+            const res = await validateBootstrapArchiveOrThrow(archive);
+            expect(res.effectiveSource).to.equal(archive);
         });
     });
 });

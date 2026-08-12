@@ -45,6 +45,7 @@ const path = require('path')
 const BlockchainConnector = require('../BlockchainConnector.js')
 const { XdmpReader } = require('./xdmp-reader.js')
 const coins = require('../coins')
+const { resolveUndoBlocks } = require('../undo-blocks.js')
 
 const MAGIC               = Buffer.from('XCHNDMP1', 'ascii')
 const HEADER_SIZE         = 64
@@ -67,6 +68,7 @@ function parseArgs(argv) {
             case '--to':         args.to = parseInt(argv[++i], 10); args.toExplicit = true; break
             case '--chunk-size': args.chunkSize = parseInt(argv[++i], 10); break
             case '--tip-safety': args.tipSafety = parseInt(argv[++i], 10); args.tipSafetyExplicit = true; break
+            case '--allow-undo-window': args.allowUndoWindow = true; break
             case '--out':        args.out = argv[++i]; break
             case '--help':
             case '-h':
@@ -87,6 +89,8 @@ Options:
   --from <height>       First block height (inclusive, default 0)
   --to <height>         Last block height (inclusive). Excludes --tip-safety.
   --tip-safety <n>      Stop n blocks before tip (default ${DEFAULT_TIP_SAFETY})
+  --allow-undo-window   Permit an explicit --to inside the live undo window
+                        (unsafe: no K/M reorg-recovery indices are seeded there)
   --chunk-size <n>      Blocks per .xdmp file (default ${DEFAULT_CHUNK_SIZE})
   --out <dir>           Output directory (required)
 
@@ -264,6 +268,34 @@ async function dumpChunk(connector, args, chunkStart, chunkEnd, chainTipAtDump) 
     return { skipped: false, bytes: bytesWritten, blocks }
 }
 
+// Reorg-recovery invariant (#4634), enforced here because this is the only place the
+// REAL tip is known: bulk-sync emits no K/M reverse indices, so a block it seeds inside
+// the live undo window is un-recoverable on reorg (phantom or missing UTXOs until a full
+// re-index). The orchestrator's effectiveTipSafety deliberately passes an explicit --to
+// through unclamped and its pre-connect log line cannot check that endpoint against a tip
+// it has not resolved, so an unsafe --to used to reach the dump on a warning alone
+// (). Fail loud instead. --allow-undo-window is the named, auditable opt-in for
+// a deliberate partial or backfill seed, and it still warns so the risky choice is logged.
+function assertExplicitToOutsideUndoWindow(dumpEnd, chainTipAtDump, network, allowUndoWindow) {
+    const undoBlocks = resolveUndoBlocks(network)
+    const safeEnd = chainTipAtDump - undoBlocks
+    if (dumpEnd <= safeEnd) return safeEnd
+    if (!allowUndoWindow) {
+        throw new Error(
+            `--to ${dumpEnd} lands inside the live undo window (tip ${chainTipAtDump} - ` +
+            `undo-blocks ${undoBlocks} = ${safeEnd}); bulk-sync seeds no K/M reorg-recovery ` +
+            `indices there, so a reorg into that range leaves phantom or missing UTXOs until ` +
+            `a full re-index (#4634). Lower --to to ${safeEnd} or pass --allow-undo-window ` +
+            `to override.`
+        )
+    }
+    console.error(
+        `[bulk-sync/dump] WARNING: --allow-undo-window set: seeding up to ${dumpEnd} inside the ` +
+        `live undo window (safe end ${safeEnd}); a reorg into that range is unrecoverable (#4634)`
+    )
+    return safeEnd
+}
+
 async function main() {
     const args = parseArgs(process.argv)
     validateArgs(args)
@@ -291,6 +323,7 @@ async function main() {
         if (dumpEnd > chainTipAtDump) {
             throw new Error(`--to ${dumpEnd} is beyond current tip ${chainTipAtDump}`)
         }
+        assertExplicitToOutsideUndoWindow(dumpEnd, chainTipAtDump, args.network, args.allowUndoWindow)
     } else {
         dumpEnd = chainTipAtDump - args.tipSafety
         if (dumpEnd < args.from) {
@@ -329,7 +362,7 @@ async function main() {
     }
 }
 
-module.exports = { existingChunkMatchesChain }
+module.exports = { existingChunkMatchesChain, parseArgs, assertExplicitToOutsideUndoWindow }
 
 if (require.main === module) {
     main().catch(err => {

@@ -995,12 +995,17 @@ describe('XChainUtxoTracker (more)', function () {
     // ── constructor defaults ───────────────────────────────────────────────
 
     describe('constructor defaults', function () {
-        it('sets auxPow correctly', function () {
+        // : auxPow now derives from the coin's wireFormat alone, so the
+        // passed flag is inert. Bitcoin is false either way; dogecoin is true either way.
+        it('sets auxPow from the coin wireFormat, not the passed flag', function () {
             const t1 = new XChainUtxoTracker('bitcoin-regtest', '127.0.0.1', '18443', 'u', 'p', 'db', true);
-            expect(t1.auxPow).to.be.true;
+            expect(t1.auxPow).to.be.false;
 
             const t2 = new XChainUtxoTracker('bitcoin-regtest', '127.0.0.1', '18443', 'u', 'p', 'db', false);
             expect(t2.auxPow).to.be.false;
+
+            const t3 = new XChainUtxoTracker('dogecoin-regtest', '127.0.0.1', '18443', 'u', 'p', 'db', false);
+            expect(t3.auxPow).to.be.true;
         });
 
         it('initializes mempoolBusy to false', function () {

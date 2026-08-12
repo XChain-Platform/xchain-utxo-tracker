@@ -23,7 +23,8 @@
 // derive-keys uses to size the seeded N-window) whenever --to is not pinned.
 
 const { expect } = require('chai');
-const { effectiveTipSafety, resolveUndoBlocks } = require('../../src/bulk-sync/orchestrator');
+const { effectiveTipSafety, resolveUndoBlocks, parseArgs } = require('../../src/bulk-sync/orchestrator');
+const dump = require('../../src/bulk-sync/dump');
 
 describe('bulk-sync tip-safety clamp (#4634) @regression', function () {
 
@@ -39,8 +40,10 @@ describe('bulk-sync tip-safety clamp (#4634) @regression', function () {
         expect(effectiveTipSafety(200, null, 'dogecoin-mainnet')).to.equal(200); // > 120
     });
 
-    it('leaves an explicit --to alone (operator owns the stop point; tip is unknown here)', function () {
+    it('leaves an explicit --to alone (the tip is unknown here; dump.js owns that guard)', function () {
         // With --to pinned, tip-safety is not used by the dump, so it is returned as-is.
+        // The invariant for that shape is enforced in dump.js against the resolved tip
+        // (see the explicit --to undo-window guard below).
         expect(effectiveTipSafety(10, 500000, 'dogecoin-mainnet')).to.equal(10);
     });
 
@@ -63,5 +66,75 @@ describe('bulk-sync tip-safety clamp (#4634) @regression', function () {
             if (prev === undefined) delete process.env.XCHAIN_UNDO_BLOCKS_BTC;
             else process.env.XCHAIN_UNDO_BLOCKS_BTC = prev;
         }
+    });
+});
+
+// ─── Regression : the explicit --to escape from that clamp ────────────
+//
+// effectiveTipSafety returns an explicit --to unclamped by design (the orchestrator
+// has not resolved a tip, so it has nothing to compare against), and main() only
+// logged a warning, which an automated or CI invocation swallows. dump.js is the one
+// place the real tip IS known, so the invariant is enforced there and the only way
+// past it is the named --allow-undo-window override.
+describe('bulk-sync explicit --to undo-window guard () @regression', function () {
+
+    // BTC undoBlocks = 12, so with a tip of 1000 the last safe endpoint is 988.
+    const TIP = 1000;
+    const NET = 'bitcoin-mainnet';
+
+    it('rejects an explicit --to inside the live undo window', function () {
+        expect(() => dump.assertExplicitToOutsideUndoWindow(989, TIP, NET, false))
+            .to.throw(/live undo window/);
+        expect(() => dump.assertExplicitToOutsideUndoWindow(TIP, TIP, NET, false))
+            .to.throw(/--allow-undo-window/);
+    });
+
+    it('names the safe endpoint the operator should use instead', function () {
+        expect(() => dump.assertExplicitToOutsideUndoWindow(1000, TIP, NET, false))
+            .to.throw(/Lower --to to 988/);
+    });
+
+    it('passes an explicit --to at or below the safe endpoint', function () {
+        expect(dump.assertExplicitToOutsideUndoWindow(988, TIP, NET, false)).to.equal(988);
+        expect(dump.assertExplicitToOutsideUndoWindow(500, TIP, NET, false)).to.equal(988);
+    });
+
+    it('lets --allow-undo-window through, still warning so the risky choice is logged', function () {
+        const prev = console.error;
+        const lines = [];
+        console.error = (...a) => lines.push(a.join(' '));
+        try {
+            expect(dump.assertExplicitToOutsideUndoWindow(1000, TIP, NET, true)).to.equal(988);
+        } finally {
+            console.error = prev;
+        }
+        expect(lines.join('\n')).to.match(/allow-undo-window set/);
+    });
+
+    it('tracks the XCHAIN_UNDO_BLOCKS_<COIN> override, so both horizons stay single-sourced', function () {
+        const prev = process.env.XCHAIN_UNDO_BLOCKS_BTC;
+        process.env.XCHAIN_UNDO_BLOCKS_BTC = '100';
+        const prevErr = console.error;
+        console.error = () => {};   // resolveUndoBlocks warns past MAX_SAFE; irrelevant here
+        try {
+            // Safe endpoint moves from 988 to 900 with the wider window.
+            expect(dump.assertExplicitToOutsideUndoWindow(900, TIP, NET, false)).to.equal(900);
+            expect(() => dump.assertExplicitToOutsideUndoWindow(901, TIP, NET, false))
+                .to.throw(/live undo window/);
+        } finally {
+            console.error = prevErr;
+            if (prev === undefined) delete process.env.XCHAIN_UNDO_BLOCKS_BTC;
+            else process.env.XCHAIN_UNDO_BLOCKS_BTC = prev;
+        }
+    });
+
+    it('accepts --allow-undo-window on both CLIs, so the override reaches the child', function () {
+        const base = ['node', 'orchestrator.js', '--network', NET, '--out', '/tmp/o', '--db', '/tmp/d'];
+        expect(parseArgs(base).allowUndoWindow).to.equal(false);
+        expect(parseArgs(base.concat('--allow-undo-window')).allowUndoWindow).to.equal(true);
+
+        const dumpBase = ['node', 'dump.js', '--network', NET, '--out', '/tmp/o'];
+        expect(dump.parseArgs(dumpBase).allowUndoWindow).to.equal(undefined);
+        expect(dump.parseArgs(dumpBase.concat('--allow-undo-window')).allowUndoWindow).to.equal(true);
     });
 });

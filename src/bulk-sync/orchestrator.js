@@ -107,6 +107,10 @@ function parseArgs(argv) {
         from:       0,
         to:         null,      // null = use tip - tipSafety
         tipSafety:  10,
+        // Named opt-in for the one unsafe shape effectiveTipSafety cannot clamp: an
+        // explicit --to inside the live undo window. Threaded to dump.js, which is
+        // where the real tip is known and where the guard actually runs (#4634).
+        allowUndoWindow: false,
         chunkSize:  10000,
         out:        null,      // working directory for all artifacts
         db:         null,      // final DB path (classic-level / LevelDB)
@@ -137,6 +141,7 @@ function parseArgs(argv) {
             case '--from':            args.from        = parseInt(argv[++i], 10); break
             case '--to':              args.to          = parseInt(argv[++i], 10); break
             case '--tip-safety':      args.tipSafety   = parseInt(argv[++i], 10); break
+            case '--allow-undo-window': args.allowUndoWindow = true; break
             case '--chunk-size':      args.chunkSize   = parseInt(argv[++i], 10); break
             case '--out':             args.out         = argv[++i]; break
             case '--db':              args.db          = argv[++i]; break
@@ -201,7 +206,10 @@ function resolveVerifyDefaults(args) {
 // pinned we clamp tip-safety up to undoBlocks (the same per-chain value derive-keys uses
 // to size the N-window, so the stop point and the seeded window stay in lockstep). Clamp
 // up only: an operator may choose a LARGER margin, never a smaller one. An explicit --to
-// is the operator's responsibility (the tip is unknown here), so it is returned as-is.
+// is returned as-is because the tip is unknown here and the clamp has nothing to compare
+// against; the invariant is enforced instead in dump.js, at the one point the real tip IS
+// resolved, where an explicit --to inside the undo window is rejected unless
+// --allow-undo-window names the override (). Warning-only here was not enough.
 function effectiveTipSafety(tipSafety, to, network) {
     if (to !== null) return tipSafety
     return Math.max(tipSafety, resolveUndoBlocks(network))
@@ -220,6 +228,8 @@ Options:
   --from <height>       first block (default 0)
   --to <height>         last block (default: tip - tip-safety)
   --tip-safety <n>      blocks before tip to stop (default 10)
+  --allow-undo-window   permit an explicit --to inside the live undo window
+                        (unsafe: no K/M reorg-recovery indices are seeded there)
   --chunk-size <n>      blocks per .xdmp file (default 10000)
   --workers <n>         parallel parse workers (default: number of chunks)
   --ram-budget <MB>     RAM for external sort (default 1024)
@@ -445,6 +455,9 @@ async function phaseDump(args, dirs) {
     ]
     if (args.to !== null) {
         dumpArgs.push('--to', String(args.to))
+        // dump.js rejects an explicit --to inside the live undo window unless this
+        // rides along, so the override has to reach the child (#4634, ).
+        if (args.allowUndoWindow) dumpArgs.push('--allow-undo-window')
     } else {
         dumpArgs.push('--tip-safety', String(args.tipSafety))
     }
@@ -737,7 +750,7 @@ async function main() {
     const undoBlocks = resolveUndoBlocks(args.network)
     const clampedTipSafety = effectiveTipSafety(args.tipSafety, args.to, args.network)
     if (args.to !== null) {
-        log('ORCHESTRATOR', `explicit --to ${args.to} set: ensure it is <= tip-${undoBlocks}, or a reorg into the bulk range will find no K/M reorg-recovery indices (#4634)`)
+        log('ORCHESTRATOR', `explicit --to ${args.to} set: dump.js rejects it if it exceeds tip-${undoBlocks}${args.allowUndoWindow ? ', but --allow-undo-window overrides that guard' : ''}, since a reorg into the bulk range finds no K/M reorg-recovery indices (#4634)`)
     } else if (clampedTipSafety !== args.tipSafety) {
         log('ORCHESTRATOR', `tip-safety ${args.tipSafety} < undo-blocks ${undoBlocks} for ${args.network}; raising tip-safety to ${clampedTipSafety} so the reorg window stays inside the live-built W/K/M range (#4634)`)
         args.tipSafety = clampedTipSafety

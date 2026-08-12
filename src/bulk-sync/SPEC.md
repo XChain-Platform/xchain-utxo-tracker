@@ -159,6 +159,13 @@ fall inside the active reorg window. If this invariant is broken (tip-safety bel
 `UNDO_BLOCKS`), a reorg into the bulk range finds no K/M and leaves missing (spent,
 never-restored) UTXOs until a full re-index (#4634).
 
+An explicit `--to` is the one endpoint that clamp cannot cover: the orchestrator has not
+resolved a tip, so it has nothing to compare against. `dump.js` enforces the same
+invariant against the tip it does resolve, rejecting an explicit `--to` above
+`tip - resolveUndoBlocks(network)`. `--allow-undo-window` is the named override for a
+deliberate partial or backfill seed; it still logs the unsafe choice. Before that guard
+existed the endpoint rode through on a warning alone ().
+
 ## Resume manifests (stale-artifact gates)
 
 A merge dir can be reused across runs, so every resume path must prove an

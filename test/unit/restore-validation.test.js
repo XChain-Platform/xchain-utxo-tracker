@@ -15,7 +15,8 @@
 'use strict';
 
 const { expect } = require('chai');
-const { isWrapperArchive, parseSha256Sidecar } = require('../../src/restore-validation.js');
+const { isWrapperArchive, parseSha256Sidecar,
+        hasRequiredLevelDbMembers, parseDetachedSignature } = require('../../src/restore-validation.js');
 
 describe('restore-validation', function () {
 
@@ -56,6 +57,58 @@ describe('restore-validation', function () {
             expect(parseSha256Sidecar('deadbeef')).to.equal(null); // too short
             expect(parseSha256Sidecar('')).to.equal(null);
             expect(parseSha256Sidecar(null)).to.equal(null);
+        });
+    });
+
+    describe('hasRequiredLevelDbMembers (#4368)', function () {
+        it('accepts a real classic-level member set', function () {
+            expect(hasRequiredLevelDbMembers(['CURRENT', 'MANIFEST-000001', '000005.ldb', '000004.log', 'LOCK']))
+                .to.equal(true);
+        });
+        it('accepts the same members behind a ./ or directory prefix', function () {
+            expect(hasRequiredLevelDbMembers(['./', './CURRENT', './MANIFEST-000007', './000005.ldb']))
+                .to.equal(true);
+            expect(hasRequiredLevelDbMembers(['store/CURRENT', 'store/MANIFEST-000007'])).to.equal(true);
+        });
+        it('rejects an archive of unrelated files', function () {
+            expect(hasRequiredLevelDbMembers(['README.txt', 'payload.bin', 'etc/passwd'])).to.equal(false);
+        });
+        it('rejects a set missing CURRENT', function () {
+            expect(hasRequiredLevelDbMembers(['MANIFEST-000001', '000005.ldb'])).to.equal(false);
+        });
+        it('rejects a set with no MANIFEST-<n>', function () {
+            expect(hasRequiredLevelDbMembers(['CURRENT', '000005.ldb'])).to.equal(false);
+            // A file merely starting with MANIFEST is not the numbered manifest.
+            expect(hasRequiredLevelDbMembers(['CURRENT', 'MANIFEST-notes.txt'])).to.equal(false);
+        });
+        it('rejects the wrapper layout, which is not a store', function () {
+            expect(hasRequiredLevelDbMembers(['data.tar.gz', 'data.sha256'])).to.equal(false);
+        });
+        it('is false for an empty or non-array input', function () {
+            expect(hasRequiredLevelDbMembers([])).to.equal(false);
+            expect(hasRequiredLevelDbMembers(null)).to.equal(false);
+            expect(hasRequiredLevelDbMembers(undefined)).to.equal(false);
+        });
+    });
+
+    describe('parseDetachedSignature (#4426)', function () {
+        const B64 = Buffer.alloc(64, 7).toString('base64');
+        it('reads the publisher\'s "v1 ed25519 <base64>" line', function () {
+            const sig = parseDetachedSignature(`v1 ed25519 ${B64}\n`);
+            expect(Buffer.isBuffer(sig)).to.equal(true);
+            expect(sig.length).to.equal(64);
+        });
+        it('returns null on a wrong version or algorithm', function () {
+            expect(parseDetachedSignature(`v2 ed25519 ${B64}`)).to.equal(null);
+            expect(parseDetachedSignature(`v1 rsa ${B64}`)).to.equal(null);
+        });
+        it('returns null on a signature that is not 64 bytes', function () {
+            expect(parseDetachedSignature('v1 ed25519 ' + Buffer.alloc(32).toString('base64'))).to.equal(null);
+        });
+        it('returns null on junk, empty, or non-string input', function () {
+            expect(parseDetachedSignature('not-a-signature')).to.equal(null);
+            expect(parseDetachedSignature('')).to.equal(null);
+            expect(parseDetachedSignature(null)).to.equal(null);
         });
     });
 });

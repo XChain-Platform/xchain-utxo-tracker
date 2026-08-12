@@ -150,6 +150,20 @@ async function loadKeys(opts) {
     const startedAt = Date.now()
 
     try {
+        // A bulk load must start from an empty store. The loop below only puts
+        // records and never deletes a key the seed no longer carries, and the
+        // LAST_* markers are written last, so seeding a populated DB overlays
+        // the new seed on the old records and then advertises the mixture as
+        // fully synced. The reachable trigger is api.js runBulkSyncIfEmpty:
+        // isDbEmpty() reads LAST_BLOCK_HEIGHT, so a load that crashed before
+        // the markers looks empty on the next boot and reseeds on top of its
+        // own partial write (). Refuse loudly instead of serving
+        // stale or phantom UTXOs.
+        const existing = await db.keys({ limit: 1 }).all()
+        if (existing.length > 0) {
+            throw new Error(`loadKeys: target DB at ${dbPath} is not empty; a bulk load requires a fresh, empty dbPath (remove the directory, or point --out at an empty path, before re-running)`)
+        }
+
         for (const pfx of prefixes) {
             const { keySize, recordSize } = LAYOUT[pfx]
             const filePath = path.join(keysDir, pfx + '.dat')

@@ -15,11 +15,12 @@
  * XChain UTXO Tracker - restore archive validation (pure decision logic)
  *
  * The single-layer `restorebootstrap` flow (api.js decompressPigz) wipes /data
- * BEFORE it extracts, so an archive that is the wrong LAYOUT or fails its
- * published checksum must be rejected up front or the live DB is destroyed and
- * replaced with a corrupt/empty store. These helpers are the pure decision core
+ * BEFORE it extracts, so an archive that fails its provenance signature, is the
+ * wrong LAYOUT, fails its published checksum, or holds no LevelDB store at all
+ * must be rejected up front or the live DB is destroyed and replaced with a
+ * corrupt/empty/attacker-chosen store. These helpers are the pure decision core
  * (no fs / child_process) so they are unit-testable; api.js supplies the
- * member list, sidecar text, and computed digest.
+ * member list, sidecar text, signature text, and computed digest.
  *
  *********************************************************************/
 
@@ -57,4 +58,49 @@ function parseSha256Sidecar(text) {
     return m ? m[0].toLowerCase() : null;
 }
 
-module.exports = { isWrapperArchive, parseSha256Sidecar, WRAPPER_MEMBER_NAMES };
+// A classic-level store always carries a `CURRENT` file naming its live manifest,
+// plus the `MANIFEST-<n>` that file points at. Anything else is not a LevelDB store.
+const LEVELDB_MANIFEST_PATTERN = /^MANIFEST-\d+$/;
+
+// True when the archive's member list looks like a LevelDB store: `CURRENT` AND at
+// least one `MANIFEST-<n>`. A checksum proves only that the archive is the one that
+// was published, never that it holds a store, so without this a correctly-checksummed
+// tar of unrelated files passes validation and the unconditional pre-extract /data
+// wipe leaves the tracker on a fresh empty DB (#4368). Basenames are compared, as in
+// isWrapperArchive, so a `./` or directory prefix does not hide the members.
+function hasRequiredLevelDbMembers(memberNames) {
+    if (!Array.isArray(memberNames)) return false;
+    let hasCurrent = false;
+    let hasManifest = false;
+    for (const raw of memberNames) {
+        if (typeof raw !== 'string') continue;
+        const base = path.posix.basename(raw.trim().replace(/\/+$/, ''));
+        if (base === 'CURRENT') hasCurrent = true;
+        else if (LEVELDB_MANIFEST_PATTERN.test(base)) hasManifest = true;
+        if (hasCurrent && hasManifest) return true;
+    }
+    return false;
+}
+
+// Parse a detached bootstrap signature file. The publisher (xchain-node's
+// BootstrapService, driven by scripts/publish-bootstraps.sh) writes
+// `v1 ed25519 <base64>`, where the signature covers the raw 32 bytes of the archive's
+// sha256 digest (digest-then-sign, so a multi-GB archive is never buffered). Returns
+// the raw signature bytes, or null when the text is not a v1 ed25519 line.
+function parseDetachedSignature(text) {
+    if (typeof text !== 'string') return null;
+    const parts = text.trim().split(/\s+/);
+    if (parts.length !== 3 || parts[0] !== 'v1' || parts[1] !== 'ed25519') return null;
+    const sig = Buffer.from(parts[2], 'base64');
+    // An ed25519 signature is exactly 64 bytes; anything else means a truncated or
+    // non-base64 payload that Buffer.from accepted silently.
+    return sig.length === 64 ? sig : null;
+}
+
+module.exports = {
+    isWrapperArchive,
+    parseSha256Sidecar,
+    hasRequiredLevelDbMembers,
+    parseDetachedSignature,
+    WRAPPER_MEMBER_NAMES,
+};

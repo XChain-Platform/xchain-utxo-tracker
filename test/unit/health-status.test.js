@@ -14,7 +14,8 @@ const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
 
-const { deriveHealthStatus } = require('../../src/api.js');
+const { deriveHealthStatus, isNodeRpcStale, deriveSyncedVerdict, NODE_RPC_STALE_MS } = require('../../src/api.js');
+const XChainUtxoTracker = require('../../src/XChainUtxoTracker.js');
 
 // xchain-node's BootstrapHealthGate.evaluateStatusPayload refuses any payload
 // whose `status` is outside this set, so a status word the tracker invents
@@ -59,6 +60,115 @@ describe('health status policy', function () {
     const controller = src.slice(src.indexOf('const jsonRpcController = {'));
     expect(controller).to.match(/^\s+async health\(\)\s*\{/m);
     expect(controller).to.match(/deriveHealthStatus\(/);
+  });
+
+});
+
+// : GET /status derived liveness from a readable LevelDB plus the halt
+// flag, while the tracking loop retries a failing getBlockchainInfo forever. A
+// coin node that is down or unsynced froze block tracking with the store still
+// readable, so the probe kept answering 'ok'.
+describe('node-RPC staleness policy', function () {
+
+  const WINDOW = 150000;
+
+  it('is not stale inside the window', function () {
+    expect(isNodeRpcStale({ lastNodeRpcOkAt: 1000, now: 1000 + WINDOW, windowMs: WINDOW })).to.equal(false);
+  });
+
+  it('is stale once the window is exceeded', function () {
+    expect(isNodeRpcStale({ lastNodeRpcOkAt: 1000, now: 1001 + WINDOW, windowMs: WINDOW })).to.equal(true);
+  });
+
+  // The loop stamps the timestamp only after a usable tip read, so a process whose
+  // loop has not started has no timestamp at all. Reading that as stale would 503
+  // every container before its first poll.
+  it('reads an unset timestamp as not-stale rather than stale', function () {
+    expect(isNodeRpcStale({})).to.equal(false);
+    expect(isNodeRpcStale()).to.equal(false);
+    expect(isNodeRpcStale({ lastNodeRpcOkAt: null })).to.equal(false);
+    expect(isNodeRpcStale({ lastNodeRpcOkAt: 'soon' })).to.equal(false);
+  });
+
+  // Five refresh cycles (BLOCKCHAIN_INFO_REFRESH_MS is 30s in XChainUtxoTracker.js),
+  // so one slow or skipped poll never trips the probe.
+  it('defaults to a window several refresh cycles wide', function () {
+    expect(NODE_RPC_STALE_MS).to.be.at.least(120000);
+  });
+
+  // Wiring guard: the /status route is registered inside startApi()'s closure and
+  // is not reachable from a require. Without this gate the staleness policy is
+  // computed by nobody and the probe is DB-only again.
+  it('gates GET /status on the staleness verdict', function () {
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+    const route = src.slice(src.indexOf("app.get('/status'"));
+    expect(route).to.match(/isNodeRpcStale\(/);
+    expect(route).to.match(/nodeRpcStale\) res\.status\(503\)|!dbOk \|\| nodeRpcStale\) res\.status\(503\)/);
+  });
+
+  // Deliberate boundary: deriveHealthStatus feeds the `health` RPC, whose consumers
+  // (xchain-node's bootstrap gate) own their own lag budget. Folding staleness into
+  // it would refuse a source the caller would otherwise accept.
+  it('keeps staleness out of the health status word', function () {
+    expect(deriveHealthStatus({ halted: false, dbOk: true })).to.equal('healthy');
+  });
+
+});
+
+// : the synced verdict was upper-bounded only. A node reset/reindex below
+// our committed tip yields a NEGATIVE lag, which read synced:true and authorized
+// PSBT selection over UTXOs in blocks the node no longer recognizes; both encoder
+// gates delegate this verdict, so the floor has to live here.
+describe('sync verdict bounds', function () {
+
+  const THRESHOLD = XChainUtxoTracker.SYNCED_THRESHOLD;
+
+  it('is synced from lag 0 up to and including the threshold', function () {
+    expect(deriveSyncedVerdict({ lag: 0, threshold: THRESHOLD })).to.equal(true);
+    expect(deriveSyncedVerdict({ lag: THRESHOLD, threshold: THRESHOLD })).to.equal(true);
+  });
+
+  it('is not synced above the threshold', function () {
+    expect(deriveSyncedVerdict({ lag: THRESHOLD + 1, threshold: THRESHOLD })).to.equal(false);
+  });
+
+  // The regression this exists for: committed 1000 against a node reset to 900.
+  it('is not synced when the tracker is AHEAD of the node', function () {
+    expect(deriveSyncedVerdict({ lag: -100, threshold: THRESHOLD })).to.equal(false);
+    expect(deriveSyncedVerdict({ lag: -1, threshold: THRESHOLD })).to.equal(false);
+  });
+
+  // A frozen cached tip can read lag 0 while the live chain has run far ahead.
+  it('is not synced while the node height is stale', function () {
+    expect(deriveSyncedVerdict({ lag: 0, nodeHeightStale: true, threshold: THRESHOLD })).to.equal(false);
+  });
+
+  it('treats an unknown lag as not synced, never as lag 0', function () {
+    expect(deriveSyncedVerdict({ lag: null, threshold: THRESHOLD })).to.equal(false);
+    expect(deriveSyncedVerdict({ threshold: THRESHOLD })).to.equal(false);
+    expect(deriveSyncedVerdict()).to.equal(false);
+  });
+
+  // Wiring guard: get_sync_status is built inside startApi()'s closure and is not
+  // reachable from a require, so an unwired helper would leave the old inline
+  // expression in force with every test above still green.
+  it('computes get_sync_status.synced from the helper', function () {
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+    const method = src.slice(src.indexOf('async get_sync_status()'));
+    expect(method).to.match(/synced:\s*deriveSyncedVerdict\(\{ lag, nodeHeightStale \}\)/);
+  });
+
+  // : get_sync_status is the ONLY tracker surface the encoder's serve-readiness
+  // probe reads, so without mempool_ready here that probe cannot mirror create_tx's
+  // UTXO_TRACKER_NOT_READY refusal and /status paints the encoder healthy through the
+  // whole restart window in which every create_tx is refused. Same closure problem as
+  // the guard above, so the same source-level assertion.
+  it('publishes mempool_ready on get_sync_status, floored by the same synced verdict', function () {
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+    const method = src.slice(src.indexOf('async get_sync_status()'));
+    expect(method).to.match(
+      /result\.mempool_ready\s*=\s*result\.synced\s*&&\s*tracker\.isMempoolReconverged\(\)\s*===\s*true/
+    );
   });
 
 });
