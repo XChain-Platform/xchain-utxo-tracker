@@ -64,19 +64,19 @@ offset    size  field
 [24..56]   32   fullTxHash      full 32B txid
 [56..88]   32   scriptPubKey    32B sha256(script)  (matches LevelUpDb O-key format)
 [88..120]  32   blockHash       containing block hash
-[120]       1   coinbase        uint8 (1 = coinbase output, 0 = normal) (L-4)
+[120]       1   coinbase        uint8 (1 = coinbase output, 0 = normal)
 ```
 
 `blockHash` is included so the merger can emit Z/S records directly from a re-sort of this stream without cross-referencing `meta-*.dat`.
 
-**Version compatibility.** The `coinbase` byte (L-4) is the only field ever added to this
+**Version compatibility.** The `coinbase` byte is the only field ever added to this
 record. The header's `record_size` field (offset 28) is the explicit discriminator: a
 legacy dump reports 120 with no flag byte, a current dump reports 121. The merger reads
 `record_size` from the header and threads it through the outputs sort, the anti-join, and
 `derive-keys`, so both widths merge; a 120-byte record carries no flag and its output is
 treated as non-coinbase (matching the LevelUpDb legacy-decode rule). The coinbase fact is
 re-derived from the block bytes at parse time (the generation tx's single 0xFFFFFFFF-index
-input), so even a `.xdmp` produced before L-4 yields correctly-flagged outputs when
+input), so even a `.xdmp` produced before this field existed yields correctly-flagged outputs when
 re-parsed by a current worker.
 
 ## spends-*.dat  (magic `XCHNSPD1`, record_size = 20)
@@ -157,14 +157,15 @@ orchestrator enforces this: it clamps `--tip-safety` up to `resolveUndoBlocks(ne
 (the same per-chain value that sizes the seeded `N` window), so no bulk-seeded block can
 fall inside the active reorg window. If this invariant is broken (tip-safety below
 `UNDO_BLOCKS`), a reorg into the bulk range finds no K/M and leaves missing (spent,
-never-restored) UTXOs until a full re-index (#4634).
+never-restored) UTXOs until a full re-index.
 
 An explicit `--to` is the one endpoint that clamp cannot cover: the orchestrator has not
 resolved a tip, so it has nothing to compare against. `dump.js` enforces the same
 invariant against the tip it does resolve, rejecting an explicit `--to` above
 `tip - resolveUndoBlocks(network)`. `--allow-undo-window` is the named override for a
 deliberate partial or backfill seed; it still logs the unsafe choice. Before that guard
-existed the endpoint rode through on a warning alone ().
+existed, the endpoint rode through on a warning alone, which meant the unsafe choice could
+go unnoticed instead of being an explicit, auditable opt-in.
 
 ## Resume manifests (stale-artifact gates)
 

@@ -10,8 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression (L-4, bulk-sync residual): coinbase maturity must survive the
-//     bulk-sync pipeline ──────────────────────────────────────────────────────
+// Regression: coinbase maturity must survive the bulk-sync pipeline.
 //
 // The live indexing path marks coinbase outputs on the O-record (optional 45th
 // byte) and getUtxosAddress withholds immature ones. Bulk-sync originally wrote
@@ -61,7 +60,8 @@ function fixtureAddress() {
 function fullTxid(ch) { return Buffer.from(ch.repeat(64), 'hex'); }
 
 // Write a legacy 120-byte outputs-*.dat (no coinbase flag byte). Mirrors the
-// pre-L-4 writer so we can prove the merger still accepts that width.
+// writer format used before the coinbase flag byte was added, so we can prove
+// the merger still accepts that width.
 function writeLegacyOutputsFile(filePath, records, firstHeight, lastHeight) {
     const RS = 120;
     const header = Buffer.alloc(HEADER_SIZE);
@@ -132,7 +132,7 @@ async function openTracker(dbPath, tipHeight) {
     return { tracker, store, mempoolDb };
 }
 
-describe('Regression (L-4 bulk-sync): coinbase maturity survives the pipeline', function () {
+describe('coinbase maturity survives the bulk-sync pipeline', function () {
     this.timeout(20000);
 
     let tmp;

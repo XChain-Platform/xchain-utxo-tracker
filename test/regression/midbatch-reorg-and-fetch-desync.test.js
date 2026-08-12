@@ -16,18 +16,18 @@ const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 
 const P_PENDING_CLEANUP_KEY = Buffer.from([0x50]);
 
-// ─── Regression (M-1/M-2): mid-batch tip-regression discards the in-flight batch ─
+// Regression: mid-batch tip-regression discards the in-flight batch.
 //
 // The true tip-regression branch in start() (a node reset / reindex /
 // invalidateblock that drops the node tip below our processed height) can be
 // reached mid-batch by a periodic blockchain-info refresh, while a LevelDB
 // batch is still open holding staged writes for blocks about to be rolled back.
 // verifyReorg opens its OWN transaction, so leaving the stale batch in place
-// either strands phantom UTXOs (committed at the next flush, M-1) or, once
+// either strands phantom UTXOs (committed at the next flush) or, once
 // verifyReorg nulls transactionArray, routes later writes as unbatched direct
-// puts while the batch counter is still > 0 (M-2). discardInflightBatchForReorg
+// puts while the batch counter is still > 0. discardInflightBatchForReorg
 // rolls the batch back and persists the aged-block cleanup list out-of-band.
-describe('Regression (M-1/M-2): discardInflightBatchForReorg', function () {
+describe('discardInflightBatchForReorg', function () {
   let tracker, db;
 
   beforeEach(async function () {
@@ -79,14 +79,14 @@ describe('Regression (M-1/M-2): discardInflightBatchForReorg', function () {
   });
 });
 
-// ─── Regression (M-10): bounded block-fetch retry fails loud on desync ────────
+// Regression: bounded block-fetch retry fails loud on desync.
 //
 // A node pruned past our cursor (or any permanent fetch fault) previously became
 // an infinite 3s retry loop with no fail-loud signal. noteBlockFetchFailure
 // counts consecutive failures at the SAME height, resets on a height change, and
 // throws a diagnosable desync error once MAX_BLOCK_FETCH_RETRIES is hit so the
 // polling loop's top-level guard exits for a supervised restart.
-describe('Regression (M-10): noteBlockFetchFailure', function () {
+describe('noteBlockFetchFailure', function () {
   let tracker;
   const MAX = XChainUtxoTracker.MAX_BLOCK_FETCH_RETRIES;
 

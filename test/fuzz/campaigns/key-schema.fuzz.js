@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// Property-based key-schema fuzz over mainnet-scale key distributions .
+// Property-based key-schema fuzz over mainnet-scale key distributions.
 //
 // Extends test/unit/key-schema-invariant.test.js, which pins the schema
 // invariants against FIXED sample keys. Mainnet exercises key-space edges
@@ -29,8 +29,6 @@ const { fc, FUZZ_RUNS, arbBuffer, randHash, randHash8 } = require('../helpers');
 const LevelUpStore = require('../../../src/LevelUpDb');
 
 const MAX_KEY_LEN = 77;   // K/P_OUT_DEL, the longest key in the schema
-
-// ─── Adversarial arbitraries (mainnet-scale distributions) ───────────────────
 
 // 32-byte hash with mainnet edge shapes: uniform, all-0x00, all-0xFF,
 // 0xFF/0x00 tail runs of arbitrary length (sort-boundary shapes), and bytes
@@ -87,9 +85,7 @@ async function freshDb() {
   return d;
 }
 
-describe('Fuzz: key-schema over mainnet-scale distributions ', function () {
-
-  // ─── 1. Builder field round-trip under adversarial inputs ─────────────────
+describe('Fuzz: key-schema over mainnet-scale distributions', function () {
 
   describe('builder field round-trip', function () {
     it('kOutput embeds scriptHash/txHash8/vout byte-exactly for any input shape', function () {
@@ -138,8 +134,6 @@ describe('Fuzz: key-schema over mainnet-scale distributions ', function () {
       );
     });
   });
-
-  // ─── 2. rangeEnd is an exact bound: membership iff prefix match ───────────
 
   describe('rangeEnd exactness', function () {
     // For any prefix (2..77 bytes) and any key up to the schema max length:
@@ -210,8 +204,6 @@ describe('Fuzz: key-schema over mainnet-scale distributions ', function () {
       );
     });
   });
-
-  // ─── 3. Real-DB scan exactness over sort-adjacent scriptHash clusters ─────
 
   describe('range-scan exactness on a real DB', function () {
     // Insert outputs under a cluster of sort-adjacent scriptHashes (the

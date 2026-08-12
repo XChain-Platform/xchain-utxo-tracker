@@ -12,10 +12,7 @@
 
 const integrationHelpers = require('../integration/helpers');
 
-// Re-export everything from integration helpers
 module.exports = { ...integrationHelpers };
-
-// ─── Timing ─────────────────────────────────────────────────────────────────
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -28,11 +25,9 @@ async function measureMs(asyncFn) {
   return { result, ms: elapsed };
 }
 
-// ─── LevelDB Fault Injectors ────────────────────────────────────────────────
-
 /**
- * Monkey-patches db.db.batch to reject with the given error.
- * Target: LevelUpDb.js:290 - endTransaction() calls this.db.batch()
+ * Monkey-patches db.db.batch to reject; endTransaction() calls this.db.batch()
+ * internally, so this simulates a write failure at commit time.
  * Returns { restore() } to undo the patch.
  */
 function injectBatchWriteFailure(levelUpStore, error) {
@@ -44,9 +39,8 @@ function injectBatchWriteFailure(levelUpStore, error) {
 }
 
 /**
- * Wraps the underlying LevelDB get() and iterator() with delays.
- * get() is used for point lookups; iterator() for range scans
- * (getOutputsScriptPubKey, getBalanceInfo, etc.).
+ * Delays LevelDB get() (point lookups) and iterator() (range scans, e.g.
+ * getOutputsScriptPubKey/getBalanceInfo) to simulate read latency.
  * Returns { restore() }.
  */
 function injectReadLatency(levelUpStore, delayMs) {
@@ -94,15 +88,10 @@ async function corruptStateAnchor(levelUpStore, { height, hash } = {}) {
   }
 }
 
-/**
- * Deletes LAST_BLOCK_HEIGHT and/or LAST_BLOCK_HASH from the store.
- */
 async function deleteStateAnchors(levelUpStore) {
   try { await levelUpStore.db.del(Buffer.from('LAST_BLOCK_HEIGHT')); } catch (e) {}
   try { await levelUpStore.db.del(Buffer.from('LAST_BLOCK_HASH')); } catch (e) {}
 }
-
-// ─── Reorg Helpers ──────────────────────────────────────────────────────────
 
 /**
  * Forces verifyReorg() to run in direct-write mode (no transactionArray).
@@ -117,12 +106,6 @@ async function forceVerifyReorg(tracker) {
   await tracker.verifyReorg();
 }
 
-// ─── Convenience ────────────────────────────────────────────────────────────
-
-/**
- * Builds a chain of coinbase blocks and commits them to the tracker.
- * Returns the blocks array.
- */
 async function buildCommittedChain(tracker, count, addressIndex = 0) {
   const blocks = integrationHelpers.buildCoinbaseChain(count, addressIndex);
   await integrationHelpers.processBlocksAndCommit(tracker, blocks);

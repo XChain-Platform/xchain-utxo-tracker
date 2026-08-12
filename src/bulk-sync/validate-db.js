@@ -220,7 +220,7 @@ async function main() {
     await truthDb.close()
     await candDb.close()
 
-    // ── Report ────────────────────────────────────────────────────────────
+    // Report
     const elapsed = Date.now() - startedAt
     const prefixes = Object.keys(stats).sort()
 

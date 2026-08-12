@@ -87,7 +87,7 @@ const MAX_BLOCK_FETCH_RETRIES = Number(process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIE
     : 20
 // After this many consecutive fetch failures at one height on an AuxPoW chain,
 // treat the failure as deterministic (e.g. an AuxPoW section skipAuxPow cannot
-// traverse,  / decoder ) and switch to getBlockReassembled, which
+// traverse) and switch to getBlockReassembled, which
 // rebuilds the pure block from getblockheader + verbose getblock + per-txid
 // getrawtransaction and so never reads the AuxPoW bytes at all. Must stay well
 // below MAX_BLOCK_FETCH_RETRIES so the fallback gets attempts in before the
@@ -96,7 +96,7 @@ const AUXPOW_REASSEMBLE_AFTER = 5
 const REMOVE_SPENT = true
 // Coinbase outputs are unspendable until they reach this many confirmations
 // (consensus rule: 100 on BTC/LTC/DOGE and their regtest/testnet variants).
-// Serving immature coinbase as spendable (L-4) hands a caller an input that
+// Serving immature coinbase as spendable hands a caller an input that
 // every node will reject, so getUtxosAddress withholds coinbase outputs below
 // this depth. Overridable for test harnesses that mine short chains.
 const COINBASE_MATURITY = Number(process.env.XCHAIN_COINBASE_MATURITY) > 0
@@ -180,8 +180,8 @@ class XChainUtxoTracker {
       // env-driven flag, in BOTH directions: a Dogecoin deployment started without
       // AUX_POW=true would otherwise parse every DOGE block as a plain Bitcoin
       // block, and a BTC/LTC deployment started WITH it would strip a section those
-      // chains never carry, truncating any block whose version signals bit 0x100
-      // (). The answer comes from the coin's declared wireFormat in the
+      // chains never carry, truncating any block whose version signals bit 0x100.
+      // The answer comes from the coin's declared wireFormat in the
       // canonical registry (src/coins) rather than a coin-name literal, matching the
       // decoder and the bulk seeder (bulk-sync/dump.js), so onboarding a merge-mined
       // chain is a registry edit. LTC's MWEB handling is unaffected: that is the
@@ -206,7 +206,7 @@ class XChainUtxoTracker {
       this.reorgCount = 0
       this.lastReorgDepth = 0
 
-      // Unrecoverable block-fetch desync signal (M-10). Set just before the
+      // Unrecoverable block-fetch desync signal. Set just before the
       // polling loop fails loud on a node that can no longer serve the next
       // block (pruned past our cursor, or a permanent missing-block fault), so
       // get_sync_status / an operator can name the fault instead of watching a
@@ -225,7 +225,7 @@ class XChainUtxoTracker {
       this.haltReason = null
 
       // Coinbase maturity depth used by getUtxosAddress to withhold immature
-      // coinbase outputs (L-4). Instance-scoped (not a bare const) so test
+      // coinbase outputs. Instance-scoped (not a bare const) so test
       // harnesses that mine short chains can relax it; production keeps the
       // consensus default. Setting it to 0 disables the gate.
       this.coinbaseMaturity = COINBASE_MATURITY
@@ -285,7 +285,7 @@ class XChainUtxoTracker {
             // reorg unwind (removeCreatedOutputsInBlock), which can never reach past
             // the undoBlocks window, so once a block ages out of that window its W
             // records are dead weight; without this the W index grows with every
-            // output ever created instead of the live-UTXO set (TP-19).
+            // output ever created instead of the live-UTXO set.
             await this.db.removeCreatedOutputsBlockIndexOnly(blockHash)
             // Same rationale for the Z block->script reverse-index: its only
             // reader is the reorg unwind (removeOutputScriptsInBlock), which is
@@ -304,8 +304,8 @@ class XChainUtxoTracker {
         this.pendingKMCleanup = []
     }
 
-    // Discard an in-flight (uncommitted) LevelDB batch before reorg recovery
-    // (M-1/M-2). A periodic blockchain-info refresh can land in the true tip
+    // Discard an in-flight (uncommitted) LevelDB batch before reorg recovery.
+    // A periodic blockchain-info refresh can land in the true tip
     // regression branch of start() mid-batch, while an open transaction still
     // holds staged writes for blocks recovery is about to roll back. verifyReorg
     // opens its OWN transaction, so a retained stale batch either strands phantom
@@ -327,7 +327,7 @@ class XChainUtxoTracker {
         return true
     }
 
-    // Evaluate a block-fetch failure at `height` (M-10). `streakHeight`/`streakCount`
+    // Evaluate a block-fetch failure at `height`. `streakHeight`/`streakCount`
     // are the caller's running streak; the count increments while the SAME height
     // keeps failing and resets to 1 on a height change (we advanced past the stuck
     // block). Once MAX_BLOCK_FETCH_RETRIES consecutive failures accrue at one
@@ -337,7 +337,7 @@ class XChainUtxoTracker {
     // top-level guard logs [fatal] and exits for a supervised restart, instead of
     // retrying every few seconds forever with no signal. Returns the updated
     // { height, count } streak for the caller to carry forward on a non-fatal miss.
-    // : whether the block-fetch loop should stop retrying the AuxPoW strip
+    // Decides whether the block-fetch loop should stop retrying the AuxPoW strip
     // path for this height and rebuild the block per-tx instead (a failure streak
     // this long at ONE height on an AuxPoW chain reads as deterministic, e.g. an
     // AuxPoW section skipAuxPow cannot traverse, not a transient RPC blip).
@@ -684,7 +684,7 @@ class XChainUtxoTracker {
 
             const confirmations = this.blockchainInfoLastBlock - nextOutput.height + 1
 
-            // Withhold immature coinbase outputs (L-4): every node rejects a spend
+            // Withhold immature coinbase outputs: every node rejects a spend
             // of a coinbase output below coinbaseMaturity confirmations, so serving
             // it as spendable would hand a caller an input that can never confirm.
             // When the tip height is not yet known, confirmations is not meaningful
@@ -840,9 +840,9 @@ class XChainUtxoTracker {
     // A coinbase transaction is the block's generation tx: exactly one input
     // whose prevout index is 0xFFFFFFFF (the same marker the input passes use to
     // skip tracing it). Its outputs are unspendable until COINBASE_MATURITY
-    // confirmations, so they must be marked at insert time (L-4).
+    // confirmations, so they must be marked at insert time.
     // Pure freshness computation shared by the API's per-query freshness surface
-    // (M-11) and its regression test, so the lag/synced contract cannot drift.
+    // and its regression test, so the lag/synced contract cannot drift.
     // lag is null when nothing is indexed yet or the node tip is unknown; callers
     // must treat null as "unknown, do not assume fresh", never as lag 0.
     // `state` carries the two readiness facts block-sync alone does not cover, so the
@@ -851,10 +851,10 @@ class XChainUtxoTracker {
     //   mempool_ready - synced AND the mempool has reconverged at least once. synced
     //     flips true before the first (unawaited) updateMempool repopulates mempoolDb,
     //     so during that window a confirmed output already spent in the node mempool
-    //     cannot be filtered out and reaches input selection ().
+    //     cannot be filtered out and reaches input selection.
     //   halted / halt_reason - the tracker stopped polling on an unrecoverable reorg.
     //     Emitted only when halted, matching get_sync_status, so the field's presence
-    //     is itself the signal ().
+    //     is itself the signal.
     static computeFreshness(committedHeight, nodeTip, synced, state = {}){
         const { mempoolReconverged = false, halted = false, haltReason = null } = state
         const tracker_height = (typeof committedHeight === 'number') ? committedHeight : -1
@@ -866,7 +866,7 @@ class XChainUtxoTracker {
         // longer recognizes. The raw isSynced() flag is height-catchup state and knows
         // nothing of that regression, so without the floor get_utxos published
         // {lag:-100, synced:true, mempool_ready:true} for the same instant get_sync_status
-        // published synced:false, and create_tx gates on THIS sibling ().
+        // published synced:false, and create_tx gates on THIS sibling.
         // Same floor deriveSyncedVerdict applies in api.js, so the two cannot disagree.
         const orphaned  = (lag !== null && lag < 0)
         const isSynced  = (synced === true) && !orphaned
@@ -1169,7 +1169,7 @@ class XChainUtxoTracker {
         // Instance-visible twin of lastBlockchainInfoRefreshAt, read by GET /status.
         // The loop below retries a failing getBlockchainInfo forever, so a coin node
         // that is down or unsynced stalls block tracking while LevelDB stays perfectly
-        // readable and the DB-only probe kept reporting 'ok' (). Seeded here
+        // readable and the DB-only probe kept reporting 'ok'. Seeded here
         // rather than in the constructor so the window starts when tracking starts.
         this.lastNodeRpcOkAt = Date.now()
         this.blockchainInfoLastBlock = -1
@@ -1244,7 +1244,7 @@ class XChainUtxoTracker {
 
         let nodeSyncedProblem = false
 
-        // Track consecutive block-fetch failures at the SAME height (M-10). A node
+        // Track consecutive block-fetch failures at the SAME height. A node
         // pruned past our cursor (or any permanent fetch fault) otherwise retries
         // every 3s forever with no fail-loud signal. Reset on any successful fetch
         // or a height change so ordinary transient blips never accumulate toward
@@ -1291,7 +1291,7 @@ class XChainUtxoTracker {
                     }
                     
                     if (lastProcessedBlockIndex > this.blockchainInfoLastBlock){
-                        // Discard any in-flight batch before recovery runs (M-1/M-2). A
+                        // Discard any in-flight batch before recovery runs. A
                         // periodic refresh can reach here mid-batch; leaving the staged
                         // batch open would leak phantom UTXOs or break per-block atomicity
                         // once verifyReorg opens its own transaction. Rationale in full at
@@ -1440,11 +1440,11 @@ class XChainUtxoTracker {
                         let fetched
                         if (this.shouldReassembleBlock(nextBlockHeight, blockFetchFailureHeight, blockFetchFailures)) {
                             // Deterministic-looking failure streak at this height on an
-                            // AuxPoW chain : bypass the prefetch queue (its batch
+                            // AuxPoW chain: bypass the prefetch queue (its batch
                             // strip would just fail the same way) and rebuild the pure
                             // block per-tx, never reading the AuxPoW bytes.
                             console.error('Block fetch at height ' + nextBlockHeight + ' failed ' + blockFetchFailures +
-                                ' consecutive times; falling back to per-tx block reassembly (malformed-AuxPoW recovery, ).')
+                                ' consecutive times; falling back to per-tx block reassembly (malformed-AuxPoW recovery).')
                             prefetchQueue = []
                             const hash = await this.connector.getBlockHash(nextBlockHeight)
                             fetched = { hash, hex: await this.connector.getBlockReassembled(hash) }
@@ -1466,7 +1466,7 @@ class XChainUtxoTracker {
                         // noteBlockFetchFailure counts consecutive failures at this
                         // height and THROWS a diagnosable desync error once the bound
                         // is hit, so a node pruned past our cursor fails loud instead
-                        // of spinning every 3s forever (M-10).
+                        // of spinning every 3s forever.
                         const _s = this.noteBlockFetchFailure(nextBlockHeight, blockFetchFailureHeight, blockFetchFailures, e)
                         blockFetchFailureHeight = _s.height
                         blockFetchFailures = _s.count
@@ -1751,7 +1751,7 @@ class XChainUtxoTracker {
                 // Phase 1: prune txs no longer in the node mempool and dedup
                 // rawMempool down to only-new txids. This is a DB-only step
                 // (no RPC, no sleep), so its write transaction opens and commits
-                // immediately. : the old single begin/endTransaction
+                // immediately. The old single begin/endTransaction
                 // spanned the ENTIRE multi-batch fetch/sleep loop below, so on a
                 // large mempool (50k txs -> tens of batches, ~1.5s sleep each)
                 // the mempool write path stayed uncommitted for >75s. Pending
@@ -1825,7 +1825,7 @@ class XChainUtxoTracker {
                         // new mempool spends, and a plain break fell through to the
                         // unconditional readiness assignment below and published it as
                         // reconverged. getUtxosAddress then served the confirmed inputs of
-                        // spends it could not see (). The outer catch de-asserts
+                        // spends it could not see. The outer catch de-asserts
                         // readiness for this and every other mid-pass fault, and finally
                         // still clears mempoolBusy so the next tick recovers.
                         if (consecutiveTxFetchFailures >= MEMPOOL_MAX_TX_FETCH_RETRIES){
@@ -1900,7 +1900,7 @@ class XChainUtxoTracker {
                 console.error('Error during mempool update: ' + error.message, error)
                 // Every route into this catch leaves a post-prune snapshot that is
                 // missing some advertised mempool txs, so readiness must be withdrawn
-                // rather than left asserted from an earlier good pass (). The
+                // rather than left asserted from an earlier good pass. The
                 // next successful pass re-asserts it at the end of the try block.
                 this.mempoolReconverged = false
             } finally {
@@ -1918,6 +1918,6 @@ module.exports.satoshiToDecimalString = satoshiToDecimalString
 module.exports.SYNCED_THRESHOLD = SYNCED_THRESHOLD
 module.exports.MAX_ADDRESS_OUTPUTS = MAX_ADDRESS_OUTPUTS
 module.exports.MAX_BLOCK_FETCH_RETRIES = MAX_BLOCK_FETCH_RETRIES
-// Exported for the  malformed-AuxPoW fallback regression test.
+// Exported for the malformed-AuxPoW fallback regression test.
 module.exports.AUXPOW_REASSEMBLE_AFTER = AUXPOW_REASSEMBLE_AFTER
 module.exports.COINBASE_MATURITY = COINBASE_MATURITY

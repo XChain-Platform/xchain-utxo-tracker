@@ -1,5 +1,4 @@
-/*********************************************************************
- *
+/*
  * Copyright © 2025–2026 Dankest, LLC
  * Based on XChain Platform by Dankest, LLC – https://dankest.llc
  *
@@ -10,8 +9,7 @@
  * license (without AGPL source-disclosure terms) is available -
  * contact legal@dankest.llc.
  *
- **********************************************************************
- * Security: global in-flight concurrency cap 
+ * Security: global in-flight concurrency cap.
  *
  * The tracker's per-IP rate limiter cannot see a stampede spread across many
  * source IPs: every bucket stays under its own limit while the process burns
@@ -124,7 +122,7 @@ async function waitFor(predicate, label){
     throw new Error('timed out waiting for: ' + label);
 }
 
-describe('Security: global in-flight concurrency cap ', function () {
+describe('Security: global in-flight concurrency cap', function () {
 
     afterEach(function () {
         for(const server of openServers){

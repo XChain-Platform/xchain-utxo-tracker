@@ -10,17 +10,16 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression (M-9, ): an invalid source size must not erase its
-//     own bootstrap task record ────────────────────────────────────────────────
-//
-// getbootstrap starts compressDirPigz and routes the rejection through
-// handleBootstrapFailure, whose recordFailure is guarded on tasks[taskId] and
-// silently no-ops when the record is missing. compressDirPigz's invalid-du-size
-// branch used to `delete tasks[taskId]` immediately before throwing, so
-// progress -1 and the error were never recorded and getbootstrapstatus answered
-// "taskid doesn't exist" instead of the real failure. The sibling M-9 tests all
-// call handleBootstrapFailure with the record already present, which is exactly
-// the precondition this bug violated, so none of them could catch it.
+// Regression: an invalid source size must not erase its own bootstrap task
+// record. getbootstrap starts compressDirPigz and routes the rejection
+// through handleBootstrapFailure, whose recordFailure is guarded on
+// tasks[taskId] and silently no-ops when the record is missing.
+// compressDirPigz's invalid-du-size branch used to `delete tasks[taskId]`
+// immediately before throwing, so progress -1 and the error were never
+// recorded and getbootstrapstatus answered "taskid doesn't exist" instead of
+// the real failure. Other regression tests for this task-record class all
+// call handleBootstrapFailure with the record already present, which is
+// exactly the precondition this bug violated, so none of them could catch it.
 //
 // The du process is stubbed rather than run, so the test exercises the real
 // compressDirPigz control flow without touching /data or spawning tar/pv/pigz
@@ -71,7 +70,7 @@ function stubDuEmitting(text) {
     };
 }
 
-describe('Regression (M-9, #4371): invalid source size keeps its bootstrap task record', function () {
+describe('invalid source size keeps its bootstrap task record', function () {
 
     it('leaves the task record in place so handleBootstrapFailure can stamp progress -1 and the error', async function () {
         const api = loadApiWithStubbedSpawn(stubDuEmitting('notanumber\t/data/xchain\n'));

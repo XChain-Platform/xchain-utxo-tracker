@@ -40,11 +40,9 @@ describe('Perf: High Query Load', function () {
     addressPool = generateAddressPool(SCALE.addresses);
     metrics = new MetricsCollector('Query Load');
 
-    // Seed data
     const seedBlocks = Math.max(50, Math.floor(SCALE.blocks / 5));
     await seedTracker(tracker, seedBlocks, addressPool, SCALE.txsPerBlock);
 
-    // Start HTTP server
     httpCtx = await startHttpServer(tracker);
   });
 
@@ -83,7 +81,6 @@ describe('Perf: High Query Load', function () {
       errors: result.errors,
       timeouts: result.timeouts
     });
-    // Record percentile values as separate metrics for the table
     metrics.record(label + ' (p50)', result.latency.p50);
     metrics.record(label + ' (p99)', result.latency.p99);
 
@@ -125,7 +122,6 @@ describe('Perf: High Query Load', function () {
   });
 
   it('measures mixed endpoint load', async function () {
-    // Interleave different endpoints
     const mixed = [];
     for (const key of addressPool) {
       mixed.push({ method: 'GET', path: `/balance/${key.address}` });
@@ -154,7 +150,6 @@ describe('Perf: Combined Indexing + Query Load', function () {
     addressPool = generateAddressPool(SCALE.addresses);
     metrics = new MetricsCollector('Combined Load');
 
-    // Seed initial data
     const seedBlocks = Math.max(50, Math.floor(SCALE.blocks / 5));
     await seedTracker(tracker, seedBlocks, addressPool, SCALE.txsPerBlock);
 
@@ -169,9 +164,8 @@ describe('Perf: Combined Indexing + Query Load', function () {
   });
 
   it('serves queries during concurrent block indexing', async function () {
-    // Prepare blocks to index during the test
     const indexBlocks = buildDenseChain(
-      Math.max(10, Math.floor(SCALE.querySecs * 5)), // ~5 blocks/sec
+      Math.max(10, Math.floor(SCALE.querySecs * 5)),
       addressPool,
       SCALE.txsPerBlock
     );
@@ -179,18 +173,17 @@ describe('Perf: Combined Indexing + Query Load', function () {
     let blocksIndexed = 0;
     let indexingDone = false;
 
-    // Start background indexing
     const indexingPromise = (async () => {
       for (const block of indexBlocks) {
         if (indexingDone) break;
         await processAndCommit(tracker, block);
         blocksIndexed++;
-        // Pace indexing to ~5 blocks/sec
+        // Pace indexing to ~5 blocks/sec so it overlaps the query run instead
+        // of finishing before or after it.
         await new Promise(r => setTimeout(r, 200));
       }
     })();
 
-    // Run query load concurrently
     const requests = addressPool.map(key => ({
       method: 'GET',
       path: `/balance/${key.address}`
@@ -208,7 +201,6 @@ describe('Perf: Combined Indexing + Query Load', function () {
       });
     });
 
-    // Stop indexing
     indexingDone = true;
     await indexingPromise;
 

@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression: bulk-sync pipeline hardening (2026-07-10 sweep) ──────────────
+// Regression: bulk-sync pipeline hardening.
 //
 // Covers the resume/atomicity/determinism fixes:
 //   - concatFilesWithHeader: atomic tmp+rename, header uniformity (record_size),

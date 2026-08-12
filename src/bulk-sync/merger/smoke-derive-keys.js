@@ -77,7 +77,7 @@ async function main() {
     const spendsPath  = path.join(TMP, 'spends.dat')
     const metaPath    = path.join(TMP, 'meta.dat')
 
-    // ── Write synthetic parse-worker outputs ──
+    // Write synthetic parse-worker outputs
     {
         const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', 0, 1)
         w.append(T0_8, 0, 100n, 0, T0_FULL, SCRIPT_X, H0)
@@ -97,7 +97,7 @@ async function main() {
         w.close()
     }
 
-    // ── External-sort outputs and spends ──
+    // External-sort outputs and spends
     const outputsByTx     = path.join(TMP, 'outputs-by-tx.dat')
     const spendsByPrevTx  = path.join(TMP, 'spends-by-prevtx.dat')
     const sortTmp         = path.join(TMP, 'sort-tmp')
@@ -114,7 +114,7 @@ async function main() {
         ramBudgetBytes: 1024 * 1024, tmpDir: path.join(sortTmp, 's'),
     })
 
-    // ── Left-anti-join → live-utxos ──
+    // Left-anti-join → live-utxos
     const liveUtxos = path.join(TMP, 'live-utxos.dat')
     const joinRes = await leftAntiJoin({
         leftPath: outputsByTx, rightPath: spendsByPrevTx, outputPath: liveUtxos,
@@ -124,7 +124,7 @@ async function main() {
     assert.strictEqual(joinRes.canceled, 1)
     assert.strictEqual(joinRes.orphanSpends, 0)
 
-    // ── Derive keys ──
+    // Derive keys
     const outDir = path.join(TMP, 'keys')
     const derTmp = path.join(TMP, 'derive-tmp')
     const { stats } = await deriveKeys({
@@ -134,7 +134,7 @@ async function main() {
         outputsRecordSize: 121,
     })
 
-    // ── Asserts: counts per prefix ──
+    // Asserts: counts per prefix
     assert.strictEqual(stats.B, 2, 'B count')
     assert.strictEqual(stats.T, 2, 'T count')
     assert.strictEqual(stats.N, 2, 'N count (window of 10, only 2 blocks)')
@@ -145,7 +145,7 @@ async function main() {
     assert.strictEqual(stats.S, 3, 'S count: X, Y, Z (option A preserves fully-spent scripts)')
     assert.strictEqual(stats.Z, 3, 'Z count')
 
-    // ── File sizes match layout.recordSize × count ──
+    // File sizes match layout.recordSize × count
     const fileSize = (name) => fs.statSync(path.join(outDir, name)).size
     assert.strictEqual(fileSize('B.dat'), stats.B * LAYOUT.B.recordSize)
     assert.strictEqual(fileSize('T.dat'), stats.T * LAYOUT.T.recordSize)
@@ -158,7 +158,7 @@ async function main() {
     assert.strictEqual(fileSize('N.dat'), stats.N * LAYOUT.N.recordSize)
     console.log('[smoke/derive-keys] counts + sizes OK')
 
-    // ── Sorted-ness: each prefix file must be ascending by key ──
+    // Sorted-ness: each prefix file must be ascending by key
     for (const p of Object.keys(LAYOUT)) {
         const { keySize, recordSize } = LAYOUT[p]
         const buf = fs.readFileSync(path.join(outDir, p + '.dat'))
@@ -170,7 +170,7 @@ async function main() {
     }
     console.log('[smoke/derive-keys] sort order OK')
 
-    // ── Specific records ──
+    // Specific records
     const B = fs.readFileSync(path.join(outDir, 'B.dat'))
     // Find the B record for block H0; verify height=0, ts=..., prev=zero.
     function findB(hash) {
@@ -195,7 +195,7 @@ async function main() {
         assert.strictEqual(B.subarray(off + 41, off + 73).compare(H0), 0, 'B[H1] prevHash')
     }
 
-    // ── S contains scriptX even though it's fully spent ──
+    // S contains scriptX even though it's fully spent
     const S = fs.readFileSync(path.join(outDir, 'S.dat'))
     function findS(script) {
         const rs = LAYOUT.S.recordSize
@@ -213,7 +213,7 @@ async function main() {
     assert.ok(findS(SCRIPT_Z) >= 0, 'S must contain scriptZ')
     console.log('[smoke/derive-keys] option A: fully-spent scriptX present in S.dat OK')
 
-    // ── Z has matching (blockHash, scriptHash) pairs ──
+    // Z has matching (blockHash, scriptHash) pairs
     const Z = fs.readFileSync(path.join(outDir, 'Z.dat'))
     function hasZ(blockHash, script) {
         const rs = LAYOUT.Z.recordSize
@@ -228,21 +228,21 @@ async function main() {
     assert.ok(hasZ(H0, SCRIPT_Y), 'Z[H0, Y]')
     assert.ok(hasZ(H1, SCRIPT_Z), 'Z[H1, Z]')
 
-    // ── I has the one spend: I[T0,0] = T1_8 ──
+    // I has the one spend: I[T0,0] = T1_8
     const I = fs.readFileSync(path.join(outDir, 'I.dat'))
     assert.strictEqual(I[0], 0x49)
     assert.strictEqual(I.subarray(1, 9).compare(T0_8), 0, 'I key prevTxHash8')
     assert.strictEqual(I.readUInt32BE(9), 0, 'I key prevVout')
     assert.strictEqual(I.subarray(13, 21).compare(T1_8), 0, 'I val spenderTxHash8')
 
-    // ── J has the one matching input-hint: J[T1, T0, 0] ──
+    // J has the one matching input-hint: J[T1, T0, 0]
     const J = fs.readFileSync(path.join(outDir, 'J.dat'))
     assert.strictEqual(J[0], 0x4A)
     assert.strictEqual(J.subarray(1, 9)  .compare(T1_8), 0, 'J key spenderTxHash8')
     assert.strictEqual(J.subarray(9, 17) .compare(T0_8), 0, 'J key prevTxHash8')
     assert.strictEqual(J.readUInt32BE(17),                0, 'J key prevVout')
 
-    // ── H records for live UTXOs only ──
+    // H records for live UTXOs only
     const H = fs.readFileSync(path.join(outDir, 'H.dat'))
     function hasH(txHash8, vout) {
         const rs = LAYOUT.H.recordSize
@@ -261,7 +261,7 @@ async function main() {
         assert.strictEqual(H.subarray(off + 13, off + 45).compare(SCRIPT_Y), 0, 'H[T0:1] scriptY')
     }
 
-    // ── O records for live UTXOs with expected values ──
+    // O records for live UTXOs with expected values
     const O = fs.readFileSync(path.join(outDir, 'O.dat'))
     function findO(script, txHash8, vout) {
         const rs = LAYOUT.O.recordSize
@@ -288,7 +288,7 @@ async function main() {
     }
     assert.strictEqual(findO(SCRIPT_X, T0_8, 0), -1, 'O must NOT contain spent X')
 
-    // ── T records ──
+    // T records
     const T = fs.readFileSync(path.join(outDir, 'T.dat'))
     function findT(txHash8) {
         const rs = LAYOUT.T.recordSize
@@ -307,7 +307,7 @@ async function main() {
         assert.strictEqual(T.subarray(off + 9, off + 41).compare(H1), 0, 'T[T1] blockHash=H1')
     }
 
-    // ── N window has both blocks ──
+    // N window has both blocks
     const N = fs.readFileSync(path.join(outDir, 'N.dat'))
     function hasN(hash) {
         const rs = LAYOUT.N.recordSize
@@ -319,7 +319,7 @@ async function main() {
     assert.ok(hasN(H0))
     assert.ok(hasN(H1))
 
-    // ── L.json ──
+    // L.json
     const L = JSON.parse(fs.readFileSync(path.join(outDir, 'L.json'), 'utf8'))
     assert.strictEqual(L.LAST_BLOCK_HEIGHT, '1') // 1 in hex = "1"
     assert.strictEqual(L.LAST_BLOCK_HASH, H1.toString('hex'))

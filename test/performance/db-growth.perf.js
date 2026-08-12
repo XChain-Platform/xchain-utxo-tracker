@@ -58,7 +58,6 @@ describe('Perf: Database Growth Degradation', function () {
       const blocksToProcess = targetBlocks - blocksProcessed;
 
       if (blocksToProcess > 0) {
-        // Index blocks up to this checkpoint
         for (let i = blocksProcessed; i < targetBlocks; i += batchSize) {
           const end = Math.min(i + batchSize, targetBlocks);
           const batch = chain.slice(i, end);
@@ -67,10 +66,8 @@ describe('Perf: Database Growth Degradation', function () {
         blocksProcessed = targetBlocks;
       }
 
-      // Count total UTXOs by querying all addresses
       let totalUtxos = 0;
 
-      // Measure serial query time
       const sampleSize = Math.min(SCALE.addresses, 50);
       const sampleAddresses = addressPool.slice(0, sampleSize);
 
@@ -91,7 +88,6 @@ describe('Perf: Database Growth Degradation', function () {
         if (rep === 0) totalUtxos += repUtxos;
       }
 
-      // Measure concurrent query time
       const { durationMs: concurrentMs } = await measureAsync(async () => {
         await Promise.all(sampleAddresses.map(key =>
           tracker.getBalanceInfo(key.address)
@@ -118,7 +114,6 @@ describe('Perf: Database Growth Degradation', function () {
       metrics.record(`query@${Math.round(pct * 100)}% (concurrent)`, perQueryConcurrent);
     }
 
-    // Print degradation table
     console.log('\n    Database Growth Degradation Report:');
     console.log('    ' + '─'.repeat(80));
     console.log('    ' + pad('Checkpoint', 12) + pad('Blocks', 10) + pad('UTXOs', 10) +
@@ -138,7 +133,6 @@ describe('Perf: Database Growth Degradation', function () {
     }
     console.log('    ' + '─'.repeat(80));
 
-    // Assert sub-linear growth: 100% should be < 4x the 25% query time
     if (results.length >= 2 && results[0].perQuerySerial > 0) {
       const first = results[0];
       const last = results[results.length - 1];

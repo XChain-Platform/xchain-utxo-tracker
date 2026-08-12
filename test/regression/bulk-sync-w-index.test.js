@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression: bulk-sync W (creation-block reverse index) parity ───────────
+// Regression: bulk-sync W (creation-block reverse index) parity.
 //
 // The live tracker writes a W-prefix (0x57) creation-block reverse-index record
 // for every confirmed output (LevelUpDb.insertOutputBlock). It is the ONLY index
@@ -222,7 +222,7 @@ describe('Regression (bulk-sync): W index is windowed to undoBlocks', function (
     afterEach(function () { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {} });
 
     // The reorg unwind can never reach past the undoBlocks window and the live
-    // tracker prunes W as blocks age out of it (TP-19), but seeded blocks below
+    // tracker prunes W as blocks age out of it, but seeded blocks below
     // the window never re-enter that aging path. An unwindowed seed therefore
     // leaves one PERMANENT 77-byte record per output ever created (~hundreds of
     // GB on a from-genesis BTC mainnet run). derive-keys must emit W only for

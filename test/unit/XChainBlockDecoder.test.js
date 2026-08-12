@@ -142,12 +142,8 @@ describe('XChainBlockDecoder', function () {
     const decoder = new XChainBlockDecoder('litecoin-mainnet');
 
     it('strips HogEx flag (0x00 0x08) from v1 tx', function () {
-      // Construct a tx hex with version=1, marker=0x00, flag=0x08
-      // The code should remove the 0008 bytes and parse normally
-      // We need to build a valid tx after stripping
-
-      // version 01000000 + marker 00 + flag 08
-      // After stripping marker+flag → must be a valid non-witness tx
+      // version(01000000) + marker(00) + flag(08); after stripping marker+flag
+      // the remainder must parse as a valid non-witness tx.
       const baseTxHex =
         '01000000' +
         '01' +

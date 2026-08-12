@@ -12,15 +12,11 @@
  *
  *********************************************************************/
 
-/*********************************************************************
- * test/unit/no-key-boot-warning.test.js
- *
- * : platform-wide no-API-key posture. Running keyless is allowed,
- * but the open/closed state must be announced loudly at boot. api.js
- * cannot be require()d in tests (it self-starts and hits real env vars),
- * so this is a source-level drift guard: the keyless branch and its
- * console.warn must stay present in src/api.js.
- *********************************************************************/
+// Platform-wide no-API-key posture: running keyless is allowed, but the
+// open/closed state must be announced loudly at boot. api.js cannot be
+// require()d in tests (it self-starts and hits real env vars), so this is a
+// source-level drift guard: the keyless branch and its console.warn must stay
+// present in src/api.js.
 
 'use strict';
 
@@ -28,7 +24,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-describe('no-API-key boot warning  @regression', function () {
+describe('no-API-key boot warning @regression', function () {
     const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
 
     it('warns at boot when UTXO_TRACKER_API_KEY is unset', function () {

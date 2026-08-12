@@ -66,7 +66,7 @@ const LEVELDB_MANIFEST_PATTERN = /^MANIFEST-\d+$/;
 // least one `MANIFEST-<n>`. A checksum proves only that the archive is the one that
 // was published, never that it holds a store, so without this a correctly-checksummed
 // tar of unrelated files passes validation and the unconditional pre-extract /data
-// wipe leaves the tracker on a fresh empty DB (#4368). Basenames are compared, as in
+// wipe leaves the tracker on a fresh empty DB. Basenames are compared, as in
 // isWrapperArchive, so a `./` or directory prefix does not hide the members.
 function hasRequiredLevelDbMembers(memberNames) {
     if (!Array.isArray(memberNames)) return false;

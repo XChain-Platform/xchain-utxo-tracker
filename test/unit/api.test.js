@@ -200,8 +200,6 @@ describe('API', function () {
     sinon.restore();
   });
 
-  // ─── REST Endpoints ──────────────────────────────────────────────────
-
   describe('GET /utxos/:address', function () {
     it('returns UTXO array', async function () {
       const utxos = [{ txid: 'abc', vout: 0, amount: 1.5, value: '150000000' }];
@@ -256,7 +254,6 @@ describe('API', function () {
     });
   });
 
-  // ─── Mempool readiness signal ───────────────────────────────────────────
   // After a restart the in-memory mempool is empty until the first
   // updateMempool() scan completes; these endpoints expose isSynced() so
   // callers can tell a reconverging zero from a genuine zero.
@@ -320,8 +317,6 @@ describe('API', function () {
       expect(res.body).to.be.null;
     });
   });
-
-  // ─── JSON-RPC ────────────────────────────────────────────────────────
 
   describe('POST / (JSON-RPC)', function () {
     // get_input_from_key_pattern is an admin method, so this block runs against
@@ -400,7 +395,6 @@ describe('API', function () {
     });
   });
 
-  // ─── Admin-method authentication ─────────────────────────────────────────
   // Admin JSON-RPC methods (bootstrap snapshot/restore, raw key scans) must be
   // gated by the API key. The router executes JSON-RPC batches (array bodies)
   // too, so the guard must inspect every entry, not just req.body.method.
@@ -466,7 +460,6 @@ describe('API', function () {
     });
   });
 
-  // ─── JSON-RPC batch cap (amplification guard) ────────────────────────────
   // express-json-rpc-router runs Promise.all over every array element, so an
   // uncapped batch turns one unauthenticated POST into thousands of concurrent
   // read scans / node RPCs. The guard rejects an over-cap array before the router.
@@ -486,8 +479,6 @@ describe('API', function () {
       expect(res.body).to.be.an('array').with.length(MAX_JSONRPC_BATCH);
     });
   });
-
-  // ─── Middleware ─────────────────────────────────────────────────────────
 
   describe('middleware', function () {
     it('includes CORS headers', async function () {

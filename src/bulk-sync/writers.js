@@ -41,7 +41,7 @@ const MAGIC_OUTPUTS      = Buffer.from('XCHNOUT1', 'ascii')
 const MAGIC_SPENDS       = Buffer.from('XCHNSPD1', 'ascii')
 const MAGIC_META         = Buffer.from('XCHNMTA1', 'ascii')
 
-// 121 bytes: the 120-byte body plus a trailing coinbase-flag byte (L-4). The
+// 121 bytes: the 120-byte body plus a trailing coinbase-flag byte. The
 // record_size header field (offset 28) is the explicit format discriminator: a
 // legacy dump reports 120 and its outputs carry no flag; the merger reads the
 // header size and treats missing-byte as non-coinbase, so old dumps still merge.
@@ -151,7 +151,7 @@ class FixedRecordWriter {
  *   [24..56]   fullTxHash     32B raw
  *   [56..88]   scriptPubKey   32B raw
  *   [88..120]  blockHash      32B raw
- *   [120]      coinbase       uint8 (1 = coinbase output, 0 = normal) (L-4)
+ *   [120]      coinbase       uint8 (1 = coinbase output, 0 = normal)
  */
 class OutputsWriter extends FixedRecordWriter {
     constructor(finalPath, chain, netName, firstHeight, lastHeight) {
@@ -169,7 +169,7 @@ class OutputsWriter extends FixedRecordWriter {
         scriptPubKey.copy(b, off + 56, 0, 32)
         blockHash.copy(b, off + 88, 0, 32)
         // Coinbase flag rides the value byte-for-byte through the sort and the
-        // anti-join into the O-record, where it drives maturity gating (L-4).
+        // anti-join into the O-record, where it drives maturity gating.
         b.writeUInt8(isCoinbase ? 1 : 0, off + 120)
         this._advance()
     }

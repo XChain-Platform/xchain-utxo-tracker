@@ -17,8 +17,6 @@ const { expect } = require('chai');
 const crypto = require('crypto');
 const LevelUpStore = require('../../src/LevelUpDb');
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 function randHash() { return crypto.randomBytes(32).toString('hex'); }
 function randHash8() { return crypto.randomBytes(8).toString('hex'); }
 function randBuf32() { return crypto.randomBytes(32); }
@@ -28,11 +26,7 @@ function makeDb() {
     return new LevelUpStore('more-test-' + Date.now() + '-' + (++dbCounter), true);
 }
 
-// ─── Suite ───────────────────────────────────────────────────────────────────
-
 describe('LevelUpDb (extended coverage)', function () {
-
-    // ─── sleep ──────────────────────────────────────────────────────────────
 
     describe('sleep()', function () {
         let db;
@@ -46,8 +40,6 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(elapsed).to.be.gte(10); // allow for timer imprecision
         });
     });
-
-    // ─── elementCompare ─────────────────────────────────────────────────────
 
     describe('elementCompare()', function () {
         let db;
@@ -64,8 +56,6 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(db.elementCompare('x', 'x')).to.equal(0);
         });
     });
-
-    // ─── addTransaction with null transactionArray (direct write path) ───────
 
     describe('addTransaction: direct-write path (transactionArray === null)', function () {
         let db;
@@ -107,8 +97,6 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── getTransaction (T prefix, hex-key path) ─────────────────────────────
-
     describe('getTransaction()', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
@@ -136,13 +124,9 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── deleteInputs ────────────────────────────────────────────────────────
-
     // deleteInputs() removed 2026-07-10: dead code with zero src/ callers,
     // a byte-for-byte second implementation of the I-key scan pattern used
     // elsewhere. See uuid:340641ec.
-
-    // ─── insertOutput with Buffer scriptPubKey ────────────────────────────────
 
     describe('insertOutput() with Buffer scriptPubKey', function () {
         let db;
@@ -193,8 +177,6 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── insertOutputHint with Buffer scriptPubKey ────────────────────────────
-
     describe('insertOutputHint() with Buffer scriptPubKey', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
@@ -221,8 +203,6 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(outputs).to.be.empty;
         });
     });
-
-    // ─── insertOutputBlock (W prefix) ────────────────────────────────────────
 
     describe('insertOutputBlock(): W prefix', function () {
         let db;
@@ -282,8 +262,6 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── removeCreatedOutputsInBlock (W prefix reorg cleanup) ────────────────
-
     describe('removeCreatedOutputsInBlock()', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
@@ -301,7 +279,6 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.insertOutputBlock({ blockHash, scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
             await db.endTransaction(true);
 
-            // Confirm the output is visible
             let outputs = await db.getOutputsScriptPubKey(scriptHex);
             expect(outputs).to.have.length(1);
 
@@ -310,7 +287,6 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.removeCreatedOutputsInBlock(blockHash);
             await db.endTransaction(true);
 
-            // Output should be gone
             outputs = await db.getOutputsScriptPubKey(scriptHex);
             expect(outputs).to.be.empty;
         });
@@ -322,8 +298,6 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.endTransaction(true);
         });
     });
-
-    // ─── removeCreatedOutputsBlockIndexOnly (W prefix aged-out prune) ─────────
 
     describe('removeCreatedOutputsBlockIndexOnly()', function () {
         let db;
@@ -361,8 +335,6 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.endTransaction(true);
         });
     });
-
-    // ─── removeOutputScriptsBlockIndexOnly (Z prefix aged-out prune) ──────────
 
     describe('removeOutputScriptsBlockIndexOnly()', function () {
         let db;
@@ -421,8 +393,6 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── removeOutputsWithInputsBatch: batch remove path ─────────────────────
-
     describe('removeOutputsWithInputsBatch()', function () {
         let db;
         beforeEach(async function () {
@@ -454,7 +424,6 @@ describe('LevelUpDb (extended coverage)', function () {
             // Clear the output cache so Phase 2 hits the DB read path
             LevelUpStore.outputCache = new Map();
 
-            // Now run the batch removal
             await db.beginTransaction();
             const count = await db.removeOutputsWithInputsBatch([
                 { prevTxHash: txHash8, prevOutputIndex: 0, blockHash }
@@ -463,7 +432,6 @@ describe('LevelUpDb (extended coverage)', function () {
 
             expect(count).to.equal(1);
 
-            // Output should be gone
             const outputs = await db.getOutputsScriptPubKey(scriptHex);
             expect(outputs).to.be.empty;
         });
@@ -577,8 +545,7 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
             await db.endTransaction(true);
 
-            // Cache should now contain the entry (populated by insertOutput above)
-            // Run batch removal; Phase 2 should see a cache hit
+            // Phase 2 of removeOutputsWithInputsBatch should now see a cache hit.
             await db.beginTransaction();
             const hitsBefore = LevelUpStore.outputCacheHits;
             await db.removeOutputsWithInputsBatch([
@@ -624,8 +591,6 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(stillPresent).to.equal(true);
         });
     });
-
-    // ─── insertOutputScriptBlock: Tier 1 and Tier 2 cache paths ──────────────
 
     describe('insertOutputScriptBlock(): tier cache paths', function () {
         let db;
@@ -739,8 +704,6 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── processDeletedOutputs: in-memory recovery (deletedTransactionArray) ──
-
     describe('processDeletedOutputs(): in-memory branch', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
@@ -805,8 +768,6 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── removeLastStoredBlock: error branch ──────────────────────────────────
-
     describe('removeLastStoredBlock(): error branch', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
@@ -831,9 +792,9 @@ describe('LevelUpDb (extended coverage)', function () {
         it('removeTransactionIfExists returns true and skips addTransaction when key IS in pending batch', async function () {
             const blockHash = randHash();
 
-            // Add the block in a batch but do NOT commit yet
+            // Add the block in a batch but do NOT commit yet, then remove it
+            // from the same in-flight batch.
             await db.addLastStoredBlock(blockHash);
-            // Now remove it from the same in-flight batch
             const result = await db.removeLastStoredBlock(blockHash);
             await db.endTransaction(true);
 
@@ -842,8 +803,6 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(blocks).to.not.include(blockHash);
         });
     });
-
-    // ─── getValuesFromKeyPattern: error branch ────────────────────────────────
 
     describe('getValuesFromKeyPattern(): error re-throw', function () {
         let db;
@@ -867,8 +826,6 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── AddressTooLargeError + InvalidCursorError constructors ──────────────
-
     describe('exported error classes', function () {
         it('AddressTooLargeError has correct properties', function () {
             const err = new LevelUpStore.AddressTooLargeError(500);
@@ -885,8 +842,6 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(err.message).to.include('bad-cursor');
         });
     });
-
-    // ─── parseOutputCursor edge cases (exercised via getOutputsScriptPubKey) ──
 
     describe('pagination cursor edge cases', function () {
         let db;
@@ -917,8 +872,6 @@ describe('LevelUpDb (extended coverage)', function () {
             });
         }
     });
-
-    // ─── deleteInputsByHints (batch variant) ──────────────────────────────────
 
     describe('deleteInputsByHints()', function () {
         let db;
@@ -951,8 +904,6 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── deleteOutputsByHints (batch variant) ─────────────────────────────────
-
     describe('deleteOutputsByHints()', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
@@ -983,8 +934,6 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── removeTransactionIfExists: false branch ──────────────────────────────
-
     describe('removeTransactionIfExists()', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
@@ -1003,8 +952,6 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(result).to.be.true;
         });
     });
-
-    // ─── getLastBlock with multiple blocks (covers both branches) ────────────
 
     describe('getLastBlock(): comparison branches', function () {
         let db;
@@ -1026,8 +973,6 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(last.hash).to.equal(h2);
         });
     });
-
-    // ─── height = -1 sentinel in encodeOutput / decodeOutput ─────────────────
 
     describe('encodeOutput/decodeOutput with height=-1', function () {
         let db;
@@ -1057,8 +1002,6 @@ describe('LevelUpDb (extended coverage)', function () {
     // coverage of that restore path lives in the processDeletedOutputs(...)
     // suites below.
 
-    // ─── getLastStoredBlocks with empty DB ───────────────────────────────────
-
     describe('getLastStoredBlocks() with empty DB', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
@@ -1069,8 +1012,6 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(blocks).to.be.an('array').that.is.empty;
         });
     });
-
-    // ─── getValuesFromKeyPattern with Buffer pattern ───────────────────────────
 
     describe('getValuesFromKeyPattern() with Buffer pattern', function () {
         let db;
@@ -1089,8 +1030,6 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(results).to.have.length(1);
         });
     });
-
-    // ─── processDeletedOutputs line 976: item.value = value ─────────────────
 
     describe('processDeletedOutputs(): item.value update branch (line 976)', function () {
         let db;
@@ -1133,8 +1072,6 @@ describe('LevelUpDb (extended coverage)', function () {
         });
     });
 
-    // ─── endTransaction catch block (line 489-492) ───────────────────────────
-
     describe('endTransaction(): batch error catch path', function () {
         let db;
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
@@ -1166,8 +1103,6 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(db.transactionArray).to.be.an.instanceOf(Map);
         });
     });
-
-    // ─── insertOutput: output cache eviction (lines 710-713) ─────────────────
 
     describe('insertOutput(): output cache eviction', function () {
         let db;

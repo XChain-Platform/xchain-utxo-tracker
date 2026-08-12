@@ -29,15 +29,12 @@ describe('Fuzz: Address Validation (P1)', function () {
     await closeTracker(tracker);
   });
 
-  // ─── getAddressType ────────────────────────────────────────────────────────
-
   describe('getAddressType', function () {
     it('never throws for any string input', async function () {
       await fc.assert(
         fc.asyncProperty(
           fc.string({ minLength: 0, maxLength: 200 }),
           async (addr) => {
-            // Must not throw; should return a string type
             const result = tracker.getAddressType(addr, NETWORK);
             expect(result).to.be.a('string');
             expect(['p2pkh', 'p2sh', 'p2wpkh', 'p2tr', 'unknown']).to.include(result);
@@ -78,17 +75,14 @@ describe('Fuzz: Address Validation (P1)', function () {
       for (const bad of badInputs) {
         try {
           const result = tracker.getAddressType(bad, NETWORK);
-          // If it returns, it should be a string
           expect(result).to.be.a('string');
         } catch (e) {
-          // Throwing is acceptable for truly invalid types
+          // Throwing is acceptable here: only a returned string is checked.
           expect(e).to.be.an('error');
         }
       }
     });
   });
-
-  // ─── getBalanceInfo with fuzzed addresses ──────────────────────────────────
 
   describe('getBalanceInfo with fuzzed addresses', function () {
     it('returns valid result for any valid address', async function () {
@@ -117,7 +111,8 @@ describe('Fuzz: Address Validation (P1)', function () {
             fc.constant(''),
             fc.constant('notanaddress'),
             fc.string({ minLength: 1, maxLength: 100 }).filter(s => {
-              // Filter out strings that might accidentally be valid
+              // Excludes strings that happen to be valid addresses, which would
+              // defeat the "invalid input" premise of this property.
               try {
                 require('bitcoinjs-lib').address.toOutputScript(s, NETWORK);
                 return false;
@@ -127,7 +122,8 @@ describe('Fuzz: Address Validation (P1)', function () {
           async (addr) => {
             try {
               await tracker.getBalanceInfo(addr);
-              // If it doesn't throw, that's a finding worth noting but not a test failure
+              // Not throwing here is not asserted as a failure: this loop only
+              // checks that when it does throw, it throws a proper Error.
             } catch (e) {
               expect(e).to.be.an('error');
             }
@@ -138,11 +134,8 @@ describe('Fuzz: Address Validation (P1)', function () {
     });
   });
 
-  // ─── getUtxosAddress with fuzzed addresses ─────────────────────────────────
-
   describe('getUtxosAddress with fuzzed addresses', function () {
     it('returns array for valid addresses', async function () {
-      // First, add some data
       const block = makeBlock(0, '0'.repeat(64), [makeCoinbaseTx(0)]);
       await processAndCommit(tracker, block);
 
@@ -186,8 +179,6 @@ describe('Fuzz: Address Validation (P1)', function () {
       );
     });
   });
-
-  // ─── getFirstSeen with fuzzed addresses ────────────────────────────────────
 
   describe('getFirstSeen with fuzzed addresses', function () {
     it('returns null or {height} for valid addresses', async function () {

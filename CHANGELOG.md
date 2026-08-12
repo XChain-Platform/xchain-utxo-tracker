@@ -8,183 +8,170 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- A `health` JSON-RPC method exposing lag, synced and halt state, so the bootstrap health gate can no longer certify a badly lagging tracker as a source ().
-- Production-scale perf harness (`test/performance/mainnet-scale-queries.perf.js`) that builds an on-disk LevelDB up to BTC-mainnet size and asserts exact address-scan and coin-selection results inside a flat time budget.
+- A `health` JSON-RPC method exposes lag, synced and halt state so a badly lagging tracker can no longer be certified as a bootstrap source.
+- Added a production-scale performance harness that builds a mainnet-size on-disk LevelDB and asserts address-scan and coin-selection results.
 
 ### Fixed
-- `CORS_ORIGIN` now accepts a comma-separated allowlist matched per-origin, instead of echoing a multi-value header that no browser accepts .
-- Pre-wipe restore aborts routed to resume (not fail-loud post-wipe path), getbootstrap writes the .sha256 sidecar, derive-keys drops the dead fullTxHash field, legacy fm.js removed.
+- `CORS_ORIGIN` now accepts a comma-separated allowlist matched per-origin instead of echoing a multi-value header no browser accepts.
+- Pre-wipe restore aborts now resume instead of failing after the wipe, bootstrap writes a checksum sidecar file, and a dead field was dropped from key derivation.
 
 ### Changed
-- Gate AuxPoW block-stripping on the coin's declared `wireFormat` in the canonical coin registry (`src/coins`) in both the live worker and the bulk seeder, instead of hardcoded coin-name checks, so onboarding a merge-mined chain is a registry edit; conformance now asserts every coin declares a handled `wireFormat`.
-- Single-source the per-chain reorg `undoBlocks` table in `src/undo-blocks.js` (imported by the live worker and the bulk seeder) so a per-chain re-tune can no longer drift between them and re-open the per-chain UTXO reorg gap.
-- Correct the bulk-sync reorg-invariant comments and operator log: K and M are skipped, W is seeded and windowed ().
+- AuxPoW block-stripping now gates on the coin's declared wire format in the canonical coin registry instead of hardcoded coin-name checks.
+- The per-chain reorg undo-blocks table is now single-sourced so the live worker and bulk seeder can no longer drift apart.
+- Corrected the bulk-sync reorg-invariant comments and operator log to reflect which archive records are skipped, seeded, and windowed.
 
 ### Fixed
-- Route the bootstrap/restore restart paths through the same guarded `launchTracker()` helper as the primary boot, so a polling-loop throw after a snapshot/restore still rolls back and logs `[fatal]` instead of surfacing as a bare unhandled rejection.
+- Bootstrap and restore restart paths now route through the same guarded launch helper as the primary boot, so a polling-loop failure rolls back and logs instead of surfacing as a bare unhandled rejection.
 
 ## [1.0.11] - 2026-07-16
 
 ### Fixed
-- LevelUpDb exports the remaining key builders and rangeEnd; new key-schema invariant suite pins binary key layouts, prefix uniqueness, rangeEnd coverage, and registry completeness against scan-bounds drift ().
-
+- Added a key-schema invariant suite pinning binary key layouts, prefix uniqueness, range coverage, and registry completeness against drift.
 
 ## [1.0.10] - 2026-06-20
 
 ### Added
-- `getUtxosAddress()` now rejects outputs whose resolved txid is shorter than 64 chars (pre-migration zero-hash records), throwing a descriptive error instead of forwarding a truncated hash to the encoder where it would silently build a malformed PSBT.
-- `get_sync_status` JSON-RPC response now includes a `synced` boolean derived from the tracker's own `SYNCED_THRESHOLD` so callers don't need to replicate the threshold locally.
-- The three address REST endpoints (`/utxos/:address`, `/balance/:address`, `/info/:address`) now expose mempool readiness via an `X-Mempool-Ready` header (and a `mempool_ready` body field on `/info`) so callers can distinguish empty results from results served before the first post-restart `updateMempool()` scan.
-- `.env.example` configuration template enumerating every environment variable the tracker reads, with safe regtest/placeholder defaults and inline comments.
-- `src/db.js` MariaDB connection pool now sets `queryTimeout` (`DB_QUERY_TIMEOUT`, default 30000 ms) to prevent hung connections on slow or lock-blocked statements.
-- `test/unit/classiclevel-behavior.test.js` + `test/ondisk-classiclevel-hook.js`: behaviour-contract tests for the LevelDB operations `LevelUpDb.js` relies on, plus `test:unit:ondisk` / `test:integration:ondisk` scripts that re-run existing suites against the real on-disk engine.
-- `test/e2e/persistence.test.js` case `G8`: asserts that pending mempool balance reconverges correctly after a tracker stop/restart cycle.
+- Address UTXO lookups now reject outputs with a pre-migration truncated transaction id instead of forwarding it to the encoder.
+- The sync-status API now returns a `synced` boolean so callers no longer need to replicate the threshold locally.
+- The address REST endpoints now expose mempool readiness via a response header and body field.
+- Added an example environment file enumerating every variable the tracker reads.
+- The database connection pool now enforces a query timeout to prevent hung connections.
+- Added behavior-contract tests for the LevelDB operations the tracker relies on, plus scripts to re-run suites against the real on-disk engine.
+- Added an end-to-end test asserting mempool balance reconverges correctly after a stop and restart.
 
 ### Changed
-- `package.json`: pinned `mariadb` 3.5.2, `bitcoinjs-lib` 6.1.7, `ecpair` 2.1.0, `bip32` 4.0.0, `tiny-secp256k1` 2.2.4 to exact versions (dropped `^` caret ranges) to ensure a byte-identical dependency tree across operator nodes.
-- `updateMempool()` inter-batch sleep reduced from 10000 ms to 1500 ms (new `MEMPOOL_INTER_BATCH_SLEEP` constant) so cumulative sleep no longer exceeds `MEMPOOL_INTERVAL` on large mempools; adds a one-line up-front log when the mempool spans more than one batch.
-- `getBlocksBatch` and `getBlocksBatchWithoutAuxPow` now retry on transient `ECONNABORTED` timeouts (up to 10 attempts, 500 ms backoff) via a new `postWithRetry` helper, matching the retry logic already on `getBlockHeader`.
-- Storage backend migrated from RocksDB to `classic-level` (LevelDB): drops the discontinued `rocksdb@5.2.1` stack (fails on Node 22) in favour of `classic-level@^3` / `memory-level@^3`; rewrites `LevelUpDb.js`, `XChainUtxoTracker.js`, and `src/bulk-sync/` to the `abstract-level` API. Every deployed node must resync; on-disk format changes from RocksDB SST to LevelDB. Bulk-sync `--backend` flag retired (tolerated and ignored).
-- AuxPoW live-sync prefetch now uses `getBlocksBatchWithoutAuxPow(heights)` instead of per-block individual fetches, aligning Dogecoin catch-up throughput with BTC/LTC.
-- `package.json`: aligned `mariadb` driver to the `^3.5.2` range used platform-wide (was `~3.4.5`).
-- Two `catch` blocks in `src/XChainUtxoTracker.js` (reorg block-delete retry, mempool raw-tx fetch retry) now append the caught error to their log line instead of logging separately or not at all.
-- `deleteInputsByHints` and `deleteOutputsByHints` now fan per-txid LevelDB range scans out with `Promise.all` instead of a serial `for…await` loop; `deleteAndCompareTxsNotInList` runs inputs and outputs cleanup in parallel.
-- Dependency installs are now reproducible: `package-lock.json` is committed and the Docker image is built with `npm ci` instead of `npm install`.
+- Pinned core crypto and database dependencies to exact versions for a byte-identical dependency tree across nodes.
+- Reduced the mempool inter-batch sleep so cumulative sleep no longer exceeds the mempool poll interval on large mempools.
+- Block-batch fetches now retry on transient connection timeouts, matching the existing header-fetch retry logic.
+- Migrated the storage backend from RocksDB to LevelDB, requiring every deployed node to resync.
+- AuxPoW live-sync prefetch now batches block fetches instead of fetching them individually.
+- Aligned the database driver version to the range used across the platform.
+- Two error-handling paths now log the caught error inline instead of dropping or duplicating it.
+- Reorg cleanup now runs its per-transaction deletions in parallel instead of serially.
+- Dependency installs are now reproducible via a committed lockfile and a clean-install build step.
 
 ### Fixed
-- `src/CryptoNetworks.js`: corrected the Litecoin dust threshold from `546` to `5460` litoshis for all three `litecoin-*` networks to match Litecoin Core's relay policy (10x Bitcoin's dust relay fee).
-- `get_input_from_key_pattern` JSON-RPC: closed an unauthenticated memory-exhaustion vector where a 32-char all-invalid hex pattern cleared the string-length gate (via `Buffer.from` silent truncation), triggered a full-database prefix scan, and accumulated results into an unbounded array. Fix adds a non-hex character gate, a 2-byte minimum key-prefix floor in `getValuesFromKeyPattern`, and a `maxValues` hard ceiling wired to `MAX_ADDRESS_OUTPUTS`.
-- `start()` loop now re-polls the chain tip on a 30-second wall-clock interval during catch-up (new `BLOCKCHAIN_INFO_REFRESH_MS`), preventing `synced` from being set prematurely and keeping the `confirmations` field accurate during long initial syncs.
-- Reorg-handling branch in `start()` now persists the `P_PENDING_CLEANUP_KEY` record outside the rolled-back transaction so aged-out K/M cleanup entries are not stranded on disk.
-- `blockFromBuffer` HogEx detection guard now accepts Litecoin transaction version 1 in addition to version 2, making the block-processing path symmetric with the single-tx `txFromHex` path.
-- Input/block hash buffers in `start()` are now copied before byte-reversing (`Buffer.from(...).reverse()`), preventing in-place mutation of shared decoded-transaction buffers.
-- `AUX_POW` env var is now parsed as an explicit boolean (`=== 'true' || === '1'`), so `AUX_POW=false` correctly disables AuxPoW mode instead of evaluating as truthy.
-- `verifyReorg()` now hard-aborts with a `console.error` and a throw when a reorg exceeds the `UNDO_BLOCKS` (10) recovery window, replacing silent UTXO under-counting.
-- `updateMempool()` no longer permanently locks `mempoolBusy` when the coin node goes down mid-batch: after `MEMPOOL_MAX_TX_FETCH_RETRIES` (5) consecutive `getRawTransactions()` failures the loop breaks, allowing the `finally` to clear the flag and the next tick to retry cleanly.
-- `this.lastBlocks` is now sorted by block height (tip last) at both load sites so `verifyReorg()` no longer throws "Can't delete a block from the 'last blocks' if it's not the last one" on every reorg.
-- `stopParsing()` now clears and nulls the recurring `mempoolInterval` timer on shutdown to prevent the mempool poll from touching an already-closed database.
-- `updateMempool()` post-fetch body is now wrapped in `try/catch/finally` so exceptions from `parseTransaction`, `beginTransaction`, or LevelDB no longer leave `mempoolBusy` stuck `true`.
-- Outputs created in a rolled-back block are now deleted from the live UTXO index via a new `W` creation-block reverse index (`[W][blockHash][txHash8][outputIndex]`), eliminating phantom UTXOs and inflated confirmed balances after a reorg.
-- Block-time mempool cleanup is now wrapped in a dedicated mempool-DB transaction guarded by the `mempoolBusy` mutex, preventing a concurrent `updateMempool()` from seeing a half-removed transaction view.
-- `blockFromBuffer` now strips the Litecoin MWEB marker+flag when the flag is the combined segwit+MWEB value `0x09` as well as the pure-MWEB `0x08`, making the block-level path symmetric with `txFromHex`.
+- Corrected the Litecoin dust threshold to match its relay policy.
+- Closed an unauthenticated memory-exhaustion path in key-pattern lookups with stricter input gates and a hard result ceiling.
+- The sync loop now re-polls the chain tip on a fixed interval during catch-up instead of marking sync complete prematurely.
+- Reorg cleanup records are now persisted outside the rolled-back transaction so aged-out entries are no longer stranded.
+- The block-format detection guard now accepts both supported transaction versions.
+- Hash buffers are now copied before reversal, preventing in-place mutation of shared decoded buffers.
+- An environment flag is now parsed as an explicit boolean instead of treating any non-empty string as true.
+- Reorg verification now hard-aborts when a reorg exceeds the recovery window instead of silently under-counting UTXOs.
+- Mempool updates no longer permanently lock after repeated fetch failures; the next cycle now retries cleanly.
+- Loaded block lists are now sorted by height so reorg verification no longer throws on out-of-order data.
+- Shutdown now clears the mempool poll timer so it can no longer touch an already-closed database.
+- Mempool post-fetch handling is now wrapped so a mid-batch exception can no longer leave its lock stuck.
+- Outputs from a rolled-back block are now removed from the live UTXO index via a reverse index, eliminating phantom UTXOs after a reorg.
+- Block-time mempool cleanup now runs inside its lock, preventing a concurrent update from seeing a half-removed transaction.
+- A Litecoin witness-marker strip now also matches a combined flag value, matching the single-transaction decode path.
 
 ### Removed
-- `src/BlockchainConnector.js`: removed unused `getMempoolEntry(txid)` method and its unit test; the tracker's indexing flow never called it and an unexercised RPC wrapper risks silently drifting with coin-node response shape changes.
+- Removed an unused connector method and its test.
 
 ## [1.0.9] - 2026-05-28
 
 ### Security
-- Pin `qs` to `^6.15.2` via an `overrides` entry, remediating GHSA-q8mj-m7cp-5q26 (moderate DoS: `qs.stringify` throws on null/undefined entries in comma-format arrays with `encodeValuesOnly` set).
+- Pinned a dependency to remediate a moderate denial-of-service advisory.
 
 ## [1.0.8] - 2026-05-28
 
 ### Fixed
-- Mempool ingest corrupted the previous-transaction hash in UTXO spend-hint (J) records because `parseTxInputs` reversed each input's hash buffer in place, so subsequent consumers received doubly-reversed bytes; the hash is now reversed on a copy, leaving shared source bytes intact.
+- Fixed mempool ingest corrupting a previous-transaction hash by mutating a shared buffer in place.
 
 ## [1.0.7] - 2026-05-28
 
 ### Removed
-- Unused `mysql` dependency; the service connects via the `mariadb` driver only and the legacy package was never imported.
+- Removed an unused database driver dependency that was never imported.
 
 ## [1.0.6] - 2026-04-06
 
 ### Changed
-- Move coverage badge to its own line in README.md for cleaner formatting
+- Moved the coverage badge to its own line in the README for cleaner formatting.
 
 ## [1.0.5] - 2026-04-05
 
 ### Changed
-- `README.md`: rewrote to match platform README structure: added version/test/coverage badges, Features list (15 items), Documentation table linking to xchain-documentation repo, Quick Start with `.env` example, Scripts table (19 commands), Test Suite breakdown (8 categories, 618+ tests), copyright footer
-- Moved Stryker mutation testing configs and plugins from repo root into `test/mutation/`: `stryker*.json`, `.mocharc.stryker.yml`, `stryker-plugins/`
-- Updated all `mutate*` npm scripts in `package.json` to reference new `test/mutation/` paths
-- Updated `mochaOptions.config` in all Stryker configs to `test/mutation/.mocharc.stryker.yml`
-- Moved `bufferutils.js` from repo root into `src/`; updated Dockerfile, test imports, Stryker configs, and custom mutant runner references
+- Rewrote the README to match the platform structure, with badges, a features list, and scripts and test-suite tables.
+- Moved mutation-testing configs and plugins into a dedicated test directory.
+- Updated mutation-testing npm scripts to reference the new paths.
+- Moved a buffer-utility module into `src/`, updating imports and configs accordingly.
 
 ## [1.0.4] - 2026-04-05
 
 ### Added
-- StrykerJS mutation testing setup with per-priority configs (P1/P2/P3), quick mode, and incremental mode
-- Custom buffer mutator plugin for endianness swap and LevelDB key prefix byte swap mutations
-- Standalone custom mutation runner (`stryker-plugins/run-custom-mutants.js`) for Buffer/encoding-specific mutations
-- Mocha config for Stryker runs (`.mocharc.stryker.yml`) with 30s timeout override
-- Local `bufferutils.js` test coverage via Module resolution patching (enables mutation testing of patched file)
-- npm scripts: `mutate`, `mutate:quick`, `mutate:p1`, `mutate:p2`, `mutate:p3`, `mutate:incremental`, `mutate:custom`, `mutate:custom:p1`
+- Added mutation testing with per-priority configs, a quick mode, and an incremental mode.
+- Added a custom mutator plugin for endianness and key-prefix byte-swap mutations.
+- Added a standalone mutation runner for buffer and encoding mutations.
+- Added a dedicated test-runner config for mutation-testing runs.
+- Enabled mutation-testing coverage of a module patched via module resolution.
 
 ### Changed
-- `src/api.js`: wrapped `startApi()` in `require.main === module` guard to support safe `require()` by Stryker workers
+- The API entry point now guards its startup call so it can be safely required by test workers.
 
 ## [1.0.3] - 2026-04-05
 
 ### Added
-- Chaos engineering test suite with 31 tests across 10 experiments targeting LevelDB persistence, RPC resilience, state corruption, and concurrency
-- Fault injection helpers: batch write failure, read latency, state anchor corruption, reorg forcing
-- Tests covering: batch write atomicity, disk-full recovery, crash mid-batch, read latency degradation, state anchor self-healing, reorg during uncommitted batch, RPC connection loss, malformed RPC responses, concurrent queries during commit, mempool flood
-- npm script: `test:chaos`
+- Added a chaos-engineering test suite covering persistence, RPC resilience, state corruption, and concurrency.
+- Added fault-injection helpers for batch write failure, read latency, state corruption, and forced reorgs.
+- Added chaos coverage for batch atomicity, disk-full recovery, crash mid-batch, and mempool flood scenarios.
 
 ## [1.0.2] - 2026-04-05
 
 ### Added
-- Performance and load testing suite with 23 tests across 7 scenarios: sustained indexing throughput, spike load recovery, HTTP query load (via autocannon), combined indexing + query load, mempool stress, database growth degradation, and reorg performance
-- Configurable test scale via `PERF_SCALE` env var (small/medium/large) with JSON results export via `PERF_RESULTS_DIR`
-- npm scripts: `test:perf`, `test:perf:quick`, `test:perf:deep`
+- Added a performance and load testing suite covering indexing throughput, query load, mempool stress, and reorg performance.
+- Added configurable test scale and JSON results export for performance runs.
 
 ## [1.0.1] - 2026-04-05
 
 ### Fixed
-- Mempool spend detection, `getInput()` now truncates txid to txHash8 to match key format used by `insertInput()`, fixing broken mempool spend detection in `getBalanceInfo()` and `getUtxosAddress()`
+- Fixed broken mempool spend detection caused by a transaction id truncation mismatch between insert and lookup.
 
 ### Added
-- Fuzz testing suite with 12 campaigns (P0-P3) using fast-check, covering block decoding, LevelDB encoding, balance calculation, transaction processing, address validation, reorg handling, mempool operations, connector responses, API endpoints, bootstrap filenames, and configuration parsing
-- npm scripts: `test:fuzz`, `test:fuzz:quick`, `test:fuzz:deep`
+- Added a fuzz-testing suite covering block decoding, encoding, balance calculation, transaction processing, and more.
 
 ## [1.0.0] - 2026-04-03
 
 ### Added
-- Bootstrap functionality for creating and restoring LevelDB snapshots
-- Balance API call (`get_balance`)
-- System info API call (`get_info`) with bitcoinjs-lib Litecoin network support
-- Dogecoin block parsing support
-- Litecoin block (hogex) parsing via modified bitcoinjs-lib
-- Litecoin witness program version 9 mempool transaction handling
-- Reorg detection and automatic chain reorganization recovery
-- Rolling 1000-block ETA window with day/hour/minute display
-- SPDX license header and LICENSE/NOTICE links in README
-- `.gitignore` for `.DS_Store` files
+- Added bootstrap functionality for creating and restoring LevelDB snapshots.
+- Added balance and system-info API calls.
+- Added Dogecoin block parsing support.
+- Added Litecoin block and witness-version-9 mempool transaction handling.
+- Added reorg detection and automatic recovery.
+- Added a rolling ETA display for sync progress.
+- Added license headers and links.
 
 ### Changed
-- **Binary key/value encoding**, replaced hex string keys and values with raw binary encoding, reducing DB size ~50%
-- **Reduced txid storage**, txid fields in T, I, J keys reduced to 8 bytes, further shrinking DB footprint
-- **Active-UTXO-only storage**, store only unspent outputs instead of all outputs, reducing DB size ~60-70%
-- **Concurrent block prefetch**, pre-fetch up to 10 blocks concurrently via JSON-RPC batch requests with HTTP keepAlive, reducing RPC idle time
-- **Parallel transaction processing**, inputs and outputs processed concurrently within each transaction using two-pass approach
-- **Increased batch sizes**, skip redundant LevelDB reads and use larger batch commits for throughput
-- Default mode changed to not delete spent outputs (configurable via `REMOVE_SPENT`)
-- Spent outputs now retained for a configurable number of blocks before deletion
-- Renamed from `xchain_address_indexer` to `xchain_utxo_tracker`
-- API listens on port specified by `API_PORT` environment variable
-- Dockerfile creates data directory and conditionally copies `.env`
-- bitcoinjs-lib downgraded from 7.0.0 to 6.1.7 for performance; fixed double buffer block hex string
+- Switched to binary key/value encoding, reducing database size.
+- Reduced transaction id storage to shrink the database footprint further.
+- Switched to active-UTXO-only storage, reducing database size.
+- Added concurrent block prefetching to reduce RPC idle time.
+- Parallelized transaction processing within each block.
+- Increased batch sizes for throughput.
+- Changed the default mode to retain spent outputs for a configurable window before deletion.
+- Renamed the service.
+- Made the API port configurable.
+- Updated the Dockerfile to create a data directory and conditionally copy the environment file.
+- Downgraded a core dependency for performance and fixed a related buffer bug.
 
 ### Fixed
-- Range scan key boundary, `rangeEnd` now appends `0xFF` correctly so scans don't miss keys
-- Reorg recovery, re-sync `lastBlocks` array and fix stale `startTimeStamp` reference after chain reorganization
-- Suppress unhandled rejections from discarded prefetch promises during reorg
-- Null guard on `deletedTransactionArray` in `processDeletedOutputs`
-- Reduce batch size and increase heap to prevent OOM on large blocks (e.g., BRC-20 inscription blocks)
-- Skip S/Z prefix writes in `insertOutputScriptBlock` for mempool transactions
-- Increase axios timeout from 5s to 30s for concurrent prefetch reliability
-- Handle null `blockHash` in `encodeTx` for mempool transactions
-- Defer K/M cleanup to after batch commit so spent UTXO backups are actually purged
-- Warn instead of crash for missing output hints from pre-`REMOVE_SPENT` data
-- Handle missing `transactionArray` key in `getTransactionValue`
-- Fix `get_input_from_key_pattern` bug documented in README update
-- Replace async stream handlers with `for-await-of` to prevent race conditions
-- Bootstrap creation and restoration progress now reaches 100%
-- BigInt removed from Litecoin block header parsing (compatibility fix)
-- bitcoinjs-lib `bufferutils` patched to work with bigint when parsing tx output values
-- Reorg no longer throws when last block is null
-- Reorg crash on chain tip mismatch resolved
-- UTXO tracker waits for coin node to synchronize before starting to parse
-- Fixed wrong bitcoin library reference after rename
-- Fixed wrong variable name in early environment setup
-- Fixed `updateMempool` performance (async handling)
+- Fixed a range-scan boundary bug that could miss keys.
+- Fixed stale state after chain reorganization.
+- Suppressed unhandled rejections from discarded prefetch promises during reorg.
+- Added a null guard for a missing deleted-transaction list.
+- Reduced batch size and increased heap to prevent out-of-memory errors on large blocks.
+- Fixed incorrect prefix writes for mempool transactions.
+- Increased request timeout for prefetch reliability.
+- Fixed a null block-hash handling bug for mempool transactions.
+- Fixed cleanup timing so spent UTXO backups are actually purged.
+- Fixed a crash on missing output hints from older data.
+- Fixed a missing-key bug in transaction value lookup.
+- Fixed a key-pattern lookup bug.
+- Replaced async stream handlers to prevent race conditions.
+- Fixed bootstrap progress reporting.
+- Fixed BigInt compatibility issues in block header and transaction parsing.
+- Fixed reorg crashes on a null or mismatched chain tip.
+- The tracker now waits for the coin node to sync before it starts parsing.
+- Fixed an incorrect library reference and a variable-name bug.
+- Fixed mempool update performance.

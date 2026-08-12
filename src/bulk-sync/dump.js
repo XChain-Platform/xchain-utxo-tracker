@@ -268,14 +268,14 @@ async function dumpChunk(connector, args, chunkStart, chunkEnd, chainTipAtDump) 
     return { skipped: false, bytes: bytesWritten, blocks }
 }
 
-// Reorg-recovery invariant (#4634), enforced here because this is the only place the
-// REAL tip is known: bulk-sync emits no K/M reverse indices, so a block it seeds inside
-// the live undo window is un-recoverable on reorg (phantom or missing UTXOs until a full
-// re-index). The orchestrator's effectiveTipSafety deliberately passes an explicit --to
-// through unclamped and its pre-connect log line cannot check that endpoint against a tip
-// it has not resolved, so an unsafe --to used to reach the dump on a warning alone
-// (). Fail loud instead. --allow-undo-window is the named, auditable opt-in for
-// a deliberate partial or backfill seed, and it still warns so the risky choice is logged.
+// Reorg-recovery invariant, enforced here because this is the only place the REAL tip is
+// known: bulk-sync emits no K/M reverse indices, so a block it seeds inside the live undo
+// window is un-recoverable on reorg (phantom or missing UTXOs until a full re-index). The
+// orchestrator's effectiveTipSafety deliberately passes an explicit --to through unclamped
+// and its pre-connect log line cannot check that endpoint against a tip it has not
+// resolved, so this is the only place left to catch it. Fail loud instead of letting it
+// through on a warning alone. --allow-undo-window is the named, auditable opt-in for a
+// deliberate partial or backfill seed, and it still warns so the risky choice is logged.
 function assertExplicitToOutsideUndoWindow(dumpEnd, chainTipAtDump, network, allowUndoWindow) {
     const undoBlocks = resolveUndoBlocks(network)
     const safeEnd = chainTipAtDump - undoBlocks
@@ -285,13 +285,13 @@ function assertExplicitToOutsideUndoWindow(dumpEnd, chainTipAtDump, network, all
             `--to ${dumpEnd} lands inside the live undo window (tip ${chainTipAtDump} - ` +
             `undo-blocks ${undoBlocks} = ${safeEnd}); bulk-sync seeds no K/M reorg-recovery ` +
             `indices there, so a reorg into that range leaves phantom or missing UTXOs until ` +
-            `a full re-index (#4634). Lower --to to ${safeEnd} or pass --allow-undo-window ` +
+            `a full re-index. Lower --to to ${safeEnd} or pass --allow-undo-window ` +
             `to override.`
         )
     }
     console.error(
         `[bulk-sync/dump] WARNING: --allow-undo-window set: seeding up to ${dumpEnd} inside the ` +
-        `live undo window (safe end ${safeEnd}); a reorg into that range is unrecoverable (#4634)`
+        `live undo window (safe end ${safeEnd}); a reorg into that range is unrecoverable`
     )
     return safeEnd
 }

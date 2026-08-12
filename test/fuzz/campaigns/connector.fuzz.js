@@ -28,8 +28,6 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
     sinon.restore();
   });
 
-  // ─── getBlockchainInfo ─────────────────────────────────────────────────────
-
   describe('getBlockchainInfo', function () {
     it('handles any JSON-RPC result shape without crashing', async function () {
       await fc.assert(
@@ -39,7 +37,6 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
             clientStub.resolves({ data: { result } });
             try {
               const info = await connector.getBlockchainInfo();
-              // Should return the result as-is
             } catch (e) {
               expect(e).to.exist;
             }
@@ -62,8 +59,9 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
           async (err) => {
             clientStub.rejects(err);
             try {
+              // A resolve here is unexpected given a rejected client call, but
+              // only a crash (non-Error throw or hang) would fail this test.
               await connector.getBlockchainInfo();
-              // If it resolves, that's unexpected but not a crash
             } catch (e) {
               expect(e).to.exist;
             }
@@ -73,8 +71,6 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
       );
     });
   });
-
-  // ─── getBlockHash ──────────────────────────────────────────────────────────
 
   describe('getBlockHash', function () {
     it('handles non-string results without crashing', async function () {
@@ -119,8 +115,6 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
     });
   });
 
-  // ─── getBlock ──────────────────────────────────────────────────────────────
-
   describe('getBlock', function () {
     it('handles any result type without crashing', async function () {
       await fc.assert(
@@ -139,8 +133,6 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
       );
     });
   });
-
-  // ─── getRawMempool ─────────────────────────────────────────────────────────
 
   describe('getRawMempool', function () {
     it('handles non-array results', async function () {
@@ -178,15 +170,12 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
     });
   });
 
-  // ─── getRawTransactions (batch) ────────────────────────────────────────────
-
   describe('getRawTransactions', function () {
     it('handles batch responses with mixed results/errors', async function () {
       await fc.assert(
         fc.asyncProperty(
           fc.integer({ min: 1, max: 5 }),
           async (count) => {
-            // Generate mix of success and error responses
             const batchResponse = [];
             for (let i = 0; i < count; i++) {
               batchResponse.push({
@@ -209,8 +198,6 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
     });
   });
 
-  // ─── getBlocksBatch ────────────────────────────────────────────────────────
-
   describe('getBlocksBatch', function () {
     it('handles empty height array', async function () {
       clientStub.resolves({ data: [] });
@@ -228,7 +215,8 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
           fc.integer({ min: 1, max: 5 }),
           async (count) => {
             const heights = Array.from({ length: count }, (_, i) => i);
-            // First call returns hashes, second returns blocks
+            // getBlocksBatch makes two batched RPC calls: hashes, then blocks
+            // by hash, so the stub must answer them in that order.
             clientStub.onCall(0).resolves({
               data: heights.map((h, i) => ({ result: 'a'.repeat(64), id: i }))
             });
@@ -247,8 +235,6 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
       );
     });
   });
-
-  // ─── Malformed response structures ─────────────────────────────────────────
 
   describe('malformed responses', function () {
     it('handles undefined data field', async function () {

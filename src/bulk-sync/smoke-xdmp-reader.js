@@ -25,7 +25,7 @@ const { XdmpReader, HEADER_SIZE } = require('./xdmp-reader.js')
 const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-xdmp-reader-'))
 console.log('[smoke/xdmp-reader] tmp dir:', TMP_DIR)
 
-// ---- helpers to build a synthetic .xdmp in memory ----
+// helpers to build a synthetic .xdmp in memory
 
 function buildHeader({ chain=1, net=3, version=1, firstHeight, lastHeight, chainTip }) {
     const buf = Buffer.alloc(HEADER_SIZE)
@@ -52,7 +52,7 @@ function writeXdmp(filePath, header, records) {
     fs.writeFileSync(filePath, Buffer.concat([header, ...records]))
 }
 
-// ---- case 1: 3 blocks, varying sizes, all readable ----
+// case 1: 3 blocks, varying sizes, all readable
 {
     const firstHeight = 100
     const lastHeight  = 102
@@ -103,7 +103,7 @@ function writeXdmp(filePath, header, records) {
     console.log('[smoke/xdmp-reader] happy path OK')
 }
 
-// ---- case 2: blockBytes view semantics: confirm the caller MUST copy ----
+// case 2: blockBytes view semantics: confirm the caller MUST copy
 {
     const header = buildHeader({ firstHeight: 0, lastHeight: 1, chainTip: 1 })
     const file = path.join(TMP_DIR, 'view.xdmp')
@@ -132,7 +132,7 @@ function writeXdmp(filePath, header, records) {
     console.log('[smoke/xdmp-reader] view invalidation behaves as documented')
 }
 
-// ---- case 3: scratch grows when a block exceeds initial 4 MB ----
+// case 3: scratch grows when a block exceeds initial 4 MB
 {
     // Use a bigger-than-initial block size but small enough to keep the test fast.
     const bigSize = 4 * 1024 * 1024 + 100
@@ -155,7 +155,7 @@ function writeXdmp(filePath, header, records) {
     console.log('[smoke/xdmp-reader] scratch grows for large blocks')
 }
 
-// ---- case 4: bad magic ----
+// case 4: bad magic
 {
     const header = buildHeader({ firstHeight: 0, lastHeight: 0 })
     Buffer.from('XNOPE___', 'ascii').copy(header, 0)
@@ -169,7 +169,7 @@ function writeXdmp(filePath, header, records) {
     console.log('[smoke/xdmp-reader] bad magic rejected')
 }
 
-// ---- case 5: height gap ----
+// case 5: height gap
 {
     const header = buildHeader({ firstHeight: 10, lastHeight: 12, chainTip: 12 })
     const file = path.join(TMP_DIR, 'gap.xdmp')
@@ -192,7 +192,7 @@ function writeXdmp(filePath, header, records) {
     console.log('[smoke/xdmp-reader] height gap rejected')
 }
 
-// ---- case 6: block_count header mismatch ----
+// case 6: block_count header mismatch
 {
     const header = buildHeader({ firstHeight: 0, lastHeight: 2, chainTip: 2 })
     header.writeUInt32LE(99, 20) // lie about block_count
@@ -206,7 +206,7 @@ function writeXdmp(filePath, header, records) {
     console.log('[smoke/xdmp-reader] block_count mismatch rejected')
 }
 
-// ---- case 7: short prefix (file truncated mid-stream) ----
+// case 7: short prefix (file truncated mid-stream)
 {
     const header = buildHeader({ firstHeight: 0, lastHeight: 1, chainTip: 1 })
     const blk    = Buffer.alloc(64, 0x55)

@@ -86,8 +86,6 @@ describe('XChainUtxoTracker', function () {
     try { await mempoolDb.close(); } catch (e) {}
   });
 
-  // ─── Constructor ───────────────────────────────────────────────────────
-
   describe('constructor', function () {
     it('sets up network and connector', function () {
       expect(tracker.network).to.exist;
@@ -103,7 +101,7 @@ describe('XChainUtxoTracker', function () {
       expect(dogeTracker.auxPow).to.be.true;
     });
 
-    // : BTC/LTC carry no AuxPoW section, so the strip path must be
+    // BTC/LTC carry no AuxPoW section, so the strip path must be
     // unreachable for them no matter what the caller or AUX_POW says.
     it('forces auxPow off for a non-dogecoin network regardless of the passed flag', function () {
       const btcTracker = new XChainUtxoTracker(
@@ -124,8 +122,6 @@ describe('XChainUtxoTracker', function () {
     });
   });
 
-  // ─── isSynced ──────────────────────────────────────────────────────────
-
   describe('isSynced', function () {
     it('returns false initially', function () {
       expect(tracker.isSynced()).to.be.false;
@@ -136,8 +132,6 @@ describe('XChainUtxoTracker', function () {
       expect(tracker.isSynced()).to.be.true;
     });
   });
-
-  // ─── getAddressType ────────────────────────────────────────────────────
 
   describe('getAddressType', function () {
     it('detects P2PKH address', function () {
@@ -158,8 +152,6 @@ describe('XChainUtxoTracker', function () {
     });
   });
 
-  // ─── millisecondsToTimeString ──────────────────────────────────────────
-
   describe('millisecondsToTimeString', function () {
     it('formats hours, minutes, seconds', function () {
       const str = tracker.millisecondsToTimeString(3661500); // 1h 1m 1.5s
@@ -173,8 +165,6 @@ describe('XChainUtxoTracker', function () {
       expect(str).to.include('2d');
     });
   });
-
-  // ─── parseTxOutputs ──────────────────────────────────────────────────────
 
   describe('parseTxOutputs', function () {
     it('inserts all outputs for a transaction', async function () {
@@ -232,8 +222,6 @@ describe('XChainUtxoTracker', function () {
     });
   });
 
-  // ─── parseTxInputs ────────────────────────────────────────────────────────
-
   describe('parseTxInputs', function () {
     it('skips coinbase inputs', async function () {
       const tx = makeTx({ ins: [makeCoinbaseInput()] });
@@ -263,8 +251,6 @@ describe('XChainUtxoTracker', function () {
       expect(input).to.not.be.null;
     });
   });
-
-  // ─── Two-pass block processing ────────────────────────────────────────────
 
   describe('two-pass processing (same-block spend)', function () {
     it('handles tx spending output from earlier tx in same block', async function () {
@@ -308,8 +294,6 @@ describe('XChainUtxoTracker', function () {
       expect(tx2Outputs).to.have.length(1);
     });
   });
-
-  // ─── getBalanceInfo ────────────────────────────────────────────────────
 
   describe('getBalanceInfo', function () {
     it('returns confirmed balance with no mempool activity', async function () {
@@ -416,8 +400,6 @@ describe('XChainUtxoTracker', function () {
     });
   });
 
-  // ─── getUtxosAddress ──────────────────────────────────────────────────
-
   describe('getUtxosAddress', function () {
     it('returns confirmed UTXOs with correct fields', async function () {
       const bitcoin = require('bitcoinjs-lib');
@@ -455,8 +437,8 @@ describe('XChainUtxoTracker', function () {
       const scriptHash = createHash('sha256').update(script).digest('hex');
 
       const txHash8 = randHash8();
-      // A valid full txid whose first 8 bytes match the O-record key prefix, so
-      // the mempool-spend lookup (which truncates to 8 bytes) still matches.
+      // Full txid built from the O-record's 8-byte key prefix (see the
+      // "reflects pending spend from mempool" test above for why).
       const fullTxHash = txHash8 + '0'.repeat(48);
 
       await db.insertOutput({
@@ -536,8 +518,6 @@ describe('XChainUtxoTracker', function () {
     });
   });
 
-  // ─── getFirstSeen ──────────────────────────────────────────────────────
-
   describe('getFirstSeen', function () {
     it('returns first-seen block height from S-prefix', async function () {
       const bitcoin = require('bitcoinjs-lib');
@@ -563,8 +543,6 @@ describe('XChainUtxoTracker', function () {
     });
   });
 
-  // ─── addToLastBlocks / removeFromLastBlocks ────────────────────────────
-
   describe('lastBlocks management', function () {
     it('addToLastBlocks adds to array and db', async function () {
       const blockHash = randHash();
@@ -578,7 +556,7 @@ describe('XChainUtxoTracker', function () {
     });
 
     it('addToLastBlocks rejects (not an unhandled rejection) on a malformed block hash', async function () {
-      // #2440: the db write is now awaited, so a synchronous kStoredBlk guard failure
+      // The db write is now awaited, so a synchronous kStoredBlk guard failure
       // surfaces as a rejected promise the caller can catch rather than an escaped
       // unhandled rejection.
       await db.beginTransaction();
@@ -638,8 +616,6 @@ describe('XChainUtxoTracker', function () {
       expect(tracker.pendingKMCleanup).to.have.length(2);
     });
   });
-
-  // ─── stopParsing ──────────────────────────────────────────────────────
 
   describe('stopParsing', function () {
     it('resolves when parsingStopped becomes true', async function () {

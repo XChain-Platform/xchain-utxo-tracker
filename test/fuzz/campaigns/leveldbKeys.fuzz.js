@@ -18,7 +18,6 @@ const {
 } = require('../helpers');
 const LevelUpStore = require('../../../src/LevelUpDb');
 
-// Helper: create a fresh in-memory DB for isolation
 async function freshDb() {
   const d = new LevelUpStore('fuzz-keys-' + Date.now() + '-' + Math.random(), true);
   await d.createDatabase();
@@ -26,8 +25,6 @@ async function freshDb() {
 }
 
 describe('Fuzz: LevelDB Key Construction (P2)', function () {
-
-  // ─── Key uniqueness: different logical entries never collide ────────────────
 
   describe('key uniqueness', function () {
     it('outputs with different txHash8 or outputIndex never overwrite each other', async function () {
@@ -184,8 +181,6 @@ describe('Fuzz: LevelDB Key Construction (P2)', function () {
     });
   });
 
-  // ─── Boundary output index values ─────────────────────────────────────────
-
   describe('boundary output index values', function () {
     it('output index 0 and max uint32 are both stored correctly', async function () {
       const db = await freshDb();
@@ -215,8 +210,6 @@ describe('Fuzz: LevelDB Key Construction (P2)', function () {
       }
     });
   });
-
-  // ─── Transaction batch operations ──────────────────────────────────────────
 
   describe('transaction batching', function () {
     it('large batch of operations commits atomically', async function () {
@@ -254,8 +247,6 @@ describe('Fuzz: LevelDB Key Construction (P2)', function () {
       );
     });
   });
-
-  // ─── getInput returns null for non-existent entries ────────────────────────
 
   describe('missing entries', function () {
     it('getInput returns null for non-existent prevTxHash/index', async function () {

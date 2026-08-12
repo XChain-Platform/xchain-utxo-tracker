@@ -22,8 +22,6 @@ const crypto = require('crypto');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 const LevelUpStore = require('../../src/LevelUpDb');
 
-// ── Helpers (mirrors XChainUtxoTracker.test.js) ───────────────────────────
-
 let _dbCounter = 0;
 function uniqueDbName(prefix) {
     return prefix + '-more-' + Date.now() + '-' + (++_dbCounter);
@@ -80,8 +78,6 @@ async function makeTracker() {
     return { tracker, db, mempoolDb };
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('XChainUtxoTracker (more)', function () {
     this.timeout(15000);
 
@@ -96,8 +92,6 @@ describe('XChainUtxoTracker (more)', function () {
         try { await db.close(); } catch (_) {}
         try { await mempoolDb.close(); } catch (_) {}
     });
-
-    // ── satoshiToDecimalString (module export) ──────────────────────────────
 
     describe('satoshiToDecimalString', function () {
         const { satoshiToDecimalString } = require('../../src/XChainUtxoTracker');
@@ -131,8 +125,6 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
-    // ── coinFromNetwork / resolveUndoBlocks (via constructor side-effects) ──
-
     describe('undoBlocks per-network resolution', function () {
         it('bitcoin-mainnet resolves to BTC default', function () {
             const t = new XChainUtxoTracker('bitcoin-mainnet', '127.0.0.1', '8332', 'u', 'p', 'db', false);
@@ -159,8 +151,6 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
-    // ── getAddressType (fill missing branches) ─────────────────────────────
-
     describe('getAddressType', function () {
         it('detects P2SH address', function () {
             // P2SH on regtest starts with '2'
@@ -186,8 +176,6 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
-    // ── millisecondsToTimeString edge cases ────────────────────────────────
-
     describe('millisecondsToTimeString', function () {
         it('formats sub-second only', function () {
             const s = tracker.millisecondsToTimeString(500);
@@ -205,8 +193,6 @@ describe('XChainUtxoTracker (more)', function () {
             expect(s).to.include('00h00m00.0s');
         });
     });
-
-    // ── addToLastBlocks: deletedTransactionArray branch (lines 159-161) ──
 
     describe('addToLastBlocks deletedTransactionArray cleanup', function () {
         it('removes block from deletedTransactionArray when it ages out', async function () {
@@ -240,8 +226,6 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
-    // ── cleanupAgedBlocks ─────────────────────────────────────────────────
-
     describe('cleanupAgedBlocks', function () {
         it('is a no-op when pendingKMCleanup is empty', async function () {
             tracker.pendingKMCleanup = [];
@@ -267,20 +251,16 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
-    // ── loadLastBlocksSortedByHeight ───────────────────────────────────────
-
     describe('loadLastBlocksSortedByHeight', function () {
         it('returns hashes sorted by ascending height', async function () {
             const h100 = randHash();
             const h200 = randHash();
             const h50 = randHash();
 
-            // Populate the db with blocks
             await db.beginTransaction();
             await db.insertBlock({ hash: h100, height: 100, timestamp: 0, previousHash: randHash() });
             await db.insertBlock({ hash: h200, height: 200, timestamp: 0, previousHash: randHash() });
             await db.insertBlock({ hash: h50,  height: 50,  timestamp: 0, previousHash: randHash() });
-            // Insert them as "last stored blocks"
             db.addLastStoredBlock(h100);
             db.addLastStoredBlock(h200);
             db.addLastStoredBlock(h50);
@@ -316,8 +296,6 @@ describe('XChainUtxoTracker (more)', function () {
             expect(sorted.indexOf(h1)).to.be.lessThan(sorted.indexOf(h2));
         });
     });
-
-    // ── parseTransaction ──────────────────────────────────────────────────
 
     describe('parseTransaction', function () {
         it('inserts transaction record when removeSpent=false', async function () {
@@ -430,8 +408,6 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
-    // ── parseTxOutputs additional branches ───────────────────────────────
-
     describe('parseTxOutputs (additional)', function () {
         it('uses tx.id when present', async function () {
             const customId = randHash();
@@ -473,8 +449,6 @@ describe('XChainUtxoTracker (more)', function () {
             expect(count).to.equal(0);
         });
     });
-
-    // ── parseTxInputs additional branches ────────────────────────────────
 
     describe('parseTxInputs (additional)', function () {
         it('skips non-standard inputs', async function () {
@@ -532,8 +506,6 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
-    // ── getBalanceInfo (missing mempool-spent-mempool-output branch) ───────
-
     describe('getBalanceInfo (mempool-spent mempool output)', function () {
         it('excludes mempool output spent by another mempool input', async function () {
             const bitcoin = require('bitcoinjs-lib');
@@ -569,8 +541,6 @@ describe('XChainUtxoTracker (more)', function () {
             expect(info.utxos.pending).to.equal(0);
         });
     });
-
-    // ── getUtxosAddress (pagination + mempool-only-on-first-page) ─────────
 
     describe('getUtxosAddress pagination', function () {
         it('limits results and sets nextCursor', async function () {
@@ -660,8 +630,6 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
-    // ── updateMempool ──────────────────────────────────────────────────────
-
     describe('updateMempool', function () {
         beforeEach(function () {
             // Fast-path sleep for all updateMempool tests
@@ -718,11 +686,10 @@ describe('XChainUtxoTracker (more)', function () {
 
             await tracker.updateMempool();
 
-            // After RETRIES failures it should break out (not hang forever)
+            // After RETRIES failures it should break out (not hang forever).
             expect(tracker.mempoolBusy).to.be.false;
-            // Sleep stub should have been called RETRIES times (one per failure before bail)
-            // The implementation sleeps after each failure except the bail-out one
-            // Actually: fails 5 times. On attempt 5 it breaks. Sleep called on failures 1-4.
+            // Sleep runs after each failure except the bail-out attempt: 5 failures,
+            // breaks on attempt 5, so sleep is called on failures 1-4.
             expect(tracker.sleep.callCount).to.be.at.least(RETRIES - 1);
         });
 
@@ -793,8 +760,6 @@ describe('XChainUtxoTracker (more)', function () {
             expect(tracker.sleep.callCount).to.be.at.least(1);
         });
     });
-
-    // ── verifyReorg height-mismatch branch (lines 634-649) ────────────────
 
     describe('verifyReorg: height mismatch (db recovery branch)', function () {
         it('fixes mismatched lastBlockIndex and continues when lastBlock exists and heights are consistent', async function () {
@@ -940,8 +905,6 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
-    // ── stopParsing additional ─────────────────────────────────────────────
-
     describe('stopParsing (mempoolInterval cleanup)', function () {
         it('clears mempoolInterval on a successful stop', async function () {
             const fakeInterval = setInterval(() => {}, 99999);
@@ -981,8 +944,6 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
-    // ── isSynced ──────────────────────────────────────────────────────────
-
     describe('isSynced', function () {
         it('reflects tracker.synced field', function () {
             tracker.synced = false;
@@ -992,10 +953,8 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
-    // ── constructor defaults ───────────────────────────────────────────────
-
     describe('constructor defaults', function () {
-        // : auxPow now derives from the coin's wireFormat alone, so the
+        // auxPow now derives from the coin's wireFormat alone, so the
         // passed flag is inert. Bitcoin is false either way; dogecoin is true either way.
         it('sets auxPow from the coin wireFormat, not the passed flag', function () {
             const t1 = new XChainUtxoTracker('bitcoin-regtest', '127.0.0.1', '18443', 'u', 'p', 'db', true);

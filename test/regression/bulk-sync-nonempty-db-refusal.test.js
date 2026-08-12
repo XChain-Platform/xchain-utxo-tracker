@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression (): the bulk loader must refuse a non-empty store ────
+// Regression: the bulk loader must refuse a non-empty store.
 //
 // loadKeys only ever `put`s and never deletes a key the incoming seed no longer
 // carries, and it writes the LAST_* markers LAST. api.js gates the whole
@@ -29,7 +29,7 @@ const { ClassicLevel } = require('classic-level');
 
 const { loadKeys } = require('../../src/bulk-sync/merger/loader.js');
 
-describe('Regression (#4387): bulk loader refuses a populated target DB', function () {
+describe('bulk loader refuses a populated target DB', function () {
     this.timeout(30000);
 
     let tmp;

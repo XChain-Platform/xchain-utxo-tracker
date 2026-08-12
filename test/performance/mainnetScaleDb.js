@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// Generator for a production-scale, ON-DISK tracker LevelDB ( leg a).
+// Generator for a production-scale, ON-DISK tracker LevelDB.
 //
 // Why this exists: every other perf harness in this repo builds its store by
 // replaying synthetic BLOCKS, which caps out in the low hundreds of thousands
@@ -48,8 +48,6 @@ const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 const ECPair = ECPairFactory.ECPairFactory(ecc);
 const NETWORK = bitcoin.networks.regtest;
 
-// ─── Scale tiers ─────────────────────────────────────────────────────────────
-//
 // `fillerScripts` distinct scriptPubKeys each hold `utxosPerFiller` outputs;
 // they exist only to make the O-keyspace big, so the probe scans below have to
 // find their prefix inside a realistically sized store. The probe addresses
@@ -88,8 +86,6 @@ function resolveTier() {
     return { name, ...tier };
 }
 
-// ─── Probe plan ──────────────────────────────────────────────────────────────
-//
 // Four probe addresses with exactly-known holdings, chosen to cover the shapes
 // the assertions care about:
 //   dust   1 UTXO      - the point-lookup shape (one row behind a 32-byte prefix)
@@ -183,8 +179,6 @@ function buildPlan(tier) {
         totalUtxoCount: tier.fillerScripts * tier.utxosPerFiller + ordinal
     };
 }
-
-// ─── Store construction ──────────────────────────────────────────────────────
 
 // A LevelUpStore whose createDatabase opens an on-disk classic-level in `dir`
 // instead of the hard-coded /data/<name> production path. Everything else is

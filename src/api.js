@@ -18,7 +18,6 @@
  * 
  ********************************************************************/
 
-// Load required libraries
 const dotenv = require('dotenv')
 dotenv.config()
 
@@ -37,7 +36,7 @@ const { resolveUndoBlocks } = require('./bulk-sync/merger/derive-keys.js')
 const { handleBootstrapFailure, handleRestoreFailure } = require('./bootstrap-recovery.js')
 const { isWrapperArchive, parseSha256Sidecar,
         hasRequiredLevelDbMembers, parseDetachedSignature } = require('./restore-validation.js')
-const { installObservability } = require('./observability');   // : default-off /metrics + structured log shim
+const { installObservability } = require('./observability');   // default-off /metrics + structured log shim
 const jsonRouter = require('express-json-rpc-router')
 const concurrencyGate = require('./concurrencyGate.js')
 const { parseCorsOrigin } = require('./corsOrigin.js')
@@ -59,7 +58,7 @@ const AUX_POW = process.env.AUX_POW === 'true' || process.env.AUX_POW === '1'
 // read-only UTXO/balance queries stay open for the encoder/indexer.
 const UTXO_TRACKER_API_KEY = process.env.UTXO_TRACKER_API_KEY || ''
 
-// Platform-wide no-API-key posture : running keyless is allowed, but the
+// Platform-wide no-API-key posture: running keyless is allowed, but the
 // service must say so loudly at boot instead of failing silently open/closed.
 if(!UTXO_TRACKER_API_KEY){
     console.warn('WARNING: UTXO_TRACKER_API_KEY is not set. Admin JSON-RPC methods (bootstrap snapshot/restore, raw key scans) are DISABLED (fail closed); read-only UTXO/balance queries remain open. Set a key to enable admin methods.')
@@ -179,7 +178,7 @@ function isNodeRpcStale({ lastNodeRpcOkAt, now = Date.now(), windowMs = NODE_RPC
 // XChainUtxoTracker rolls back from, so the outputs we would authorize live in
 // blocks the node no longer recognizes. The check was upper-bounded only, so
 // lag -100 read synced:true and both encoder gates, which delegate this verdict,
-// let orphaned UTXOs reach PSBT selection (). Pure and exported so the
+// let orphaned UTXOs reach PSBT selection. Pure and exported so the
 // bound is unit-testable without a running server.
 function deriveSyncedVerdict({ lag, nodeHeightStale = false, threshold = XChainUtxoTracker.SYNCED_THRESHOLD } = {}) {
     if (nodeHeightStale) return false
@@ -188,7 +187,6 @@ function deriveSyncedVerdict({ lag, nodeHeightStale = false, threshold = XChainU
 }
 
 async function startApi(){
-    //Start the tracker
     const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
     launchTracker(tracker)
 
@@ -250,7 +248,7 @@ async function startApi(){
         return infoAddress
     }
 
-    // Per-query freshness surface (seam finding M-11). UTXO/balance results are
+    // Per-query freshness surface. UTXO/balance results are
     // served from the last COMMITTED height, which can lag the node tip during
     // catch-up or a reorg, so a caller (e.g. the encoder selecting inputs) can
     // otherwise pick a UTXO from a view that is already stale without any signal
@@ -262,7 +260,7 @@ async function startApi(){
     // do not assume fresh", never as lag 0.
     // Also carries mempool_ready (block sync AND mempool reconvergence, the same
     // pair REST gates X-Mempool-Ready on) and, while halted, the halt marker, so
-    // an RPC caller gates on the same facts a REST caller can ().
+    // an RPC caller gates on the same facts a REST caller can.
     async function getFreshnessMeta(){
         let committedHeight = -1;
         try { committedHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
@@ -295,14 +293,13 @@ async function startApi(){
     // Use Helmet to increase security
     app.use(helmet());
 
-    // Allow JSON requests
     app.use(bodyParser.json());
 
     // CORS disabled by default. CORS_ORIGIN is a comma-separated ALLOWLIST, not a
     // single origin: handing `cors` the raw string makes it echo that string
     // verbatim to every caller, a multi-value header no browser accepts, so every
     // listed origin is blocked while the header reads as configured. Parsing is
-    // what makes the list work; see src/corsOrigin.js .
+    // what makes the list work; see src/corsOrigin.js.
     app.use(cors({ origin: parseCorsOrigin(process.env.CORS_ORIGIN) }));
 
     // Trust only the first proxy hop so the rate limiter keys on the real client
@@ -323,7 +320,7 @@ async function startApi(){
         message:         { error: 'Too many requests', code: 'RATE_LIMITED' },
     }));
 
-    // Global in-flight concurrency cap . The limiter above keys on the
+    // Global in-flight concurrency cap. The limiter above keys on the
     // client IP, so a stampede spread across thousands of distinct IPs never
     // trips it while still driving unbounded concurrent LevelDB scans (an
     // /utxos/:address read walks the address index). This caps how many
@@ -357,7 +354,7 @@ async function startApi(){
     });
     app.use(requestGate);
 
-    // : Prometheus /metrics plus a structured log shim, both DEFAULT OFF.
+    // Prometheus /metrics plus a structured log shim, both DEFAULT OFF.
     // Nothing is registered and no timer starts unless METRICS_ENABLED (and, for
     // log shipping, LOG_SHIP_ENABLED + LOG_SHIP_URL) are set. Wired AFTER the
     // rate limiter and concurrency gates on purpose: an enabled scrape endpoint
@@ -421,8 +418,7 @@ async function startApi(){
             // Read off the freshness meta rather than raw isSynced(): computeFreshness
             // floors both verdicts on a negative lag (committed tip above the node's,
             // so the view is orphaned), and the raw pair does not, which put
-            // X-Synced:false beside X-Mempool-Ready:true on the same response
-            // ().
+            // X-Synced:false beside X-Mempool-Ready:true on the same response.
             res.set('X-Mempool-Ready', String(freshness.mempool_ready));
             // Continuation cursor for paginated requests (?limit=). Absent when not
             // paginating or when the final page has been reached.
@@ -470,7 +466,7 @@ async function startApi(){
             // JSON object) an additive `sync` field callers can gate on.
             const freshness = await setFreshnessHeaders(res);
             // Off the floored meta, same reason as /utxos: an orphaned view must not
-            // publish X-Synced:false beside X-Mempool-Ready:true ().
+            // publish X-Synced:false beside X-Mempool-Ready:true.
             res.set('X-Mempool-Ready', String(freshness.mempool_ready));
             if (info && typeof info === 'object') info.mempool_ready = freshness.mempool_ready;
             if (info && typeof info === 'object') info.sync = freshness;
@@ -487,19 +483,15 @@ async function startApi(){
             return {status:"success"};
         },
 
-        // ── Readiness contract ─────────────────────────────────────────
-        // The tracker's height fields all report the LAST COMMITTED state,
-        // not in-flight processing. This matters because the tracker buffers
-        // up to DB_TRANSACTION_BLOCKS_QUANTITY blocks before flushing via
-        // endTransaction(). During a mid-batch state, in-memory has the new
-        // UTXOs but disk doesn't; and getLastBlockHeight() reads from disk.
-        // So getLastBlockHeight() returning N is a hard guarantee that every
-        // output in blocks 0..N is queryable via get_utxos / get_balance.
-        // is_quiescent() builds on this: it returns ready=true only when the
-        // committed height matches the node tip AND the node's mempool is
-        // empty, giving callers a barrier they can wait on without needing
-        // to know any of the tracker's batching internals.
-        // ───────────────────────────────────────────────────────────────
+        // Readiness contract: the tracker's height fields all report the LAST
+        // COMMITTED state, not in-flight processing, since the tracker buffers up
+        // to DB_TRANSACTION_BLOCKS_QUANTITY blocks before flushing via
+        // endTransaction() and getLastBlockHeight() reads from disk. So
+        // getLastBlockHeight() returning N guarantees every output in blocks 0..N
+        // is queryable via get_utxos / get_balance. is_quiescent() builds on this:
+        // it returns ready=true only when the committed height matches the node
+        // tip AND the node's mempool is empty, giving callers a barrier they can
+        // wait on without needing to know any of the tracker's batching internals.
 
         // Sync-status probe: tracker tip vs node tip. Used by e2e tests and
         // ops tooling to diagnose lag when an address's funding tx looks lost.
@@ -539,7 +531,7 @@ async function startApi(){
             // encoder's serve-readiness probe reads: without the field that probe could
             // not mirror create_tx's UTXO_TRACKER_NOT_READY refusal, and /status painted
             // the encoder healthy for the whole restart window in which create_tx refuses
-            // every request (, the same divergence #2263 fixed for lag).
+            // every request (the same kind of divergence previously fixed for lag).
             result.mempool_ready = result.synced && tracker.isMempoolReconverged() === true;
             if (nodeHeightStale) result.node_height_stale = true;
             // Surface mempool RPC health so operators can detect a node that is
@@ -552,7 +544,7 @@ async function startApi(){
             // frequent reorganizations and know the depth of the last one.
             result.reorg_count      = tracker.reorgCount;
             result.last_reorg_depth = tracker.lastReorgDepth;
-            // Surface an unrecoverable block-fetch desync (M-10) so a monitor can
+            // Surface an unrecoverable block-fetch desync so a monitor can
             // name the fault. Set just before the polling loop fails loud on a node
             // pruned past our cursor; visible in the brief window before exit.
             if (tracker.blockFetchDesync) result.block_fetch_desync = tracker.blockFetchDesync;
@@ -572,8 +564,7 @@ async function startApi(){
         // defined in one place. xchain-node's BootstrapHealthGate probes this
         // method first and falls back to GET /status, which carries no lag field
         // at all; without this method that gate's lag refusal silently never
-        // fired and a badly lagging tracker certified as a bootstrap source
-        // ().
+        // fired and a badly lagging tracker certified as a bootstrap source.
         async health() {
             const sync = await jsonRpcController.get_sync_status();
             // Same reachability read GET /status runs: a missing or unreachable
@@ -633,27 +624,25 @@ async function startApi(){
 
             const result = { utxos: utxos }
             if (utxos && utxos.nextCursor) result.nextCursor = utxos.nextCursor
-            // Freshness surface (M-11): additive sibling field so callers can gate
+            // Freshness surface: additive sibling field so callers can gate
             // on committed height / lag without a separate get_sync_status round-trip.
             result.sync = await getFreshnessMeta()
             return result
         },
-        // Function to retrieve the height of the block where an address was first seen
         async get_first_seen({address}) {
             return await getFirstSeen(address)
         },
-        
+
         async get_balance({address}) {
             let balance = await getBalance(address)
 
-            // Return balance; sync is an additive freshness surface (M-11).
+            // sync is an additive freshness surface; see getFreshnessMeta above.
             return { balance: balance, sync: await getFreshnessMeta() }
         },
 
-        // Function to retrieve the confirmed, pending balances of an address
         async get_info({address}) {
             const info = await getInfo(address)
-            // Additive freshness surface (M-11); leaves existing fields intact.
+            // Additive freshness surface; leaves existing fields intact.
             if (info && typeof info === 'object') info.sync = await getFreshnessMeta()
             return info
         },
@@ -707,7 +696,7 @@ async function startApi(){
                 }).catch(error => {
                     // Compression failed but /data is untouched: resume indexing so a
                     // failed snapshot never freezes the tracker, and keep the task
-                    // record so a status poll surfaces the failure (M-9).
+                    // record so a status poll surfaces the failure.
                     bootstrapBusy = false
                     handleBootstrapFailure({ tasks, taskId, error, relaunch: () => launchTracker(tracker) })
                 })
@@ -756,10 +745,10 @@ async function startApi(){
                 }).catch(error => {
                     // decompressPigz wipes /data BEFORE extracting, so a POST-wipe
                     // failure leaves the on-disk DB partially wiped and untrustworthy:
-                    // fail loud so the supervisor restarts into a clean recovery path
-                    // (M-9). A PRE-wipe validation abort (error.preWipe) never touched
+                    // fail loud so the supervisor restarts into a clean recovery path.
+                    // A PRE-wipe validation abort (error.preWipe) never touched
                     // /data, so handleRestoreFailure resumes indexing via relaunch
-                    // instead of killing the process (#3192).
+                    // instead of killing the process.
                     bootstrapBusy = false
                     handleRestoreFailure({ tasks, taskId, error,
                         failLoud: () => process.exit(1),
@@ -808,13 +797,13 @@ async function startApi(){
         // A readable store is not forward progress. The tracking loop retries a
         // failing getBlockchainInfo forever, so a coin node that is down or unsynced
         // freezes block tracking while LevelDB still answers and this probe still
-        // said 'ok' (). Gate on the loop's own last usable tip read, in
+        // said 'ok'. Gate on the loop's own last usable tip read, in
         // memory: no RPC is issued from the probe, so the check adds no node load.
         const nodeRpcStale = isNodeRpcStale({ lastNodeRpcOkAt: tracker.lastNodeRpcOkAt })
         const status = !dbOk ? 'degraded' : (nodeRpcStale ? 'stalled' : 'ok')
         if (!dbOk || nodeRpcStale) res.status(503)
         // request_gate exposes the global concurrency cap and how many requests
-        // it has shed ; a climbing shed count is the only outward sign
+        // it has shed; a climbing shed count is the only outward sign
         // that a distinct-IP stampede is being refused.
         const body = { status, db: dbOk, committed_height: committedHeight, request_gate: requestGate.getStats(), probe_gate: probeGate.getStats() }
         if (nodeRpcStale) {
@@ -832,11 +821,8 @@ async function startApi(){
     // response instead of crashing the request.
     app.use((req, res, next) => { if (req.body === undefined) req.body = {}; next(); });
 
-    // Allow JSON-RPC requests
     app.use(jsonRouter({methods: jsonRpcController}))
 
-
-    // Start the server
     app.listen(UTXO_TRACKER_API_PORT, () => {
       console.log('API listening on port '+UTXO_TRACKER_API_PORT)
     })
@@ -870,7 +856,7 @@ async function compressDirPigz(taskId, source, destination) {
         // .catch into handleBootstrapFailure, whose recordFailure is guarded on
         // tasks[taskId] and no-ops once the record is gone. Deleting here made
         // getbootstrapstatus answer "taskid doesn't exist" instead of the real
-        // failure, defeating the M-9 invariant (). The du non-zero-exit
+        // failure, defeating that invariant. The du non-zero-exit
         // reject above already leaves the record intact; this branch now matches.
         console.error(`Error: Invalid size for source '${source}'.`)
         throw new Error(`Invalid size for source: ${totalBytes}`)
@@ -883,13 +869,11 @@ async function compressDirPigz(taskId, source, destination) {
     ])   
     const pigz = spawn('pigz', ['-C', JSON.stringify({"original_size":totalBytes.toString()})]) //-C add a comment to the final file, this will be the original size to calculate progress when decompressing
 
-    // Pipe all processes
-    tar.stdout.pipe(pv.stdin) // tar sends data to pv
-    pv.stdout.pipe(pigz.stdin)  // pv monitors data and sends it to pigz
+    tar.stdout.pipe(pv.stdin)
+    pv.stdout.pipe(pigz.stdin)
     const outputStream = fs.createWriteStream(destination)
-    pigz.stdout.pipe(outputStream) // pigz sends compress data to file
+    pigz.stdout.pipe(outputStream)
 
-    // Monitors stderr from pv
     pv.stderr.on('data', (data) => {
         // handling pv progress
         const percentageString = data.toString().trim(); // pv -n prints the progress and a line break
@@ -921,12 +905,12 @@ async function compressDirPigz(taskId, source, destination) {
             } else {
                 //console.log(`\nProcess completed. File: ${destination}`)
                 // Write the .sha256 sidecar the single-layer restore path verifies
-                // against (#2725), so restoring our OWN snapshot still gets a real
+                // against, so restoring our OWN snapshot still gets a real
                 // integrity check rather than needing BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED=1.
                 // sha256sum format (`<hex>  <name>`) so both parseSha256Sidecar and a
                 // plain `sha256sum -c` accept it. This snapshot is UNSIGNED (no signing
                 // key lives in the tracker container), so restoring it does need the
-                // separate BOOTSTRAP_RESTORE_ALLOW_UNSIGNED=1 provenance opt-out (#4426):
+                // separate BOOTSTRAP_RESTORE_ALLOW_UNSIGNED=1 provenance opt-out:
                 // a locally-produced archive has no publisher to authenticate.
                 sha256File(destination)
                     .then((digest) => fs.promises.writeFile(
@@ -937,7 +921,6 @@ async function compressDirPigz(taskId, source, destination) {
             }
         })
 
-        // Handling init errors
         tar.on('error', (err) => reject(new Error(`tar failed to init: ${err.message}`)))
         pv.on('error', (err) => reject(new Error(`pv failed to init: ${err.message}`)))
         pigz.on('error', (err) => reject(new Error(`pigz fail to init: ${err.message}`)))
@@ -1135,7 +1118,7 @@ function loadBootstrapPublicKey() {
 // Every checksum this file verifies travels WITH the archive (the sidecar beside it,
 // the inner data.sha256 inside it), so anyone who can write the bootstrap volume or
 // alter the archive in transit can recompute it and be self-consistent: integrity is
-// not authenticity (#4426). The published archives carry `<archive>.sig`, an ed25519
+// not authenticity. The published archives carry `<archive>.sig`, an ed25519
 // signature over the archive's sha256 digest, which xchain-node's downloadBootstrap
 // fetches into the same directory. Fail closed: a missing key or missing/bad signature
 // refuses the restore unless the operator sets BOOTSTRAP_RESTORE_ALLOW_UNSIGNED=1,
@@ -1175,7 +1158,7 @@ async function verifyBootstrapProvenanceOrThrow(source) {
 // signatures both say "this is the archive that was published"; neither says "this
 // archive holds a store", so a correctly-signed-or-checksummed tar of unrelated files
 // used to pass validation, after which the unconditional wipe deleted /data and the
-// tracker reopened onto a fresh empty DB (#4368). The member list must be the FULL one:
+// tracker reopened onto a fresh empty DB. The member list must be the FULL one:
 // the limit-10 listing used for wrapper detection is far too short, since CURRENT and
 // MANIFEST-* sort after the first ten members of a real store. Cost is one extra
 // decompress pass of an archive the pipeline is about to decompress anyway.
@@ -1190,12 +1173,12 @@ async function assertLevelDbArchiveOrThrow(archivePath, reportedSource) {
 // Validate a restore archive BEFORE the destructive /data wipe. Returns the effective
 // source to feed the pigz/tar pipeline plus an optional temp dir the caller must clean
 // up. Three gates, in trust order: provenance (a detached signature over the outer
-// archive, fail-closed unless BOOTSTRAP_RESTORE_ALLOW_UNSIGNED=1, #4426), integrity
+// archive, fail-closed unless BOOTSTRAP_RESTORE_ALLOW_UNSIGNED=1), integrity
 // (the BootstrapService wrapper layout is unwrapped and its inner payload
-// checksum-verified in place rather than refused, #2445/#2726; a single-layer archive
-// is verified against its published sha256 sidecar, #2604, with a missing sidecar
-// failing closed unless BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED=1, #2725), and content (the
-// effective archive really is a LevelDB store, #4368).
+// checksum-verified in place rather than refused; a single-layer archive
+// is verified against its published sha256 sidecar, with a missing sidecar
+// failing closed unless BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED=1), and content (the
+// effective archive really is a LevelDB store).
 async function validateBootstrapArchiveOrThrow(source) {
     await verifyBootstrapProvenanceOrThrow(source)
 
@@ -1240,10 +1223,9 @@ async function validateBootstrapArchiveOrThrow(source) {
 async function decompressPigz(taskId, source, destination) {
     // Validate BEFORE the destructive wipe: an unsigned, wrong-layout, checksum-failing,
     // or not-a-LevelDB-store archive must abort with the live DB intact, never delete
-    // /data then restore a corrupt, empty, or attacker-chosen store (#2445 / #2604 /
-    // #4368 / #4426). A wrapper archive is unwrapped+verified here and its
-    // inner data.tar.gz becomes the effective source (#2726); tmpDir (outside /data) is
-    // cleaned up after the pipeline completes.
+    // /data then restore a corrupt, empty, or attacker-chosen store. A wrapper archive
+    // is unwrapped+verified here and its inner data.tar.gz becomes the effective source;
+    // tmpDir (outside /data) is cleaned up after the pipeline completes.
     // Pre-wipe validation runs with the live DB still intact, so any error escaping
     // it (missing/invalid sidecar, checksum mismatch, wrapper unwrap failure) is a
     // recoverable abort, NOT the post-wipe fail-loud regime. Tag it so the caller's
@@ -1306,12 +1288,11 @@ async function decompressPigzInner(taskId, source, destination) {
         const percentageString = data.toString().trim(); // pv -n prints the progress and a line break
         const currentPercentage = parseInt(percentageString, 10);
         
-        if (!isNaN(currentPercentage)) { // Check if the percentage is a valid number
+        if (!isNaN(currentPercentage)) {
             tasks[taskId]["progress"] = currentPercentage
         }
     })
 
-    // Handling errors
     pigz.stderr.on('data', (data) => { console.error(`Error from pigz: ${data}`) })
     tar.stderr.on('data', (data) => { console.error(`Error from tar: ${data}`) })
 
@@ -1488,7 +1469,7 @@ module.exports = {
     assertLevelDbArchiveOrThrow,
     listArchiveMembers,
     sha256File,
-    // Exported for the M-9 recovery regression only: the bootstrap task map and
+    // Exported for the recovery regression test only: the bootstrap task map and
     // the compressor that must leave a record behind for handleBootstrapFailure
     // to stamp. Nothing outside src/api.js consumes either at runtime.
     compressDirPigz,

@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression: tip-pointer / N-window atomicity + restart recovery ──────────
+// Regression: tip-pointer / N-window atomicity + restart recovery.
 //
 // The 2026-05-31 fleet incident: after an unclean restart onto a reorg, the
 // persisted tip pointer (setLastBlockHash/Height) and the lastBlocks undo-window

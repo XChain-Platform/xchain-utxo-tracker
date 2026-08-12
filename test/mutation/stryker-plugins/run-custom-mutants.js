@@ -36,8 +36,6 @@ const path = require('path');
 const { execSync } = require('child_process');
 const { generate } = require('./buffer-mutator.cjs');
 
-// ── CLI argument parsing ────────────────────────────────────────────────────
-
 const args = process.argv.slice(2);
 let specGlob = 'test/unit/**/*.test.js';
 let timeoutMs = 30000;
@@ -63,8 +61,6 @@ const DEFAULT_TARGETS = [
 
 const targetFiles = files.length > 0 ? files : DEFAULT_TARGETS;
 
-// ── Generate mutants ────────────────────────────────────────────────────────
-
 const mutants = generate(targetFiles);
 
 if (mutants.length === 0) {
@@ -74,8 +70,6 @@ if (mutants.length === 0) {
 
 console.log(`Generated ${mutants.length} custom mutants across ${targetFiles.length} files\n`);
 
-// ── Apply and test each mutant ──────────────────────────────────────────────
-
 const results = { killed: 0, survived: 0, error: 0, timedOut: 0 };
 const survivors = [];
 
@@ -84,11 +78,9 @@ for (let i = 0; i < mutants.length; i++) {
   const absPath = path.resolve(mutant.fileName);
   const original = fs.readFileSync(absPath, 'utf8');
 
-  // Apply mutation: replace text at the specified location
   const lines = original.split('\n');
   const { start, end } = mutant.location;
 
-  // Convert location to flat offsets
   let startOffset = 0;
   for (let l = 0; l < start.line; l++) {
     startOffset += lines[l].length + 1; // +1 for \n
@@ -103,7 +95,6 @@ for (let i = 0; i < mutants.length; i++) {
 
   const mutated = original.slice(0, startOffset) + mutant.replacement + original.slice(endOffset);
 
-  // Write mutated file
   fs.writeFileSync(absPath, mutated, 'utf8');
 
   const label = `[${i + 1}/${mutants.length}] ${mutant.fileName}:${start.line + 1} ${mutant.mutatorName}: ${mutant.description}`;
@@ -135,12 +126,9 @@ for (let i = 0; i < mutants.length; i++) {
       process.stdout.write(`  ERROR     ${label}\n`);
     }
   } finally {
-    // Always restore original
     fs.writeFileSync(absPath, original, 'utf8');
   }
 }
-
-// ── Report ──────────────────────────────────────────────────────────────────
 
 const total = results.killed + results.survived + results.error + results.timedOut;
 const detected = results.killed + results.timedOut + results.error;

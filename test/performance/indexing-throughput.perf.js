@@ -129,7 +129,6 @@ describe('Perf: Sustained Indexing Throughput', function () {
     tracker = await createTestTracker();
     resetTxCounter();
 
-    // Force GC if available
     if (global.gc) global.gc();
     const heapBefore = process.memoryUsage().heapUsed;
 
@@ -198,14 +197,12 @@ describe('Perf: Spike Load', function () {
       return sorted[Math.floor(sorted.length / 2)];
     }
 
-    // Phase 1: Baseline (small blocks)
     const baselineChain = buildDenseChain(phaseBlocks, addressPool, baselineTxsPerBlock);
     const baselinePerBlock = await medianPerBlock(baselineChain);
 
-    // Phase 2: Spike (large blocks)
     const spikeCount = Math.max(5, Math.floor(phaseBlocks / 4));
     const spikeChain = buildDenseChain(spikeCount, addressPool, spikeTxsPerBlock);
-    // Adjust heights to continue from baseline
+    // Heights continue from the baseline phase so the chain stays contiguous.
     spikeChain.forEach((b, i) => { b.height = phaseBlocks + i; });
 
     const spikeTimes = [];
@@ -217,7 +214,6 @@ describe('Perf: Spike Load', function () {
       metrics.record('spike-block', durationMs, { txsPerBlock: spikeTxsPerBlock });
     }
 
-    // Phase 3: Recovery (small blocks again)
     const recoveryChain = buildDenseChain(phaseBlocks, addressPool, baselineTxsPerBlock);
     recoveryChain.forEach((b, i) => { b.height = phaseBlocks + spikeCount + i; });
 
@@ -257,8 +253,7 @@ describe('Perf: Spike Load', function () {
       console.log(`    ${txCount} txs/block: ${formatMs(perBlock)}/block`);
     }
 
-    // Check linearity: time should scale roughly proportional to tx count
-    // Compare smallest vs largest
+    // Check linearity: time should scale roughly proportional to tx count.
     if (timings.length >= 2 && timings[0].perBlock > 0) {
       const first = timings[0];
       const last = timings[timings.length - 1];

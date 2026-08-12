@@ -12,7 +12,7 @@
  *
  **********************************************************************
  *
- * XChain UTXO Tracker - global in-flight concurrency gate 
+ * XChain UTXO Tracker - global in-flight concurrency gate
  *
  * The per-IP rate limiter in front of this bounds how fast ONE client may
  * ask; it says nothing about how many distinct clients arrive at once. A
@@ -26,7 +26,7 @@
  * Shed, do not queue. A queued request still holds the caller's socket, hides
  * the overload from its retry logic, and by the time it runs the client has
  * usually given up and re-asked - which is how a stampede compounds. Same
- * reasoning as the xchain-sync snapshot semaphore , which answers a
+ * reasoning as the xchain-sync snapshot semaphore, which answers a
  * saturated snapshot cap itself rather than waiting for a slot.
  *
  ********************************************************************/
@@ -93,7 +93,7 @@ function createConcurrencyGate(options){
 
     middleware.limit    = limit;
     // Operational surface: a climbing `shed` is the signal that a stampede is
-    // being refused, the same way sync exposes snapshots_rejected .
+    // being refused, the same way sync exposes snapshots_rejected.
     middleware.getStats = () => ({ limit, in_flight: inFlight, shed });
 
     return middleware;

@@ -19,14 +19,14 @@ function randHash() { return crypto.randomBytes(32).toString('hex'); }
 function randHash8() { return crypto.randomBytes(8).toString('hex'); }
 function makeDb() { return new LevelUpStore('sweep-' + Date.now() + '-' + Math.random(), true); }
 
-// ─── C7/C15: mempool (height<0) insertOutput must not poison the shared cache ──
+// Regression: mempool (height<0) insertOutput must not poison the shared cache.
 //
 // The process-global outputCache is shared by the confirmed and mempool stores.
 // The mempool store is the only caller passing height=-1. A concurrent mempool
 // parse of a just-mined tx would otherwise overwrite the confirmed height in the
 // cache, and the confirming block's Pass 2 would archive a K restore record with
 // height=-1 that a reorg then restores to the confirmed store (confirmations tip+2).
-describe('Regression (stress-sweep C7): mempool insertOutput does not write the shared outputCache', function () {
+describe('mempool insertOutput does not write the shared outputCache', function () {
   let db;
   beforeEach(async function () { LevelUpStore.outputCache = new Map(); db = makeDb(); await db.createDatabase(); });
   afterEach(async function () { try { await db.close(); } catch (e) {} LevelUpStore.outputCache = new Map(); });
@@ -63,13 +63,13 @@ describe('Regression (stress-sweep C7): mempool insertOutput does not write the 
   });
 });
 
-// ─── C5/C11: discarding a batch resets the knownScripts existence cache ───────
+// Regression: discarding a batch resets the knownScripts existence cache.
 //
 // insertOutputScriptBlock adds a script to the static knownScripts cache as soon
 // as it STAGES the S/Z puts. If the batch is later discarded (mid-batch reorg),
 // a stale cache entry makes the replacement chain's re-mined output Tier-0 hit and
 // skip re-writing S/Z, permanently losing that script's first-seen height.
-describe('Regression (stress-sweep C5): endTransaction(false) resets knownScripts', function () {
+describe('endTransaction(false) resets knownScripts', function () {
   let db;
   beforeEach(async function () { LevelUpStore.knownScripts = new Set(); db = makeDb(); await db.createDatabase(); });
   afterEach(async function () { try { await db.close(); } catch (e) {} LevelUpStore.knownScripts = new Set(); });
@@ -94,13 +94,13 @@ describe('Regression (stress-sweep C5): endTransaction(false) resets knownScript
   });
 });
 
-// ─── C9: removeTransactionIfExists must not cancel a staged DEL ────────────────
+// Regression: removeTransactionIfExists must not cancel a staged DEL.
 //
 // It was written to cancel a create+remove-in-one-batch PUT, but blindly cancelled
 // a staged DEL too. The P-key crash-recovery can replay a cleanup list that
 // addToLastBlocks then re-shifts, so the same block is cleaned twice in one
 // transaction; the second del cancelled the first, leaving the N record on disk.
-describe('Regression (stress-sweep C9): removeTransactionIfExists only cancels a staged PUT', function () {
+describe('removeTransactionIfExists only cancels a staged PUT', function () {
   let db;
   beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
   afterEach(async function () { try { await db.close(); } catch (e) {} });
@@ -141,14 +141,14 @@ describe('Regression (stress-sweep C9): removeTransactionIfExists only cancels a
   });
 });
 
-// ─── C14: cleanupAgedBlocks never purges a block still in the live reorg window ─
+// Regression: cleanupAgedBlocks never purges a block still in the live reorg window.
 //
 // After a mid-batch reorg discards staged blocks, pendingKMCleanup can contain
 // hashes that are once again the live committed tip (they were aged out against a
 // stale in-memory window). Purging them would delete K/M/W/N records inside the
 // undo window and wedge the next reorg. cleanupAgedBlocks skips any hash still in
 // this.lastBlocks and dedupes the list.
-describe('Regression (stress-sweep C14): cleanupAgedBlocks skips live-window + dedupes', function () {
+describe('cleanupAgedBlocks skips live-window + dedupes', function () {
   let tracker, db;
   beforeEach(async function () {
     tracker = new XChainUtxoTracker('bitcoin-regtest', '127.0.0.1', '18443', 'u', 'p', 'c14-db', false);
@@ -196,12 +196,12 @@ describe('Regression (stress-sweep C14): cleanupAgedBlocks skips live-window + d
   });
 });
 
-// ─── C4: paged getUtxosAddress dedupes a both-stores outpoint by point-probe ───
+// Regression: paged getUtxosAddress dedupes a both-stores outpoint by point-probe.
 //
 // hasOutputForTx is the page-independent confirmed-store membership probe used to
 // avoid emitting a just-mined outpoint from BOTH the mempool store (page 1) and
 // the confirmed store (a later page).
-describe('Regression (stress-sweep C4): hasOutputForTx point-probe', function () {
+describe('hasOutputForTx point-probe', function () {
   let db;
   beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
   afterEach(async function () { try { await db.close(); } catch (e) {} });

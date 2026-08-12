@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Security: get_input_from_key_pattern raw-scan primitive ──────────────────
+// Security: get_input_from_key_pattern raw-scan primitive.
 //
 // The JSON-RPC method get_input_from_key_pattern runs a LevelDB prefix scan.
 // These tests pin its input-handling contract:

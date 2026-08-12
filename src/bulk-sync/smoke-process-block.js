@@ -11,8 +11,8 @@
 // contact legal@dankest.llc.
 
 // Ad-hoc smoke test for process-block.js. Uses a hand-built mock of the
-// decoded Bitcoin mainnet genesis block (to avoid requiring bitcoinjs-lib
-// locally (real-decoder integration is exercised on dankesttest).
+// decoded Bitcoin mainnet genesis block, to avoid requiring bitcoinjs-lib
+// locally; real-decoder integration is exercised elsewhere.
 //
 // Genesis facts (Bitcoin mainnet, block 0):
 //   blockHash      (display): 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
@@ -83,7 +83,7 @@ outputs.close()
 spends.close()
 meta.close()
 
-// ---- outputs-*.dat ----
+// outputs-*.dat
 {
     const buf = fs.readFileSync(outPath)
     assert.strictEqual(buf.length, HEADER_SIZE + OUTPUTS_RECORD_SIZE)
@@ -117,7 +117,7 @@ meta.close()
     console.log('[smoke/process-block] outputs-*.dat OK')
 }
 
-// ---- spends-*.dat: coinbase skipped, file is header-only ----
+// spends-*.dat: coinbase skipped, file is header-only
 {
     const buf = fs.readFileSync(spdPath)
     assert.strictEqual(buf.length, HEADER_SIZE)
@@ -125,7 +125,7 @@ meta.close()
     console.log('[smoke/process-block] spends-*.dat OK')
 }
 
-// ---- meta-*.dat ----
+// meta-*.dat
 {
     const buf = fs.readFileSync(metaPath)
     assert.strictEqual(buf.length, HEADER_SIZE + 76 + 8)
@@ -153,7 +153,7 @@ meta.close()
     console.log('[smoke/process-block] meta-*.dat OK')
 }
 
-// ---- non-coinbase input path: synthetic block with 1 spend ----
+// non-coinbase input path: synthetic block with 1 spend
 {
     const prevInternalLE = Buffer.from(
         '11223344556677889900aabbccddeeff' +

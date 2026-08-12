@@ -18,7 +18,6 @@
  *
  ********************************************************************/
 
-// Load required libraries
 const axios = require('axios');
 const http  = require('http');
 
@@ -206,7 +205,7 @@ function skipAuxPow(buf, start) {
 // so a strip correction can never land in one and silently miss the other.
 // Keep in sync with xchain-decoder/src/BlockchainConnector.js stripAuxPowFromBlockHex;
 // xchain-decoder/test/unit/auxpowStripParity.test.js asserts byte identity of the two
-// function bodies , so a strip correction here must land there too.
+// function bodies, so a strip correction here must land there too.
 function stripAuxPowFromBlockHex(headerHex, blockHex) {
     const dataToRemove = headerHex.length - 160  // 160 hex chars = 80-byte standard header
     if (dataToRemove > 0) {
@@ -335,9 +334,9 @@ class BlockchainConnector {
         throw new Error("There were problems getting a block hex. ")
     }
 
-    // Recovery path for a block whose AuxPoW section skipAuxPow cannot traverse
-    // (, sibling of decoder ): rebuild the pure (AuxPoW-free) block
-    // from RPC parts instead of stripping the raw block hex. getblockheader
+    // Recovery path for a block whose AuxPoW section skipAuxPow cannot traverse:
+    // rebuild the pure (AuxPoW-free) block from RPC parts instead of stripping the
+    // raw block hex. getblockheader
     // gives the 80-byte header, verbose getblock gives the in-block txid order,
     // and getrawtransaction gives each tx's canonical serialization, so the
     // result is byte-identical to what getBlockWithoutAuxPow would have
@@ -638,5 +637,5 @@ class BlockchainConnector {
 }
 
 module.exports = BlockchainConnector
-// Exported for the  malformed-AuxPoW reassembly regression test.
+// Exported for the malformed-AuxPoW reassembly regression test.
 module.exports.encodeVarintHex = encodeVarintHex

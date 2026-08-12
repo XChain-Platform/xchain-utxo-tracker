@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression (L-4): immature coinbase outputs must not be served spendable ──
+// Regression: immature coinbase outputs must not be served spendable.
 //
 // The tracker previously served every confirmed UTXO as spendable, including
 // coinbase outputs younger than COINBASE_MATURITY (100) confirmations. Every
@@ -28,7 +28,7 @@ const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 const FULL_TXID_A = 'a'.repeat(64);
 const FULL_TXID_B = 'b'.repeat(64);
 
-describe('Regression (L-4): coinbase maturity', function () {
+describe('coinbase maturity', function () {
 
   describe('O-record coinbase flag round-trips and stays reindex-free', function () {
     let db;
@@ -53,7 +53,7 @@ describe('Regression (L-4): coinbase maturity', function () {
     });
 
     it('a legacy 44-byte O-value (written without the coinbase byte) decodes as non-coinbase', async function () {
-      // Write the exact pre-L-4 44-byte value directly under the store so the
+      // Write the exact legacy 44-byte value directly under the store so the
       // record is byte-identical to what an existing on-disk DB holds. It must
       // read back as coinbase=false with no error (no forced reindex).
       const scriptHash = crypto.createHash('sha256').update(Buffer.from('feedface', 'hex')).digest('hex');
@@ -127,7 +127,7 @@ describe('Regression (L-4): coinbase maturity', function () {
       expect(txids).to.not.include(FULL_TXID_A);
     });
 
-    it('coinbaseMaturity = 0 disables the gate (matches the pre-L-4 behaviour)', async function () {
+    it('coinbaseMaturity = 0 disables the gate (matches the behaviour before the maturity check was added)', async function () {
       tracker.coinbaseMaturity = 0;
       tracker.blockchainInfoLastBlock = 60;
 

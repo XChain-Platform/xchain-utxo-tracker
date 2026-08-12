@@ -72,7 +72,7 @@ async function main() {
 
     const LRS = 16, RRS = 12, KS = 8
 
-    // ---- Case A: pure no-cancellation (right empty, all left emitted) ----
+    // Case A: pure no-cancellation (right empty, all left emitted)
     {
         const leftKeys  = [1, 5, 9, 13, 17]
         const rightKeys = []
@@ -95,7 +95,7 @@ async function main() {
         console.log('[smoke/streaming-join] case A pure no-cancellation OK')
     }
 
-    // ---- Case B: full cancellation (every left key in right) ----
+    // Case B: full cancellation (every left key in right)
     {
         const leftKeys  = [1, 5, 9, 13, 17]
         const rightKeys = [1, 5, 9, 13, 17]
@@ -117,7 +117,7 @@ async function main() {
         console.log('[smoke/streaming-join] case B full cancellation OK')
     }
 
-    // ---- Case C: partial cancellation + orphan spends ----
+    // Case C: partial cancellation + orphan spends
     {
         // left  keys: 1, 3, 5, 7, 9, 11
         // right keys: 2, 3, 4, 7, 10   (2, 4, 10 = orphans; 3, 7 = canceled)
@@ -148,7 +148,7 @@ async function main() {
         console.log('[smoke/streaming-join] case C partial cancellation + orphans OK')
     }
 
-    // ---- Case D: empty left ----
+    // Case D: empty left
     {
         const leftPath  = path.join(TMP_DIR, 'd.left')
         const rightPath = path.join(TMP_DIR, 'd.right')
@@ -167,7 +167,7 @@ async function main() {
         console.log('[smoke/streaming-join] case D empty left OK')
     }
 
-    // ---- Case E: empty right ----
+    // Case E: empty right
     {
         const leftPath  = path.join(TMP_DIR, 'e.left')
         const rightPath = path.join(TMP_DIR, 'e.right')
@@ -186,7 +186,7 @@ async function main() {
         console.log('[smoke/streaming-join] case E empty right OK')
     }
 
-    // ---- Case F: copyLeftHeader preserves header bytes ----
+    // Case F: copyLeftHeader preserves header bytes
     {
         const HS = 64
         const header = Buffer.alloc(HS)
@@ -219,7 +219,7 @@ async function main() {
         console.log('[smoke/streaming-join] case F copyLeftHeader OK')
     }
 
-    // ---- Case G: distinct payloads carried through verbatim ----
+    // Case G: distinct payloads carried through verbatim
     {
         const leftKeys  = [100, 200, 300]
         const rightKeys = [200]
@@ -246,7 +246,7 @@ async function main() {
         console.log('[smoke/streaming-join] case G payload integrity OK')
     }
 
-    // ---- Case H: duplicate keys on left (surplus emitted) ----
+    // Case H: duplicate keys on left (surplus emitted)
     {
         // left:  1, 5, 5, 5, 9   right: 5
         // one pairing: one 5 canceled, two extra 5s emitted with 1 and 9.
@@ -271,7 +271,7 @@ async function main() {
         console.log('[smoke/streaming-join] case H duplicate left keys OK')
     }
 
-    // ---- Case I: duplicate keys on right (surplus counted as orphan) ----
+    // Case I: duplicate keys on right (surplus counted as orphan)
     {
         // left:  1, 5, 9   right: 5, 5, 5
         // first 5 cancels; remaining two 5s are orphan spends.

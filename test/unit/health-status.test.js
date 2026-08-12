@@ -51,7 +51,7 @@ describe('health status policy', function () {
       .to.equal('healthy');
   });
 
-  // : the helper's doc comment claimed it mirrored xchain-decoder's health(),
+  // The helper's doc comment used to claim it mirrored xchain-decoder's health(),
   // which "likewise keeps its durable halt marker out of `status`". The decoder does
   // publish reorg_halted as its own field with `status` untouched, while this helper
   // folds halt straight into the word, so the analogy told a reader the opposite of
@@ -78,7 +78,7 @@ describe('health status policy', function () {
 
 });
 
-// : GET /status derived liveness from a readable LevelDB plus the halt
+// GET /status used to derive liveness from a readable LevelDB plus the halt
 // flag, while the tracking loop retries a failing getBlockchainInfo forever. A
 // coin node that is down or unsynced froze block tracking with the store still
 // readable, so the probe kept answering 'ok'.
@@ -129,7 +129,7 @@ describe('node-RPC staleness policy', function () {
 
 });
 
-// : the synced verdict was upper-bounded only. A node reset/reindex below
+// The synced verdict used to be upper-bounded only. A node reset/reindex below
 // our committed tip yields a NEGATIVE lag, which read synced:true and authorized
 // PSBT selection over UTXOs in blocks the node no longer recognizes; both encoder
 // gates delegate this verdict, so the floor has to live here.
@@ -172,7 +172,7 @@ describe('sync verdict bounds', function () {
     expect(method).to.match(/synced:\s*deriveSyncedVerdict\(\{ lag, nodeHeightStale \}\)/);
   });
 
-  // : get_sync_status is the ONLY tracker surface the encoder's serve-readiness
+  // get_sync_status is the ONLY tracker surface the encoder's serve-readiness
   // probe reads, so without mempool_ready here that probe cannot mirror create_tx's
   // UTXO_TRACKER_NOT_READY refusal and /status paints the encoder healthy through the
   // whole restart window in which every create_tx is refused. Same closure problem as

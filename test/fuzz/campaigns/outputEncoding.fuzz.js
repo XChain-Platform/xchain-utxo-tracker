@@ -30,8 +30,6 @@ describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
     try { await db.close(); } catch (e) {}
   });
 
-  // ─── Output insert/retrieve round-trip ─────────────────────────────────────
-
   describe('output round-trip', function () {
     it('any value in valid range round-trips through insertOutput/getOutputsScriptPubKey', async function () {
       await fc.assert(
@@ -154,8 +152,6 @@ describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
     });
   });
 
-  // ─── Block insert/retrieve round-trip ──────────────────────────────────────
-
   describe('block round-trip', function () {
     it('block data round-trips for any valid height/timestamp/hash', async function () {
       await fc.assert(
@@ -180,8 +176,6 @@ describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
       );
     });
   });
-
-  // ─── Multiple outputs per script ───────────────────────────────────────────
 
   describe('multiple outputs per script', function () {
     it('multiple outputs for same scriptHash are all retrievable', async function () {
@@ -232,8 +226,6 @@ describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
     });
   });
 
-  // ─── Block height/hash storage ─────────────────────────────────────────────
-
   describe('block height and hash storage', function () {
     it('block height round-trips for any non-negative integer', async function () {
       await fc.assert(
@@ -267,8 +259,6 @@ describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
       );
     });
   });
-
-  // ─── Input insert/retrieve ─────────────────────────────────────────────────
 
   describe('input round-trip', function () {
     it('input data round-trips through insertInput/getInput', async function () {

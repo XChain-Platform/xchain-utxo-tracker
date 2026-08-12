@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression: bulk-sync dump chain-continuity validator ────────────────────
+// Regression: bulk-sync dump chain-continuity validator
 //
 // The bulk-sync dump records the node-provided block hash but never recomputes
 // it, and nothing checks that consecutive blocks link. orderBatchResults fixed
@@ -132,7 +132,7 @@ describe('Regression: bulk-sync chain-continuity validator', function () {
     });
 });
 
-// ─── File path: real .xdmp files through XdmpReader + cross-file ordering ──────
+// File path: real .xdmp files through XdmpReader + cross-file ordering
 
 const MAGIC = Buffer.from('XCHNDMP1', 'ascii');
 

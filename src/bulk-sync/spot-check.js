@@ -230,7 +230,7 @@ async function main() {
     await truthDb.close()
     await candDb.close()
 
-    // ── Report ────────────────────────────────────────────────────────────
+    // Report
     console.log('Per-prefix spot-check:')
     console.log('  prefix         total   sampled     hits    exact     diff     miss')
     let totalMismatch = 0

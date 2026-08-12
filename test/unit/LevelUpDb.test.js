@@ -35,8 +35,6 @@ describe('LevelUpDb', function () {
     try { await db.close(); } catch (e) { /* already closed */ }
   });
 
-  // ─── Block height / hash ──────────────────────────────────────────────────
-
   describe('block height and hash', function () {
     it('getLastBlockHeight returns -1 when empty', async function () {
       expect(await db.getLastBlockHeight()).to.equal(-1);
@@ -59,8 +57,6 @@ describe('LevelUpDb', function () {
       expect(await db.getLastBlockHash()).to.equal(hash);
     });
   });
-
-  // ─── Block (B prefix) ─────────��──────────────────────────────────────────
 
   describe('block operations (B prefix)', function () {
     it('inserts and retrieves a block', async function () {
@@ -109,8 +105,6 @@ describe('LevelUpDb', function () {
     });
   });
 
-  // ─── Transaction (T prefix) ──────────────────────────────────────────────
-
   describe('transaction operations (T prefix)', function () {
     it('inserts and retrieves a transaction', async function () {
       const txHash = randHash();
@@ -141,8 +135,6 @@ describe('LevelUpDb', function () {
       expect(txs).to.be.empty;
     });
   });
-
-  // ─── Output (O prefix) ──────────���────────────────────────────────────────
 
   describe('output operations (O prefix)', function () {
     it('inserts and queries outputs by scriptPubKey', async function () {
@@ -257,7 +249,6 @@ describe('LevelUpDb', function () {
       expect(outputs[0].vout).to.equal(7);
     });
 
-    // ─── Pagination + safety ceiling ─────────────────────────────────────
     // A mega miner-coinbase/payout address can hold millions of outputs.
     // Materializing them all OOMs the process; getOutputsScriptPubKey gained a
     // bounded page (limit + after cursor) and a fail-loud maxOutputs ceiling.
@@ -323,8 +314,6 @@ describe('LevelUpDb', function () {
     });
   });
 
-  // ─── Output hint (H prefix) ───────���──────────────────────────────────────
-
   describe('output hint operations (H prefix)', function () {
     it('inserts output hint and deletes outputs by hint', async function () {
       const scriptHash = randHash();
@@ -335,11 +324,9 @@ describe('LevelUpDb', function () {
       await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
       await db.endTransaction(true);
 
-      // Verify output exists
       let outputs = await db.getOutputsScriptPubKey(scriptHash);
       expect(outputs).to.have.length(1);
 
-      // Delete by hint
       await db.beginTransaction();
       const deleted = await db.deleteOutputsByHint(fullTxHash);
       await db.endTransaction(true);
@@ -349,8 +336,6 @@ describe('LevelUpDb', function () {
       expect(outputs).to.be.empty;
     });
   });
-
-  // ─── Input (I prefix) ────────────────────────────────────────────────────
 
   describe('input operations (I prefix)', function () {
     it('inserts and retrieves an input', async function () {
@@ -369,8 +354,6 @@ describe('LevelUpDb', function () {
     });
   });
 
-  // ─── Input hint (J prefix) ─────────��───────────────────────────��─────────
-
   describe('input hint operations (J prefix)', function () {
     it('inserts input hint and deletes inputs by hint', async function () {
       const prevTxHash = randHash();
@@ -381,11 +364,9 @@ describe('LevelUpDb', function () {
       await db.insertInputHint({ prevTxHash, prevOutputIndex: 0, txHash: spendingTxHash8 });
       await db.endTransaction(true);
 
-      // Input should exist
       let input = await db.getInput(prevTxHash.substring(0, 16), 0);
       expect(input).to.not.be.null;
 
-      // Delete by hint
       await db.beginTransaction();
       const deleted = await db.deleteInputsByHint(spendingFullTx);
       await db.endTransaction(true);
@@ -396,25 +377,20 @@ describe('LevelUpDb', function () {
     });
   });
 
-  // ─── removeOutputWithInput (REMOVE_SPENT path) ───────────────────────────
-
   describe('removeOutputWithInput', function () {
     it('removes a committed output and stages K/M records', async function () {
       const scriptHash = randHash();
       const txHash8 = randHash8();
       const blockHash = randHash();
 
-      // Insert output + hint, commit
       await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: BigInt(5000), height: 10 });
       await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
       await db.endTransaction(true);
 
-      // Now spend it
       await db.beginTransaction();
       await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
       await db.endTransaction(true);
 
-      // Output should be gone
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
       expect(outputs).to.be.empty;
     });
@@ -424,16 +400,13 @@ describe('LevelUpDb', function () {
       const txHash8 = randHash8();
       const blockHash = randHash();
 
-      // Insert output + hint in same batch (not committed)
+      // Insert output + hint and spend it all in the same in-flight batch (not committed).
       await db.beginTransaction();
       await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: BigInt(1000), height: 5 });
       await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
-
-      // Spend it in the same batch
       await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
       await db.endTransaction(true);
 
-      // Output should be gone
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
       expect(outputs).to.be.empty;
     });
@@ -449,15 +422,12 @@ describe('LevelUpDb', function () {
     });
   });
 
-  // ─── processDeletedOutputs recovery ───────���───────────────────────────────
-
   describe('processDeletedOutputs', function () {
     it('recovers outputs from K/M records', async function () {
       const scriptHash = randHash();
       const txHash8 = randHash8();
       const blockHash = randHash();
 
-      // Insert and commit output
       await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: BigInt(7000), height: 20 });
       await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
       await db.endTransaction(true);
@@ -467,16 +437,13 @@ describe('LevelUpDb', function () {
       await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
       await db.endTransaction(true);
 
-      // Output should be gone
       let outputs = await db.getOutputsScriptPubKey(scriptHash);
       expect(outputs).to.be.empty;
 
-      // Recover
       await db.beginTransaction();
       await db.processDeletedOutputs(blockHash, true);
       await db.endTransaction(true);
 
-      // Output should be back
       outputs = await db.getOutputsScriptPubKey(scriptHash);
       expect(outputs).to.have.length(1);
       expect(outputs[0].value).to.equal('7000');
@@ -495,18 +462,14 @@ describe('LevelUpDb', function () {
       await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
       await db.endTransaction(true);
 
-      // Purge without recovery
       await db.beginTransaction();
       await db.processDeletedOutputs(blockHash, false);
       await db.endTransaction(true);
 
-      // Output should remain gone
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
       expect(outputs).to.be.empty;
     });
   });
-
-  // ─── Output script block (S / Z prefix) ──────��───────────────────────────
 
   describe('script block tracking (S/Z prefix)', function () {
     it('records first appearance and retrieves it', async function () {
@@ -552,10 +515,8 @@ describe('LevelUpDb', function () {
       await db.insertOutputScriptBlock(scriptHash, blockHash, 10);
       await db.endTransaction(true);
 
-      // Verify exists
       expect(await db.getOutputScriptBlock(scriptHash)).to.not.be.null;
 
-      // Remove
       await db.beginTransaction();
       await db.removeOutputScriptsInBlock(blockHash);
       await db.endTransaction(true);
@@ -563,8 +524,6 @@ describe('LevelUpDb', function () {
       expect(await db.getOutputScriptBlock(scriptHash)).to.be.null;
     });
   });
-
-  // ─── Stored block list (N prefix) ────────────���───────────────────────────
 
   describe('stored block list (N prefix)', function () {
     it('adds and retrieves stored blocks', async function () {
@@ -593,8 +552,6 @@ describe('LevelUpDb', function () {
     });
   });
 
-  // ─── Batch / transaction management ─────────���─────────────────────────────
-
   describe('batch operations', function () {
     it('beginTransaction resets the transaction map', async function () {
       await db.insertOutput({ scriptPubKey: randHash(), txHash: randHash8(), outputIndex: 0, value: BigInt(1), height: 1 });
@@ -618,8 +575,6 @@ describe('LevelUpDb', function () {
       await db.endTransaction(true);
     });
   });
-
-  // ─── getValuesFromKeyPattern ────────��─────────────────────────────────────
 
   describe('getValuesFromKeyPattern', function () {
     it('scans by key prefix', async function () {
@@ -656,8 +611,6 @@ describe('LevelUpDb', function () {
       expect(results[0].key.toLowerCase()).to.match(new RegExp('^4f' + scriptHash + txFF + '00000000$'));
     });
   });
-
-  // ─── deleteAndCompareTxsNotInList (mempool helper) ────────────────────────
 
   describe('deleteAndCompareTxsNotInList', function () {
     it('deletes txs not in the provided list', async function () {

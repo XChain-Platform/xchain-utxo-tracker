@@ -41,8 +41,6 @@ const {
   closeTracker
 } = require('../integration/helpers');
 
-// ─── Scale configuration ────────────────────────────────────────────────────
-
 const SCALE_CONFIGS = {
   small:  { blocks: 200,  txsPerBlock: 5,   addresses: 20,  mempoolTxs: 100,  queryConns: 5,  querySecs: 3  },
   medium: { blocks: 500,  txsPerBlock: 20,  addresses: 100, mempoolTxs: 500,  queryConns: 20, querySecs: 10 },
@@ -50,8 +48,6 @@ const SCALE_CONFIGS = {
 };
 
 const SCALE = SCALE_CONFIGS[process.env.PERF_SCALE || 'medium'];
-
-// ─── Extended address pool ──────────────────────────────────────────────────
 
 const ECPair = ECPairFactory.ECPairFactory(ecc);
 
@@ -61,11 +57,9 @@ function generateAddressPool(n) {
   if (_addressCache.has(n)) return _addressCache.get(n);
 
   const pool = [];
-  // Reuse TEST_KEYS for the first 10
   for (let i = 0; i < Math.min(n, 10); i++) {
     pool.push(TEST_KEYS[i]);
   }
-  // Generate additional addresses beyond 10
   for (let i = 10; i < n; i++) {
     const privKey = createHash('sha256').update('perf-key-' + i).digest();
     const keyPair = ECPair.fromPrivateKey(privKey, { network: NETWORK });
@@ -86,8 +80,6 @@ function generateAddressPool(n) {
   return pool;
 }
 
-// ─── Dense chain builders ───────────────────────────────────────────────────
-
 /**
  * Build a chain of blocks where each block has txsPerBlock coinbase-style
  * transactions spread across the address pool.
@@ -101,7 +93,6 @@ function buildDenseChain(count, addressPool, txsPerBlock) {
     const txs = [];
     for (let t = 0; t < txsPerBlock; t++) {
       const addrIdx = (i * txsPerBlock + t) % addressPool.length;
-      // Build coinbase-style tx targeting the address pool entry
       const key = addressPool[addrIdx];
       const tx = makeTx({
         ins: [makeCoinbaseInput()],
@@ -133,7 +124,7 @@ function buildSpendingChain(utxoPool, addressPool, blockCount, outsPerTx = 1) {
 
   for (let i = 0; i < blockCount; i++) {
     const height = i;
-    const txs = [makeCoinbaseTx(0)]; // coinbase first
+    const txs = [makeCoinbaseTx(0)];
 
     // Spend as many UTXOs as available, up to a reasonable limit per block
     const maxSpends = Math.min(10, utxoPool.length - utxoIdx);
@@ -177,8 +168,6 @@ function extractUtxoPool(blocks) {
   return utxos;
 }
 
-// ─── Metrics collector ──────────────────────────────────────────────────────
-
 class MetricsCollector {
   constructor(suiteName) {
     this.suiteName = suiteName;
@@ -192,7 +181,6 @@ class MetricsCollector {
       this.meta.set(label, extras);
     }
     this.entries.get(label).push(durationMs);
-    // Merge extras
     Object.assign(this.meta.get(label), extras);
   }
 
@@ -268,8 +256,6 @@ function percentile(sorted, p) {
   return sorted[idx];
 }
 
-// ─── Timing helpers ─────────────────────────────────────────────────────────
-
 async function measureAsync(fn) {
   const start = process.hrtime.bigint();
   const result = await fn();
@@ -277,8 +263,6 @@ async function measureAsync(fn) {
   const durationMs = Number(end - start) / 1e6;
   return { result, durationMs };
 }
-
-// ─── Formatting helpers ─────────────────────────────────────────────────────
 
 function formatMs(ms) {
   if (ms < 1) return ms.toFixed(3) + 'ms';
@@ -298,8 +282,7 @@ function pad(str, len) {
   return s.length >= len ? s : s + ' '.repeat(len - s.length);
 }
 
-// ─── HTTP server for autocannon tests ───────────────────────────────────────
-
+// HTTP server used as the target for autocannon load tests.
 function startHttpServer(tracker) {
   return new Promise((resolve, reject) => {
     const app = express();
@@ -370,8 +353,6 @@ function startHttpServer(tracker) {
   });
 }
 
-// ─── Helpers for mempool population ─────────────────────────────────────────
-
 /**
  * Populate the mempool DB with unconfirmed transactions spending from utxoPool.
  * Returns array of { txid, vout } for the new mempool outputs.
@@ -413,8 +394,6 @@ async function clearMempoolDb(tracker) {
   tracker.mempoolDb = newDb;
 }
 
-// ─── Seeding utility ────────────────────────────────────────────────────────
-
 /**
  * Seed a tracker with a dense chain and return UTXO references.
  * Processes in 100-block batches to match production batch size.
@@ -431,8 +410,6 @@ async function seedTracker(tracker, blockCount, addressPool, txsPerBlock) {
   const utxoPool = extractUtxoPool(chain);
   return { chain, utxoPool };
 }
-
-// ─── Exports ────────────────────────────────────────────────────────────────
 
 module.exports = {
   // Scale

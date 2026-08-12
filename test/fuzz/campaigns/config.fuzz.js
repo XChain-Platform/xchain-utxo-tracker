@@ -17,7 +17,10 @@ const XChainBlockDecoder = require('../../../src/XChainBlockDecoder');
 
 describe('Fuzz: Configuration Parsing (P3)', function () {
 
-  // ─── XChainUtxoTracker constructor ─────────────────────────────────────────
+  // These constructor tests only assert crash-safety: either the call
+  // succeeds or it throws an Error, never anything else (hang, non-Error
+  // throw, etc). Deferred-validation rationale for specific fields is
+  // noted where it applies below.
 
   describe('XChainUtxoTracker constructor', function () {
     it('handles fuzzed network strings without crashing', async function () {
@@ -29,10 +32,7 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
               const tracker = new XChainUtxoTracker(
                 network, '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
               );
-              // Constructor succeeded; the network may or may not be valid
-              // but it should not crash
             } catch (e) {
-              // Throwing is acceptable for invalid network
               expect(e).to.be.an('error');
             }
           }
@@ -53,9 +53,8 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
           const tracker = new XChainUtxoTracker(
             network, '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
           );
-          // Should succeed
         } catch (e) {
-          // Some networks may not be supported yet, that's fine
+          // Some listed networks may not be supported yet; that is not a failure here.
         }
       }
     });
@@ -74,10 +73,11 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
           ),
           async (port) => {
             try {
+              // Port validation happens at connection time, not construction,
+              // so a malformed port here is not required to throw.
               const tracker = new XChainUtxoTracker(
                 'bitcoin-regtest', '127.0.0.1', port, 'user', 'pass', 'test-db', false
               );
-              // Constructor may succeed (port validation happens at connection time)
             } catch (e) {
               expect(e).to.be.an('error');
             }
@@ -119,10 +119,10 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
           fc.string({ minLength: 0, maxLength: 200 }),
           async (user, pass) => {
             try {
+              // Auth happens at connection time, not construction.
               const tracker = new XChainUtxoTracker(
                 'bitcoin-regtest', '127.0.0.1', '18443', user, pass, 'test-db', false
               );
-              // Constructor should succeed (auth happens at connection time)
             } catch (e) {
               expect(e).to.be.an('error');
             }
@@ -184,8 +184,6 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
       );
     });
   });
-
-  // ─── XChainBlockDecoder constructor ────────────────────────────────────────
 
   describe('XChainBlockDecoder constructor', function () {
     it('handles any network name string', async function () {

@@ -10,12 +10,12 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-//  regression (sibling of decoder ): a DOGE block whose AuxPoW
-// section skipAuxPow cannot traverse used to fail the strip path until the
-// streak was misdiagnosed as a pruned-node desync and halted the tracker.
-// After AUXPOW_REASSEMBLE_AFTER consecutive failures at one height the loop
-// now rebuilds the pure block from getblockheader + verbose getblock +
-// per-txid getrawtransaction, never reading the AuxPoW bytes.
+// Regression: a DOGE block whose AuxPoW section skipAuxPow cannot traverse
+// used to fail the strip path until the streak was misdiagnosed as a
+// pruned-node desync and halted the tracker. After AUXPOW_REASSEMBLE_AFTER
+// consecutive failures at one height the loop now rebuilds the pure block
+// from getblockheader + verbose getblock + per-txid getrawtransaction,
+// never reading the AuxPoW bytes.
 
 const { expect } = require('chai');
 const BlockchainConnector = require('../../src/BlockchainConnector');
@@ -41,7 +41,7 @@ function makeConnector(overrides) {
     return Object.assign(connector, overrides);
 }
 
-describe('malformed-AuxPoW block reassembly fallback ', function () {
+describe('malformed-AuxPoW block reassembly fallback', function () {
 
     it('encodeVarintHex encodes each varint width and refuses >2^32-1', function () {
         expect(encodeVarintHex(0)).to.equal('00');

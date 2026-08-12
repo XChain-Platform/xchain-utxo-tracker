@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-//  (review finding P18): the mempool write transaction must NOT span the
+// The mempool write transaction must NOT span the
 // whole multi-batch fetch/sleep loop. The old code opened one
 // beginTransaction() before the loop and committed a single endTransaction()
 // only after every batch had been fetched and every inter-batch sleep had
@@ -36,7 +36,7 @@ function randTxid() { return crypto.randomBytes(32).toString('hex'); }
 // (beginTransaction sets a fresh Map, endTransaction nulls it).
 function hasOpenTransaction(db) { return db.transactionArray != null; }
 
-describe('updateMempool transaction scope ( / P18)', function () {
+describe('updateMempool transaction scope (write transaction must not span the fetch/sleep loop)', function () {
   let tracker;
   let db;
   let mempoolDb;
@@ -126,12 +126,12 @@ describe('updateMempool transaction scope ( / P18)', function () {
   });
 });
 
-// : Phase 1's prune COMMITS before Phase 2 fetches the new txids, so a pass
+// Phase 1's prune COMMITS before Phase 2 fetches the new txids, so a pass
 // that gives up mid-fetch leaves a snapshot missing those spends. The abort was a
 // plain `break` falling through to an unconditional mempoolReconverged = true, so the
 // partial snapshot published as ready and getUtxosAddress served the confirmed inputs
 // of spends the mempool index could not see.
-describe('updateMempool readiness after an incomplete pass ()', function () {
+describe('updateMempool readiness after an incomplete pass', function () {
   let tracker;
   let db;
   let mempoolDb;

@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression: bulk-sync resume artifact validation ────────────────────────
+// Regression: bulk-sync resume artifact validation.
 //
 // The orchestrator's resume gates were existence-only (concat) and size-only
 // (sorted intermediates), so a merge dir reused across runs could silently

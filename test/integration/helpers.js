@@ -22,8 +22,6 @@ const ECPair = ECPairFactory.ECPairFactory(ecc);
 const NETWORK = bitcoin.networks.regtest;
 const SATOSHI = 100000000;
 
-// ─── Deterministic test addresses ────────────────────────────────────────────
-
 const TEST_KEYS = [];
 for (let i = 1; i <= 10; i++) {
   const privKey = createHash('sha256').update('test-key-' + i).digest();
@@ -41,8 +39,6 @@ for (let i = 1; i <= 10; i++) {
   });
 }
 
-// ─── Amount formatting ───────────────────────────────────────────────────────
-//
 // The tracker reports every UTXO `amount` and every balance as a fixed-8 DECIMAL
 // STRING, not a Number: plain `value / 1e8` loses precision once a total passes
 // Number.MAX_SAFE_INTEGER (DOGE balances above ~90M), so the whole formatting path
@@ -78,12 +74,8 @@ function sumAmounts(utxos) {
     (abs % BigInt(100000000)).toString().padStart(8, '0');
 }
 
-// ─── Random hash helpers ─────────────────────────────────────────────────────
-
 function randHash() { return crypto.randomBytes(32).toString('hex'); }
 function randHash8() { return crypto.randomBytes(8).toString('hex'); }
-
-// ─── Mock transaction builder (mirrors bitcoinjs-lib Transaction shape) ──────
 
 let txCounter = 0;
 
@@ -123,6 +115,7 @@ function makeSpendInput(prevTxIdHex, prevVout = 0) {
   };
 }
 
+// Shape mirrors bitcoinjs-lib's Transaction interface (getId(), ins, outs).
 function makeTx(opts = {}) {
   const txid = opts.txid || makeTxId();
   return {
@@ -140,8 +133,6 @@ function makeCoinbaseTx(addressIndex, valueSats = 50 * SATOSHI) {
   });
 }
 
-// ─── Block builder ───────────────────────────────────────────────────────────
-
 function makeBlock(height, previousHash, transactions, hash) {
   return {
     hash: hash || randHash(),
@@ -151,8 +142,6 @@ function makeBlock(height, previousHash, transactions, hash) {
     transactions
   };
 }
-
-// ─── Process a block through the tracker (two-pass) ──────────────────────────
 
 async function processBlock(tracker, block) {
   const db = tracker.db;
@@ -164,12 +153,12 @@ async function processBlock(tracker, block) {
     previousHash: block.previousHash
   });
 
-  // Pass 1: all outputs
+  // Two passes: outputs must be written before inputs are parsed, so a
+  // same-block spend can find the output it's spending.
   for (const tx of block.transactions) {
     await tracker.parseTxOutputs(db, tx, block.hash, block.height, false, true);
   }
 
-  // Pass 2: all inputs
   for (const tx of block.transactions) {
     await tracker.parseTxInputs(db, tx, block.hash, false, true);
   }
@@ -195,8 +184,6 @@ async function processBlocksAndCommit(tracker, blocks) {
   await tracker.cleanupAgedBlocks();
 }
 
-// ─── Build a chain of coinbase-only blocks ───────────────────────────────────
-
 function buildCoinbaseChain(count, addressIndex = 0, startHeight = 0) {
   const blocks = [];
   let prevHash = '0'.repeat(64);
@@ -211,8 +198,6 @@ function buildCoinbaseChain(count, addressIndex = 0, startHeight = 0) {
 
   return blocks;
 }
-
-// ─── Create a fresh tracker with in-memory DBs ──────────────────────────────
 
 async function createTestTracker() {
   const tracker = new XChainUtxoTracker(
@@ -235,7 +220,7 @@ async function createTestTracker() {
   tracker.mempoolDb = mempoolDb;
   tracker.blockchainInfoLastBlock = 1000;
   // These harnesses mine short synthetic chains and treat coinbase outputs as
-  // ordinary spendable coins; coinbase-maturity policy (L-4) is exercised in its
+  // ordinary spendable coins; coinbase-maturity policy is exercised in its
   // own regression test, so disable the maturity gate here to keep the many
   // low-height / low-tip indexing assertions valid.
   tracker.coinbaseMaturity = 0;

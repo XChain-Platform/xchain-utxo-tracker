@@ -47,7 +47,7 @@ function readHeader(file) {
 
 function hex(b) { return Buffer.from(b).toString('hex') }
 
-// ---- OutputsWriter ----
+// OutputsWriter
 {
     const file = path.join(TMP_DIR, 'outputs-w00-h00000000-h00000099.dat')
     const w = new OutputsWriter(file, 'bitcoin', 'regtest', 0, 99)
@@ -94,7 +94,7 @@ function hex(b) { return Buffer.from(b).toString('hex') }
     console.log('[smoke] OutputsWriter OK')
 }
 
-// ---- SpendsWriter ----
+// SpendsWriter
 {
     const file = path.join(TMP_DIR, 'spends-w00-h00000000-h00000099.dat')
     const w = new SpendsWriter(file, 'bitcoin', 'regtest', 0, 99)
@@ -119,7 +119,7 @@ function hex(b) { return Buffer.from(b).toString('hex') }
     console.log('[smoke] SpendsWriter OK')
 }
 
-// ---- MetaWriter ----
+// MetaWriter
 {
     const file = path.join(TMP_DIR, 'meta-w00-h00000000-h00000099.dat')
     const w = new MetaWriter(file, 'bitcoin', 'regtest', 0, 99)
@@ -167,7 +167,7 @@ function hex(b) { return Buffer.from(b).toString('hex') }
     console.log('[smoke] MetaWriter OK')
 }
 
-// ---- abort() leaves no rogue final file ----
+// abort() leaves no rogue final file
 {
     const file = path.join(TMP_DIR, 'outputs-abort-test.dat')
     const w = new OutputsWriter(file, 'bitcoin', 'regtest', 0, 0)

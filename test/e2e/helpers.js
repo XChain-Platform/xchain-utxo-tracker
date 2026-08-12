@@ -31,8 +31,7 @@ const ECPair = ECPairFactory.ECPairFactory(ecc);
 const NETWORK = bitcoin.networks.regtest;
 const SATOSHI = 100000000;
 
-// ─── Deterministic test addresses (same as integration helpers) ─────────────
-
+// Deterministic test addresses (same as integration helpers).
 const TEST_KEYS = [];
 for (let i = 1; i <= 10; i++) {
   const privKey = createHash('sha256').update('test-key-' + i).digest();
@@ -50,11 +49,7 @@ for (let i = 1; i <= 10; i++) {
   });
 }
 
-// ─── Random hash helpers ─────────────────────────────────────────────────────
-
 function randHash() { return crypto.randomBytes(32).toString('hex'); }
-
-// ─── Mock transaction builder ────────────────────────────────────────────────
 
 let txCounter = 0;
 
@@ -109,8 +104,6 @@ function makeCoinbaseTx(addressIndex, valueSats = 50 * SATOSHI) {
   });
 }
 
-// ─── Block builder ───────────────────────────────────────────────────────────
-
 /**
  * Build a mock block object that matches the shape returned by XChainBlockDecoder.blockFromHex().
  * The critical detail: prevHash must be a Buffer in *internal* byte order (reversed from display hex).
@@ -118,24 +111,21 @@ function makeCoinbaseTx(addressIndex, valueSats = 50 * SATOSHI) {
  */
 function makeBlock(height, previousHashHex, transactions, hash) {
   const blockHash = hash || randHash();
-  // Convert previousHashHex to internal byte order (reversed)
   const prevHashBuf = Buffer.from(previousHashHex, 'hex').reverse();
   return {
     hash: blockHash,
     height,
     previousHash: previousHashHex,
     timestamp: 1700000000 + height * 600,
-    // This is the decoded block shape that blockFromHex() returns
+    // This is the decoded block shape that blockFromHex() returns.
     prevHash: prevHashBuf,
     transactions
   };
 }
 
-// ─── Chain builder ───────────────────────────────────────────────────────────
-
 /**
  * Build a simple chain of coinbase-only blocks.
- * Returns { blocks, chain } where chain is a height→block map.
+ * Returns the array of blocks in height order.
  */
 function buildCoinbaseChain(count, addressIndex = 0, startHeight = 0, valueSats = 50 * SATOSHI) {
   const blocks = [];
@@ -166,12 +156,10 @@ function buildChainFromSpecs(specs) {
     const spec = specs[i];
     const txs = [];
 
-    // Always include a coinbase
     const cbAddr = spec.coinbase ? spec.coinbase.to : 0;
     const cbAmount = spec.coinbase ? spec.coinbase.amount : 50 * SATOSHI;
     txs.push(makeCoinbaseTx(cbAddr, cbAmount));
 
-    // Optional spending transaction
     if (spec.spend) {
       const ins = spec.spend.ins || [makeSpendInput(spec.spend.prevTxId, spec.spend.prevVout || 0)];
       const outs = spec.spend.outs.map(o => makeOutput(o.to, o.amount));
@@ -186,12 +174,9 @@ function buildChainFromSpecs(specs) {
   return blocks;
 }
 
-// ─── Blockchain connector stub ───────────────────────────────────────────────
-
 /**
  * Stubs all BlockchainConnector methods on the tracker to serve from a pre-built chain.
  * The chain can be mutated (blocks added/replaced) while the tracker is running.
- *
  * Returns the chain state object so tests can modify it.
  */
 function stubBlockchain(tracker, initialBlocks) {
@@ -199,24 +184,21 @@ function stubBlockchain(tracker, initialBlocks) {
     blocks: [...initialBlocks],
     hashToBlock: new Map(),
     mempool: [],        // array of txids
-    mempoolTxHex: {},   // txid → hex (but we stub txFromHex to return the mock tx)
-    mempoolTxObjects: {},  // txid → mock tx object
+    mempoolTxHex: {},   // txid -> hex (but we stub txFromHex to return the mock tx)
+    mempoolTxObjects: {},  // txid -> mock tx object
     tipHeight() { return this.blocks.length - 1; }
   };
 
-  // Index blocks by hash
   for (const b of state.blocks) {
     state.hashToBlock.set(b.hash, b);
   }
 
-  // Stub getBlockchainInfo
   sinon.stub(tracker.connector, 'getBlockchainInfo').callsFake(async () => ({
     blocks: state.tipHeight(),
     verificationprogress: 1.0,
     headers: state.tipHeight()
   }));
 
-  // Stub getBlockHash
   sinon.stub(tracker.connector, 'getBlockHash').callsFake(async (height) => {
     if (height >= 0 && height < state.blocks.length) {
       return state.blocks[height].hash;
@@ -224,12 +206,12 @@ function stubBlockchain(tracker, initialBlocks) {
     throw new Error('Block height out of range: ' + height);
   });
 
-  // Stub getBlock: returns a fake hex string keyed by hash
+  // Returns a fake hex string keyed by hash.
   sinon.stub(tracker.connector, 'getBlock').callsFake(async (hash) => {
     return 'fakehex_' + hash;
   });
 
-  // Stub getBlocksBatch: used for non-AuxPoW prefetching
+  // Used for non-AuxPoW prefetching.
   sinon.stub(tracker.connector, 'getBlocksBatch').callsFake(async (heights) => {
     return heights.map(h => {
       const b = state.blocks[h];
@@ -238,13 +220,12 @@ function stubBlockchain(tracker, initialBlocks) {
     });
   });
 
-  // Stub blockFromHex: maps our fake hex back to the mock block object
+  // Maps our fake hex back to the mock block object.
   sinon.stub(tracker.xchainBlockDecoder, 'blockFromHex').callsFake((hex) => {
-    // hex is 'fakehex_<hash>'
     const hash = hex.replace('fakehex_', '');
     const block = state.hashToBlock.get(hash);
     if (!block) throw new Error('Unknown block hex: ' + hex);
-    // Return a fresh object with a fresh prevHash buffer (start() mutates it via .reverse())
+    // Fresh object with a fresh prevHash buffer, since start() mutates it via .reverse().
     return {
       prevHash: Buffer.from(block.previousHash, 'hex').reverse(),
       timestamp: block.timestamp,
@@ -278,9 +259,6 @@ function addBlockToState(state, block) {
   state.hashToBlock.set(block.hash, block);
 }
 
-/**
- * Add a mempool transaction to the chain state.
- */
 function addMempoolTx(state, tx) {
   const txid = tx._txid || tx.getId();
   state.mempool.push(txid);
@@ -288,25 +266,17 @@ function addMempoolTx(state, tx) {
   state.mempoolTxObjects[txid] = tx;
 }
 
-/**
- * Remove a mempool transaction from the chain state.
- */
 function removeMempoolTx(state, txid) {
   state.mempool = state.mempool.filter(id => id !== txid);
   delete state.mempoolTxHex[txid];
   delete state.mempoolTxObjects[txid];
 }
 
-/**
- * Clear all mempool transactions.
- */
 function clearMempool(state) {
   state.mempool = [];
   state.mempoolTxHex = {};
   state.mempoolTxObjects = {};
 }
-
-// ─── Polling helpers ─────────────────────────────────────────────────────────
 
 async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -342,15 +312,12 @@ async function waitForSynced(tracker, timeoutMs = 30000) {
   throw new Error('Timed out waiting for tracker to sync');
 }
 
-// ─── Tracker factory ─────────────────────────────────────────────────────────
-
 /**
- * Create a tracker instance suitable for E2E testing.
- * The tracker is NOT started. Call tracker.start() yourself.
- * The start() method will create its own LevelDB instances.
- *
- * For in-memory DBs, we monkey-patch LevelUpStore so the tracker's start()
- * creates in-memory databases instead of disk ones.
+ * Create a tracker instance suitable for E2E testing. The tracker is NOT
+ * started; call tracker.start() yourself. That start() method creates its
+ * own LevelDB instances, so for in-memory DBs we monkey-patch LevelUpStore
+ * (see patchLevelUpStoreInMemory) so it creates in-memory databases instead
+ * of disk ones.
  */
 function createE2ETracker() {
   const tracker = new XChainUtxoTracker(
@@ -363,7 +330,6 @@ function createE2ETracker() {
  * Patch the LevelUpStore module so that ANY new instance uses memory-level
  * (in-memory) regardless of the inMemory constructor param. This lets us test
  * the start() loop (which creates its own DBs) without needing disk access.
- *
  * Returns a restore function.
  */
 function patchLevelUpStoreInMemory() {
@@ -385,8 +351,6 @@ function patchLevelUpStoreInMemory() {
     LevelUpStore.prototype.createDatabase = origCreateDatabase;
   };
 }
-
-// ─── Express app factory ─────────────────────────────────────────────────────
 
 function createApiApp(tracker) {
   const app = express();

@@ -44,7 +44,7 @@ function tarDir(sourceDir, archive) {
 function writeStoreFiles(dir, { extraMembers = 0 } = {}) {
     fs.mkdirSync(dir, { recursive: true });
     // Members that sort BEFORE CURRENT, so a limit-10 member listing would miss the
-    // real store files: the regression guard for the #4368 full-scan requirement.
+    // real store files: the regression guard for the full-scan requirement.
     for (let i = 0; i < extraMembers; i++)
         fs.writeFileSync(path.join(dir, `00000${i}.ldb`), 'ldb');
     fs.writeFileSync(path.join(dir, 'CURRENT'), 'MANIFEST-000001\n');
@@ -59,7 +59,7 @@ function buildSingleLayerArchive(dir, opts = {}) {
 }
 
 // Build a single-layer archive that is correctly formed but holds no LevelDB store:
-// the #4368 case that used to pass validation and then wipe /data.
+// this used to pass validation and then wipe /data.
 function buildNonStoreArchive(dir) {
     const junkDir = path.join(dir, 'junk');
     fs.mkdirSync(junkDir, { recursive: true });
@@ -108,7 +108,7 @@ describe('validateBootstrapArchiveOrThrow', function () {
         tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bootstrap-test-'));
         delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED;
         delete process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY;
-        // The integrity and layout suites below predate the provenance gate (#4426) and
+        // The integrity and layout suites below predate the provenance gate and
         // exercise the checksum layer on unsigned fixtures, so they take the same
         // unsigned opt-out an operator restoring a local getbootstrap snapshot uses.
         // The provenance suite clears it and asserts the fail-closed default itself.
@@ -121,8 +121,8 @@ describe('validateBootstrapArchiveOrThrow', function () {
         try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
     });
 
-    // Finding #2725: missing sidecar fails closed unless the operator opts out.
-    describe('single-layer sidecar gating (#2725)', function () {
+    // Missing sidecar fails closed unless the operator opts out.
+    describe('single-layer sidecar gating', function () {
         it('(a) missing sidecar + no env opt-out throws', async function () {
             const archive = buildSingleLayerArchive(tmp);
             let threw = false;
@@ -157,8 +157,8 @@ describe('validateBootstrapArchiveOrThrow', function () {
         });
     });
 
-    // Finding #2726: wrapper archive is now unwrapped + checksum-verified, not refused.
-    describe('wrapper unwrap (#2726)', function () {
+    // A wrapper archive is unwrapped + checksum-verified, not refused.
+    describe('wrapper unwrap', function () {
         it('unwraps a valid wrapper and returns the inner data.tar.gz as effective source', async function () {
             const archive = buildWrapperArchive(tmp);
             const res = await validateBootstrapArchiveOrThrow(archive);
@@ -178,9 +178,9 @@ describe('validateBootstrapArchiveOrThrow', function () {
         });
     });
 
-    // Finding #4426: the archive's own checksums travel with it, so provenance comes
+    // The archive's own checksums travel with it, so provenance comes
     // from the detached signature checked against the repo-pinned key, fail-closed.
-    describe('detached signature provenance gating (#4426)', function () {
+    describe('detached signature provenance gating', function () {
         beforeEach(function () { delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED; });
 
         it('a self-consistent single-layer archive with no .sig is refused by default', async function () {
@@ -260,10 +260,10 @@ describe('validateBootstrapArchiveOrThrow', function () {
         });
     });
 
-    // Finding #4368: a checksum says "this is the published archive", never "this is a
+    // A checksum says "this is the published archive", never "this is a
     // LevelDB store". Without a content gate the wipe still fires and the tracker
     // reopens onto an empty DB.
-    describe('LevelDB content gating (#4368)', function () {
+    describe('LevelDB content gating', function () {
         it('refuses a correctly-checksummed single-layer archive holding no store', async function () {
             const archive = buildNonStoreArchive(tmp);
             fs.writeFileSync(archive + '.sha256', `${sha256File(archive)}  nonstore.tar.gz\n`);

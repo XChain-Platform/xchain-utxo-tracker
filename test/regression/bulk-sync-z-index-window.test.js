@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression: bulk-sync Z index is windowed to undoBlocks, S is not ───────
+// Regression: bulk-sync Z index is windowed to undoBlocks, S is not.
 //
 // Z ('Z'/0x5A, block -> first-seen script) is read only by the reorg unwind
 // (removeOutputScriptsInBlock), which can never reach past the undoBlocks

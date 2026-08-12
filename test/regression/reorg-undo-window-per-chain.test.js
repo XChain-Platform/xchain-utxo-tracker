@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression: per-chain reorg recovery window (UNDO_BLOCKS) ────────────────
+// Regression: per-chain reorg recovery window (UNDO_BLOCKS).
 //
 // Commit 0e8c043 made the reorg recovery window per-chain instead of a flat 10.
 // On 1-minute DOGE blocks a flat window was only ~10 minutes of headroom; the
@@ -83,7 +83,7 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
       expect(undoBlocksFor('dogecoin-mainnet')).to.equal(120);
     });
 
-    // uuid:65309b82: the live resolver used to honor a non-positive override
+    // The live resolver used to honor a non-positive override
     // (`parseInt(...) || default` treats a negative as truthy), yielding a
     // negative window that mass-purged undo records, while the seeder rejected
     // it via `> 0`. Both share the single resolver now, so a non-positive
@@ -98,12 +98,12 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
     }
   });
 
-  // #4903: the live worker and the bulk seeder must agree on the per-chain window, or the
+  // The live worker and the bulk seeder must agree on the per-chain window, or the
   // bulk-seeded N-prefix can undershoot the live reorg depth guard for one chain (the gap
-  // 51aab3b closed). Both now import the single table in src/undo-blocks.js, so this asserts
+  // commit 51aab3b closed). Both now import the single table in src/undo-blocks.js, so this asserts
   // the bulk seeder resolves the same per-chain values as the live tracker (no hand-copied
   // second table to drift).
-  describe('bulk seeder shares the live per-chain window (single-source, #4903)', function () {
+  describe('bulk seeder shares the live per-chain window (single-source)', function () {
     const { resolveUndoBlocks: seederResolve } = require('../../src/bulk-sync/merger/derive-keys.js');
     for (const [network, expected] of [['bitcoin-mainnet', 12], ['litecoin-mainnet', 48], ['dogecoin-mainnet', 120]]) {
       it(network + ' matches between live worker and bulk seeder (' + expected + ')', function () {

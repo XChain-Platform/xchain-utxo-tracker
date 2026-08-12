@@ -60,7 +60,7 @@ describe('restore-validation', function () {
         });
     });
 
-    describe('hasRequiredLevelDbMembers (#4368)', function () {
+    describe('hasRequiredLevelDbMembers', function () {
         it('accepts a real classic-level member set', function () {
             expect(hasRequiredLevelDbMembers(['CURRENT', 'MANIFEST-000001', '000005.ldb', '000004.log', 'LOCK']))
                 .to.equal(true);
@@ -91,7 +91,7 @@ describe('restore-validation', function () {
         });
     });
 
-    describe('parseDetachedSignature (#4426)', function () {
+    describe('parseDetachedSignature', function () {
         const B64 = Buffer.alloc(64, 7).toString('base64');
         it('reads the publisher\'s "v1 ed25519 <base64>" line', function () {
             const sig = parseDetachedSignature(`v1 ed25519 ${B64}\n`);

@@ -44,7 +44,6 @@
  *
  ********************************************************************/
 
-// Load required libraries
 const util = require('./util')
 
 // Debug-only tracing for the missing-O-record investigation. Gated behind
@@ -78,7 +77,7 @@ const P_HINT_DEL   = 0x4D  // 'M'
 const P_STORED_BLK = 0x4E  // 'N'
 const P_OUT_BLK    = 0x57  // 'W' - creation-block reverse index for outputs
 
-// ─── Binary helpers ───────────────────────────────────────────────────────────
+// Binary helpers
 
 function h2b(hex) { return Buffer.from(hex, 'hex') }
 function b2h(buf) { return Buffer.isBuffer(buf) ? buf.toString('hex') : buf }
@@ -90,7 +89,7 @@ function idxBuf(n) {
     return b
 }
 
-// ─── Address-query pagination ──────────────────────────────────────────────────
+// Address-query pagination
 // A single-address output scan (O-prefix range) can return millions of rows for a
 // mega miner-coinbase/payout address. Materializing them all into one array OOMs
 // the process and takes the tracker down for every caller. getOutputsScriptPubKey
@@ -140,26 +139,22 @@ function parseOutputCursor(cursor) {
 }
 
 function rangeEnd(prefix) {
-    // The 0xFF suffix must be at least as long as the longest key suffix of ANY
-    // range scan, or a key whose leading suffix bytes are all 0xFF sorts above the
+    // The 0xFF suffix must be at least as long as the longest key suffix of any
+    // range scan, or a key whose suffix bytes are all 0xFF sorts above the
     // (shorter) inclusive `lte` bound and is silently dropped from the iterator.
-    // The previous 12-byte suffix covered only the 12-byte-suffix scans (O/H/I/M:
-    // 33-byte prefix over 45-byte keys), but UNDER-covered the reorg-consistency
-    // scans: the K/P_OUT_DEL restore scan uses a 33-byte [K+blockHash] prefix over
-    // 77-byte keys (44-byte suffix) and the Z/P_BLK_SCRIPT scan leaves a 32-byte
-    // scriptHash suffix. A dropped K key means a spent output is NOT restored on a
-    // reorg rollback (permanent balance under-count); a dropped Z key leaves a stale
-    // first-seen (S) record. 64 bytes covers the current maximum (44) with margin; a
-    // longer all-0xFF upper bound never bleeds into the next prefix (the differing
-    // prefix byte is compared first) and never excludes a valid key.
+    // A previous 12-byte suffix covered the common O/H/I/M scans (33-byte prefix
+    // over 45-byte keys) but under-covered the reorg-consistency scans: K's
+    // 33-byte prefix over 77-byte keys leaves a 44-byte suffix, and Z leaves a
+    // 32-byte suffix. A dropped K key means a spent output is not restored on
+    // reorg rollback (permanent balance under-count); a dropped Z key leaves a
+    // stale first-seen (S) record.
     //
-    // The suffix is sized so that prefix.length + suffix.length is at least the
-    // longest key in the schema (77 bytes: K/P_OUT_DEL). The internal fixed-prefix
-    // scans always leave >= 33-byte prefixes, but getValuesFromKeyPattern accepts
-    // patterns as short as 2 bytes, which over a 77-byte K key leaves a 75-byte
-    // suffix that a fixed 64-byte 0xFF bound would under-cover. Deriving the length
-    // from the prefix keeps the bound valid for every scan while retaining the
-    // 64-byte floor for the common fixed-prefix cases.
+    // 64 bytes covers that 44-byte maximum with margin, and a longer all-0xFF
+    // bound never bleeds into the next prefix (the differing prefix byte sorts
+    // first) or excludes a valid key. The length is derived from prefix.length
+    // rather than fixed, because getValuesFromKeyPattern accepts patterns as
+    // short as 2 bytes, which over the 77-byte K key would leave a 75-byte
+    // suffix that a fixed 64-byte bound would under-cover.
     const MAX_KEY_LEN = 77
     return Buffer.concat([prefix, Buffer.alloc(Math.max(64, MAX_KEY_LEN - prefix.length), 0xFF)])
 }
@@ -175,7 +170,7 @@ function toMapKey(key) {
     return Buffer.isBuffer(key) ? key.toString('latin1') : key
 }
 
-// ─── Key constructors ─────────────────────────────────────────────────────────
+// Key constructors
 // Each constructor allocates a single Buffer and writes fields directly via
 // buf.write(hex, offset, 'hex'): avoids the 3-5 temporary Buffers that
 // Buffer.concat + h2b + pb + idxBuf produced previously. At ~5M key builds per
@@ -420,7 +415,7 @@ function kOutDelFromBuf(blockHashHex, scriptPubKeyBuf, txHash8Hex, idx) {
     return buf
 }
 
-// ─── Value encoders / decoders ────────────────────────────────────────────────
+// Value encoders / decoders
 
 // B value: [height(4)][timestamp(4)][previousHash(32)] = 40 bytes
 function encodeBlock(height, timestamp, previousHashHex) {
@@ -460,14 +455,14 @@ function encodeInputVal(txHash8Hex) {
 }
 
 // O value: [value(8)][height(4)][fullTxHash(32)] = 44 bytes, plus an OPTIONAL
-// 45th coinbase-flag byte (0x01) appended only for coinbase outputs (L-4).
+// 45th coinbase-flag byte (0x01) appended only for coinbase outputs.
 // height = -1 stored as 0xFFFFFFFF (twos-complement Int32)
 const ZERO_HASH = '0'.repeat(64)
 function encodeOutput(value, height, fullTxHashHex, isCoinbase = false) {
     // Non-coinbase outputs (the overwhelming majority) stay exactly 44 bytes, so
     // existing records and encodings are byte-identical; only coinbase outputs
     // grow by one flag byte. This keeps the change reindex-free: a legacy 44-byte
-    // record decodes as non-coinbase, which is the pre-L-4 behaviour.
+    // record decodes as non-coinbase, which is the behaviour before this flag existed.
     const buf = Buffer.alloc(isCoinbase ? 45 : 44)
     buf.writeBigUInt64BE(BigInt(value), 0)
     buf.writeInt32BE(height != null ? height : -1, 8)
@@ -493,7 +488,7 @@ function decodeOutput(buf) {
         h: buf.readInt32BE(8),
         // ZERO_HASH is the "no full txid" sentinel (see encodeOutput).
         t: fullTxHash === ZERO_HASH ? null : fullTxHash,
-        // Optional coinbase flag (L-4); legacy 44-byte records read as false.
+        // Optional coinbase flag; legacy 44-byte records read as false.
         cb: buf.length > 44 && buf[44] === 1
     }
 }
@@ -518,12 +513,13 @@ function decodeScriptBlk(buf) {
 
 const EMPTY = Buffer.alloc(0)
 
-// ─── LevelUpStore class ───────────────────────────────────────────────────────
+// LevelUpStore class
 
-// LRU-ish cache for recently-written output values, keyed by `${txHash8}:${idx}`.
-// UTXO locality: most spends consume outputs created within the last few thousand
-// blocks, so a bounded in-memory cache absorbs a large fraction of Phase 2 reads
-// in removeOutputsWithInputsBatch without touching the DB. Map insertion order
+// LRU-ish cache for recently-written output values, keyed by txHash8 plus a
+// packed 2-char outputIndex (see insertOutput). UTXO locality: most spends
+// consume outputs created within the last few thousand blocks, so a bounded
+// in-memory cache absorbs a large fraction of Phase 2 reads in
+// removeOutputsWithInputsBatch without touching the DB. Map insertion order
 // gives FIFO eviction; entries are also evicted on spend.
 const OUTPUT_CACHE_MAX = 2_000_000
 
@@ -700,7 +696,7 @@ class LevelUpStore {
         }
     }
 
-    // ─── Block height / hash ─────────────────────────────────────────────────
+    // Block height / hash
 
     async getLastBlockHeight(){
         const value = await this.db.get(PREFIX_LAST_BLOCK_HEIGHT)
@@ -732,7 +728,7 @@ class LevelUpStore {
         return await this.addTransaction("put", PREFIX_LAST_BLOCK_HASH, Buffer.from(hash))
     }
 
-    // ─── Stored block list (N prefix) ────────────────────────────────────────
+    // Stored block list (N prefix)
 
     async addLastStoredBlock(blockHash){
         return await this.addTransaction("put", kStoredBlk(blockHash), EMPTY)
@@ -751,7 +747,7 @@ class LevelUpStore {
         }
     }
 
-    // ─── Block (B prefix) ────────────────────────────────────────────────────
+    // Block (B prefix)
 
     async insertBlock(block) {
         return await this.addTransaction(
@@ -771,7 +767,7 @@ class LevelUpStore {
         return decodeBlock(buf)
     }
 
-    // ─── Transaction (T prefix) ──────────────────────────────────────────────
+    // Transaction (T prefix)
 
     async insertTransaction(tx) {
         return await this.addTransaction(
@@ -815,7 +811,7 @@ class LevelUpStore {
         return value === undefined ? null : value
     }
 
-    // ─── Input (I prefix) ────────────────────────────────────────────────────
+    // Input (I prefix)
 
     async insertInput(input) {
         return await this.addTransaction(
@@ -841,7 +837,7 @@ class LevelUpStore {
         return value !== undefined
     }
 
-    // ─── Input hint (J prefix) ───────────────────────────────────────────────
+    // Input hint (J prefix)
 
     async insertInputHint(input) {
         return await this.addTransaction(
@@ -886,38 +882,32 @@ class LevelUpStore {
         return counts.reduce((sum, n) => sum + n, 0)
     }
 
-    // ─── Output (O prefix) ───────────────────────────────────────────────────
+    // Output (O prefix)
 
     // output.scriptPubKey may be a Buffer (hot path) or a hex string (mempool / legacy callers).
     async insertOutput(output) {
         const oVal = encodeOutput(output.value, output.height, output.fullTxHash || null, output.coinbase === true)
 
         // Populate the recent-output cache so Phase 2 of removeOutputsWithInputsBatch
-        // can absorb spends of this output without a DB read.
-        // Pack outputIndex into 2 BMP chars (high/low 16 bits) instead of
-        // ":" + String(n): avoids the NumberPrototypeToString hot spot from the
-        // profile while covering the full 32-bit range.
+        // can absorb spends without a DB read. outputIndex is packed into 2 BMP
+        // chars (high/low 16 bits) rather than ":" + String(n) to avoid a
+        // string-conversion hot spot seen in profiling, while covering the full
+        // 32-bit range.
         //
-        // outputCache is a process-global static shared by the confirmed and mempool
-        // stores. The mempool store also calls insertOutput (height=-1), so its
-        // entries land here too. Correctness relies on block Pass 1 (parseTxOutputs /
-        // insertOutput) overwriting any mempool cache entry with the confirmed height
-        // before Pass 2 (removeOutputsWithInputsBatch) reads it. A confirmed block
-        // can only spend an already-mined output, so by the time Pass 2 runs, all
-        // relevant cache entries already carry the confirmed height from Pass 1.
-        // The reorg path (removeCreatedOutputsInBlock) deletes O records for orphaned
-        // outputs but does not evict the cache; stale entries from the orphaned block
-        // are never re-read because the spending tx is also gone after the reorg.
-        // Never cache a mempool (unconfirmed) output. The mempool store shares this
-        // process-global static cache and is the ONLY caller that passes a negative
-        // height (blockHeight=-1). A concurrent updateMempool pass can re-cache a
-        // just-mined tx with height=-1 AFTER the confirming block's Pass 1 wrote the
-        // correct height, so the confirmed block's Pass 2 (removeOutputsWithInputsBatch)
-        // would then archive a K restore record with height=-1; a later reorg restores
-        // that output to the confirmed store with a bogus height (confirmations tip+2).
-        // The mempool store never READS this cache (removeOutputsWithInputsBatch runs
-        // only on the confirmed store), so skipping the write for height<0 removes the
-        // only writer of -1 heights while leaving the confirmed hot path unchanged.
+        // outputCache is a process-global static shared by the confirmed and
+        // mempool stores; the mempool store also calls insertOutput (height=-1).
+        // Correctness relies on block Pass 1 overwriting any mempool entry with
+        // the confirmed height before Pass 2 reads it (a confirmed block can only
+        // spend an already-mined output). The reorg path deletes O records for
+        // orphaned outputs but does not evict the cache; those entries are never
+        // re-read because the spending tx is also gone after the reorg.
+        //
+        // Never cache a mempool (unconfirmed) output: it is the only caller that
+        // passes height<0, and a concurrent mempool re-cache after Pass 1 wrote
+        // the confirmed height could make Pass 2 archive a K restore record with
+        // a bogus height=-1, later restored on reorg with a wrong confirmation
+        // count. The mempool store never reads this cache, so skipping the write
+        // for height<0 removes the only writer of bad heights.
         if (output.height != null && output.height >= 0) {
             const _oi = output.outputIndex
             const cacheKey = output.txHash + String.fromCharCode((_oi >>> 16) & 0xFFFF, _oi & 0xFFFF)
@@ -940,7 +930,7 @@ class LevelUpStore {
         return await this.addTransaction("put", oKey, oVal)
     }
 
-    // ─── Output hint (H prefix) ──────────────────────────────────────────────
+    // Output hint (H prefix)
 
     // output.scriptPubKey may be a Buffer (hot path) or a hex string.
     async insertOutputHint(output){
@@ -954,7 +944,7 @@ class LevelUpStore {
         )
     }
 
-    // ─── Output creation-block reverse index (W prefix) ──────────────────────
+    // Output creation-block reverse index (W prefix)
 
     // Records which block created this output so a reorg can find and delete the
     // O/H entries for outputs born in a rolled-back block but never spent (which
@@ -976,33 +966,22 @@ class LevelUpStore {
         )
     }
 
-    // ─── Output + hint removal (REMOVE_SPENT path) ───────────────────────────
+    // Output + hint removal (REMOVE_SPENT path)
 
-    // Cross-block in-memory spend recovery.
-    //
-    // When an output is created and spent within the SAME uncommitted batch the
-    // spend takes the in-memory path: the O/H entries are dropped from the
-    // staging map and the only restore record is the per-spend-block entry in
-    // deletedTransactionArray. That in-memory record is discarded the moment the
-    // batch commits (endTransaction nulls the maps), so it cannot survive to a
-    // later reorg. For a same-block create+spend that is harmless: a reorg can
-    // never split a single block, so the output never needs restoring on its own.
-    // But a batch spans up to DB_TRANSACTION_BLOCKS_QUANTITY blocks, so a create
-    // at block N and a spend at block N+k (k>0) is also in-memory yet CAN be split
-    // by a reorg to a fork between N and N+k. After commit there are no K/M records
-    // on disk, so processDeletedOutputs finds nothing to restore and the spent
-    // output's balance is silently lost.
-    //
-    // Fix: when the spent output was created in a strictly earlier block than the
-    // spending input, write the same M (hint) + K (output) restore records the
-    // DB/archive branch writes, keyed by the spend blockHash. A reorg that rolls
-    // back the spend block then restores the output exactly as for a normal
-    // committed spend. The records are still pruned by cleanupAgedBlocks once the
-    // spend block ages out of the undoBlocks window.
-    //
-    // spendBlockHeight is read from the B record inserted for this block earlier
-    // in the same batch; createdHeight is decoded from the spent output's value.
-    // Both are needed because the input object carries no height.
+    // Cross-block in-memory spend recovery: when an output is created and spent
+    // in the SAME batch, the spend takes the in-memory path and only survives
+    // via the per-block entry in deletedTransactionArray, which endTransaction
+    // discards on commit. A same-block create+spend is harmless (a reorg can
+    // never split one block), but a batch spans up to
+    // DB_TRANSACTION_BLOCKS_QUANTITY blocks, so a create at block N and a spend
+    // at block N+k can be split by a reorg between them; with no K/M records on
+    // disk, processDeletedOutputs finds nothing to restore and the balance is
+    // silently lost. Fix: when the spent output's creation block is strictly
+    // earlier than the spend block, write the same M/K restore records the
+    // DB/archive branch writes, keyed by the spend blockHash, so a reorg
+    // restores it normally; cleanupAgedBlocks still prunes them once they age
+    // out. spendBlockHeight comes from this batch's B record; createdHeight
+    // from the spent output's value, since the input object carries no height.
     spendBlockHeightInBatch(blockHashHex){
         const blkVal = this.getTransactionValue(kBlock(blockHashHex))
         if (blkVal == null) return null
@@ -1092,7 +1071,7 @@ class LevelUpStore {
         const hintDbKeys = []
         const hintDbIndices = []
 
-        // ── Phase 1: Resolve all hint keys (scriptPubKey lookup) ──
+        // Phase 1: resolve all hint keys (scriptPubKey lookup)
         const _tHint = Date.now()
         for (let i = 0; i < inputs.length; i++) {
             const inp = inputs[i]
@@ -1127,7 +1106,7 @@ class LevelUpStore {
         }
         LevelUpStore.parseInBuckets.hintRead += Date.now() - _tHint
 
-        // ── Phase 2: Resolve all output values ──
+        // Phase 2: resolve all output values
         // First check the in-memory output cache (recently-written outputs).
         // Most spends hit recently-created UTXOs (locality), so this absorbs
         // a large fraction of the lookups without touching the DB.
@@ -1169,7 +1148,7 @@ class LevelUpStore {
         }
         LevelUpStore.parseInBuckets.outRead += Date.now() - _tOut
 
-        // ── Phase 3: Stage all deletes ──
+        // Phase 3: stage all deletes
         const _tStage = Date.now()
         for (let i = 0; i < inputs.length; i++) {
             if (!resolved[i]) continue
@@ -1260,7 +1239,7 @@ class LevelUpStore {
         return counts.reduce((sum, n) => sum + n, 0)
     }
 
-    // ─── Deleted output recovery (K / M prefix) ──────────────────────────────
+    // Deleted output recovery (K / M prefix)
 
     async processDeletedOutputs(blockHash, recover = true){
         const delMapKey = toMapKey(blockHash)
@@ -1317,7 +1296,7 @@ class LevelUpStore {
         }
     }
 
-    // ─── Output script block (S / Z prefix) ──────────────────────────────────
+    // Output script block (S / Z prefix)
 
     // outputScript may be a Buffer (hot path) or a hex string (mempool / legacy callers).
     async insertOutputScriptBlock(outputScript, blockHash, blockHeight){
@@ -1434,8 +1413,8 @@ class LevelUpStore {
     // Delete the O/H entries for every output CREATED in the given block, using
     // the W creation-block reverse index. Called during a reorg to purge outputs
     // born in a rolled-back block that were never spent (K/M recovery only
-    // restores outputs spent in the rolled-back block, so without this they would
-    // linger as phantom UTXOs and inflate balances permanently. Must run after
+    // restores outputs spent in the rolled-back block, so without this they
+    // would linger as phantom UTXOs and inflate balances permanently). Must run after
     // processDeletedOutputs(recover=true): if an output was both created and spent
     // in this block, recovery re-stages its O/H put and this del then overrides it.
     async removeCreatedOutputsInBlock(blockHash){
@@ -1489,7 +1468,7 @@ class LevelUpStore {
         }
     }
 
-    // ─── Queries ─────────────────────────────────────────────────────────────
+    // Queries
 
     async getOutputsScriptPubKey(scriptPubKey, { limit = null, after = null, maxOutputs = null } = {}){
         const outputs = []
@@ -1584,7 +1563,7 @@ class LevelUpStore {
         return result
     }
 
-    // ─── Mempool helpers ─────────────────────────────────────────────────────
+    // Mempool helpers
 
     async deleteAndCompareTxsNotInList(txidList){
         const deletedTxs = []
@@ -1625,7 +1604,7 @@ class LevelUpStore {
         return { transactionsDeleted: deletedTxs.length, outputsDeleted, inputsDeleted }
     }
 
-    // ─── Generic key-pattern scan (used by API) ───────────────────────────────
+    // Generic key-pattern scan (used by API)
     // pattern: hex string representing the binary key prefix
 
     async getValuesFromKeyPattern(pattern, { maxValues = null } = {}){
@@ -1676,7 +1655,7 @@ module.exports = LevelUpStore
 module.exports.AddressTooLargeError = AddressTooLargeError
 module.exports.InvalidCursorError  = InvalidCursorError
 // Exported so the bulk-sync loader can write O-record values byte-identically
-// to the live path (optional 45th coinbase byte, L-4), reusing this single
+// to the live path (optional 45th coinbase byte), reusing this single
 // source of the encoding instead of duplicating the format.
 module.exports.encodeOutput = encodeOutput
 module.exports.decodeOutput = decodeOutput

@@ -27,8 +27,6 @@ describe('BlockchainConnector', function () {
     sinon.restore();
   });
 
-  // ─── Constructor ────────────────────────────────────────────────────────
-
   describe('constructor', function () {
     it('builds the correct base URL', function () {
       expect(connector.url).to.equal('http://127.0.0.1:8332');
@@ -40,8 +38,6 @@ describe('BlockchainConnector', function () {
       expect(connector.rpcPassword).to.equal('pass');
     });
   });
-
-  // ─── getBlockchainInfo ────────────────────────────────────────────────────
 
   describe('getBlockchainInfo', function () {
     it('returns result on success', async function () {
@@ -66,8 +62,6 @@ describe('BlockchainConnector', function () {
       }
     });
   });
-
-  // ─── getBlockHash ────────────────────────────────────────────────────────
 
   describe('getBlockHash', function () {
     it('returns hash for valid height', async function () {
@@ -101,8 +95,6 @@ describe('BlockchainConnector', function () {
       }
     });
   });
-
-  // ─── getBlock ────────────────────────────────────────────────────────
 
   describe('getBlock', function () {
     it('returns hex when hexFormat=true (default)', async function () {
@@ -149,8 +141,6 @@ describe('BlockchainConnector', function () {
     });
   });
 
-  // ─── getBlockHeader ────────────────────────────────────────────────────────
-
   describe('getBlockHeader', function () {
     it('returns header on success', async function () {
       clientStub.resolves({ data: { result: '01000000...' } });
@@ -175,7 +165,7 @@ describe('BlockchainConnector', function () {
     });
 
     it('throws after 10 timeout retries, backing off between each', async function () {
-      const sleepStub = sinon.stub(connector, 'sleep').resolves();  // skip real backoff
+      const sleepStub = sinon.stub(connector, 'sleep').resolves();
       const timeoutErr = new Error('timeout');
       timeoutErr.code = 'ECONNABORTED';
       clientStub.rejects(timeoutErr);
@@ -203,8 +193,6 @@ describe('BlockchainConnector', function () {
     });
   });
 
-  // ─── getBlockWithoutAuxPow ───────────────────────────────────────────────
-
   // Build a minimal but structurally valid AuxPoW block hex for testing the
   // structural-parse path (Dogecoin Core 1.14 behavior: getblockheader returns
   // exactly 160 hex chars regardless of merge-mining status).
@@ -216,7 +204,6 @@ describe('BlockchainConnector', function () {
     // Version bytes in little-endian: 0x00000101 -> 01 01 00 00
     const standardHeader = '01010000' + '00'.repeat(76)  // version (4 B) + 76 B padding = 80 B total = 160 hex chars
 
-    // Minimal coinbase tx: version(4) + nIns(1=0x01) + prevout(32 zeros + ffffffff) + scriptLen(0) + seq(ffffffff) + nOuts(1) + value(0 8B) + scriptLen(0) + locktime(4)
     const coinbaseTx = (
       '01000000'        +  // version (4 B)
       '01'              +  // nIns = 1
@@ -371,8 +358,6 @@ describe('BlockchainConnector', function () {
     });
   });
 
-  // ─── getRawMempool ────────────────────────────────────────────────────────
-
   describe('getRawMempool', function () {
     it('returns array of txids', async function () {
       const txids = ['aaa', 'bbb', 'ccc'];
@@ -392,8 +377,6 @@ describe('BlockchainConnector', function () {
     });
   });
 
-  // ─── getRawTransaction ────────────────────────────────────────────────────
-
   describe('getRawTransaction', function () {
     it('returns raw hex on success', async function () {
       clientStub.resolves({ data: { result: '020000000001...' } });
@@ -402,7 +385,7 @@ describe('BlockchainConnector', function () {
     });
 
     it('retries on failure up to 10 times', async function () {
-      // Use a real short sleep to keep tests fast
+      // Stub sleep so the retry backoff resolves instantly, keeping the test fast.
       sinon.stub(connector, 'sleep').resolves();
 
       clientStub.rejects(new Error('timeout'));
@@ -430,8 +413,6 @@ describe('BlockchainConnector', function () {
     });
   });
 
-  // ─── getRawTransactions ───────────────────────────────────────────────────
-
   describe('getRawTransactions', function () {
     it('fetches all txids in parallel', async function () {
       clientStub.resolves({ data: { result: 'hexdata' } });
@@ -445,8 +426,6 @@ describe('BlockchainConnector', function () {
       expect(results).to.be.empty;
     });
   });
-
-  // ─── getBlocksBatch ─────────────────────────────────────────────────────
 
   describe('getBlocksBatch', function () {
     it('returns empty array for empty heights', async function () {
@@ -521,8 +500,6 @@ describe('BlockchainConnector', function () {
       }
     });
   });
-
-  // ─── additional branch coverage ───────────────────────────────────────────
 
   describe('getRawTransaction (tx no longer present)', function () {
     it('resolves null when the node returns no result (mined/evicted)', async function () {

@@ -22,8 +22,6 @@ describe('Fuzz: Block Decoder (P0)', function () {
     decoder = new XChainBlockDecoder('bitcoin-regtest');
   });
 
-  // ─── blockFromBuffer: random buffers must never hang or segfault ───────────
-
   describe('blockFromBuffer', function () {
     it('never hangs on arbitrary buffers (throws or returns)', async function () {
       await fc.assert(
@@ -34,7 +32,8 @@ describe('Fuzz: Block Decoder (P0)', function () {
             try {
               decoder.blockFromBuffer(buf);
             } catch (e) {
-              // Throwing is fine; we just assert it doesn't hang or segfault
+              // The property under test is "never hangs or segfaults"; a thrown
+              // Error is a passing outcome, not a failure.
               expect(e).to.be.an('error');
             }
           }
@@ -50,9 +49,9 @@ describe('Fuzz: Block Decoder (P0)', function () {
           async (bytes) => {
             const buf = Buffer.from(bytes);
             try {
+              // bitcoinjs Block.fromBuffer also throws below 80 bytes, but
+              // succeeding here is not treated as a failure either.
               decoder.blockFromBuffer(buf);
-              // bitcoinjs Block.fromBuffer also throws for < 80 bytes
-              // If it doesn't throw, that's still acceptable
             } catch (e) {
               expect(e).to.be.an('error');
             }
@@ -69,9 +68,9 @@ describe('Fuzz: Block Decoder (P0)', function () {
           async (bytes) => {
             const buf = Buffer.from(bytes);
             try {
+              // A bare 80-byte buffer is header-only (no transactions); either
+              // a block with zero transactions or a throw is acceptable here.
               const block = decoder.blockFromBuffer(buf);
-              // 80-byte buffer = header only; should return a block with no transactions
-              // or throw if the default parser doesn't support header-only
             } catch (e) {
               expect(e).to.be.an('error');
             }
@@ -99,8 +98,6 @@ describe('Fuzz: Block Decoder (P0)', function () {
     });
   });
 
-  // ─── blockFromHex: fuzzed hex strings ──────────────────────────────────────
-
   describe('blockFromHex', function () {
     it('never hangs on arbitrary hex strings', async function () {
       await fc.assert(
@@ -126,7 +123,8 @@ describe('Fuzz: Block Decoder (P0)', function () {
             try {
               decoder.blockFromHex(str);
             } catch (e) {
-              // Must not crash with unhandled error types
+              // Looser than the Error-instance checks elsewhere: non-hex input
+              // may reach a throw of a non-Error value, which is still a pass.
               expect(e).to.exist;
             }
           }
@@ -135,8 +133,6 @@ describe('Fuzz: Block Decoder (P0)', function () {
       );
     });
   });
-
-  // ─── txFromHex: fuzzed transaction hex ─────────────────────────────────────
 
   describe('txFromHex', function () {
     it('never hangs on arbitrary hex', async function () {
@@ -164,8 +160,6 @@ describe('Fuzz: Block Decoder (P0)', function () {
     });
   });
 
-  // ─── Litecoin-specific parsing ─────────────────────────────────────────────
-
   describe('litecoin block decoder', function () {
     let ltcDecoder;
 
@@ -191,7 +185,8 @@ describe('Fuzz: Block Decoder (P0)', function () {
     });
 
     it('txFromHex handles HogEx flag combinations', async function () {
-      // Generate hex that starts with valid-looking version + marker + flag patterns
+      // Structured rather than pure-random input, so runs actually exercise
+      // the version/marker/flag parsing path instead of failing before it.
       await fc.assert(
         fc.asyncProperty(
           fc.constantFrom('01000000', '02000000', 'ffffffff'),
@@ -211,8 +206,6 @@ describe('Fuzz: Block Decoder (P0)', function () {
       );
     });
   });
-
-  // ─── doubleSha256AndReverse: should always produce 32 bytes ────────────────
 
   describe('doubleSha256AndReverse', function () {
     it('always returns a 32-byte buffer for any input', async function () {

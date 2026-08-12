@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression: bulk-sync merkle-root verification (--merkle) ───────────────
+// Regression: bulk-sync merkle-root verification (--merkle)
 //
 // The chain-continuity validator only hashed the 80-byte header, so a node
 // substituting the tx list under a genuine header passed silently. The

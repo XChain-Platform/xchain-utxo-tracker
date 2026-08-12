@@ -88,15 +88,12 @@ describe('Integration: API Queries', function () {
     await closeTracker(tracker);
   });
 
-  // Seed some data: 3 blocks, addr0 gets coinbase each time
   async function seedData() {
     const block0 = makeBlock(0, '0'.repeat(64), [makeCoinbaseTx(0, 10 * SATOSHI)]);
     const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(0, 20 * SATOSHI)]);
     const block2 = makeBlock(2, block1.hash, [makeCoinbaseTx(0, 30 * SATOSHI)]);
     await processBlocksAndCommit(tracker, [block0, block1, block2]);
   }
-
-  // ─── Scenario 5.1: REST Endpoints ─────────────────────────────────────
 
   describe('REST endpoints', function () {
     it('GET /utxos/:address returns correct UTXO list', async function () {
@@ -129,8 +126,6 @@ describe('Integration: API Queries', function () {
       expect(res.body.type).to.equal('p2pkh');
     });
   });
-
-  // ─── Scenario 5.2: JSON-RPC Methods ───────────────────────────────────
 
   describe('JSON-RPC methods', function () {
     function rpcCall(method, params = {}) {
@@ -169,8 +164,6 @@ describe('Integration: API Queries', function () {
     });
   });
 
-  // ─── Scenario 5.3: Non-Existent Address ───────────────────────────────
-
   describe('non-existent address queries', function () {
     it('REST /utxos returns empty array', async function () {
       await seedData();
@@ -201,8 +194,6 @@ describe('Integration: API Queries', function () {
     });
   });
 
-  // ─── Scenario 5.4: API reflects state changes ────────────────────────
-
   describe('API reflects state changes', function () {
     it('balance updates after processing new blocks', async function () {
       await seedData();
@@ -210,7 +201,6 @@ describe('Integration: API Queries', function () {
       const res1 = await request.get('/balance/' + TEST_KEYS[0].address).expect(200);
       expect(res1.body).to.equal(coinAmount(60));
 
-      // Process one more block
       const lastHash = (await tracker.db.getLastBlockHash());
       const block3 = makeBlock(3, lastHash, [makeCoinbaseTx(0, 40 * SATOSHI)]);
       await processAndCommit(tracker, block3);

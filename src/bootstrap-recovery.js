@@ -14,7 +14,7 @@
 
 'use strict'
 
-// Recovery handlers for the bootstrap snapshot / restore admin RPCs (M-9).
+// Recovery handlers for the bootstrap snapshot / restore admin RPCs.
 // Extracted from api.js so the fail-safe / fail-loud control flow is unit
 // testable without booting the whole server (api.js self-invokes on require).
 

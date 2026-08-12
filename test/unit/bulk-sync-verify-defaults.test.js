@@ -10,8 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── : bulk-sync verification defaults ON for mainnet bootstraps ────────
-//
+// Bulk-sync verification defaults ON for mainnet bootstraps.
 // A mainnet bootstrap seeds the production UTXO set, so a silently corrupt
 // dump is a consensus-facing hazard. Decision (2026-07-17): --verify-chain and
 // --verify-merkle default ON for *-mainnet networks, with explicit
@@ -26,7 +25,7 @@ function argsFor(network, ...extra) {
         '--network', network, '--out', '/tmp/x', '--db', '/tmp/y', ...extra]);
 }
 
-describe('bulk-sync verify defaults  @unit', function () {
+describe('bulk-sync verify defaults @unit', function () {
 
     it('detects mainnet networks by the -mainnet suffix', function () {
         expect(isMainnetNetwork('bitcoin-mainnet')).to.equal(true);

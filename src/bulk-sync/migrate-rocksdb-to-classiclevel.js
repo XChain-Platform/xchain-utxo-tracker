@@ -65,7 +65,7 @@
 const fs = require('fs')
 const path = require('path')
 
-// ---- args -----------------------------------------------------------------
+// args
 function parseArgs(argv) {
     const a = { batchBytes: 64 * 1024 * 1024, segmentKeys: 100_000_000, verify: true, verifyOnly: false }
     for (let i = 2; i < argv.length; i++) {
@@ -88,7 +88,7 @@ function fmtBytes(n) { return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB' }
 function ts() { return new Date().toISOString().replace('T', ' ').slice(0, 19) }
 function log(msg) { console.log(`[${ts()}] ${msg}`) }
 
-// ---- backend openers ------------------------------------------------------
+// backend openers
 // Source: RocksDB used DIRECTLY as an abstract-leveldown store (no levelup), so
 // the pre-migration image needs nothing added. Open read-mostly; we never write
 // to it. keyAsBuffer/valueAsBuffer on the iterator give raw Buffers -> exact bytes.
@@ -144,7 +144,7 @@ function pullFromClassic(db) {
     }
 }
 
-// ---- copy -----------------------------------------------------------------
+// copy
 async function copy(src, dst, batchBytes, segmentKeys) {
     log(`COPY start: ${src} (rocksdb) -> ${dst} (classic-level), batch=${fmtBytes(batchBytes)}`)
     const from = await openRocks(src)
@@ -186,7 +186,7 @@ async function copy(src, dst, batchBytes, segmentKeys) {
     return { keys, totalBytes }
 }
 
-// ---- verify ---------------------------------------------------------------
+// verify
 // Streaming lockstep compare. Both backends iterate keys in ascending byte
 // order, so we walk them together and classify every key.
 async function verify(src, dst) {
@@ -233,7 +233,7 @@ async function verify(src, dst) {
     return ok
 }
 
-// ---- main -----------------------------------------------------------------
+// main
 ;(async () => {
     const a = parseArgs(process.argv)
     if (a.help || !a.src || !a.dst) {

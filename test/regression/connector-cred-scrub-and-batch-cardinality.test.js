@@ -15,8 +15,8 @@ const sinon = require('sinon');
 const BlockchainConnector = require('../../src/BlockchainConnector');
 
 // Build an axios-shaped error that carries the RPC password on error.config.auth,
-// exactly as axios attaches the request config to a thrown error. The stress-sweep
-// leak: getBlockchainInfo / getBlockHash / getRawMempool rethrew this object
+// exactly as axios attaches the request config to a thrown error. The leak:
+// getBlockchainInfo / getBlockHash / getRawMempool rethrew this object
 // unsanitized, so an upstream console.error(msg, err) serialized the password.
 function axiosErrorWithAuth(code) {
   const err = new Error('connect ' + (code || 'ECONNREFUSED'));
@@ -27,7 +27,7 @@ function axiosErrorWithAuth(code) {
   return err;
 }
 
-describe('Regression (stress-sweep): RPC credential scrub on the three bypassing methods', function () {
+describe('RPC credential scrub on the three bypassing methods', function () {
   let connector, clientStub;
 
   beforeEach(function () {
@@ -71,7 +71,7 @@ describe('Regression (stress-sweep): RPC credential scrub on the three bypassing
   });
 });
 
-describe('Regression (stress-sweep): getBlocksBatch trusts id bijection, not positional sort', function () {
+describe('getBlocksBatch trusts id bijection, not positional sort', function () {
   let connector, clientStub;
 
   beforeEach(function () {

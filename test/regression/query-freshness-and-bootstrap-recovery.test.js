@@ -16,14 +16,14 @@ const path = require('path');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 const { handleBootstrapFailure, handleRestoreFailure } = require('../../src/bootstrap-recovery');
 
-// ─── Regression (M-11): per-query freshness surface ──────────────────────────
+// Regression: per-query freshness surface.
 //
 // UTXO/balance results are served from the last COMMITTED height, which can lag
 // the node tip during catch-up or a reorg. Callers (e.g. the encoder selecting
 // inputs) previously had no freshness signal on the response itself. The API now
 // exposes committed height / node tip / lag / synced, computed by the shared
 // XChainUtxoTracker.computeFreshness so the contract can't drift.
-describe('Regression (M-11): computeFreshness', function () {
+describe('computeFreshness', function () {
 
   it('computes lag as node tip minus committed height', function () {
     const f = XChainUtxoTracker.computeFreshness(100, 105, false);
@@ -56,7 +56,7 @@ describe('Regression (M-11): computeFreshness', function () {
     expect(f.synced).to.equal(false);
   });
 
-  // : block sync flips true before the first mempool rebuild finishes, so
+  // Block sync flips true before the first mempool rebuild finishes, so
   // `synced` alone is not spendability. The RPC sibling must carry the same pair
   // REST already gates X-Mempool-Ready on.
   it('reports mempool_ready only when BOTH block sync and mempool reconvergence hold', function () {
@@ -69,7 +69,7 @@ describe('Regression (M-11): computeFreshness', function () {
     expect(XChainUtxoTracker.computeFreshness(10, 10, true, { mempoolReconverged: 'yes' }).mempool_ready).to.equal(false);
   });
 
-  // : the per-query sibling is what create_tx gates on, so the negative-lag
+  // The per-query sibling is what create_tx gates on, so the negative-lag
   // floor get_sync_status applies has to hold here too. Without it the two surfaces
   // disagreed for the same instant: get_sync_status said synced:false while get_utxos
   // said synced:true, mempool_ready:true, and only the second one reaches money.
@@ -92,7 +92,7 @@ describe('Regression (M-11): computeFreshness', function () {
     expect(behind.mempool_ready).to.equal(true);
   });
 
-  // : the halt marker rides the per-query sibling, so a consumer learns the
+  // The halt marker rides the per-query sibling, so a consumer learns the
   // store is frozen without a second get_sync_status round-trip. Present only when
   // halted, so its presence is itself the signal.
   it('carries the halt marker only while halted', function () {
@@ -124,7 +124,7 @@ describe('Regression (M-11): computeFreshness', function () {
   // `tracker.isSynced() && tracker.isMempoolReconverged()`, which is not floored on a
   // negative lag, so an orphaned view (committed tip above the node's) shipped
   // X-Synced:false and X-Mempool-Ready:true on the SAME response. All three sites now
-  // read the floored freshness meta instead ().
+  // read the floored freshness meta instead.
   it('builds every X-Mempool-Ready header from the floored freshness meta', function () {
     const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
     const sites = src.match(/res\.set\('X-Mempool-Ready'[^\n]*\)/g) || [];
@@ -136,14 +136,14 @@ describe('Regression (M-11): computeFreshness', function () {
   });
 });
 
-// ─── Regression (M-9): bootstrap/restore recovery must not freeze or strand ───
+// Regression: bootstrap/restore recovery must not freeze or strand.
 //
 // A failed bootstrap compression previously froze the tracker (parsing stopped,
 // never relaunched) and a failed restore stranded a wiped /data, both without a
 // surfaced error. Bootstrap failure now resumes indexing and keeps the task
 // record; restore failure (which wipes /data before extracting) fails loud so a
 // supervisor restarts into a clean recovery path.
-describe('Regression (M-9): bootstrap/restore recovery handlers', function () {
+describe('bootstrap/restore recovery handlers', function () {
 
   it('bootstrap failure resumes indexing and preserves a surfaced error on the task', function () {
     const tasks = { t1: { progress: 40, filename: 'snap.tar.gz' } };
@@ -176,7 +176,7 @@ describe('Regression (M-9): bootstrap/restore recovery handlers', function () {
     expect(tasks.t2.error).to.equal('tar truncated');
   });
 
-  // #3192: a pre-wipe validation abort (error.preWipe) happens BEFORE /data is
+  // A pre-wipe validation abort (error.preWipe) happens BEFORE /data is
   // touched, so the DB is intact and indexing can resume. It must NOT fail loud
   // (which would kill the process with a factually wrong "AFTER /data was wiped"
   // message) - it resumes via relaunch, exactly like a bootstrap failure.

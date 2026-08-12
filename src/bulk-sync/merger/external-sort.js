@@ -167,7 +167,7 @@ async function externalSort(opts) {
         expectedRuns: Math.ceil(totalRecords / recordsPerRun),
     })
 
-    // ---------- Phase 1: create sorted runs ----------
+    // Phase 1: create sorted runs
 
     const runPaths = []
     const fdIn = fs.openSync(inputPath, 'r')
@@ -230,7 +230,7 @@ async function externalSort(opts) {
         fs.closeSync(fdIn)
     }
 
-    // ---------- Phase 2: k-way merge ----------
+    // Phase 2: k-way merge
 
     onProgress({ phase: 'merge-start', runs: runPaths.length })
 

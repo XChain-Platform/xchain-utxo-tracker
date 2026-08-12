@@ -10,23 +10,21 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression (item 2407): resolveUndoBlocks must validate optsUndoBlocks ───
-//
 // resolveUndoBlocks previously short-circuited on a truthy optsUndoBlocks
 // before running the integer/positive validation or the MAX_SAFE ceiling
-// warning that the env path applies. That let resolveUndoBlocks(network, -5)
-// return -5 outright (a negative undo-blocks window degenerates the aging
-// loop into a mass undo purge), and let a non-integer opts value pass through
-// unvalidated. The fix routes the explicit opts value through the same
+// warning that the env path applies, so resolveUndoBlocks(network, -5) fell
+// through and returned -5 outright (a negative undo-blocks window degenerates
+// the aging loop into a mass undo purge), and a non-integer opts value went
+// unvalidated too. The fix routes the explicit opts value through the same
 // integer/positive check as the env override, falling back to the per-chain
-// default on an invalid value, and still applies the MAX_SAFE_UNDO_BLOCKS
-// ceiling warning uniformly regardless of which path produced the value.
+// default on an invalid value, and applies the MAX_SAFE_UNDO_BLOCKS ceiling
+// warning uniformly regardless of which path produced the value.
 
 const { expect } = require('chai');
 const sinon = require('sinon');
 const { resolveUndoBlocks, DEFAULT_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS } = require('../../src/undo-blocks');
 
-describe('resolveUndoBlocks opts validation (item 2407)', function () {
+describe('resolveUndoBlocks opts validation', function () {
   let consoleErrorStub;
 
   beforeEach(function () {

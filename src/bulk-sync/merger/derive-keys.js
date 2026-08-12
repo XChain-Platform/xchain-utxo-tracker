@@ -28,7 +28,7 @@
  *   I.dat   13+ 8 =  21B  (key: 'I'+prevTxHash8+voutBE; val: spenderTxHash8)
  *   O.dat   45+45 =  90B  (key: 'O'+script32+txHash8+voutBE;
  *                           val: valueBE(8)+heightBE(4)+fullTxHash32+coinbase(1))
- *                           The coinbase byte (L-4) is always present in this
+ *                           The coinbase byte is always present in this
  *                           intermediate so the record stays fixed-width for the
  *                           external sort; the loader re-encodes it to the live
  *                           path's optional-byte form (44B normal / 45B coinbase).
@@ -47,7 +47,7 @@
  *                           purge outputs created in a rolled-back seeded block.
  *                           Windowed to the last undoBlocks seeded blocks: the
  *                           unwind can't reach deeper, and the live tracker
- *                           prunes W past that window (TP-19), so deeper seeded
+ *                           prunes W past that window, so deeper seeded
  *                           records would be permanent dead weight.
  *   Z.dat   65+ 0 =  65B  (key: 'Z'+blockHash32+script32)
  *                           Block->script reverse index. Windowed to the last
@@ -86,8 +86,8 @@ const P_SCRIPT_BLK = 0x53 // 'S'
 const P_OUT_BLK    = 0x57 // 'W' - creation-block reverse index for outputs
 const P_BLK_SCRIPT = 0x5A // 'Z'
 
-// Legacy outputs record size. New dumps are 121 bytes (trailing coinbase flag,
-// L-4); callers pass opts.outputsRecordSize (read from the dump header) so both
+// Legacy outputs record size. New dumps are 121 bytes (trailing coinbase flag);
+// callers pass opts.outputsRecordSize (read from the dump header) so both
 // widths merge. Kept as the default for legacy callers that omit it.
 const OUTPUTS_RECORD_SIZE = 120
 const OUTPUTS_RECORD_SIZE_CB = 121
@@ -176,7 +176,7 @@ async function sortByKey(inputPath, outputPath, recordSize, keySize, tmpDir, ram
  * @param {string}  opts.tmpDir            temp scratch
  * @param {number}  opts.outputsRecordSize width of records in outputsPath /
  *                                          liveUtxosPath. 121 for dumps that
- *                                          carry the coinbase flag (L-4), 120
+ *                                          carry the coinbase flag, 120
  *                                          for legacy dumps. Defaults to 120 so
  *                                          legacy callers keep working. The
  *                                          orchestrator reads it from the dump
@@ -211,7 +211,7 @@ async function deriveKeys(opts) {
     if (outputsRecordSize !== OUTPUTS_RECORD_SIZE && outputsRecordSize !== OUTPUTS_RECORD_SIZE_CB) {
         throw new Error(`deriveKeys: unsupported outputsRecordSize ${outputsRecordSize} (expected 120 or 121)`)
     }
-    // Coinbase flag lives at byte 120, present only in 121-byte (L-4) records.
+    // Coinbase flag lives at byte 120, present only in 121-byte records.
     const hasCoinbaseByte = outputsRecordSize === OUTPUTS_RECORD_SIZE_CB
 
     if (!metaPath || !outputsPath || !liveUtxosPath || !spendsByPrevPath) {
@@ -225,7 +225,7 @@ async function deriveKeys(opts) {
 
     const stats = {}
 
-    // ─── Phase 1: meta → B-raw, T-raw, N-raw, capture last block ─────────────
+    // Phase 1: meta → B-raw, T-raw, N-raw, capture last block
     onProgress({ phase: 'meta-start' })
     const meta = new MetaReader(metaPath)
 
@@ -295,7 +295,7 @@ async function deriveKeys(opts) {
     stats.B      = bRaw.count
     onProgress({ phase: 'meta-done', ...stats })
 
-    // ─── Phase 2: sort B, T, N by key ────────────────────────────────────────
+    // Phase 2: sort B, T, N by key
     await sortByKey(bRawPath, path.join(outDir, 'B.dat'), LAYOUT.B.recordSize, LAYOUT.B.keySize, path.join(tmpDir, 'sort-B'), ramBudgetBytes)
     if (tRaw) {
         await sortByKey(tRawPath, path.join(outDir, 'T.dat'), LAYOUT.T.recordSize, LAYOUT.T.keySize, path.join(tmpDir, 'sort-T'), ramBudgetBytes)
@@ -306,7 +306,7 @@ async function deriveKeys(opts) {
     try { fs.unlinkSync(nRawPath) } catch (_) {}
     onProgress({ phase: 'sort-BTN-done' })
 
-    // ─── Phase 3: live-utxos → H.dat (sorted), O-raw (unsorted) ──────────────
+    // Phase 3: live-utxos → H.dat (sorted), O-raw (unsorted)
     // live-utxos.dat has no header (produced by streaming-join). Records are
     // 120B outputs, sorted by (txHash8, vout). That happens to be H's sort
     // order already → emit H directly with no re-sort.
@@ -331,13 +331,12 @@ async function deriveKeys(opts) {
             //   [56..88]  scriptPubKey
             //   [88..120] blockHash
             const txHash8      = rec.subarray(0, 8)
-            // voutBE is stored in-place at [8..12]; we'll slice it.
             const voutBE       = rec.subarray(8, 12)
             const valBE        = rec.subarray(12, 20)
             const heightBE     = rec.subarray(20, 24)
             const fullTxHash   = rec.subarray(24, 56)
             const scriptPubKey = rec.subarray(56, 88)
-            // Byte 120 exists only in 121-byte (L-4) records; legacy 120-byte
+            // Byte 120 exists only in 121-byte records; legacy 120-byte
             // records have no flag and are treated as non-coinbase.
             const coinbase     = hasCoinbaseByte && rec[120] === 1
 
@@ -353,7 +352,7 @@ async function deriveKeys(opts) {
             //          | value(8) + height(4) + fullTxHash(32) + coinbase(1)
             // The coinbase byte keeps the record fixed-width for the external
             // sort; the loader collapses it to the live path's optional-byte
-            // form so a non-coinbase O-value stays 44 bytes on disk (L-4).
+            // form so a non-coinbase O-value stays 44 bytes on disk.
             oRaw.write((buf, off) => {
                 buf[off] = P_OUTPUT
                 scriptPubKey.copy(buf, off + 1, 0, 32)
@@ -375,12 +374,12 @@ async function deriveKeys(opts) {
     stats.O = liveCount
     onProgress({ phase: 'live-done', liveCount })
 
-    // ─── Phase 4: sort O by key ──────────────────────────────────────────────
+    // Phase 4: sort O by key
     await sortByKey(oRawPath, path.join(outDir, 'O.dat'), LAYOUT.O.recordSize, LAYOUT.O.keySize, path.join(tmpDir, 'sort-O'), ramBudgetBytes)
     try { fs.unlinkSync(oRawPath) } catch (_) {}
     onProgress({ phase: 'sort-O-done' })
 
-    // ─── Phase 5: outputs (pre-cancellation) → script candidates ─────────────
+    // Phase 5: outputs (pre-cancellation) → script candidates
     // Emit one record per output: scriptHash(32) | rowIdBE(4) | blockHash(32)
     //                             | heightBE(4)  = 72B. Phase 6 reads only
     // scriptHash/blockHash/heightBE to build the S and Z records (neither S nor Z
@@ -404,7 +403,7 @@ async function deriveKeys(opts) {
     const wRawPath      = path.join(tmpDir, 'W-raw.dat')
     // W is windowed like the live index: the reorg unwind can never reach past
     // the undoBlocks window, and the live tracker prunes W as blocks age out of
-    // it (removeCreatedOutputsBlockIndexOnly, TP-19). Seeded blocks below the
+    // it (removeCreatedOutputsBlockIndexOnly). Seeded blocks below the
     // window never re-enter that aging path, so an unwindowed seed would leave
     // one permanent 77B record per output ever created (~hundreds of GB on a
     // from-genesis BTC run). Only outputs created in the last undoBlocks seeded
@@ -468,7 +467,7 @@ async function deriveKeys(opts) {
     try { fs.unlinkSync(wRawPath) } catch (_) {}
     onProgress({ phase: 'sort-W-done', W: stats.W })
 
-    // ─── Phase 6: dedup by scriptHash → S.dat (sorted), Z-raw (unsorted) ─────
+    // Phase 6: dedup by scriptHash → S.dat (sorted), Z-raw (unsorted)
     // Because we sorted by (scriptHash, rowId), the first record per
     // scriptHash in the sorted stream is the earliest occurrence. S.dat is
     // already sorted by scriptHash (=key minus prefix): emit in-order.
@@ -523,12 +522,12 @@ async function deriveKeys(opts) {
     stats.Z = zRaw.count // may be < S: Z is windowed to undoBlocks, S is not
     onProgress({ phase: 'SZ-dedup-done', uniqueScripts })
 
-    // ─── Phase 7: sort Z by key ──────────────────────────────────────────────
+    // Phase 7: sort Z by key
     await sortByKey(zRawPath, path.join(outDir, 'Z.dat'), LAYOUT.Z.recordSize, LAYOUT.Z.keySize, path.join(tmpDir, 'sort-Z'), ramBudgetBytes)
     try { fs.unlinkSync(zRawPath) } catch (_) {}
     onProgress({ phase: 'sort-Z-done' })
 
-    // ─── Phase 8: spends-by-prevtx → I.dat (sorted), J-raw (unsorted) ────────
+    // Phase 8: spends-by-prevtx → I.dat (sorted), J-raw (unsorted)
     // spends-by-prevtx.dat has no header, records = 20B, sorted by
     // (prevTxHash8, prevVout): matches I key order exactly.
     //
@@ -580,13 +579,13 @@ async function deriveKeys(opts) {
         stats.J = spendCount
         onProgress({ phase: 'spends-done', spendCount })
 
-        // ─── Phase 9: sort J by key ──────────────────────────────────────────────
+        // Phase 9: sort J by key
         await sortByKey(jRawPath, path.join(outDir, 'J.dat'), LAYOUT.J.recordSize, LAYOUT.J.keySize, path.join(tmpDir, 'sort-J'), ramBudgetBytes)
         try { fs.unlinkSync(jRawPath) } catch (_) {}
         onProgress({ phase: 'sort-J-done' })
     }
 
-    // ─── Phase 10: L markers (JSON) ──────────────────────────────────────────
+    // Phase 10: L markers (JSON)
     if (lastBlockHash == null) {
         throw new Error('deriveKeys: meta file had no blocks; cannot emit LAST_* markers')
     }

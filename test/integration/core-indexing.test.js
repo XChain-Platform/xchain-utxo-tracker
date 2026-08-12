@@ -30,8 +30,6 @@ describe('Integration: Core Indexing', function () {
     await closeTracker(tracker);
   });
 
-  // ─── Scenario 1.1: Coinbase-Only Block ─────────────────────────────────
-
   describe('coinbase-only block', function () {
     it('indexes coinbase output and returns correct UTXO/balance', async function () {
       const coinbaseTx = makeCoinbaseTx(0, 50 * SATOSHI);
@@ -39,13 +37,11 @@ describe('Integration: Core Indexing', function () {
 
       await processAndCommit(tracker, block);
 
-      // Verify via getUtxosAddress
       const utxos = await tracker.getUtxosAddress(TEST_KEYS[0].address);
       expect(utxos).to.have.length(1);
       expect(utxos[0].amount).to.equal(coinAmount(50));
       expect(utxos[0].vout).to.equal(0);
 
-      // Verify via getBalanceInfo
       const info = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info.balances.confirmed).to.equal('50.00000000');
       expect(info.balances.pending).to.equal('0.00000000');
@@ -104,27 +100,22 @@ describe('Integration: Core Indexing', function () {
     });
   });
 
-  // ─── Scenario 1.2: Simple Transfer ────────────────────────────────────
-
   describe('simple transfer (spend + change)', function () {
     it('updates balances correctly after spend', async function () {
-      // Block 0: coinbase 50 BTC to address 0
       const coinbaseTx = makeCoinbaseTx(0, 50 * SATOSHI);
       const block0 = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
 
-      // Block 1: spend coinbase, send 10 to addr1, 39.99 change to addr0
       const spendTx = makeTx({
         ins: [makeSpendInput(coinbaseTx._txid, 0)],
         outs: [
-          makeOutput(1, 10 * SATOSHI),        // 10 BTC to address 1
-          makeOutput(0, 3999000000)            // 39.99 BTC change to address 0
+          makeOutput(1, 10 * SATOSHI),
+          makeOutput(0, 3999000000) // 39.99 BTC change to address 0
         ]
       });
       const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(2), spendTx]);
 
       await processBlocksAndCommit(tracker, [block0, block1]);
 
-      // Address 0: original 50 BTC spent, only has 39.99 BTC change
       const info0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info0.balances.confirmed).to.equal('39.99000000');
       expect(info0.utxos.confirmed).to.equal(1);
@@ -133,7 +124,6 @@ describe('Integration: Core Indexing', function () {
       expect(utxos0).to.have.length(1);
       expect(utxos0[0].amount).to.equal(coinAmount('39.99'));
 
-      // Address 1: received 10 BTC
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('10.00000000');
       expect(info1.utxos.confirmed).to.equal(1);
@@ -156,14 +146,11 @@ describe('Integration: Core Indexing', function () {
     });
   });
 
-  // ─── Scenario 1.3: Multi-Output Transaction ──────────────────────────
-
   describe('multi-output transaction', function () {
     it('creates separate UTXOs for each output address', async function () {
       const coinbaseTx = makeCoinbaseTx(0, 50 * SATOSHI);
       const block0 = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
 
-      // Tx with 5 outputs to 5 different addresses
       const multiTx = makeTx({
         ins: [makeSpendInput(coinbaseTx._txid, 0)],
         outs: [
@@ -178,7 +165,6 @@ describe('Integration: Core Indexing', function () {
 
       await processBlocksAndCommit(tracker, [block0, block1]);
 
-      // Check each recipient
       const amounts = [5, 10, 15, 8, 11];
       for (let i = 0; i < 5; i++) {
         const utxos = await tracker.getUtxosAddress(TEST_KEYS[i + 1].address);
@@ -189,16 +175,12 @@ describe('Integration: Core Indexing', function () {
     });
   });
 
-  // ─── Scenario 1.4: Same-Block Spend ───────────────────────────────────
-
   describe('same-block spend', function () {
     it('handles output created and spent in the same block', async function () {
-      // Block 0: coinbase to addr0
       const coinbaseTx = makeCoinbaseTx(0, 50 * SATOSHI);
       const block0 = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
       await processAndCommit(tracker, block0);
 
-      // Block 1: tx1 sends to addr1, tx2 spends addr1's output in the same block
       const tx1 = makeTx({
         ins: [makeSpendInput(coinbaseTx._txid, 0)],
         outs: [makeOutput(1, 25 * SATOSHI)]
@@ -212,27 +194,22 @@ describe('Integration: Core Indexing', function () {
       const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(3), tx1, tx2]);
       await processAndCommit(tracker, block1);
 
-      // Address 1: output was created by tx1 and spent by tx2, should have 0 UTXOs
       const utxos1 = await tracker.getUtxosAddress(TEST_KEYS[1].address);
       expect(utxos1).to.have.length(0);
 
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('0.00000000');
 
-      // Address 2: received 24 BTC from tx2
       const utxos2 = await tracker.getUtxosAddress(TEST_KEYS[2].address);
       expect(utxos2).to.have.length(1);
       expect(utxos2[0].amount).to.equal(coinAmount(24));
     });
   });
 
-  // ─── Scenario 1.5: Multiple UTXOs for Same Address ────────────────────
-
   describe('multiple UTXOs for same address', function () {
     it('accumulates UTXOs across blocks', async function () {
       const prevHash = '0'.repeat(64);
 
-      // 3 blocks, each with a coinbase sending to address 0
       const block0 = makeBlock(0, prevHash, [makeCoinbaseTx(0, 10 * SATOSHI)]);
       const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(0, 20 * SATOSHI)]);
       const block2 = makeBlock(2, block1.hash, [makeCoinbaseTx(0, 30 * SATOSHI)]);
@@ -260,11 +237,8 @@ describe('Integration: Core Indexing', function () {
     });
   });
 
-  // ─── Scenario 1.6: Spending One of Multiple UTXOs ─────────────────────
-
   describe('spending one of multiple UTXOs', function () {
     it('removes only the spent UTXO', async function () {
-      // Create 3 UTXOs for address 0
       const cb0 = makeCoinbaseTx(0, 10 * SATOSHI);
       const cb1 = makeCoinbaseTx(0, 20 * SATOSHI);
       const cb2 = makeCoinbaseTx(0, 30 * SATOSHI);
@@ -275,7 +249,6 @@ describe('Integration: Core Indexing', function () {
 
       await processBlocksAndCommit(tracker, [block0, block1, block2]);
 
-      // Spend only the middle UTXO (cb1, 20 BTC)
       const spendTx = makeTx({
         ins: [makeSpendInput(cb1._txid, 0)],
         outs: [makeOutput(1, 19 * SATOSHI)]
@@ -284,23 +257,19 @@ describe('Integration: Core Indexing', function () {
 
       await processAndCommit(tracker, block3);
 
-      // Address 0: should have 2 UTXOs (10 + 30 = 40 BTC)
       const utxos = await tracker.getUtxosAddress(TEST_KEYS[0].address);
       expect(utxos).to.have.length(2);
 
-      expect(sumAmounts(utxos)).to.equal(coinAmount(40));
+      expect(sumAmounts(utxos)).to.equal(coinAmount(40)); // 10 + 30
 
       const info = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info.balances.confirmed).to.equal('40.00000000');
       expect(info.utxos.confirmed).to.equal(2);
 
-      // Address 1: received 19 BTC
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('19.00000000');
     });
   });
-
-  // ─── Scenario 1.7: Confirmations calculation ─────────────────────────
 
   describe('confirmations', function () {
     it('calculates correct confirmation count', async function () {

@@ -296,10 +296,8 @@ describe('bufferutils', function () {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Local bufferutils.js: the patched file that lives in the repo root.
 // These tests ensure mutations to the local file are detected by Stryker.
-// ---------------------------------------------------------------------------
 describe('bufferutils (local patched copy)', function () {
 
   describe('readUInt64LE / writeUInt64LE', function () {

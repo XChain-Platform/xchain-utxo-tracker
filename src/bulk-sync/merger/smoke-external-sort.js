@@ -66,7 +66,7 @@ function isSorted(filePath, headerSize, recordSize, keySize, expectedCount) {
     fs.closeSync(fd)
 }
 
-// ---- MinHeap basic sanity ----
+// MinHeap basic sanity
 {
     const h = new MinHeap()
     const vals = [5, 1, 9, 3, 7, 2, 8, 4, 6, 0]
@@ -82,7 +82,7 @@ async function main() {
     fs.rmSync(TMP_DIR, { recursive: true, force: true })
     fs.mkdirSync(TMP_DIR)
 
-    // ---- Case A: single-run, no header ----
+    // Case A: single-run, no header
     {
         const RS = 20, KS = 12, N = 5000
         const records = buildRandomRecords(N, RS, 42)
@@ -101,7 +101,7 @@ async function main() {
         console.log('[smoke/external-sort] case A single-run OK')
     }
 
-    // ---- Case B: multi-run (force 10 runs) ----
+    // Case B: multi-run (force 10 runs)
     {
         const RS = 20, KS = 12, N = 10000
         const records = buildRandomRecords(N, RS, 123)
@@ -124,7 +124,7 @@ async function main() {
         console.log('[smoke/external-sort] case B multi-run (10 runs) OK')
     }
 
-    // ---- Case C: preserveHeader ----
+    // Case C: preserveHeader
     {
         const RS = 20, KS = 12, N = 2000, HS = 64
         const header  = Buffer.alloc(HS)
@@ -153,7 +153,7 @@ async function main() {
         console.log('[smoke/external-sort] case C preserveHeader OK')
     }
 
-    // ---- Case D: keepRuns retains intermediate files ----
+    // Case D: keepRuns retains intermediate files
     {
         const RS = 20, KS = 12, N = 600
         const records = buildRandomRecords(N, RS, 999)
@@ -172,7 +172,7 @@ async function main() {
         console.log('[smoke/external-sort] case D keepRuns OK')
     }
 
-    // ---- Case E: empty input ----
+    // Case E: empty input
     {
         const RS = 20, KS = 12
         const inPath  = path.join(TMP_DIR, 'e.in')
@@ -190,7 +190,7 @@ async function main() {
         console.log('[smoke/external-sort] case E empty input OK')
     }
 
-    // ---- Case F: misaligned input size → must throw ----
+    // Case F: misaligned input size → must throw
     {
         const inPath  = path.join(TMP_DIR, 'f.in')
         const outPath = path.join(TMP_DIR, 'f.out')
@@ -209,7 +209,7 @@ async function main() {
         console.log('[smoke/external-sort] case F misaligned input rejected')
     }
 
-    // ---- Case G: stability-ish (sort is key-only; equal keys may reorder).
+    // Case G: stability-ish (sort is key-only; equal keys may reorder).
     // We verify only that the output is a permutation with keys sorted.
     {
         const RS = 20, KS = 4, N = 3000 // 32-bit keys → lots of collisions

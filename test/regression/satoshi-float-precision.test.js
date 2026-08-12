@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression: satoshiToDecimalString must stay exact-integer, never float ──
+// Regression: satoshiToDecimalString must stay exact-integer, never float.
 //
 // Commit a2774ac reintroduced (and was reverted from) a float-based amount
 // formatter (`Number(sats) / 1e8` then toFixed(8)). For any satoshi count above

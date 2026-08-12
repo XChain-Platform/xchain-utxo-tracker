@@ -71,7 +71,7 @@ function processBlock(block, height, blockHash, writers) {
         // Coinbase = the block's generation tx: exactly one input whose prevout
         // index is 0xFFFFFFFF (same marker the input loop below skips). Mirrors
         // XChainUtxoTracker.isCoinbaseTransaction so bulk-sync flags coinbase
-        // outputs identically to the live path, driving maturity gating (L-4).
+        // outputs identically to the live path, driving maturity gating.
         const ins = tx.ins
         const isCoinbase = ins.length === 1 && ins[0] && ins[0].index === 0xFFFFFFFF
 

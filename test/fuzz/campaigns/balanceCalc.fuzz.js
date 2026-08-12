@@ -22,8 +22,6 @@ const { satoshiToDecimalString } = require('../../../src/XChainUtxoTracker');
 
 describe('Fuzz: Balance Calculation (P0)', function () {
 
-  // ─── satoshiToDecimalString ────────────────────────────────────────────────
-
   describe('satoshiToDecimalString', function () {
     it('always returns a valid decimal string with 8 decimal places for any BigInt', async function () {
       await fc.assert(
@@ -61,7 +59,6 @@ describe('Fuzz: Balance Calculation (P0)', function () {
           async (value) => {
             const result = satoshiToDecimalString(-value);
             expect(result).to.match(/^-\d+\.\d{8}$/);
-            // Absolute value should match positive version
             const positive = satoshiToDecimalString(value);
             expect(result).to.equal('-' + positive);
           }
@@ -91,7 +88,6 @@ describe('Fuzz: Balance Calculation (P0)', function () {
       for (const bad of badInputs) {
         try {
           satoshiToDecimalString(bad);
-          // If it doesn't throw, that's a finding
           expect.fail(`Expected ${String(bad)} to throw`);
         } catch (e) {
           // Any error type is acceptable (TypeError, RangeError, SyntaxError, etc.)
@@ -100,8 +96,6 @@ describe('Fuzz: Balance Calculation (P0)', function () {
       }
     });
   });
-
-  // ─── Balance oracle cross-check ────────────────────────────────────────────
 
   describe('balance oracle', function () {
     let tracker;
@@ -121,7 +115,6 @@ describe('Fuzz: Balance Calculation (P0)', function () {
           fc.integer({ min: 0, max: 9 }),
           fc.array(fc.bigInt({ min: 1n, max: 10000000000n }), { minLength: 1, maxLength: 20 }),
           async (blockCount, addrIdx, values) => {
-            // Create fresh tracker for each run
             const t = await createTestTracker();
             try {
               const actualCount = Math.min(blockCount, values.length);
@@ -165,7 +158,6 @@ describe('Fuzz: Balance Calculation (P0)', function () {
             const changeValue = coinbaseValue - actualSpend;
             const t = await createTestTracker();
             try {
-              // Block 0: coinbase to addr
               const coinbaseTx = makeTx({
                 ins: [makeCoinbaseInput()],
                 outs: [{ value: coinbaseValue, script: TEST_KEYS[addrIdx].script }]
@@ -173,11 +165,9 @@ describe('Fuzz: Balance Calculation (P0)', function () {
               const block0 = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
               await processAndCommit(t, block0);
 
-              // Verify initial balance
               let info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);
               expect(info.balances.confirmed).to.equal(satoshiToDecimalString(coinbaseValue));
 
-              // Block 1: spend the coinbase output, send change back
               const otherAddr = (addrIdx + 1) % 10;
               const spendTx = makeTx({
                 ins: [makeSpendInput(coinbaseTx._txid, 0)],
@@ -189,11 +179,9 @@ describe('Fuzz: Balance Calculation (P0)', function () {
               const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx((addrIdx + 2) % 10), spendTx]);
               await processAndCommit(t, block1);
 
-              // Balance should be exactly the change value
               info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);
               expect(info.balances.confirmed).to.equal(satoshiToDecimalString(changeValue));
 
-              // Other address should have the spend value
               const otherInfo = await t.getBalanceInfo(TEST_KEYS[otherAddr].address);
               expect(otherInfo.balances.confirmed).to.equal(satoshiToDecimalString(actualSpend));
             } finally {

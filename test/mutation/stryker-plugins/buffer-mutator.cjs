@@ -27,8 +27,6 @@
  *    A prefix swap causes lookups to scan the wrong LevelDB namespace.
  */
 
-// ── Mutation rules ──────────────────────────────────────────────────────────
-
 const ENDIANNESS_RULES = [
   { from: 'writeUInt32BE',    to: 'writeUInt32LE' },
   { from: 'writeUInt32LE',    to: 'writeUInt32BE' },
@@ -60,8 +58,6 @@ const PREFIX_RULES = [
   { from: '0x4B', to: '0x4D' },  // P_OUT_DEL (K) <-> P_HINT_DEL (M)
   { from: '0x4D', to: '0x4B' },
 ];
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
  * Convert a flat string offset to { line, column } (0-based).
@@ -126,8 +122,6 @@ function isInString(source, matchIdx) {
   return inSingle || inDouble || inTemplate;
 }
 
-// ── Mutant generator ────────────────────────────────────────────────────────
-
 /**
  * Generate mutants for a single source file.
  *
@@ -174,7 +168,6 @@ function generateMutantsForFile(source, fileName) {
         continue;
       }
 
-      // Only mutate on lines that declare a P_* constant
       if (!lineContains(source, idx, 'const P_')) {
         continue;
       }
@@ -194,23 +187,13 @@ function generateMutantsForFile(source, fileName) {
   return mutants;
 }
 
-// ── Stryker plugin registration ─────────────────────────────────────────────
-//
 // Stryker v8 discovers custom plugins by requiring the module listed in the
-// "plugins" config array. The module must export a `strykerPlugins` array
-// of { kind, name, factory } objects.
-//
-// We declare a "Checker" kind with a no-op implementation because Stryker v8
-// does not expose a public "MutantGenerator" plugin kind for external plugins.
-// Instead, custom mutations are injected via a checker plugin that annotates
-// mutants. However, the cleanest v8-compatible approach is to declare our
-// custom mutants as an "ignore" plugin and inject them through the
-// instrumenter's `mutantInstrumenter` hook.
-//
-// Since Stryker's plugin API for custom mutant generation is internal and
-// version-sensitive, we take the pragmatic approach: this file exports a
-// standalone `generate()` function that can be called by a wrapper script
-// or integrated into a custom Stryker run pipeline.
+// "plugins" config array, and expects a `strykerPlugins` array of
+// { kind, name, factory } objects. It exposes no public "MutantGenerator"
+// kind for external plugins, so this file exports an empty plugin list (to
+// satisfy the loader without error) plus a standalone `generate()` function
+// that a wrapper script drives instead of Stryker's own mutation pipeline
+// (see run-custom-mutants.js).
 
 const fs = require('fs');
 const path = require('path');
@@ -260,18 +243,9 @@ if (require.main === module) {
   process.exit(0);
 }
 
-// ── Stryker plugin export ───────────────────────────────────────────────────
-//
-// Stryker v8 loads this as a plugin. We export a strykerPlugins array.
-// Since custom mutant generation is not a first-class plugin kind in Stryker
-// v8's public API, we register as a no-op plugin that Stryker will load
-// without error. The actual mutation injection happens via the standalone
-// `generate()` function or by running this file as a pre-processing step
-// that feeds results into Stryker's `--mutate` pipeline.
-//
-// For full integration, use the companion script `run-with-custom-mutants.js`
-// which applies custom mutations one at a time and runs the test suite.
-
+// Stryker v8 loads this module as a plugin; the empty strykerPlugins array
+// lets it load without error (see the file-level note above for why this
+// isn't a real MutantGenerator plugin).
 module.exports = {
   strykerPlugins: [],
   generate,

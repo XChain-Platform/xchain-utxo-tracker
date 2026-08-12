@@ -19,10 +19,6 @@ const {
   coinAmount, sumAmounts
 } = require('./helpers');
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 1. Same-block spend chains
-// ═══════════════════════════════════════════════════════════════════════════════
-
 describe('Boundary: Same-block spend chains', function () {
   let tracker;
 
@@ -30,11 +26,9 @@ describe('Boundary: Same-block spend chains', function () {
   afterEach(async function () { await closeTracker(tracker); });
 
   it('handles A->B spend within the same block', async function () {
-    // Tx A: coinbase pays address 0
     const txA = makeCoinbaseTx(0, 50 * SATOSHI);
     const txAId = txA._txid;
 
-    // Tx B: spends A's output, pays address 1
     const txB = makeTx({
       ins: [makeSpendInput(txAId, 0)],
       outs: [makeOutput(1, 50 * SATOSHI)]
@@ -43,11 +37,9 @@ describe('Boundary: Same-block spend chains', function () {
     const block = makeBlock(0, '0'.repeat(64), [txA, txB]);
     await processAndCommit(tracker, block);
 
-    // Address 0 should have 0 UTXOs (spent in same block)
     const utxos0 = await tracker.getUtxosAddress(TEST_KEYS[0].address);
     expect(utxos0).to.have.length(0);
 
-    // Address 1 should have 1 UTXO
     const utxos1 = await tracker.getUtxosAddress(TEST_KEYS[1].address);
     expect(utxos1).to.have.length(1);
     expect(utxos1[0].amount).to.equal(coinAmount(50));
@@ -108,10 +100,6 @@ describe('Boundary: Same-block spend chains', function () {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 2. Large vout indices
-// ═══════════════════════════════════════════════════════════════════════════════
-
 describe('Boundary: Large vout indices', function () {
   let tracker;
 
@@ -131,7 +119,6 @@ describe('Boundary: Large vout indices', function () {
     const block = makeBlock(0, '0'.repeat(64), [tx]);
     await processAndCommit(tracker, block);
 
-    // Each of 10 addresses should have 10 UTXOs
     for (let i = 0; i < 10; i++) {
       const utxos = await tracker.getUtxosAddress(TEST_KEYS[i].address);
       expect(utxos).to.have.length(10);
@@ -164,10 +151,6 @@ describe('Boundary: Large vout indices', function () {
     expect(utxos2[0].amount).to.equal(coinAmount(3));
   });
 });
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 3. Zero-value outputs
-// ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Boundary: Zero-value outputs', function () {
   let tracker;
@@ -207,10 +190,6 @@ describe('Boundary: Zero-value outputs', function () {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 4. Many UTXOs per address
-// ═══════════════════════════════════════════════════════════════════════════════
-
 describe('Boundary: Many UTXOs per address', function () {
   let tracker;
 
@@ -218,7 +197,6 @@ describe('Boundary: Many UTXOs per address', function () {
   afterEach(async function () { await closeTracker(tracker); });
 
   it('handles 500 UTXOs for a single address', async function () {
-    // Create 500 coinbase blocks all paying address 0
     const blocks = buildCoinbaseChain(500, 0, 0);
     await processBlocksAndCommit(tracker, blocks);
 
@@ -230,10 +208,6 @@ describe('Boundary: Many UTXOs per address', function () {
     expect(info.utxos.confirmed).to.equal(500);
   });
 });
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 5. BigInt balance precision (the core fix validation)
-// ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Boundary: Balance precision with large values', function () {
   let tracker;
@@ -258,7 +232,6 @@ describe('Boundary: Balance precision with large values', function () {
   });
 
   it('aggregates multiple large-value UTXOs precisely', async function () {
-    // Two outputs each worth 500M DOGE
     const val = BigInt('50000000000000000'); // 500M DOGE in satoshis
 
     const tx = makeTx({
@@ -294,10 +267,6 @@ describe('Boundary: Balance precision with large values', function () {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 6. Reorg at UNDO_BLOCKS boundary
-// ═══════════════════════════════════════════════════════════════════════════════
-
 describe('Boundary: Reorg at UNDO_BLOCKS limit', function () {
   let tracker;
 
@@ -305,11 +274,9 @@ describe('Boundary: Reorg at UNDO_BLOCKS limit', function () {
   afterEach(async function () { await closeTracker(tracker); });
 
   it('recovers spent outputs during reorg within the UNDO_BLOCKS window', async function () {
-    // Block 0: coinbase to address 0 (50 BTC)
     const coinbase = makeCoinbaseTx(0, 50 * SATOSHI);
     const block0 = makeBlock(0, '0'.repeat(64), [coinbase]);
 
-    // Block 1: spend coinbase to address 1
     const spendTx = makeTx({
       ins: [makeSpendInput(coinbase._txid, 0)],
       outs: [makeOutput(1, 50 * SATOSHI)]
@@ -319,11 +286,10 @@ describe('Boundary: Reorg at UNDO_BLOCKS limit', function () {
     await processAndCommit(tracker, block0);
     await processAndCommit(tracker, block1);
 
-    // Address 0 should have 0 UTXOs (spent)
     let utxos0 = await tracker.getUtxosAddress(TEST_KEYS[0].address);
     expect(utxos0).to.have.length(0);
 
-    // Simulate reorg: remove block 1's outputs and recover deletions
+    // Simulate a reorg by undoing block1's writes directly against the db layer.
     await tracker.db.beginTransaction();
     await tracker.db.removeOutputScriptsInBlock(block1.hash);
     await tracker.db.processDeletedOutputs(block1.hash, true);
@@ -332,7 +298,6 @@ describe('Boundary: Reorg at UNDO_BLOCKS limit', function () {
     await tracker.db.setLastBlockHash(block0.hash);
     await tracker.db.endTransaction();
 
-    // Address 0 should have its UTXO back
     utxos0 = await tracker.getUtxosAddress(TEST_KEYS[0].address);
     expect(utxos0).to.have.length(1);
     expect(utxos0[0].amount).to.equal(coinAmount(50));
@@ -350,26 +315,19 @@ describe('Boundary: Reorg at UNDO_BLOCKS limit', function () {
     const height = await tracker.db.getLastBlockHeight();
     expect(height).to.equal(total - 1);
 
-    // Only the most recent `window` block hashes stay tracked...
+    // Only the most recent `window` hashes stay tracked, oldest-first.
     expect(tracker.lastBlocks).to.have.length(window);
-    // ...and they are exactly the newest ones, oldest-first.
     expect(tracker.lastBlocks).to.deep.equal(blocks.slice(-window).map(b => b.hash));
   });
 
   it('maintains correct UTXO state across batch boundary (100 blocks)', async function () {
     const blocks = buildCoinbaseChain(101, 0, 0);
-
-    // Process in one big batch (simulates batch commit at 100)
     await processBlocksAndCommit(tracker, blocks);
 
     const utxos = await tracker.getUtxosAddress(TEST_KEYS[0].address);
     expect(utxos).to.have.length(101);
   });
 });
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 7. Coinbase input handling
-// ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Boundary: Coinbase input skip', function () {
   let tracker;
@@ -382,15 +340,10 @@ describe('Boundary: Coinbase input skip', function () {
     const block = makeBlock(0, '0'.repeat(64), [tx]);
     await processAndCommit(tracker, block);
 
-    // No input record should exist for coinbase
     const input = await tracker.db.getInput('0'.repeat(16), 4294967295);
     expect(input).to.be.null;
   });
 });
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 8. Confirmation calculations
-// ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Boundary: Confirmation calculations', function () {
   let tracker;
@@ -420,10 +373,6 @@ describe('Boundary: Confirmation calculations', function () {
     expect(utxos[0].confirmations).to.equal(1); // 500 - 500 + 1
   });
 });
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 9. Empty/minimal blocks
-// ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Boundary: Empty and minimal blocks', function () {
   let tracker;
@@ -457,10 +406,6 @@ describe('Boundary: Empty and minimal blocks', function () {
     expect(await tracker.db.getLastBlockHeight()).to.equal(1);
   });
 });
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 10. Address with no UTXOs
-// ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Boundary: Address with no history', function () {
   let tracker;
@@ -501,10 +446,6 @@ describe('Boundary: Address with no history', function () {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 11. Spending one of multiple outputs from the same transaction
-// ═══════════════════════════════════════════════════════════════════════════════
-
 describe('Boundary: Partial spend of multi-output tx', function () {
   let tracker;
 
@@ -530,7 +471,6 @@ describe('Boundary: Partial spend of multi-output tx', function () {
     await processAndCommit(tracker, block0);
     await processAndCommit(tracker, block1);
 
-    // Address 0 should have only vout=1 left (20 BTC)
     const utxos = await tracker.getUtxosAddress(TEST_KEYS[0].address);
     expect(utxos).to.have.length(1);
     expect(utxos[0].vout).to.equal(1);

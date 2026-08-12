@@ -41,7 +41,7 @@ const { encodeOutput, kOutBlk } = require('../../LevelUpDb.js')
 // coinbase1 = 45B) so the external sort can treat it as a plain record. On the
 // way into LevelDB we collapse it to the live path's exact bytes via
 // encodeOutput: a normal output stays 44 bytes, a coinbase output keeps its
-// optional 45th flag byte (L-4). This keeps bulk-seeded O-records byte-identical
+// optional 45th flag byte. This keeps bulk-seeded O-records byte-identical
 // to incrementally-indexed ones, so maturity gating reads the flag the same way.
 function transformOValue(value) {
     const sat        = value.readBigUInt64BE(0)
@@ -157,8 +157,8 @@ async function loadKeys(opts) {
         // fully synced. The reachable trigger is api.js runBulkSyncIfEmpty:
         // isDbEmpty() reads LAST_BLOCK_HEIGHT, so a load that crashed before
         // the markers looks empty on the next boot and reseeds on top of its
-        // own partial write (). Refuse loudly instead of serving
-        // stale or phantom UTXOs.
+        // own partial write. Refuse loudly instead of serving stale or
+        // phantom UTXOs.
         const existing = await db.keys({ limit: 1 }).all()
         if (existing.length > 0) {
             throw new Error(`loadKeys: target DB at ${dbPath} is not empty; a bulk load requires a fresh, empty dbPath (remove the directory, or point --out at an empty path, before re-running)`)

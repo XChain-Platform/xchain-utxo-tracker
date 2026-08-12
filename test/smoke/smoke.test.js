@@ -42,8 +42,6 @@ describe('UTXO Tracker Smoke Tests', function () {
     await closeTracker(tracker);
   });
 
-  // ── ST-01: Service Initialization ──────────────────────────────────────────
-
   it('ST-01: initializes tracker and databases without error', function () {
     expect(tracker).to.not.be.null;
     expect(tracker.db).to.not.be.null;
@@ -51,8 +49,6 @@ describe('UTXO Tracker Smoke Tests', function () {
     expect(tracker.mempoolDb).to.not.be.null;
     expect(tracker.mempoolDb.db).to.not.be.null;
   });
-
-  // ── ST-02: LevelDB Read/Write Round-Trip ───────────────────────────────────
 
   it('ST-02: reads back block height and hash after writing', async function () {
     const db = tracker.db;
@@ -75,8 +71,6 @@ describe('UTXO Tracker Smoke Tests', function () {
     await db.endTransaction();
   });
 
-  // ── ST-03: Single Block Indexing (Coinbase Only) ───────────────────────────
-
   describe('after indexing one coinbase block', function () {
     const genesisHash = '00'.repeat(32);
     let block0;
@@ -97,8 +91,6 @@ describe('UTXO Tracker Smoke Tests', function () {
       expect(outputs[0].vout).to.equal(0);
     });
 
-    // ── ST-04: UTXO Query by Address ─────────────────────────────────────────
-
     it('ST-04: returns UTXOs when queried by address', async function () {
       const utxos = await tracker.getUtxosAddress(TEST_KEYS[0].address);
 
@@ -111,8 +103,6 @@ describe('UTXO Tracker Smoke Tests', function () {
       expect(utxos[0].scriptPubKey).to.be.a('string').that.is.not.empty;
     });
 
-    // ── ST-05: Balance Query by Address ──────────────────────────────────────
-
     it('ST-05: returns correct balance info for a funded address', async function () {
       const info = await tracker.getBalanceInfo(TEST_KEYS[0].address);
 
@@ -124,14 +114,10 @@ describe('UTXO Tracker Smoke Tests', function () {
       expect(info.utxos.pending).to.equal(0);
     });
 
-    // ── ST-06: Spending a UTXO ───────────────────────────────────────────────
-
     it('ST-06: removes spent output and creates new output after a spend', async function () {
-      // Get the txid of the coinbase output to spend
       const utxosBefore = await tracker.getUtxosAddress(TEST_KEYS[0].address);
       const prevTxId = utxosBefore[0].txid;
 
-      // Build a transaction spending address[0] -> address[1]
       const spendTx = makeTx({
         ins: [makeSpendInput(prevTxId, 0)],
         outs: [makeOutput(1, 49 * SATOSHI)]
@@ -140,25 +126,20 @@ describe('UTXO Tracker Smoke Tests', function () {
       const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(2), spendTx]);
       await processAndCommit(tracker, block1);
 
-      // Address 0 should now have zero UTXOs (REMOVE_SPENT=true deletes spent outputs)
+      // REMOVE_SPENT=true deletes spent outputs, so address 0 drops to zero UTXOs.
       const utxosAddr0 = await tracker.getUtxosAddress(TEST_KEYS[0].address);
       expect(utxosAddr0).to.be.an('array').with.lengthOf(0);
 
-      // Address 1 should have the new output
       const utxosAddr1 = await tracker.getUtxosAddress(TEST_KEYS[1].address);
       expect(utxosAddr1).to.be.an('array').with.lengthOf(1);
       expect(utxosAddr1[0].value).to.equal((49 * SATOSHI).toString());
     });
-
-    // ── ST-09: Empty Address Query ───────────────────────────────────────────
 
     it('ST-09: returns empty array for an address with no UTXOs', async function () {
       const utxos = await tracker.getUtxosAddress(TEST_KEYS[9].address);
       expect(utxos).to.be.an('array').with.lengthOf(0);
     });
   });
-
-  // ── ST-07 & ST-08: Express API Health Check ────────────────────────────────
 
   describe('Express API layer', function () {
     let app;

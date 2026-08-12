@@ -21,10 +21,6 @@ const { satoshiToDecimalString } = require('../../src/XChainUtxoTracker');
 function randHash() { return crypto.randomBytes(32).toString('hex'); }
 function randHash8() { return crypto.randomBytes(8).toString('hex'); }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 1. satoshiToDecimalString precision
-// ═══════════════════════════════════════════════════════════════════════════════
-
 describe('Boundary: satoshiToDecimalString', function () {
 
   it('converts zero', function () {
@@ -88,10 +84,6 @@ describe('Boundary: satoshiToDecimalString', function () {
     expect(satoshiToDecimalString('5000000000')).to.equal('50.00000000');
   });
 });
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 2. Value encoding/decoding at boundaries
-// ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Boundary: Output value encoding/decoding', function () {
   let db;
@@ -169,10 +161,6 @@ describe('Boundary: Output value encoding/decoding', function () {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 3. Height encoding at boundaries
-// ═══════════════════════════════════════════════════════════════════════════════
-
 describe('Boundary: Height encoding/decoding', function () {
   let db;
 
@@ -244,10 +232,6 @@ describe('Boundary: Height encoding/decoding', function () {
     expect(block.h).to.equal(2147483647);
   });
 });
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 4. TxID and Vout boundary encoding
-// ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Boundary: TxID and Vout encoding', function () {
   let db;
@@ -340,10 +324,6 @@ describe('Boundary: TxID and Vout encoding', function () {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 5. LevelDB prefix scan boundaries
-// ═══════════════════════════════════════════════════════════════════════════════
-
 describe('Boundary: Prefix scan isolation', function () {
   let db;
 
@@ -418,10 +398,6 @@ describe('Boundary: Prefix scan isolation', function () {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 6. Block height/hash storage boundaries
-// ═══════════════════════════════════════════════════════════════════════════════
-
 describe('Boundary: Block height/hash storage', function () {
   let db;
 
@@ -470,10 +446,6 @@ describe('Boundary: Block height/hash storage', function () {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// 7. Output hint and removal (REMOVE_SPENT path)
-// ═══════════════════════════════════════════════════════════════════════════════
-
 describe('Boundary: Output hint and removal', function () {
   let db;
 
@@ -497,7 +469,6 @@ describe('Boundary: Output hint and removal', function () {
     await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
     await db.endTransaction();
 
-    // Now spend it
     await db.beginTransaction();
     await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
     await db.endTransaction();
@@ -512,7 +483,7 @@ describe('Boundary: Output hint and removal', function () {
     const blockHash = randHash();
     const fullTxHash = txHash8 + randHash().substring(16);
 
-    // Insert and spend within the same uncommitted batch
+    // Insert and spend within the same uncommitted batch.
     await db.beginTransaction();
     await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 5000000000, height: 1, fullTxHash });
     await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
@@ -529,22 +500,20 @@ describe('Boundary: Output hint and removal', function () {
     const blockHash = randHash();
     const fullTxHash = txHash8 + randHash().substring(16);
 
-    // Insert output
     await db.beginTransaction();
     await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 5000000000, height: 1, fullTxHash });
     await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
     await db.endTransaction();
 
-    // Spend it (creates K/M records)
+    // Spend it (creates K/M records).
     await db.beginTransaction();
     await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
     await db.endTransaction();
 
-    // Verify it's gone
     let outputs = await db.getOutputsScriptPubKey(scriptHash);
     expect(outputs).to.have.length(0);
 
-    // Recover via processDeletedOutputs (reorg simulation)
+    // Recover via processDeletedOutputs (reorg simulation).
     await db.beginTransaction();
     await db.processDeletedOutputs(blockHash, true);
     await db.endTransaction();
@@ -554,10 +523,6 @@ describe('Boundary: Output hint and removal', function () {
     expect(outputs[0].value).to.equal('5000000000');
   });
 });
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 8. Stored blocks (N prefix) / UNDO_BLOCKS tracking
-// ═══════════════════════════════════════════════════════════════════════════════
 
 describe('Boundary: Stored blocks tracking', function () {
   let db;

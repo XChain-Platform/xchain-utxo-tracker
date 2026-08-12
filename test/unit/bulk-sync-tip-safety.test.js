@@ -10,23 +10,22 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression #4634: bulk-sync tip-safety must cover the reorg window ────────
-//
-// The bulk-sync merger emits no K/M reorg-recovery indices (SPEC.md; W IS seeded,
-// windowed to the derive-keys range, but W alone cannot recover a reorg). The
-// design relies on bulk-sync stopping at least undoBlocks below the tip so the
-// live incremental worker builds W/K/M for every block inside the reorg window.
-// The orchestrator default tip-safety was 10, below the per-chain undoBlocks
+// Regression: bulk-sync tip-safety must cover the reorg window.
+// The bulk-sync merger emits no K/M reorg-recovery indices (SPEC.md; W IS
+// seeded, windowed to the derive-keys range, but W alone cannot recover a
+// reorg), so it must stop at least undoBlocks below the tip so the live
+// incremental worker builds W/K/M for every block inside the reorg window.
+// The prior default tip-safety (10) was below every chain's undoBlocks
 // (BTC 12, LTC 48, DOGE 120), so a reorg into the freshly seeded range left
 // phantom (unspent, never-deleted) or missing (spent, never-restored) UTXOs.
-// effectiveTipSafety() clamps tip-safety up to undoBlocks (the same value
+// effectiveTipSafety() now clamps tip-safety up to undoBlocks (the same value
 // derive-keys uses to size the seeded N-window) whenever --to is not pinned.
 
 const { expect } = require('chai');
 const { effectiveTipSafety, resolveUndoBlocks, parseArgs } = require('../../src/bulk-sync/orchestrator');
 const dump = require('../../src/bulk-sync/dump');
 
-describe('bulk-sync tip-safety clamp (#4634) @regression', function () {
+describe('bulk-sync tip-safety clamp @regression', function () {
 
     it('raises a too-small tip-safety up to the per-chain undoBlocks', function () {
         // Default orchestrator tip-safety of 10 is below every chain's undoBlocks.
@@ -69,14 +68,13 @@ describe('bulk-sync tip-safety clamp (#4634) @regression', function () {
     });
 });
 
-// ─── Regression : the explicit --to escape from that clamp ────────────
-//
-// effectiveTipSafety returns an explicit --to unclamped by design (the orchestrator
-// has not resolved a tip, so it has nothing to compare against), and main() only
-// logged a warning, which an automated or CI invocation swallows. dump.js is the one
-// place the real tip IS known, so the invariant is enforced there and the only way
-// past it is the named --allow-undo-window override.
-describe('bulk-sync explicit --to undo-window guard () @regression', function () {
+// Regression: the explicit --to escape from that clamp. effectiveTipSafety
+// returns an explicit --to unclamped by design (the orchestrator has not
+// resolved a tip, so it has nothing to compare against), and main() only
+// logged a warning, which an automated or CI invocation swallows. dump.js is
+// the one place the real tip IS known, so the invariant is enforced there
+// and the only way past it is the named --allow-undo-window override.
+describe('bulk-sync explicit --to undo-window guard @regression', function () {
 
     // BTC undoBlocks = 12, so with a tip of 1000 the last safe endpoint is 988.
     const TIP = 1000;

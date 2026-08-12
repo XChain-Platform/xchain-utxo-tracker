@@ -10,13 +10,13 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression: cleanupAgedBlocks prunes the Z block->script reverse index ──
+// Regression: cleanupAgedBlocks prunes the Z block->script reverse index.
 //
 // The Z index ('Z'/0x5A, one record per block + first-seen script) has exactly
 // one reader: the reorg unwind (removeOutputScriptsInBlock), which is hard
 // depth-guarded to the undoBlocks window. A Z record for a block older than
-// that window is therefore permanently unreachable, yet the TP-19 aged-block
-// prune originally removed only its W twin, so Z grew monotonically with every
+// that window is therefore permanently unreachable, yet the aged-block prune
+// originally removed only its W twin, so Z grew monotonically with every
 // distinct scriptPubKey ever seen for the life of the store. cleanupAgedBlocks
 // must prune Z alongside W while leaving the S first-seen record intact (S
 // backs the live getFirstSeen query).

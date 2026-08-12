@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Regression: input-hash reversal must operate on a COPY ───────────────────
+// Regression: input-hash reversal must operate on a COPY.
 //
 // Commit cfa0902 ("reverse prev-tx hash on a copy to stop spend-hint
 // corruption", v1.0.8). The wire-order input hash is reversed to display order

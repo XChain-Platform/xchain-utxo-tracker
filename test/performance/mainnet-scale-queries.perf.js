@@ -10,17 +10,16 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-//  leg (a): production-scale latency contract for the tracker's address
-// scan and for the paged drain the encoder does before coin selection.
-//
-// The distinction from 's fuzz suite: that proves the key schema is
-// CORRECT at scale (no collisions, no aliasing across prefixes). This proves it
-// is FAST at scale, which is a different failure mode with the same symptom
-// surface. Every query here is a prefix-range read whose cost must be O(rows
-// returned), independent of how many rows the store holds; a regression that
-// makes it O(store) - a dropped gte/lte bound, a full-iterator filter, a key
-// layout that no longer clusters an address's outputs - passes every
-// correctness test and takes the tracker down on launch day.
+// Production-scale latency contract for the tracker's address scan and for
+// the paged drain the encoder does before coin selection. A separate fuzz
+// suite proves the key schema is CORRECT at scale (no collisions, no
+// aliasing across prefixes); this proves it is FAST at scale, a different
+// failure mode with the same symptom surface. Every query here is a
+// prefix-range read whose cost must be O(rows returned), independent of how
+// many rows the store holds; a regression that makes it O(store) - a dropped
+// gte/lte bound, a full-iterator filter, a key layout that no longer
+// clusters an address's outputs - passes every correctness test and takes
+// the tracker down on launch day.
 //
 // So the assertions come in pairs: the EXACT result set (compared against a
 // plan computed without touching the database) and a WALL-CLOCK ceiling. A fast

@@ -18,7 +18,6 @@
  *
  ********************************************************************/
 
-// Load required libraries
 const crypto = require('crypto');
 const bitcoinjs = require('bitcoinjs-lib');
 // BigInt-safe 64-bit reader/writer, applied in-process so a >2^53-1 sat DOGE
@@ -132,7 +131,6 @@ class XChainBlockDecoder {
                   }
                 }
                 const witnessCommit = block.getWitnessCommit();
-                // This Block contains a witness commit
                 if (witnessCommit) block.witnessCommit = witnessCommit;
                 return block; 
             default:

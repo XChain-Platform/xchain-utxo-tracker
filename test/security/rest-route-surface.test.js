@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Security: REST address routes pass untrusted input straight through ──────
+// Security: REST address routes pass untrusted input straight through.
 //
 // The four GET /…/:address routes (api.js) take `req.params.address` verbatim
 // and hand it to the tracker. There is NO length cap, charset allowlist, or

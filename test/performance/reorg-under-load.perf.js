@@ -84,21 +84,18 @@ describe('Perf: Reorg Under Load', function () {
           await processAndCommit(tracker, block);
         }
 
-        // Create divergent chain starting at (tip - depth)
         const forkPoint = chainLength - depth - 1;
         const divergentHashes = {};
         for (let i = forkPoint + 1; i < chainLength; i++) {
           divergentHashes[i] = randHash();
         }
 
-        // Stub the connector to return divergent hashes
         sinon.stub(tracker.connector, 'getBlockHash').callsFake(async (height) => {
           if (divergentHashes[height] !== undefined) return divergentHashes[height];
           if (height >= 0 && height < chain.length) return chain[height].hash;
           throw new Error('Block not found');
         });
 
-        // Measure reorg detection and rollback
         const { durationMs } = await measureAsync(async () => {
           await runVerifyReorg(tracker);
         });
@@ -107,7 +104,6 @@ describe('Perf: Reorg Under Load', function () {
 
         console.log(`    Depth ${depth}: ${formatMs(durationMs)}`);
 
-        // Verify rollback happened
         const newHeight = await tracker.db.getLastBlockHeight();
         expect(newHeight).to.equal(forkPoint,
           `Expected height ${forkPoint} after ${depth}-block reorg, got ${newHeight}`);
@@ -133,16 +129,14 @@ describe('Perf: Reorg Under Load', function () {
       resetTxCounter();
       tracker = await createTestTracker();
 
-      // Build a short chain (within UNDO_BLOCKS window)
+      // Chain stays within the UNDO_BLOCKS window so the rollback is possible.
       const baseChain = buildDenseChain(10, addressPool, 3);
       for (const block of baseChain) {
         await processAndCommit(tracker, block);
       }
 
-      // Query balances before reorg
       const utxosBefore = await tracker.getUtxosAddress(addressPool[0].address);
 
-      // Simulate a 3-block reorg by rolling back blocks 7, 8, 9
       const forkPoint = 6;
       const divergentHashes = {};
       for (let i = forkPoint + 1; i < 10; i++) {
@@ -155,16 +149,13 @@ describe('Perf: Reorg Under Load', function () {
         throw new Error('Block not found');
       });
 
-      // Perform reorg
       await runVerifyReorg(tracker);
 
-      // Query after reorg
       const utxosAfter = await tracker.getUtxosAddress(addressPool[0].address);
 
       console.log(`    UTXOs before reorg: ${utxosBefore.length}`);
       console.log(`    UTXOs after 3-block reorg: ${utxosAfter.length}`);
 
-      // Verify height was rolled back
       const newHeight = await tracker.db.getLastBlockHeight();
       expect(newHeight).to.equal(forkPoint);
 
@@ -180,7 +171,7 @@ describe('Perf: Reorg Under Load', function () {
       resetTxCounter();
       tracker = await createTestTracker();
 
-      // Phase 1: Index baseline chain (keep short for undo window)
+      // Chain stays short so the whole thing fits inside the undo window.
       const baselineChain = buildDenseChain(10, addressPool, 5);
 
       const { durationMs: baselineMs } = await measureAsync(async () => {
@@ -190,7 +181,6 @@ describe('Perf: Reorg Under Load', function () {
       });
       const baselinePerBlock = baselineMs / 10;
 
-      // Phase 2: Simulate 5-block reorg
       const forkPoint = 4;
       const divergentHashes = {};
       for (let i = forkPoint + 1; i < 10; i++) {
@@ -203,19 +193,16 @@ describe('Perf: Reorg Under Load', function () {
         throw new Error('Block not found');
       });
 
-      // Perform reorg
       const { durationMs: reorgMs } = await measureAsync(async () => {
         await runVerifyReorg(tracker);
       });
 
       sinon.restore();
 
-      // Phase 3: Index replacement chain (new blocks after fork point)
       resetTxCounter();
       const recoveryChain = buildDenseChain(10, addressPool, 5);
       recoveryChain.forEach((b, i) => { b.height = forkPoint + 1 + i; });
 
-      // Set prevHash of first recovery block to match the fork point block
       if (forkPoint >= 0 && forkPoint < baselineChain.length) {
         recoveryChain[0].previousHash = baselineChain[forkPoint].hash;
       }

@@ -117,7 +117,7 @@ async function main() {
     // O: 1 live UTXO on scriptY @ T0:1 value=200 height=0. The intermediate
     // O.dat value is 45 bytes (value8+height4+fullTxHash32+coinbase1); the loader
     // re-encodes it to the live path's on-disk form, so a non-coinbase output
-    // reads back as the 44-byte oValOnDisk (the coinbase byte is dropped, L-4).
+    // reads back as the 44-byte oValOnDisk (the coinbase byte is dropped).
     const oValIntermediate = Buffer.alloc(45)
     oValIntermediate.writeBigUInt64BE(200n, 0)
     oValIntermediate.writeInt32BE(0, 8)

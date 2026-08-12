@@ -39,14 +39,14 @@ const { HEADER_SIZE, OUTPUTS_RECORD_SIZE, SPENDS_RECORD_SIZE } = require('./writ
 const { networkToCodes, validateConcatArtifact, parseDatHeader,
         writeSortedManifest, checkSortedManifest } = require('./merger/resume-manifest.js')
 
-// --------------- constants ---------------
+// constants
 
 const OUTPUTS_KEY_SIZE = 12   // txHash8(8) + vout(4)
 const SPENDS_KEY_SIZE  = 12   // prevTxHash8(8) + prevVout(4)
 
 const BULK_SYNC_DIR = __dirname
 
-// --------------- cleanup manager ---------------
+// cleanup manager
 
 /**
  * Tracks files that have been fully consumed by the pipeline and unlinks
@@ -99,7 +99,7 @@ class CleanupManager {
     }
 }
 
-// --------------- arg parsing ---------------
+// arg parsing
 
 function parseArgs(argv) {
     const args = {
@@ -109,7 +109,7 @@ function parseArgs(argv) {
         tipSafety:  10,
         // Named opt-in for the one unsafe shape effectiveTipSafety cannot clamp: an
         // explicit --to inside the live undo window. Threaded to dump.js, which is
-        // where the real tip is known and where the guard actually runs (#4634).
+        // where the real tip is known and where the guard actually runs.
         allowUndoWindow: false,
         chunkSize:  10000,
         out:        null,      // working directory for all artifacts
@@ -124,8 +124,8 @@ function parseArgs(argv) {
         cleanupThresholdMb: 100 * 1024,
         skipDump:    false,
         // null = unset; resolveVerifyDefaults() turns null into ON for
-        // mainnet networks (safety over read-pass cost, ) and OFF
-        // everywhere else. Explicit --[no-]verify-* flags always win.
+        // mainnet networks (safety over read-pass cost) and OFF everywhere
+        // else. Explicit --[no-]verify-* flags always win.
         verifyChain: null,
         verifyMerkle: null,    // implies verifyChain; adds tx-body merkle rebuild
         skipParse:   false,
@@ -177,8 +177,8 @@ function parseArgs(argv) {
 
 // A mainnet bootstrap seeds the production UTXO set, so a silently corrupt
 // dump (truncated .xdmp, disk bitrot, node fed a bad block) is a
-// consensus-facing hazard: verification defaults ON there .
-// Non-mainnet (regtest/testnet) keeps the fast path.
+// consensus-facing hazard: verification defaults ON there. Non-mainnet
+// (regtest/testnet) keeps the fast path.
 function isMainnetNetwork(network) {
     return /-mainnet$/.test(String(network))
 }
@@ -202,14 +202,15 @@ function resolveVerifyDefaults(args) {
 // the live incremental worker build W/K/M for every block inside the reorg
 // window. With tip-safety < undoBlocks the seeded N-window includes bulk-synced blocks
 // with no K/M, so a reorg into that range leaves phantom (unspent, never-deleted) or
-// missing (spent, never-restored) UTXOs until a full re-index (#4634). When --to is not
+// missing (spent, never-restored) UTXOs until a full re-index. When --to is not
 // pinned we clamp tip-safety up to undoBlocks (the same per-chain value derive-keys uses
 // to size the N-window, so the stop point and the seeded window stay in lockstep). Clamp
 // up only: an operator may choose a LARGER margin, never a smaller one. An explicit --to
 // is returned as-is because the tip is unknown here and the clamp has nothing to compare
 // against; the invariant is enforced instead in dump.js, at the one point the real tip IS
 // resolved, where an explicit --to inside the undo window is rejected unless
-// --allow-undo-window names the override (). Warning-only here was not enough.
+// --allow-undo-window names the override. A warning-only override used to be enough to
+// let an unsafe --to through unnoticed, which is why the guard now fails loud instead.
 function effectiveTipSafety(tipSafety, to, network) {
     if (to !== null) return tipSafety
     return Math.max(tipSafety, resolveUndoBlocks(network))
@@ -257,7 +258,7 @@ Environment:
 `)
 }
 
-// --------------- helpers ---------------
+// helpers
 
 function fmtDuration(ms) {
     const s = Math.floor(ms / 1000)
@@ -412,7 +413,7 @@ function concatFilesWithHeader(inputPaths, outputPath, headerSize) {
 /**
  * Read the record_size field (offset 28, u32 LE) from a dump/intermediate
  * header. This is the explicit width discriminator between the legacy 120-byte
- * outputs record and the 121-byte coinbase-flagged record (L-4). Falls back to
+ * outputs record and the 121-byte coinbase-flagged record. Falls back to
  * the compiled OUTPUTS_RECORD_SIZE if the field is absent (0) or unreadable, so
  * a pre-record_size dump still parses at the current width.
  */
@@ -443,7 +444,7 @@ function findFiles(dir, prefix, suffix) {
         .map(f => path.join(dir, f))
 }
 
-// --------------- phases ---------------
+// phases
 
 async function phaseDump(args, dirs) {
     log('DUMP', `dumping blocks to ${dirs.dumps}`)
@@ -456,7 +457,7 @@ async function phaseDump(args, dirs) {
     if (args.to !== null) {
         dumpArgs.push('--to', String(args.to))
         // dump.js rejects an explicit --to inside the live undo window unless this
-        // rides along, so the override has to reach the child (#4634, ).
+        // rides along, so the override has to reach the child.
         if (args.allowUndoWindow) dumpArgs.push('--allow-undo-window')
     } else {
         dumpArgs.push('--tip-safety', String(args.tipSafety))
@@ -471,7 +472,6 @@ async function phaseParse(args, dirs, xdmpFiles) {
     const maxWorkers = args.workers || xdmpFiles.length
     log('PARSE', `parsing ${xdmpFiles.length} dumps with up to ${maxWorkers} parallel workers`)
 
-    // Process in batches of maxWorkers
     for (let i = 0; i < xdmpFiles.length; i += maxWorkers) {
         const batch = xdmpFiles.slice(i, i + maxWorkers)
         const promises = batch.map(xdmpPath => {
@@ -546,7 +546,7 @@ async function phaseMerge(args, dirs, cleanup) {
     const ramBudgetBytes = args.ramBudget * 1024 * 1024
 
     // The dump header's record_size field (offset 28, u32 LE) is the explicit
-    // format discriminator: new dumps report 121 (trailing coinbase flag, L-4),
+    // format discriminator: new dumps report 121 (trailing coinbase flag),
     // legacy dumps report 120. Threading it through the sort, anti-join and
     // deriveKeys lets both widths merge; a legacy dump carries no flag and its
     // outputs are treated as non-coinbase. Fall back to the compiled constant if
@@ -720,7 +720,7 @@ async function phaseLoad(args, dirs) {
     return result
 }
 
-// --------------- main ---------------
+// main
 
 async function main() {
     const args = parseArgs(process.argv)
@@ -746,13 +746,13 @@ async function main() {
 
     // Enforce the reorg-recovery invariant before the dump phase reads tip-safety
     // (see effectiveTipSafety): clamp tip-safety up to undoBlocks so no bulk-seeded
-    // block lands inside the active reorg window with no K/M indices (#4634).
+    // block lands inside the active reorg window with no K/M indices.
     const undoBlocks = resolveUndoBlocks(args.network)
     const clampedTipSafety = effectiveTipSafety(args.tipSafety, args.to, args.network)
     if (args.to !== null) {
-        log('ORCHESTRATOR', `explicit --to ${args.to} set: dump.js rejects it if it exceeds tip-${undoBlocks}${args.allowUndoWindow ? ', but --allow-undo-window overrides that guard' : ''}, since a reorg into the bulk range finds no K/M reorg-recovery indices (#4634)`)
+        log('ORCHESTRATOR', `explicit --to ${args.to} set: dump.js rejects it if it exceeds tip-${undoBlocks}${args.allowUndoWindow ? ', but --allow-undo-window overrides that guard' : ''}, since a reorg into the bulk range finds no K/M reorg-recovery indices`)
     } else if (clampedTipSafety !== args.tipSafety) {
-        log('ORCHESTRATOR', `tip-safety ${args.tipSafety} < undo-blocks ${undoBlocks} for ${args.network}; raising tip-safety to ${clampedTipSafety} so the reorg window stays inside the live-built W/K/M range (#4634)`)
+        log('ORCHESTRATOR', `tip-safety ${args.tipSafety} < undo-blocks ${undoBlocks} for ${args.network}; raising tip-safety to ${clampedTipSafety} so the reorg window stays inside the live-built W/K/M range`)
         args.tipSafety = clampedTipSafety
     }
 

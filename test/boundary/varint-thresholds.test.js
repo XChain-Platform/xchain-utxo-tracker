@@ -10,25 +10,21 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// ─── Boundary: varint size-class thresholds + uint64 verifuint limit ──────────
-//
-// The existing unit/bufferutils suite round-trips a single-byte varint and
-// decodes one 3-byte (0xFD) value, and round-trips uint64 up to MAX_SAFE_INTEGER.
-// What it does NOT pin are the *transitions* between Compact-Size classes,
-// exactly the boundaries where an off-by-one in length math silently mis-frames a
-// transaction. varint is encoded as: n < 0xFD → 1 byte; n ≤ 0xFFFF → 0xFD + 2
-// bytes; n ≤ 0xFFFFFFFF → 0xFE + 4 bytes; else 0xFF + 8 bytes. We exercise the
-// last value of each class and the first value of the next, in both directions
-// (write→read and raw-byte inspection), plus the verifuint upper bound that
+// The existing bufferutils suite round-trips a single-byte varint and one
+// 3-byte value, but never pins the *transitions* between Compact-Size
+// classes, exactly where an off-by-one in length math would silently
+// mis-frame a transaction. Encoding: n < 0xFD → 1 byte; n ≤ 0xFFFF → 0xFD + 2
+// bytes; n ≤ 0xFFFFFFFF → 0xFE + 4 bytes; else 0xFF + 8 bytes. Each class
+// boundary here is exercised on both sides, plus the verifuint ceiling that
 // guards writeUInt64LE/readUInt64LE against silent precision loss past 2^53.
 
 const { expect } = require('chai');
 const varuint = require('varuint-bitcoin');
-// src/bufferutils.js is a Docker-only override of bitcoinjs-lib/src/bufferutils
-// (its require('./types') only resolves inside the lib's src/). The code that
-// runs locally (XChainBlockDecoder's BufferReader) loads the installed lib
-// copy, so that is the real, exercised path we pin here (same API). See
-// unit/bufferutils.test.js for the resolver shim that also covers the patch.
+// src/bufferutils.js is a Docker-only override of bitcoinjs-lib's version
+// (its require('./types') only resolves inside the lib's src/, so it can't be
+// required directly here). The code that runs locally (XChainBlockDecoder's
+// BufferReader) loads the installed lib copy instead, the real path this
+// file pins; see unit/bufferutils.test.js for the resolver shim.
 const {
   BufferWriter,
   BufferReader,
@@ -117,8 +113,8 @@ describe('Boundary: writeUInt64LE / readUInt64LE verifuint limit', function () {
   });
 
   it('reading a stored 2**53 (above the ceiling) is rejected, not silently rounded', function () {
-    // Hand-encode 2**53 little-endian and confirm the reader's verifuint trips
-    // rather than returning a lossy Number.
+    // writeUInt64LE would itself reject 2**53, so encode it by hand here to
+    // test the read-side check independently.
     const buf = Buffer.alloc(8);
     buf.writeUInt32LE(0x00000000, 0);
     buf.writeUInt32LE(0x00200000, 4); // high dword = 2**53 / 2**32
