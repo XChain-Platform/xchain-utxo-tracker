@@ -12,7 +12,7 @@
  *
  **********************************************************************
  *
- * XChain shared observability: service wiring
+ * XChain shared observability - service wiring
  *
  * One call, installObservability(app, { service }), gives an xchain-* service a
  * Prometheus /metrics endpoint plus a structured log shim. Both are DEFAULT
