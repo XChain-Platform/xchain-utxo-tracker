@@ -184,6 +184,13 @@ describe('validateBootstrapArchiveOrThrow', function () {
         beforeEach(function () { delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED; });
 
         it('a self-consistent single-layer archive with no .sig is refused by default', async function () {
+            // A key IS pinned here, deliberately: what this case is about is the
+            // MISSING SIGNATURE, and the refusal branch emits a different message
+            // when no key is pinned at all. Without this the case passed only where
+            // an untracked src/config/bootstrap_signing_pubkey.pem happened to sit on
+            // disk, and failed on every clean checkout (measured on the CI venue
+            // 2026-08-12, reproduced locally by hiding that file).
+            pinTestSigningKey(tmp);
             const archive = buildSingleLayerArchive(tmp);
             fs.writeFileSync(archive + '.sha256', `${sha256File(archive)}  single.tar.gz\n`);
             let threw = false;
@@ -193,6 +200,9 @@ describe('validateBootstrapArchiveOrThrow', function () {
         });
 
         it('a self-consistent WRAPPER archive with no .sig is refused by default', async function () {
+            // Same reason as the single-layer case above: pin a key so the branch
+            // under test is the missing .sig, not the missing key.
+            pinTestSigningKey(tmp);
             const archive = buildWrapperArchive(tmp);
             let threw = false;
             try { await validateBootstrapArchiveOrThrow(archive); }
