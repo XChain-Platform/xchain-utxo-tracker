@@ -51,6 +51,20 @@ describe('health status policy', function () {
       .to.equal('healthy');
   });
 
+  // : the helper's doc comment claimed it mirrored xchain-decoder's health(),
+  // which "likewise keeps its durable halt marker out of `status`". The decoder does
+  // publish reorg_halted as its own field with `status` untouched, while this helper
+  // folds halt straight into the word, so the analogy told a reader the opposite of
+  // the behavior two lines below it. The tracker has no durable marker to compare
+  // against at all. Guard the description instead of the comparison.
+  it('documents that halt reaches the status word, without the decoder analogy', function () {
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+    const doc = src.slice(0, src.indexOf('function deriveHealthStatus('))
+      .split('\n\n').pop();
+    expect(doc).to.match(/'halted'/);
+    expect(doc).to.not.match(/decoder/i);
+  });
+
   // Wiring guard: jsonRpcController is built inside startApi()'s closure and is
   // not reachable from a require, so the method's registration is asserted at
   // the source level. Without a registered `health`, the gate's first probe gets

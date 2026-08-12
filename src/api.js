@@ -147,9 +147,11 @@ function launchTracker(tracker){
 // from lag. Consumers own their own lag budget (xchain-node's bootstrap gate
 // allows 100 blocks against the tracker's SYNCED_THRESHOLD of 3), so folding lag
 // into `status` would refuse a source the caller would otherwise accept; lag
-// travels as its own field for the caller to judge. Mirrors xchain-decoder's
-// health(), which likewise keeps its durable halt marker out of `status`. Pure
-// and exported so the policy is unit-testable without a running server.
+// travels as its own field for the caller to judge. Halt state DOES reach the
+// word: a halted tracker returns 'halted', which sits outside the bootstrap
+// gate's accepted set and so refuses the source, matching what the tracker's own
+// GET /status already reports and failing closed on a tip we stopped trusting.
+// Pure and exported so the policy is unit-testable without a running server.
 function deriveHealthStatus({ halted = false, dbOk = false } = {}) {
     if (halted) return 'halted'
     return dbOk ? 'healthy' : 'unhealthy'
