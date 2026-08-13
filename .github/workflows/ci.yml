@@ -8,13 +8,24 @@ name: CI
 # caps, so they hold across runner noise.
 on:
   push:
-    branches: [master]
+    # develop is where all work lands; master only ever receives release PRs.
+    # Both run the gate: develop so a lane push is verified as it lands, master
+    # so the merge commit a release tag points at has its own green run.
+    branches: [master, develop]
   pull_request:
     branches: [master]
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Protected branches (master, develop) group per COMMIT and are never
+  # cancelled; everything else groups per ref and supersedes freely.
+  #
+  # develop is where every lane lands post-adoption, and the release ceremony
+  # freezes a release branch at a specific develop SHA and requires that SHA's
+  # run to be green. A run cancelled by the next push can never supply that,
+  # and GitHub evicts a QUEUED run in the same group regardless of
+  # cancel-in-progress, so the grouping is what actually fixes it.
+  group: ci-${{ github.ref }}-${{ (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop') && github.sha || 'ref' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' && github.ref != 'refs/heads/develop' }}
 
 jobs:
   test:
