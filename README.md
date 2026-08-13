@@ -106,7 +106,7 @@ variable list and the exported metric names are in
 
 The module is vendored byte-identically from xchain-hub. Edit it there
 and re-run `xchain-hub/bin/sync-observability.sh`; a local edit fails the
-parity gate in `bin/check-observability-parity.js`.
+parity check CI runs across the vendored copies.
 
 ## Scripts
 
