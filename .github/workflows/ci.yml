@@ -6,6 +6,10 @@ name: CI
 # requires a MariaDB service). Perf runs at PERF_SCALE=small to bound CI
 # runtime (~20s); its assertions are relative-ratio / scale-derived memory
 # caps, so they hold across runner noise.
+# Least privilege for the default GITHUB_TOKEN: every job here only reads the repo.
+permissions:
+  contents: read
+
 on:
   push:
     # develop is where all work lands; master only ever receives release PRs.
