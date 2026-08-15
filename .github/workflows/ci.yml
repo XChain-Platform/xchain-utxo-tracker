@@ -75,6 +75,11 @@ jobs:
       - name: Coverage thresholds (c8 --check-coverage)
         run: npm run coverage:check
 
+  # Perf tier, deliberately outside `npm run ci` and so outside the pre-push
+  # venue gate: these are timing assertions, and a loaded workstation makes them
+  # flaky, which is how a gate stops being believed. Declared as separate in the
+  # platform's claude/bin/ci-job-reachability-config.json, which is what keeps a
+  # job that nothing else runs from going dark unnoticed.
   perf:
     # Only spend the perf runtime once the unit gate is green.
     needs: test
