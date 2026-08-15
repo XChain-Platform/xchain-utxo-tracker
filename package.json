@@ -29,7 +29,7 @@
     "api": "node --max-old-space-size=4096 ./src/api.js",
     "test": "mocha --timeout 0 --recursive test/unit/**/*.test.js",
     "coverage": "c8 --reporter=text --reporter=html --include 'src/**/*.js' mocha --timeout 0 --recursive 'test/unit/**/*.test.js' --exit",
-    "coverage:check": "c8 --check-coverage --lines 61 --branches 82 --reporter=text --include 'src/**/*.js' mocha --timeout 0 --recursive 'test/unit/**/*.test.js' --exit",
+    "coverage:check": "c8 --check-coverage --lines 63.5 --statements 63.5 --branches 83.2 --functions 65.3 --reporter=text --include 'src/**/*.js' mocha --timeout 0 --recursive 'test/unit/**/*.test.js' --exit",
     "ci": "mocha 'test/unit/**/*.test.js' --timeout 10000 --recursive --exit && npm run ci:security && npm run ci:regression && npm run ci:smoke",
     "ci:security": "mocha --timeout 30000 --recursive 'test/security/**/*.test.js' --exit",
     "ci:regression": "mocha --timeout 30000 --recursive 'test/regression/**/*.test.js' --exit",
