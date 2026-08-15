@@ -80,7 +80,13 @@ function buildServer(options){
     const held      = new Promise(resolve => { releaseHeld  = resolve; });
     const heldProbe = new Promise(resolve => { releaseProbe = resolve; });
 
+    // Counts handler entries. A DISABLED gate reports {0,0,0} at all times, so its
+    // stats carry no signal a test can synchronize on; this is the positive proof
+    // that a request got past the gate instead of never having been dispatched.
+    let expensiveEntered = 0;
+
     app.get('/expensive', async (req, res) => {
+        expensiveEntered++;
         await held;
         res.json({ ok: true, ip: req.ip });
     });
@@ -94,7 +100,12 @@ function buildServer(options){
     const server = http.createServer(app);
     openServers.push(server);
 
-    return { app, gate, probeGate, server, release: () => releaseHeld(), releaseProbe: () => releaseProbe() };
+    return {
+        app, gate, probeGate, server,
+        release:      () => releaseHeld(),
+        releaseProbe: () => releaseProbe(),
+        entered:      () => expensiveEntered
+    };
 }
 
 function listen(server){
@@ -233,11 +244,14 @@ describe('Security: global in-flight concurrency cap', function () {
     });
 
     it('is disabled by a cap of 0 (operator escape hatch)', async function () {
-        const { server, gate, release } = buildServer({ limit: 0 });
+        const { server, gate, release, entered } = buildServer({ limit: 0 });
         await listen(server);
 
         const parked = [get(server, '/expensive', 1), get(server, '/expensive', 2), get(server, '/expensive', 3)];
-        await new Promise(r => setTimeout(r, 50));
+        // Wait on the handler, not the clock. A disabled gate's stats read {0,0,0}
+        // from the first millisecond, so a fixed sleep that ended early would satisfy
+        // the assertion below without a single request having reached the route.
+        await waitFor(() => entered() === 3, 'all three requests to reach the handler past the disabled gate');
 
         // A disabled gate counts nothing and sheds nothing; it must not become a
         // cap of zero that refuses every request.

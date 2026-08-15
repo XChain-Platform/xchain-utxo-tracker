@@ -206,6 +206,17 @@ class XChainUtxoTracker {
       this.reorgCount = 0
       this.lastReorgDepth = 0
 
+      // Forward-progress heartbeat, stamped when a block batch is committed.
+      // Kept in memory because the /metrics collector runs synchronously and so
+      // cannot await the durable pointer (db.getLastBlockHeight()); see
+      // src/utxoTrackerMetrics.js. Null until the first commit, which is what
+      // keeps a still-starting tracker out of the stall alert. A rollback moves
+      // the durable pointer without stamping these, so the height is corrected
+      // at the next forward commit; reorgCount/lastReorgDepth are the signals
+      // for that window.
+      this.lastCommitAt = null
+      this.lastCommittedHeight = null
+
       // Unrecoverable block-fetch desync signal. Set just before the
       // polling loop fails loud on a node that can no longer serve the next
       // block (pruned past our cursor, or a permanent missing-block fault), so
@@ -1602,6 +1613,12 @@ class XChainUtxoTracker {
                         const _tCommit = Date.now()
                         await this.db.endTransaction()
                         _t.commit += Date.now() - _tCommit
+
+                        // Stamp the forward-progress heartbeat only after the batch is
+                        // durable, so a crash mid-flush cannot leave /metrics claiming a
+                        // commit the DB never took.
+                        this.lastCommitAt = Date.now()
+                        this.lastCommittedHeight = nextBlockHeight
 
                         // Flush deferred mempool cleanup AFTER confirmed outputs are committed.
                         // This closes the ordering gap: mined UTXOs are queryable from the
