@@ -11,6 +11,8 @@
 // contact legal@dankest.llc.
 
 const { expect } = require('chai');
+const fs = require('fs');
+const path = require('path');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 
 // Durable fix for the unrecoverable-reorg crash-loop.
@@ -183,6 +185,133 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
       tracker.haltForResync();
       expect(tracker.halted).to.equal(true);
       expect(tracker.haltReason).to.match(/unrecoverable reorg/i);
+    });
+  });
+
+  // The halt is only half a feature without a way out of it. The loop exits by
+  // throwing, so it never runs the normal-stop branch that closes the store and
+  // sets parsingStopped; stopParsing() could then only time out and reject, and
+  // both recovery RPCs open with that call, so restorebootstrap could never reach
+  // the wipe. And nothing cleared halted afterwards, so even a completed resync
+  // kept publishing halted=true to xchain-node's bootstrap gate forever.
+  describe('halted recovery path', function () {
+
+    function haltedTracker() {
+      const tracker = newTracker();
+      tracker.db = { closes: 0, close: async function () { this.closes++; } };
+      tracker.haltForResync('deep reorg');
+      return tracker;
+    }
+
+    // Fail fast rather than hang the suite (this file runs with timeout 0).
+    function within(ms, promise) {
+      return Promise.race([
+        promise,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('stopParsing never settled')), ms))
+      ]);
+    }
+
+    it('records the aborted loop so the stop path can tell it from a live one', function () {
+      const tracker = newTracker();
+      expect(tracker.parsingAborted).to.equal(false);
+      tracker.haltForResync('deep reorg');
+      expect(tracker.parsingAborted).to.equal(true);
+    });
+
+    it('stopParsing resolves on a halted tracker and closes the store before a wipe', async function () {
+      const tracker = haltedTracker();
+
+      const result = await within(3000, tracker.stopParsing());
+
+      expect(result).to.equal(true);
+      expect(tracker.parsingStopped).to.equal(true);
+      // The restore wipes /data next, so the handle must be closed, exactly once.
+      expect(tracker.db.closes).to.equal(1);
+    });
+
+    it('stopParsing is idempotent for a second admin call (getbootstrap then restore)', async function () {
+      const tracker = haltedTracker();
+      await within(3000, tracker.stopParsing());
+
+      const again = await within(3000, tracker.stopParsing());
+
+      expect(again).to.equal(true);
+      expect(tracker.db.closes).to.equal(1);
+    });
+
+    it('stopParsing rejects (never hangs) when the store fails to close', async function () {
+      const tracker = newTracker();
+      tracker.db = { close: async () => { throw new Error('leveldb busy'); } };
+      tracker.haltForResync('deep reorg');
+
+      let err = null;
+      try {
+        await within(3000, tracker.stopParsing());
+      } catch (e) {
+        err = e;
+      }
+      expect(err, 'a close failure must surface to the RPC').to.be.an('error');
+      expect(err.message).to.equal('leveldb busy');
+      // A failed close must NOT claim the store is safe to wipe (parsingStopped is
+      // only ever seeded by start(), so before a first run it reads undefined).
+      expect(tracker.parsingStopped).to.not.equal(true);
+    });
+
+    it('leaves a still-running loop on the wait path instead of closing its store', async function () {
+      const tracker = newTracker();
+      tracker.db = { closes: 0, close: async function () { this.closes++; } };
+      tracker.sleep = async () => {};
+      tracker.parsingStopped = false;
+
+      let rejected = false;
+      try {
+        await within(3000, tracker.stopParsing());
+      } catch (e) {
+        rejected = true;
+      }
+
+      // No abort recorded means the loop may still be alive, so the short-circuit
+      // must not fire: the timeout path stands and the store stays open.
+      expect(rejected).to.equal(true);
+      expect(tracker.db.closes).to.equal(0);
+      if (tracker.mempoolInterval) { clearInterval(tracker.mempoolInterval); tracker.mempoolInterval = null; }
+    });
+
+    it('clearHalt drops the marker and the reason', function () {
+      const tracker = newTracker();
+      tracker.haltForResync('deep reorg');
+
+      tracker.clearHalt();
+
+      expect(tracker.halted).to.equal(false);
+      expect(tracker.haltReason).to.equal(null);
+    });
+
+    // start() needs a live node to run, so the reset that keeps parsingAborted
+    // honest across a relaunch is guarded at the source. Without it a relaunched
+    // loop would still read as aborted and the next stop would close a live store.
+    it('start() clears the aborted marker alongside the other per-start resets', function () {
+      const src = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker.js'), 'utf8');
+      const prologue = src.slice(src.indexOf('async start()'), src.indexOf('async start()') + 4000);
+      expect(prologue).to.match(/this\.parsingStopped = false/);
+      expect(prologue).to.match(/this\.parsingAborted = false/);
+    });
+
+    // The bootstrap RPCs live inside startApi()'s closure and are not reachable
+    // from a require, so the halt-clear wiring is guarded at the source too.
+    it('clears the halt on the restore success path only, never on a snapshot', function () {
+      const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+
+      const restore = src.slice(src.indexOf('async restorebootstrap('),
+        src.indexOf('async getbootstraprestorestatus('));
+      expect(restore).to.match(/tracker\.clearHalt\(\)/);
+      // Ordering matters: a clear after the relaunch would race the loop.
+      expect(restore.indexOf('tracker.clearHalt()'))
+        .to.be.lessThan(restore.indexOf('launchTracker(tracker)'));
+
+      const snapshot = src.slice(src.indexOf('async getbootstrap('),
+        src.indexOf('async getbootstrapstatus('));
+      expect(snapshot).to.not.match(/clearHalt/);
     });
   });
 });

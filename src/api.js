@@ -749,6 +749,13 @@ async function startApi(){
                     tasks[taskId]["progress"] = 100
                     console.log("Starting the parsing")
                     bootstrapBusy = false
+                    // The extraction replaced the store the halt was declared against, so
+                    // the marker no longer describes what is on disk. Without this the one
+                    // tracker instance this process ever builds keeps reporting halted=true
+                    // and 503 after a successful resync, and xchain-node's bootstrap gate
+                    // refuses it forever. Only the restore path clears it: getbootstrap
+                    // leaves the data untouched, so a halt there is still true.
+                    tracker.clearHalt()
                     launchTracker(tracker)
                 }).catch(error => {
                     // decompressPigz wipes /data BEFORE extracting, so a POST-wipe
