@@ -84,4 +84,36 @@ describe('Boundary: confirmation count at the chain tip', function () {
     const utxos = await tracker.getUtxosAddress(ADDR.address);
     expect(utxos[0].confirmations).to.equal(0);
   });
+
+  // The next three pin the NEGATIVE side of that same unclamped formula. A count
+  // below zero is not a cosmetic wrong number: xchain-encoder's validateUtxoEntry
+  // and UtxoTracker.js both throw on it, and the throw aborts the whole address
+  // fetch. Zero stays served (see the case above); only the throwing value is
+  // withheld.
+  it('withholds every confirmed output while the tip height is still uninitialized', async function () {
+    tracker.blockchainInfoLastBlock = -1;
+    await storeConfirmedOutput(tracker, { height: 900, txHash: '55'.repeat(8) });
+
+    const utxos = await tracker.getUtxosAddress(ADDR.address);
+    expect(utxos).to.have.length(0);
+  });
+
+  it('withholds an output more than one block above a stale cached tip', async function () {
+    tracker.blockchainInfoLastBlock = 1000;
+    await storeConfirmedOutput(tracker, { height: 1002, txHash: '66'.repeat(8) });
+
+    const utxos = await tracker.getUtxosAddress(ADDR.address);
+    expect(utxos).to.have.length(0);
+  });
+
+  it('serves the same output once the tip initializes, with confirmations >= 1', async function () {
+    tracker.blockchainInfoLastBlock = -1;
+    await storeConfirmedOutput(tracker, { height: 900, txHash: '77'.repeat(8) });
+    expect(await tracker.getUtxosAddress(ADDR.address)).to.have.length(0);
+
+    tracker.blockchainInfoLastBlock = 1000;
+    const utxos = await tracker.getUtxosAddress(ADDR.address);
+    expect(utxos).to.have.length(1);
+    expect(utxos[0].confirmations).to.equal(101);
+  });
 });

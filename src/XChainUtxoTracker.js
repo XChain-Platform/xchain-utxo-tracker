@@ -206,6 +206,17 @@ class XChainUtxoTracker {
       this.reorgCount = 0
       this.lastReorgDepth = 0
 
+      // Forward-progress heartbeat, stamped when a block batch is committed.
+      // Kept in memory because the /metrics collector runs synchronously and so
+      // cannot await the durable pointer (db.getLastBlockHeight()); see
+      // src/utxoTrackerMetrics.js. Null until the first commit, which is what
+      // keeps a still-starting tracker out of the stall alert. A rollback moves
+      // the durable pointer without stamping these, so the height is corrected
+      // at the next forward commit; reorgCount/lastReorgDepth are the signals
+      // for that window.
+      this.lastCommitAt = null
+      this.lastCommittedHeight = null
+
       // Unrecoverable block-fetch desync signal. Set just before the
       // polling loop fails loud on a node that can no longer serve the next
       // block (pruned past our cursor, or a permanent missing-block fault), so
@@ -223,6 +234,13 @@ class XChainUtxoTracker {
       // against a stable process instead of racing a restart loop.
       this.halted = false
       this.haltReason = null
+
+      // Set when the polling loop leaves by THROWING (the halt path) rather than
+      // through its normal-stop branch, which is the only branch that closes the
+      // store and sets parsingStopped. Tracked separately from `halted` because
+      // `halted` is an operator-facing status that deliberately outlives a
+      // relaunch, while this records the loop-lifecycle fact stopParsing acts on.
+      this.parsingAborted = false
 
       // Coinbase maturity depth used by getUtxosAddress to withhold immature
       // coinbase outputs. Instance-scoped (not a bare const) so test
@@ -408,10 +426,29 @@ class XChainUtxoTracker {
     haltForResync(reason){
         this.halted = true
         this.haltReason = reason || 'unrecoverable reorg (rolled back past the recovery window)'
+        // We are only ever called from the start() rejection guard, so the loop is
+        // provably gone and skipped the normal-stop branch that sets parsingStopped.
+        // Record that: without it stopParsing() can only time out, and both recovery
+        // RPCs open with that wait, so the resync this halt exists to enable is
+        // unreachable on the one state that needs it.
+        this.parsingAborted = true
         if (this.mempoolInterval){ clearInterval(this.mempoolInterval); this.mempoolInterval = null }
         console.error('[halted] xchain-utxo-tracker stopped polling: ' + this.haltReason
             + ' - process kept alive for an operator resync (restorebootstrap); NOT auto-wiping. '
             + '/status now returns 503 and get_sync_status.halted=true.')
+    }
+
+    // Clear the halt marker once a restore has REPLACED the on-disk store the halt was
+    // declared against, so /status and get_sync_status stop reporting a fault that no
+    // longer describes the data and xchain-node's BootstrapHealthGate can accept this
+    // source again. Deliberately not called from start() or from the snapshot-only
+    // getbootstrap relaunch: there the data is unchanged, so an un-halt would publish
+    // healthy over the same bad tip until the loop re-detects the reorg, and the gate's
+    // lag budget cannot catch that window because a deep reorg leaves lag near zero.
+    // A restored snapshot that is itself bad simply re-halts when the loop re-detects.
+    clearHalt(){
+        this.halted = false
+        this.haltReason = null
     }
 
     // getLastStoredBlocks() returns the stored-block hashes in blockHash
@@ -470,6 +507,27 @@ class XChainUtxoTracker {
             if (this.mempoolInterval) {
                 clearInterval(this.mempoolInterval)
                 this.mempoolInterval = null
+            }
+
+            // The loop aborted (halt path) instead of stopping normally, so nothing
+            // is left running to reach the else branch and the wait below could only
+            // ever time out and reject, which is what made restorebootstrap and
+            // getbootstrap unreachable on a halted tracker. Finalize the stop here
+            // the way that branch would, closing the store FIRST so a restore wipes
+            // /data with no handle held open. parsingStopped is the idempotence guard:
+            // a second stop call falls through to the resolve path below.
+            if (this.parsingAborted && !this.parsingStopped){
+                try {
+                    await this.db.close()
+                } catch (err) {
+                    // Reject explicitly: a throw inside this executor never reaches the
+                    // caller's await, it becomes an unhandled rejection and the RPC hangs.
+                    reject(err)
+                    return
+                }
+                this.parsingStopped = true
+                resolve(true)
+                return
             }
 
             let triesCount = 10
@@ -684,14 +742,25 @@ class XChainUtxoTracker {
 
             const confirmations = this.blockchainInfoLastBlock - nextOutput.height + 1
 
+            // Withhold an output whose count came out NEGATIVE. blockchainInfoLastBlock
+            // is -1 both in the constructor and again at the top of every startTracking
+            // run, so until the first getblockchaininfo lands this subtraction is
+            // negative for every stored output. The consumer contract is non-negative:
+            // xchain-encoder validator.js validateUtxoEntry and UtxoTracker.js both
+            // throw `confirmations must be a non-negative integer`, and that throw
+            // aborts the WHOLE address fetch, not just the one entry. Zero is
+            // deliberately still served: it is the encoder's unconfirmed marker
+            // (`confirmations == 0`) and the pinned stale-tip behaviour in
+            // test/boundary/confirmations.test.js, so only the value that would throw
+            // is dropped.
+            if (confirmations < 0) continue
+
             // Withhold immature coinbase outputs: every node rejects a spend
             // of a coinbase output below coinbaseMaturity confirmations, so serving
             // it as spendable would hand a caller an input that can never confirm.
-            // When the tip height is not yet known, confirmations is not meaningful
-            // and stays below the threshold, so we withhold (the conservative
-            // direction for spendability). Legacy O-records carry coinbase=false and
-            // are unaffected. Coinbase outputs only exist in the confirmed store, so
-            // no equivalent filter is needed on the mempool loop below.
+            // Legacy O-records carry coinbase=false and are unaffected. Coinbase
+            // outputs only exist in the confirmed store, so no equivalent filter is
+            // needed on the mempool loop below.
             if (nextOutput.coinbase && this.coinbaseMaturity > 0 && confirmations < this.coinbaseMaturity) continue
 
             nextOutput.txid = txid
@@ -1196,6 +1265,9 @@ class XChainUtxoTracker {
         
         this.keepParsing = true
         this.parsingStopped = false
+        // A relaunched loop is running again, so the previous abort no longer
+        // describes it; leaving this set would let stopParsing close a live store.
+        this.parsingAborted = false
 
         // Prefetch queue: each entry is { height, promise } where promise resolves to { hash, hex }
         let prefetchQueue = []
@@ -1602,6 +1674,12 @@ class XChainUtxoTracker {
                         const _tCommit = Date.now()
                         await this.db.endTransaction()
                         _t.commit += Date.now() - _tCommit
+
+                        // Stamp the forward-progress heartbeat only after the batch is
+                        // durable, so a crash mid-flush cannot leave /metrics claiming a
+                        // commit the DB never took.
+                        this.lastCommitAt = Date.now()
+                        this.lastCommittedHeight = nextBlockHeight
 
                         // Flush deferred mempool cleanup AFTER confirmed outputs are committed.
                         // This closes the ordering gap: mined UTXOs are queryable from the

@@ -37,6 +37,7 @@ const { handleBootstrapFailure, handleRestoreFailure } = require('./bootstrap-re
 const { isWrapperArchive, parseSha256Sidecar,
         hasRequiredLevelDbMembers, parseDetachedSignature } = require('./restore-validation.js')
 const { installObservability } = require('./observability');   // default-off /metrics + structured log shim
+const { installUtxoTrackerMetrics } = require('./utxoTrackerMetrics');   // sync-freshness heartbeat gauges
 const jsonRouter = require('express-json-rpc-router')
 const concurrencyGate = require('./concurrencyGate.js')
 const { parseCorsOrigin } = require('./corsOrigin.js')
@@ -363,12 +364,19 @@ async function startApi(){
     // See src/observability/README.md.
     let trackerVersion = '';
     try { trackerVersion = require('../package.json').version; } catch { /* version label is cosmetic */ }
-    installObservability(app, {
+    const observability = installObservability(app, {
         service: 'xchain-utxo-tracker',
         version: trackerVersion,
         coin:    process.env.COIN || '',
         network: NETWORK || ''
     });
+
+    // Sync-freshness heartbeat. Commit recency, halt state and reorg counters
+    // live in get_sync_status / GET /status only, so a wedged or halted tracker
+    // leaves no trace on the scrape and is undetectable if that polling rail
+    // itself regresses. No-ops when metrics are off (registry null unless
+    // METRICS_ENABLED). See src/utxoTrackerMetrics.js.
+    installUtxoTrackerMetrics(observability, tracker);
 
     // API key enforcement for admin JSON-RPC methods. Fails closed: without a
     // configured key these methods are rejected, never left open.
@@ -741,6 +749,13 @@ async function startApi(){
                     tasks[taskId]["progress"] = 100
                     console.log("Starting the parsing")
                     bootstrapBusy = false
+                    // The extraction replaced the store the halt was declared against, so
+                    // the marker no longer describes what is on disk. Without this the one
+                    // tracker instance this process ever builds keeps reporting halted=true
+                    // and 503 after a successful resync, and xchain-node's bootstrap gate
+                    // refuses it forever. Only the restore path clears it: getbootstrap
+                    // leaves the data untouched, so a halt there is still true.
+                    tracker.clearHalt()
                     launchTracker(tracker)
                 }).catch(error => {
                     // decompressPigz wipes /data BEFORE extracting, so a POST-wipe

@@ -59,7 +59,8 @@
     "mutate:p3": "stryker run test/mutation/stryker.p3.config.json",
     "mutate:incremental": "stryker run test/mutation/stryker.config.json --incremental",
     "mutate:custom": "node test/mutation/stryker-plugins/run-custom-mutants.js",
-    "mutate:custom:p1": "node test/mutation/stryker-plugins/run-custom-mutants.js --spec 'test/unit/**/*.test.js' --spec 'test/integration/**/*.test.js' src/LevelUpDb.js src/XChainUtxoTracker.js src/bufferutils.js"
+    "mutate:custom:p1": "node test/mutation/stryker-plugins/run-custom-mutants.js --spec 'test/unit/**/*.test.js' --spec 'test/integration/**/*.test.js' src/LevelUpDb.js src/XChainUtxoTracker.js src/bufferutils.js",
+    "ci:full": "bash bin/ci-full.sh"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^9.6.1",
@@ -73,7 +74,7 @@
     "supertest": "^7.2.2"
   },
   "overrides": {
-    "brace-expansion": "^5.0.8",
+    "brace-expansion": "^5.0.9",
     "minimatch": "^10.2.5",
     "qs": "^6.15.2",
     "serialize-javascript": "^7.0.5",
@@ -84,7 +85,7 @@
     "tough-cookie": "^6.0.2",
     "uuid": "^11.1.1",
     "form-data": "^4.0.6",
-    "js-yaml": "^4.3.0"
+    "js-yaml": "^4.3.1"
   },
   "engines": {
     "node": ">=22.0.0"
