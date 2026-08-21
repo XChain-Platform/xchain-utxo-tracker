@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/coverage-unit%20%7C%20integration%20%7C%20e2e%20%7C%20boundary%20%7C%20security%20%7C%20fuzz%20%7C%20chaos%20%7C%20mutation%20%7C%20regression%20%7C%20performance%20%7C%20smoke-brightgreen" alt="Coverage">
 </p>
 
-UTXO indexing service for the XChain Platform. Continuously polls cryptocurrency nodes (Bitcoin, Litecoin, Dogecoin) via JSON-RPC, decodes every block, indexes all unspent transaction outputs in LevelDB using compact binary encoding, and serves balance and UTXO queries through REST and JSON-RPC APIs. The encoder depends on this service to find spendable inputs when constructing transactions.
+UTXO indexing service for the XChain Platform. Continuously polls the coin nodes of every supported chain (Bitcoin, Litecoin, and Dogecoin today) via JSON-RPC, decodes every block, indexes all unspent transaction outputs in LevelDB using compact binary encoding, and serves balance and UTXO queries through REST and JSON-RPC APIs. The encoder depends on this service to find spendable inputs when constructing transactions.
 
 ## Features
 
@@ -28,7 +28,7 @@ UTXO indexing service for the XChain Platform. Continuously polls cryptocurrency
 - **Concurrent block prefetch**: up to 10 blocks pre-fetched concurrently via JSON-RPC batch requests with HTTP keep-alive
 - **Batch writes**: LevelDB writes batched in groups of 200 blocks with atomic commit
 - **Two-pass transaction processing**: outputs inserted before inputs within each block, correctly handling intra-block spends
-- **Multi-chain support**: Bitcoin, Litecoin, and Dogecoin on mainnet, testnet, and regtest
+- **Multi-chain support**: Bitcoin, Litecoin, and Dogecoin today on mainnet, testnet, and regtest
 - **AuxPoW/HogEx header stripping**: Dogecoin AuxPoW headers and Litecoin HogEx witness flag stripped before block decoding
 - **Bootstrap support**: compressed tar archive backup and restore for fast initial sync
 - **REST + JSON-RPC API**: dual interface for UTXO queries, balance lookups, address info, and bootstrap operations
