@@ -692,7 +692,14 @@ class LevelUpStore {
         } catch (err){
             console.log("There were errors trying to insert data in a batch")
             console.log(err)
-            throw new Error("Error in LevelDB batch inserting")
+            // Carry the LevelDB error, not just a label. This is the atomic flush of a
+            // whole block batch, and the throw reaches the polling loop's top-level
+            // guard, verifyReorg's retry classifier and the supervisor log; without the
+            // cause those readers see a constant string and the real code/message only
+            // exists in an earlier console line nobody correlates. Same convention as
+            // createDatabase and removeLastStoredBlock in this file. The leading text is
+            // kept verbatim as the stable prefix callers and tests match on.
+            throw new Error("Error in LevelDB batch inserting: " + (err && err.message), { cause: err })
         }
     }
 

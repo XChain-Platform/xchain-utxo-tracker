@@ -97,12 +97,44 @@ const MAX_PAGE_LIMIT = Number(process.env.UTXO_MAX_PAGE_LIMIT) > 0
     ? Math.floor(Number(process.env.UTXO_MAX_PAGE_LIMIT))
     : 10000
 
+// Validate-or-fall-back resolver for the bulk-sync numeric env knobs, the same shape
+// resolveUndoBlocks (undo-blocks.js) applies to XCHAIN_UNDO_BLOCKS_<COIN>: a malformed
+// override is refused and the default stands, loudly. Number() rather than parseInt()
+// because parseInt happily truncates '10abc' to 10 and reads a typo as intent; a knob
+// this pipeline FATALs on deserves the strict read.
+//
+// These values are not just forwarded. BULK_SYNC_TIP_SAFETY also feeds the
+// too-short-chain pre-flight in runBulkSyncIfEmpty, and a raw string ran through
+// parseInt there yielded NaN on a typo'd value; Math.max(NaN, undoBlocks) is NaN and
+// every comparison against NaN is false, so the pre-flight that exists to fall back
+// to incremental sync silently passed instead. The orchestrator was then spawned with
+// --tip-safety <garbage>, which dump.js validateArgs rejects as a FATAL: one typo
+// turned into a crash-loop where the design called for a graceful fallback. The
+// sibling knobs go through here too because orchestrator.js parseArgs runs bare
+// parseInt on all five, so a malformed --workers or --ram-budget degrades silently
+// rather than failing at all.
+//
+// Warn-and-default rather than throw: the pre-flight's whole purpose is that a
+// misconfigured tracker still comes up on the incremental path.
+function envInt(name, fallback, min){
+    const raw = process.env[name]
+    if (raw === undefined || raw === null || String(raw).trim() === '') return fallback
+    const parsed = Number(String(raw).trim())
+    if (!Number.isInteger(parsed) || parsed < min) {
+        console.error(
+            `WARNING: ${name}='${raw}' is not an integer >= ${min}; falling back to ${fallback}. ` +
+            'Bulk-sync will run with the default for this knob.')
+        return fallback
+    }
+    return parsed
+}
+
 // Bulk-sync pre-flight (activates on empty DB). See runBulkSyncIfEmpty below.
-const BULK_SYNC_WORKERS      = process.env.BULK_SYNC_WORKERS      || '6'
-const BULK_SYNC_CHUNK_SIZE   = process.env.BULK_SYNC_CHUNK_SIZE   || '10000'
-const BULK_SYNC_RAM_BUDGET   = process.env.BULK_SYNC_RAM_BUDGET   || '4096'
-const BULK_SYNC_TIP_SAFETY   = process.env.BULK_SYNC_TIP_SAFETY   || '10'
-const BULK_SYNC_BATCH_SIZE   = process.env.BULK_SYNC_BATCH_SIZE   || '10000'
+const BULK_SYNC_WORKERS      = envInt('BULK_SYNC_WORKERS',    6,     1)
+const BULK_SYNC_CHUNK_SIZE   = envInt('BULK_SYNC_CHUNK_SIZE', 10000, 1)
+const BULK_SYNC_RAM_BUDGET   = envInt('BULK_SYNC_RAM_BUDGET', 4096,  1)
+const BULK_SYNC_TIP_SAFETY   = envInt('BULK_SYNC_TIP_SAFETY', 10,    0)
+const BULK_SYNC_BATCH_SIZE   = envInt('BULK_SYNC_BATCH_SIZE', 10000, 1)
 const BULK_SYNC_WORK_DIR     = process.env.BULK_SYNC_WORK_DIR     || path.join('/data', DB_NAME, '_bulk-sync-work')
 const BULK_SYNC_NODE_POLL_MS = 30000
 
@@ -261,10 +293,13 @@ async function startApi(){
     // do not assume fresh", never as lag 0.
     // Also carries mempool_ready (block sync AND mempool reconvergence, the same
     // pair REST gates X-Mempool-Ready on) and, while halted, the halt marker, so
-    // an RPC caller gates on the same facts a REST caller can.
-    async function getFreshnessMeta(){
+    // an RPC caller gates on the same facts a REST caller can. A caller that has
+    // already read the committed height (GET /status) passes it in to skip the
+    // second LevelDB read.
+    async function getFreshnessMeta(knownCommittedHeight){
         let committedHeight = -1;
-        try { committedHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
+        if (typeof knownCommittedHeight === 'number') committedHeight = knownCommittedHeight;
+        else { try { committedHeight = await tracker.db.getLastBlockHeight(); } catch (e) {} }
         const rawTip = (typeof tracker.latestKnownChainTip === 'number')
             ? tracker.latestKnownChainTip
             : (typeof tracker.blockchainInfoLastBlock === 'number' ? tracker.blockchainInfoLastBlock : -1);
@@ -570,9 +605,10 @@ async function startApi(){
         // markers), matching xchain-decoder's and xchain-indexer's health().
         // Delegates to get_sync_status so the lag math and SYNCED_THRESHOLD stay
         // defined in one place. xchain-node's BootstrapHealthGate probes this
-        // method first and falls back to GET /status, which carries no lag field
-        // at all; without this method that gate's lag refusal silently never
-        // fired and a badly lagging tracker certified as a bootstrap source.
+        // method first and falls back to GET /status; before that route carried
+        // freshness, a fallback body had no lag field, the gate's lag refusal
+        // silently never fired and a badly lagging tracker certified as a
+        // bootstrap source.
         async health() {
             const sync = await jsonRpcController.get_sync_status();
             // Same reachability read GET /status runs: a missing or unreachable
@@ -637,8 +673,23 @@ async function startApi(){
             result.sync = await getFreshnessMeta()
             return result
         },
+        // Frozen shape: bare {height} or null. xchain-indexer's UtxoTracker client
+        // parses it positionally and that verdict feeds a replay-frozen dispenser
+        // path, so wrapping it (the null case included) would change historical
+        // outcomes. Callers needing freshness use get_first_seen_status below or
+        // the REST /firstseen/:address headers.
         async get_first_seen({address}) {
             return await getFirstSeen(address)
+        },
+
+        // Freshness-aware sibling of get_first_seen, carrying the same additive
+        // sync surface the other address queries and the REST twin already publish.
+        // One shape in every case, so a null first_seen from a lagging, halted or
+        // unwinding tracker is distinguishable from an address that has genuinely
+        // never appeared on chain.
+        async get_first_seen_status({address}) {
+            const firstSeen = await getFirstSeen(address)
+            return { first_seen: firstSeen || null, sync: await getFreshnessMeta() }
         },
 
         async get_balance({address}) {
@@ -805,9 +856,16 @@ async function startApi(){
         // Halted (unrecoverable reorg): report unhealthy so Docker/monitors see the
         // degradation while the process stays up (no restart thrash; unless-stopped
         // only restarts on exit). Recovery is an operator resync via restorebootstrap.
+        // Freshness (tracker_height / node_height / lag / synced) rides on BOTH
+        // branches from the poll loop's cached tip, no node RPC: xchain-node's
+        // BootstrapHealthGate falls back to this probe whenever its `health` POST
+        // is shed by the request gate (this route answers from probe_gate's
+        // reserve), and a body with no lag field gave that gate's lag refusal
+        // nothing to judge. lag stays null when the tip is unknown, never 0.
+        const freshness = await getFreshnessMeta(committedHeight)
         if (tracker.halted) {
             res.status(503)
-            return res.json({ status: 'halted', halt_reason: tracker.haltReason, db: dbOk, committed_height: committedHeight })
+            return res.json({ status: 'halted', halt_reason: tracker.haltReason, db: dbOk, committed_height: committedHeight, ...freshness })
         }
         // A readable store is not forward progress. The tracking loop retries a
         // failing getBlockchainInfo forever, so a coin node that is down or unsynced
@@ -820,7 +878,7 @@ async function startApi(){
         // request_gate exposes the global concurrency cap and how many requests
         // it has shed; a climbing shed count is the only outward sign
         // that a distinct-IP stampede is being refused.
-        const body = { status, db: dbOk, committed_height: committedHeight, request_gate: requestGate.getStats(), probe_gate: probeGate.getStats() }
+        const body = { status, db: dbOk, committed_height: committedHeight, ...freshness, request_gate: requestGate.getStats(), probe_gate: probeGate.getStats() }
         if (nodeRpcStale) {
             body.node_rpc_stale = true
             body.stale_for_ms   = Date.now() - tracker.lastNodeRpcOkAt
@@ -1391,17 +1449,20 @@ function runBulkSyncOrchestrator() {
     const dbPath   = path.join('/data', DB_NAME)
     const orchPath = path.join(__dirname, 'bulk-sync', 'orchestrator.js')
 
+    // String() because the knobs above are resolved NUMBERS now and spawn refuses a
+    // non-string argv element; the values themselves are already validated integers,
+    // so the orchestrator can no longer be handed a NaN it would FATAL on.
     const args = [
         orchPath,
         '--network',    NETWORK,
         '--from',       '0',
-        '--tip-safety', BULK_SYNC_TIP_SAFETY,
-        '--chunk-size', BULK_SYNC_CHUNK_SIZE,
-        '--workers',    BULK_SYNC_WORKERS,
+        '--tip-safety', String(BULK_SYNC_TIP_SAFETY),
+        '--chunk-size', String(BULK_SYNC_CHUNK_SIZE),
+        '--workers',    String(BULK_SYNC_WORKERS),
         '--out',        BULK_SYNC_WORK_DIR,
         '--db',         dbPath,
-        '--ram-budget', BULK_SYNC_RAM_BUDGET,
-        '--batch-size', BULK_SYNC_BATCH_SIZE,
+        '--ram-budget', String(BULK_SYNC_RAM_BUDGET),
+        '--batch-size', String(BULK_SYNC_BATCH_SIZE),
     ]
 
     // Resume support: if parsed/ already has worker output, skip dump+parse.
@@ -1445,7 +1506,11 @@ async function runBulkSyncIfEmpty() {
     // [tipSafety+1, undoBlocks) would pass here, then dump.js computes a negative
     // dumpEnd and FATALs, crash-looping the tracker before startApi(). Keep the
     // two in lockstep so a too-short chain falls through to the incremental tracker.
-    const minBlocks = Math.max(parseInt(BULK_SYNC_TIP_SAFETY, 10), resolveUndoBlocks(NETWORK)) + 1
+    // BULK_SYNC_TIP_SAFETY is already a validated integer (envInt above): the old
+    // parseInt here turned a malformed env into NaN, and NaN loses every comparison,
+    // so this guard silently stopped guarding on exactly the misconfiguration it
+    // needed to catch.
+    const minBlocks = Math.max(BULK_SYNC_TIP_SAFETY, resolveUndoBlocks(NETWORK)) + 1
     if (info.blocks < minBlocks) {
         console.log(`[bulk-sync] chain too short (${info.blocks} blocks < ${minBlocks} required): skipping bulk-sync, incremental sync will index from block 0`)
         return
@@ -1484,6 +1549,7 @@ module.exports = {
     assertLevelDbArchiveOrThrow,
     listArchiveMembers,
     sha256File,
+    envInt,
     // Exported for the recovery regression test only: the bootstrap task map and
     // the compressor that must leave a record behind for handleBootstrapFailure
     // to stamp. Nothing outside src/api.js consumes either at runtime.

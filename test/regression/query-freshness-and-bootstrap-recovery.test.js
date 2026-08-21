@@ -112,7 +112,7 @@ describe('computeFreshness', function () {
   // assertion above green while get_utxos still shipped the old four fields.
   it('feeds the tracker\'s mempool and halt state into the per-query sibling', function () {
     const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
-    const fn = src.slice(src.indexOf('async function getFreshnessMeta()'));
+    const fn = src.slice(src.indexOf('async function getFreshnessMeta('));
     const body = fn.slice(0, fn.indexOf('\n    }'));
     expect(body).to.match(/mempoolReconverged:\s*tracker\.isMempoolReconverged\(\)/);
     expect(body).to.match(/halted:\s*!!tracker\.halted/);

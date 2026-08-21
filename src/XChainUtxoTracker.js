@@ -152,6 +152,23 @@ class XChainUtxoTracker {
       if (!this.network) {
         throw new Error(`XChainUtxoTracker: unknown network "${network}" -- no bitcoinjs network config resolved. Check the configured network name.`)
       }
+
+      // Net portion ('mainnet'|'testnet'|'regtest') of the "<fullname>-<network>"
+      // key. The guard above already rejected an unknown key, so the suffix here
+      // is a valid network name.
+      this.consensusNetwork = String(network).slice(String(network).lastIndexOf('-') + 1)
+
+      // Verify the bundled canonical coin files against CONSENSUS_CONFIG_PIN before
+      // any consensus-relevant field is read, matching decoder, indexer and hub. A
+      // null pin (mainnet, pre-arm) skips; a mismatch on an armed network throws, so
+      // a drifted or partially re-vendored bundle halts instead of fetching and
+      // stripping block bytes under divergent network params (the auxPow decision
+      // below, and the address/script rules the UTXO set is keyed on, both come from
+      // this registry). Deliberately not wrapped in try/catch, and deliberately in
+      // the constructor rather than start(): api.js does not await start(), so a
+      // later check would let the HTTP surface bind and serve queries first.
+      require('./coins').verifyConsensusPin(this.consensusNetwork)
+
       this.connector = new BlockchainConnector(nodeUrl, nodePort, nodeUser, nodePassword)
       this.dbName = dbName
       
@@ -1403,7 +1420,11 @@ class XChainUtxoTracker {
                             // blocks above the node tip, then reconciles by hash, honoring the
                             // undoBlocks depth guard (a regression deeper than the window aborts
                             // loudly for an operator-driven resync).
-                            console.log("WARNING! The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"). The node likely reset or reorged below our tip; rolling back to its chain.")
+                            // console.warn, not console.log: the line says WARNING but a
+                            // collector keys severity on the console method, so at info level
+                            // this tip regression is filed as routine progress. See the
+                            // reorg-detection-warn-level drift guard.
+                            console.warn("WARNING! The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"). The node likely reset or reorged below our tip; rolling back to its chain.")
                             this.lastBlocks = await this.loadLastBlocksSortedByHeight()
                             await this.verifyReorg(this.blockchainInfoLastBlock)
                             lastProcessedBlockIndex = await this.db.getLastBlockHeight()
@@ -1437,7 +1458,10 @@ class XChainUtxoTracker {
                             console.error('Error re-checking the committed tip hash from node: ' + err.message, err)
                         }
                         if (tipHashFromNode && tipHashFromNode != lastProcessedBlockHash){
-                            console.log("A same-height tip reorg has been detected. Cleaning blocks...")
+                            // console.warn: a tip swap at the same height is a reorg, and it
+                            // must leave a warn-level record even if verifyReorg then wedges
+                            // before reorgCount/last_reorg_depth advance.
+                            console.warn("A same-height tip reorg has been detected. Cleaning blocks...")
                             prefetchQueue = []
                             // Discard any in-flight batch before recovery, exactly as the
                             // prev-hash-mismatch and true-regression reorg paths do. This
@@ -1571,7 +1595,10 @@ class XChainUtxoTracker {
                             // getLastStoredBlocks() order is lexicographic by hash,
                             // which makes verifyReorg's removeFromLastBlocks throw.
                             this.lastBlocks = await this.loadLastBlocksSortedByHeight()
-                            console.log("A reorg has been detected. Cleaning blocks...")
+                            // console.warn: the prev-hash-mismatch path is the ordinary reorg
+                            // trigger, so leaving it at info is what makes a routine reorg
+                            // invisible to a warn+ filter.
+                            console.warn("A reorg has been detected. Cleaning blocks...")
                             await this.verifyReorg()
                             lastProcessedBlockIndex = await this.db.getLastBlockHeight()
                             lastProcessedBlockHash = await this.db.getLastBlockHash()
