@@ -1098,7 +1098,14 @@ describe('LevelUpDb (extended coverage)', function () {
 
             // Should throw the wrapped batch error
             expect(err).to.be.an('error');
-            expect(err.message).to.equal('Error in LevelDB batch inserting');
+            expect(err.message).to.have.string('Error in LevelDB batch inserting');
+            // The atomic flush of a whole block batch is the most durability-critical
+            // throw in this store, and it reaches the polling loop's top-level guard
+            // and the supervisor log with nothing else attached. Pin the cause and the
+            // inlined message: without them the propagated error is a constant string
+            // and the real LevelDB code lives only in an earlier console line.
+            expect(err.cause).to.be.an('error');
+            expect(err.message).to.have.string(err.cause.message);
             // transactionArray was NOT cleared (catch re-throws before null assignment)
             expect(db.transactionArray).to.be.an.instanceOf(Map);
         });

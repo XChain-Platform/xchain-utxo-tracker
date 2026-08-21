@@ -97,12 +97,44 @@ const MAX_PAGE_LIMIT = Number(process.env.UTXO_MAX_PAGE_LIMIT) > 0
     ? Math.floor(Number(process.env.UTXO_MAX_PAGE_LIMIT))
     : 10000
 
+// Validate-or-fall-back resolver for the bulk-sync numeric env knobs, the same shape
+// resolveUndoBlocks (undo-blocks.js) applies to XCHAIN_UNDO_BLOCKS_<COIN>: a malformed
+// override is refused and the default stands, loudly. Number() rather than parseInt()
+// because parseInt happily truncates '10abc' to 10 and reads a typo as intent; a knob
+// this pipeline FATALs on deserves the strict read.
+//
+// These values are not just forwarded. BULK_SYNC_TIP_SAFETY also feeds the
+// too-short-chain pre-flight in runBulkSyncIfEmpty, and a raw string ran through
+// parseInt there yielded NaN on a typo'd value; Math.max(NaN, undoBlocks) is NaN and
+// every comparison against NaN is false, so the pre-flight that exists to fall back
+// to incremental sync silently passed instead. The orchestrator was then spawned with
+// --tip-safety <garbage>, which dump.js validateArgs rejects as a FATAL: one typo
+// turned into a crash-loop where the design called for a graceful fallback. The
+// sibling knobs go through here too because orchestrator.js parseArgs runs bare
+// parseInt on all five, so a malformed --workers or --ram-budget degrades silently
+// rather than failing at all.
+//
+// Warn-and-default rather than throw: the pre-flight's whole purpose is that a
+// misconfigured tracker still comes up on the incremental path.
+function envInt(name, fallback, min){
+    const raw = process.env[name]
+    if (raw === undefined || raw === null || String(raw).trim() === '') return fallback
+    const parsed = Number(String(raw).trim())
+    if (!Number.isInteger(parsed) || parsed < min) {
+        console.error(
+            `WARNING: ${name}='${raw}' is not an integer >= ${min}; falling back to ${fallback}. ` +
+            'Bulk-sync will run with the default for this knob.')
+        return fallback
+    }
+    return parsed
+}
+
 // Bulk-sync pre-flight (activates on empty DB). See runBulkSyncIfEmpty below.
-const BULK_SYNC_WORKERS      = process.env.BULK_SYNC_WORKERS      || '6'
-const BULK_SYNC_CHUNK_SIZE   = process.env.BULK_SYNC_CHUNK_SIZE   || '10000'
-const BULK_SYNC_RAM_BUDGET   = process.env.BULK_SYNC_RAM_BUDGET   || '4096'
-const BULK_SYNC_TIP_SAFETY   = process.env.BULK_SYNC_TIP_SAFETY   || '10'
-const BULK_SYNC_BATCH_SIZE   = process.env.BULK_SYNC_BATCH_SIZE   || '10000'
+const BULK_SYNC_WORKERS      = envInt('BULK_SYNC_WORKERS',    6,     1)
+const BULK_SYNC_CHUNK_SIZE   = envInt('BULK_SYNC_CHUNK_SIZE', 10000, 1)
+const BULK_SYNC_RAM_BUDGET   = envInt('BULK_SYNC_RAM_BUDGET', 4096,  1)
+const BULK_SYNC_TIP_SAFETY   = envInt('BULK_SYNC_TIP_SAFETY', 10,    0)
+const BULK_SYNC_BATCH_SIZE   = envInt('BULK_SYNC_BATCH_SIZE', 10000, 1)
 const BULK_SYNC_WORK_DIR     = process.env.BULK_SYNC_WORK_DIR     || path.join('/data', DB_NAME, '_bulk-sync-work')
 const BULK_SYNC_NODE_POLL_MS = 30000
 
@@ -1391,17 +1423,20 @@ function runBulkSyncOrchestrator() {
     const dbPath   = path.join('/data', DB_NAME)
     const orchPath = path.join(__dirname, 'bulk-sync', 'orchestrator.js')
 
+    // String() because the knobs above are resolved NUMBERS now and spawn refuses a
+    // non-string argv element; the values themselves are already validated integers,
+    // so the orchestrator can no longer be handed a NaN it would FATAL on.
     const args = [
         orchPath,
         '--network',    NETWORK,
         '--from',       '0',
-        '--tip-safety', BULK_SYNC_TIP_SAFETY,
-        '--chunk-size', BULK_SYNC_CHUNK_SIZE,
-        '--workers',    BULK_SYNC_WORKERS,
+        '--tip-safety', String(BULK_SYNC_TIP_SAFETY),
+        '--chunk-size', String(BULK_SYNC_CHUNK_SIZE),
+        '--workers',    String(BULK_SYNC_WORKERS),
         '--out',        BULK_SYNC_WORK_DIR,
         '--db',         dbPath,
-        '--ram-budget', BULK_SYNC_RAM_BUDGET,
-        '--batch-size', BULK_SYNC_BATCH_SIZE,
+        '--ram-budget', String(BULK_SYNC_RAM_BUDGET),
+        '--batch-size', String(BULK_SYNC_BATCH_SIZE),
     ]
 
     // Resume support: if parsed/ already has worker output, skip dump+parse.
@@ -1445,7 +1480,11 @@ async function runBulkSyncIfEmpty() {
     // [tipSafety+1, undoBlocks) would pass here, then dump.js computes a negative
     // dumpEnd and FATALs, crash-looping the tracker before startApi(). Keep the
     // two in lockstep so a too-short chain falls through to the incremental tracker.
-    const minBlocks = Math.max(parseInt(BULK_SYNC_TIP_SAFETY, 10), resolveUndoBlocks(NETWORK)) + 1
+    // BULK_SYNC_TIP_SAFETY is already a validated integer (envInt above): the old
+    // parseInt here turned a malformed env into NaN, and NaN loses every comparison,
+    // so this guard silently stopped guarding on exactly the misconfiguration it
+    // needed to catch.
+    const minBlocks = Math.max(BULK_SYNC_TIP_SAFETY, resolveUndoBlocks(NETWORK)) + 1
     if (info.blocks < minBlocks) {
         console.log(`[bulk-sync] chain too short (${info.blocks} blocks < ${minBlocks} required): skipping bulk-sync, incremental sync will index from block 0`)
         return
@@ -1484,6 +1523,7 @@ module.exports = {
     assertLevelDbArchiveOrThrow,
     listArchiveMembers,
     sha256File,
+    envInt,
     // Exported for the recovery regression test only: the bootstrap task map and
     // the compressor that must leave a record behind for handleBootstrapFailure
     // to stamp. Nothing outside src/api.js consumes either at runtime.

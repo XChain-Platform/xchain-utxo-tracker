@@ -300,6 +300,14 @@ async function main() {
     const args = parseArgs(process.argv)
     validateArgs(args)
 
+    // The seeder is its own process, spawned before the tracker is constructed, and
+    // it reads coins.WIRE_FORMAT below to decide AuxPoW stripping. Verify the bundled
+    // coin files against CONSENSUS_CONFIG_PIN here too, or a drifted bundle would
+    // dump every block under divergent network params and the tracker's own boot
+    // check would only fire after the seed was already on disk. validateArgs has
+    // already constrained args.netName to a real network name.
+    coins.verifyConsensusPin(args.netName)
+
     const nodeUrl      = process.env.NODE_URL
     const nodePort     = process.env.NODE_PORT
     const nodeUser     = process.env.NODE_USER
