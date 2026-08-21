@@ -120,6 +120,17 @@ describe('node-RPC staleness policy', function () {
     expect(route).to.match(/nodeRpcStale\) res\.status\(503\)|!dbOk \|\| nodeRpcStale\) res\.status\(503\)/);
   });
 
+  // Wiring guard: xchain-node's bootstrap gate falls back to GET /status when the
+  // health POST is shed, and refuses a body with no lag field. The freshness meta
+  // (lag/node_height/synced from the cached tip, no RPC) must ride on BOTH the
+  // halted and the normal branch so the fallback probe is never lag-free.
+  it('spreads the freshness meta into every GET /status body', function () {
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+    const route = src.slice(src.indexOf("app.get('/status'"), src.indexOf("app.use((req, res, next) => { if (req.body === undefined)"));
+    expect(route).to.match(/const freshness = await getFreshnessMeta\(committedHeight\)/);
+    expect(route.match(/\.\.\.freshness/g) || []).to.have.lengthOf(2);
+  });
+
   // Deliberate boundary: deriveHealthStatus feeds the `health` RPC, whose consumers
   // (xchain-node's bootstrap gate) own their own lag budget. Folding staleness into
   // it would refuse a source the caller would otherwise accept.

@@ -293,10 +293,13 @@ async function startApi(){
     // do not assume fresh", never as lag 0.
     // Also carries mempool_ready (block sync AND mempool reconvergence, the same
     // pair REST gates X-Mempool-Ready on) and, while halted, the halt marker, so
-    // an RPC caller gates on the same facts a REST caller can.
-    async function getFreshnessMeta(){
+    // an RPC caller gates on the same facts a REST caller can. A caller that has
+    // already read the committed height (GET /status) passes it in to skip the
+    // second LevelDB read.
+    async function getFreshnessMeta(knownCommittedHeight){
         let committedHeight = -1;
-        try { committedHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
+        if (typeof knownCommittedHeight === 'number') committedHeight = knownCommittedHeight;
+        else { try { committedHeight = await tracker.db.getLastBlockHeight(); } catch (e) {} }
         const rawTip = (typeof tracker.latestKnownChainTip === 'number')
             ? tracker.latestKnownChainTip
             : (typeof tracker.blockchainInfoLastBlock === 'number' ? tracker.blockchainInfoLastBlock : -1);
@@ -602,9 +605,10 @@ async function startApi(){
         // markers), matching xchain-decoder's and xchain-indexer's health().
         // Delegates to get_sync_status so the lag math and SYNCED_THRESHOLD stay
         // defined in one place. xchain-node's BootstrapHealthGate probes this
-        // method first and falls back to GET /status, which carries no lag field
-        // at all; without this method that gate's lag refusal silently never
-        // fired and a badly lagging tracker certified as a bootstrap source.
+        // method first and falls back to GET /status; before that route carried
+        // freshness, a fallback body had no lag field, the gate's lag refusal
+        // silently never fired and a badly lagging tracker certified as a
+        // bootstrap source.
         async health() {
             const sync = await jsonRpcController.get_sync_status();
             // Same reachability read GET /status runs: a missing or unreachable
@@ -669,8 +673,23 @@ async function startApi(){
             result.sync = await getFreshnessMeta()
             return result
         },
+        // Frozen shape: bare {height} or null. xchain-indexer's UtxoTracker client
+        // parses it positionally and that verdict feeds a replay-frozen dispenser
+        // path, so wrapping it (the null case included) would change historical
+        // outcomes. Callers needing freshness use get_first_seen_status below or
+        // the REST /firstseen/:address headers.
         async get_first_seen({address}) {
             return await getFirstSeen(address)
+        },
+
+        // Freshness-aware sibling of get_first_seen, carrying the same additive
+        // sync surface the other address queries and the REST twin already publish.
+        // One shape in every case, so a null first_seen from a lagging, halted or
+        // unwinding tracker is distinguishable from an address that has genuinely
+        // never appeared on chain.
+        async get_first_seen_status({address}) {
+            const firstSeen = await getFirstSeen(address)
+            return { first_seen: firstSeen || null, sync: await getFreshnessMeta() }
         },
 
         async get_balance({address}) {
@@ -837,9 +856,16 @@ async function startApi(){
         // Halted (unrecoverable reorg): report unhealthy so Docker/monitors see the
         // degradation while the process stays up (no restart thrash; unless-stopped
         // only restarts on exit). Recovery is an operator resync via restorebootstrap.
+        // Freshness (tracker_height / node_height / lag / synced) rides on BOTH
+        // branches from the poll loop's cached tip, no node RPC: xchain-node's
+        // BootstrapHealthGate falls back to this probe whenever its `health` POST
+        // is shed by the request gate (this route answers from probe_gate's
+        // reserve), and a body with no lag field gave that gate's lag refusal
+        // nothing to judge. lag stays null when the tip is unknown, never 0.
+        const freshness = await getFreshnessMeta(committedHeight)
         if (tracker.halted) {
             res.status(503)
-            return res.json({ status: 'halted', halt_reason: tracker.haltReason, db: dbOk, committed_height: committedHeight })
+            return res.json({ status: 'halted', halt_reason: tracker.haltReason, db: dbOk, committed_height: committedHeight, ...freshness })
         }
         // A readable store is not forward progress. The tracking loop retries a
         // failing getBlockchainInfo forever, so a coin node that is down or unsynced
@@ -852,7 +878,7 @@ async function startApi(){
         // request_gate exposes the global concurrency cap and how many requests
         // it has shed; a climbing shed count is the only outward sign
         // that a distinct-IP stampede is being refused.
-        const body = { status, db: dbOk, committed_height: committedHeight, request_gate: requestGate.getStats(), probe_gate: probeGate.getStats() }
+        const body = { status, db: dbOk, committed_height: committedHeight, ...freshness, request_gate: requestGate.getStats(), probe_gate: probeGate.getStats() }
         if (nodeRpcStale) {
             body.node_rpc_stale = true
             body.stale_for_ms   = Date.now() - tracker.lastNodeRpcOkAt
