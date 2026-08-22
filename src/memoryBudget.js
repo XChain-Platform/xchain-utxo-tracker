@@ -80,8 +80,10 @@ function budgetBytes() {
     return hostBytes
 }
 
-function parseEnvInt(name) {
-    const raw = process.env[name]
+// Takes the value, not the variable name: a computed process.env[name] read is
+// invisible to the env-var documentation gate, so every variable is read by
+// name at its call site instead.
+function parseEnvInt(raw) {
     if (raw === undefined || raw === '') return null
     const value = parseInt(raw, 10)
     if (!Number.isFinite(value) || value <= 0) return null
@@ -91,13 +93,13 @@ function parseEnvInt(name) {
 // An explicit env value always wins: an operator who has measured their own
 // workload knows something this derivation cannot.
 function leveldbCacheBytes() {
-    const override = parseEnvInt('LEVELDB_CACHE_BYTES')
+    const override = parseEnvInt(process.env.LEVELDB_CACHE_BYTES)
     if (override !== null) return override
     return Math.floor(clamp(budgetBytes() / CACHE_FRACTION, CACHE_MIN_BYTES, CACHE_MAX_BYTES))
 }
 
 function heapFlushThresholdMB() {
-    const override = parseEnvInt('HEAP_FLUSH_THRESHOLD_MB')
+    const override = parseEnvInt(process.env.HEAP_FLUSH_THRESHOLD_MB)
     if (override !== null) return override
     const derivedMB = budgetBytes() / HEAP_FLUSH_FRACTION / MIB
     return Math.floor(clamp(derivedMB, HEAP_FLUSH_MIN_MB, HEAP_FLUSH_MAX_MB))
