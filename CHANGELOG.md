@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-08-18
+
+### Added
+- `GET /status` carries tracker height, node height, lag and synced, so a caller falling back to it from the health POST has something to judge; an unknown tip reports lag as null rather than 0.
+- `get_first_seen_status` gives a freshness-aware sibling to `get_first_seen`, making a null from a lagging or halted tracker distinguishable from an address that never appeared.
+
+### Fixed
+- The consensus pin is verified at boot, and the bulk-sync environment is validated.
+- Code-review round fixes across the tracker (two rounds, 9 files).
+
+### Security
+- Raised the brace-expansion and js-yaml dependency floors and the advisory guards that pin them.
+
 ## [0.9.0] - 2026-08-14
 
 First release of the XChain Platform release train. Every component in the train
