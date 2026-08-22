@@ -18,19 +18,13 @@
  * backfill: the LevelDB block cache (native, off-heap) and the heap
  * threshold that forces an early batch flush.
  *
- * Both used to be fixed constants sized for a large server (4 GiB of
- * block cache under a 4 GB heap ceiling). On a small host that is a
- * multiple of the whole machine: a Raspberry Pi 4 running a testnet
- * backfill reached 4.39 GB RSS and exhausted swap. Capping the
- * container without resizing these is worse, not better, because the
- * process then dies against the cgroup limit instead of the host's,
- * in a restart loop that makes no forward progress.
- *
- * So derive both from the memory this process may actually use, and
- * read that from the cgroup when one applies: inside a container
- * os.totalmem() reports the HOST's memory, so `--memory 2g` is
- * invisible to it and every derived size would be wrong in the one
- * case where being wrong is fatal.
+ * Both are derived from the memory this process may actually use, which
+ * is read from the cgroup whenever one binds below host RAM. That case
+ * is the one that must not be got wrong: inside a container
+ * os.totalmem() reports the HOST, so a memory-capped tracker would
+ * otherwise size itself for the machine and be OOM-killed in a restart
+ * loop that never completes a batch. A container cap alone is therefore
+ * not a fix; the sizes have to move with it.
  *
  ********************************************************************/
 
@@ -47,11 +41,9 @@ const CACHE_MAX_BYTES = 4096 * MIB
 const HEAP_FLUSH_MIN_MB = 256
 const HEAP_FLUSH_MAX_MB = 2048
 
-// Fractions of the budget. The cache is the larger share because it is a
-// steady-state working-set cache, while the heap figure is a flush trigger
-// that only has to hold one batch of staged writes. Together they leave
-// better than half the budget for the rest of the process and for the
-// allocation spikes inside a single block parse.
+// The cache takes the larger share as a steady-state working set; the heap
+// figure only has to hold one staged batch. Together they leave better than
+// half the budget for the rest of the process and per-block spikes.
 const CACHE_FRACTION = 4
 const HEAP_FLUSH_FRACTION = 8
 

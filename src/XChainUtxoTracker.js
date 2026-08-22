@@ -41,17 +41,9 @@ bitcoin.initEccLib(ecc)
 const CHECK_BLOCK_DELAY_MS = 1000 //1 second to continously ask for new block when all has been parsed
 const BLOCKCHAIN_INFO_REFRESH_MS = 30000 //Re-poll the node tip at least this often during catch-up so the tracked tip stays current
 const DB_TRANSACTION_BLOCKS_QUANTITY = 200
-// Heap-pressure flush guard: modern BTC blocks (~4k tx avg, 10k+ in dense
-// windows) accumulate ~17–90 MB of staged Buffer writes per block in
-// `transactionArray`. A full 200-block batch can push V8 heap past the
-// 4 GB --max-old-space-size cap mid-parse and abort the process. Flush
-// early when heap exceeds this threshold so the block-count constant
-// acts as an upper bound rather than the sole trigger.
-//
-// Derived from the process's memory budget rather than fixed at 2048, which
-// on a capped container is the entire allowance: the guard has to trip well
-// before the cgroup limit, or the kernel gets there first and no flush ever
-// runs. HEAP_FLUSH_THRESHOLD_MB overrides.
+// Heap-pressure flush guard: dense BTC blocks stage ~17-90 MB of Buffer writes
+// each, so a full 200-block batch can push V8 past its ceiling mid-parse. Flush
+// early instead, at a threshold that must trip before any cgroup limit does.
 const HEAP_FLUSH_THRESHOLD_MB = memoryBudget.heapFlushThresholdMB()
 const PARSE_MODE_FILES = 0
 const PARSE_MODE_BULK_INSERTS = 1

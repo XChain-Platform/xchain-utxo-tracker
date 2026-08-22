@@ -563,11 +563,9 @@ class LevelUpStore {
                 this.db = new MemoryLevel({ keyEncoding: 'buffer', valueEncoding: 'buffer' })
             } else {
                 // A large block cache keeps hot UTXO index blocks resident: on big
-                // mainnet DBs sat on spinning disks, the 8 MB default turns every cold
-                // lookup into a random seek and IO-bounds catch-up. Sized against the
-                // memory this process may actually use (see memoryBudget), because the
-                // former fixed 4 GiB is most of a small host and all of a capped
-                // container. LEVELDB_CACHE_BYTES still overrides outright.
+                // mainnet DBs on spinning disks, the 8 MB default turns every cold
+                // lookup into a random seek. Sized by memoryBudget against what this
+                // process may use; LEVELDB_CACHE_BYTES overrides outright.
                 this.db = new ClassicLevel("/data/"+this.dbName, { keyEncoding: 'buffer', valueEncoding: 'buffer',
                     cacheSize: memoryBudget.leveldbCacheBytes(),
                     writeBufferSize: parseInt(process.env.LEVELDB_WRITE_BUFFER_BYTES ?? String(64 * 1024 * 1024), 10) })
