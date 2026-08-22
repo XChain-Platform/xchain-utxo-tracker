@@ -17,6 +17,7 @@
  ********************************************************************/
 
 const util = require('./util')
+const memoryBudget = require('./memoryBudget')
 const crypto = require('crypto');
 const bs58check = require('bs58check')
 const bitcoin = require('bitcoinjs-lib')
@@ -46,7 +47,12 @@ const DB_TRANSACTION_BLOCKS_QUANTITY = 200
 // 4 GB --max-old-space-size cap mid-parse and abort the process. Flush
 // early when heap exceeds this threshold so the block-count constant
 // acts as an upper bound rather than the sole trigger.
-const HEAP_FLUSH_THRESHOLD_MB = 2048
+//
+// Derived from the process's memory budget rather than fixed at 2048, which
+// on a capped container is the entire allowance: the guard has to trip well
+// before the cgroup limit, or the kernel gets there first and no flush ever
+// runs. HEAP_FLUSH_THRESHOLD_MB overrides.
+const HEAP_FLUSH_THRESHOLD_MB = memoryBudget.heapFlushThresholdMB()
 const PARSE_MODE_FILES = 0
 const PARSE_MODE_BULK_INSERTS = 1
 const SYNCED_THRESHOLD = 3

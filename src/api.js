@@ -34,6 +34,7 @@ const XChainUtxoTracker  = require('./XChainUtxoTracker');
 const BlockchainConnector = require('./BlockchainConnector');
 const { resolveUndoBlocks } = require('./bulk-sync/merger/derive-keys.js')
 const { handleBootstrapFailure, handleRestoreFailure } = require('./bootstrap-recovery.js')
+const memoryBudget = require('./memoryBudget')
 const { isWrapperArchive, parseSha256Sidecar,
         hasRequiredLevelDbMembers, parseDetachedSignature } = require('./restore-validation.js')
 const { installObservability } = require('./observability');   // default-off /metrics + structured log shim
@@ -898,6 +899,7 @@ async function startApi(){
 
     app.listen(UTXO_TRACKER_API_PORT, () => {
       console.log('API listening on port '+UTXO_TRACKER_API_PORT)
+      console.log(memoryBudget.describe())
     })
 }
 

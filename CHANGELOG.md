@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- The LevelDB block cache and the heap-flush threshold are now sized from the memory the process may actually use, reading the cgroup limit when one applies, instead of a fixed 4 GiB and 2048 MB.
+- Startup logs the resolved memory budget, what bound it, and the sizes derived from it.
+
 ## [0.10.0] - 2026-08-18
 
 ### Added
