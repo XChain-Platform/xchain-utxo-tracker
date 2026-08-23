@@ -64,6 +64,7 @@ function loadWith({ hostGiB, cgroupBytes = null, cgroupRaw = null, version = 'v2
         budgetBytes: mod.budgetBytes(),
         cacheBytes: mod.leveldbCacheBytes(),
         heapFlushMB: mod.heapFlushThresholdMB(),
+        bulkSyncMB: mod.bulkSyncRamBudgetMB(),
         description: mod.describe()
     }
 
@@ -171,6 +172,54 @@ describe('utxo-tracker memory budget', function () {
             process.env.LEVELDB_CACHE_BYTES = 'not-a-number'
             const { cacheBytes } = loadWith({ hostGiB: 8 })
             expect(cacheBytes).to.equal(2048 * MIB)
+        })
+    })
+
+    // The budget stopped at the process boundary: bulk-sync runs in a spawned
+    // orchestrator whose external sort was handed a flat 4096 MB no matter what
+    // the cgroup said, so a 2 GB tracker asked its own child to sort against
+    // twice the whole limit and the kernel killed it at the merge, twice, on the
+    // one path an operator only reaches after something has already gone wrong.
+    describe('the bulk-sync child is sized by the same budget as its parent', function () {
+
+        it('gives a 2 GB container a sort budget that fits inside it', function () {
+            const { bulkSyncMB, cacheBytes, heapFlushMB } = loadWith({ hostGiB: 64, cgroupBytes: 2 * GIB })
+            expect(bulkSyncMB).to.equal(1024)
+            // The parent is still resident while the child sorts, so the two
+            // together have to leave headroom under the cap.
+            expect(bulkSyncMB * MIB + cacheBytes + heapFlushMB * MIB).to.be.below(2 * GIB)
+        })
+
+        it('never hands the child more than the budget it must fit inside', function () {
+            for (const hostGiB of [1, 2, 4, 8, 16, 64, 256]) {
+                const { budgetBytes, bulkSyncMB } = loadWith({ hostGiB })
+                expect(bulkSyncMB * MIB).to.be.at.most(budgetBytes / 2)
+            }
+        })
+
+        it('keeps the former flat 4096 on any host large enough to have meant it', function () {
+            for (const hostGiB of [8, 16, 64, 256]) {
+                const { bulkSyncMB } = loadWith({ hostGiB })
+                expect(bulkSyncMB).to.equal(4096)
+            }
+        })
+
+        it('scales down on the 8 GB board this was reported from', function () {
+            // 8 GB of RAM, ~7801 MB visible to the OS: half of that, not 4096
+            // plus the parent's own cache on top of it.
+            const { bulkSyncMB } = loadWith({ hostGiB: 7.62 })
+            expect(bulkSyncMB).to.be.below(4096)
+            expect(bulkSyncMB).to.be.at.least(3000)
+        })
+
+        it('holds a floor so a tiny host still gets a workable sort budget', function () {
+            const { bulkSyncMB } = loadWith({ hostGiB: 64, cgroupBytes: 512 * MIB })
+            expect(bulkSyncMB).to.equal(512)
+        })
+
+        it('names the child budget in the startup line', function () {
+            const { description } = loadWith({ hostGiB: 64, cgroupBytes: 2 * GIB })
+            expect(description).to.contain('bulk-sync RAM budget 1024MB')
         })
     })
 

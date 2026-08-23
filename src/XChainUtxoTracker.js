@@ -1149,13 +1149,23 @@ class XChainUtxoTracker {
                     // in those blocks. A loud abort is strictly safer than a silently
                     // corrupt index: stop here and require an operator-driven resync.
                     if (blocksDeleted.length >= this.undoBlocks){
+                        // Naming the remedy rather than the category, because the
+                        // operator most likely to read this line arrived by
+                        // restoring a published bootstrap whose tip had drifted:
+                        // "resync from a known-good snapshot" sends them back to
+                        // the snapshot that put them here, and doing it again
+                        // halts again at the same block.
                         const msg = "verifyReorg: reorg depth exceeds the recovery window "
                             + "(UNDO_BLOCKS=" + this.undoBlocks + "). Already rolled back "
                             + blocksDeleted.length + " blocks; spent-output recovery records "
                             + "for block height " + lastBlockIndex + " and below have already "
                             + "been purged, so continuing would silently leave the UTXO index "
-                            + "under-counted. Aborting. Recovery: perform a full resync from a "
-                            + "known-good snapshot."
+                            + "under-counted. Aborting. Recovery: this index cannot be walked "
+                            + "back onto the node's chain and has to be rebuilt. Under xchain-node "
+                            + "run `xchain-node reset xchain-utxo-tracker <coin> <network>`, which "
+                            + "drops the volume and takes the bulk-sync path; standalone, stop the "
+                            + "tracker, empty its data directory and restart it. Restoring the same "
+                            + "bootstrap again lands back here if its tip is the drifted one."
                         console.error(msg)
                         throw XChainUtxoTracker.markUnrecoverableReorg(new Error(msg))
                     }

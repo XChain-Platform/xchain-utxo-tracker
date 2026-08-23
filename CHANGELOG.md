@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - The LevelDB block cache and the heap-flush threshold are now sized from the memory the process may actually use, reading the cgroup limit when one applies, instead of a fixed 4 GiB and 2048 MB.
+- The bulk-sync sort budget is derived from that same memory budget instead of a fixed 4096 MB, so a memory-capped tracker no longer hands its own subprocess more memory than the cap allows.
 - Startup logs the resolved memory budget, what bound it, and the sizes derived from it.
+
+### Fixed
+- A reorg too deep to recover from now names the commands that rebuild the index, instead of advising a resync from the snapshot that may have caused it.
 
 ## [0.10.0] - 2026-08-18
 

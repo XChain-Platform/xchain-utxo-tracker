@@ -133,7 +133,12 @@ function envInt(name, fallback, min){
 // Bulk-sync pre-flight (activates on empty DB). See runBulkSyncIfEmpty below.
 const BULK_SYNC_WORKERS      = envInt('BULK_SYNC_WORKERS',    6,     1)
 const BULK_SYNC_CHUNK_SIZE   = envInt('BULK_SYNC_CHUNK_SIZE', 10000, 1)
-const BULK_SYNC_RAM_BUDGET   = envInt('BULK_SYNC_RAM_BUDGET', 4096,  1)
+// Default DERIVED from the same cgroup-aware budget as the block cache and the
+// flush threshold, not a flat 4096: the orchestrator is a child process, and a
+// tracker capped at 2 GB was handing its sort twice the whole cgroup and being
+// OOM-killed at the merge, repeatedly, on the recovery path an operator reaches
+// only after something else already went wrong. An explicit env value still wins.
+const BULK_SYNC_RAM_BUDGET   = envInt('BULK_SYNC_RAM_BUDGET', memoryBudget.bulkSyncRamBudgetMB(), 1)
 const BULK_SYNC_TIP_SAFETY   = envInt('BULK_SYNC_TIP_SAFETY', 10,    0)
 const BULK_SYNC_BATCH_SIZE   = envInt('BULK_SYNC_BATCH_SIZE', 10000, 1)
 const BULK_SYNC_WORK_DIR     = process.env.BULK_SYNC_WORK_DIR     || path.join('/data', DB_NAME, '_bulk-sync-work')

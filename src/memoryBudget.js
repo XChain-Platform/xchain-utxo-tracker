@@ -41,11 +41,24 @@ const CACHE_MAX_BYTES = 4096 * MIB
 const HEAP_FLUSH_MIN_MB = 256
 const HEAP_FLUSH_MAX_MB = 2048
 
+// Bulk-sync runs in a CHILD process (the orchestrator), whose external sort
+// allocates against whatever budget it is handed. A flat default handed that
+// child more than the whole cgroup on a small host, so the kernel killed it at
+// the merge step while the parent's own sizes were derived correctly: the
+// budget has to reach one level down or the class is only half closed. Ceiling
+// at the former flat default so a big host derives exactly what it runs today.
+const BULK_SYNC_MIN_MB = 512
+const BULK_SYNC_MAX_MB = 4096
+
 // The cache takes the larger share as a steady-state working set; the heap
 // figure only has to hold one staged batch. Together they leave better than
 // half the budget for the rest of the process and per-block spikes.
 const CACHE_FRACTION = 4
 const HEAP_FLUSH_FRACTION = 8
+
+// Half, because the orchestrator is not alone: the tracker that spawned it
+// still holds its own block cache and staged batch inside the same limit.
+const BULK_SYNC_FRACTION = 2
 
 // cgroup v2 exposes "max" for unlimited; v1 uses a sentinel near 2^63. Either
 // way a limit at or above host RAM tells us nothing the host total does not.
@@ -105,6 +118,14 @@ function heapFlushThresholdMB() {
     return Math.floor(clamp(derivedMB, HEAP_FLUSH_MIN_MB, HEAP_FLUSH_MAX_MB))
 }
 
+// MB the bulk-sync orchestrator's external sort may allocate. Read by api.js as
+// the DEFAULT for BULK_SYNC_RAM_BUDGET, so an explicit env value still wins the
+// same way it does for the two knobs above.
+function bulkSyncRamBudgetMB() {
+    const derivedMB = budgetBytes() / BULK_SYNC_FRACTION / MIB
+    return Math.floor(clamp(derivedMB, BULK_SYNC_MIN_MB, BULK_SYNC_MAX_MB))
+}
+
 // Logged once at startup: when a tracker is killed for memory, the first
 // question is what it thought it was allowed to use, and on a capped
 // container that answer is not something an operator can infer from the host.
@@ -114,12 +135,14 @@ function describe() {
     const bound = (cgroupBytes !== null && cgroupBytes < hostBytes) ? 'cgroup limit' : 'host memory'
     const mb = (bytes) => Math.round(bytes / MIB)
     return `memory budget ${mb(budgetBytes())}MB (${bound}); ` +
-        `LevelDB block cache ${mb(leveldbCacheBytes())}MB, heap-flush threshold ${heapFlushThresholdMB()}MB`
+        `LevelDB block cache ${mb(leveldbCacheBytes())}MB, heap-flush threshold ${heapFlushThresholdMB()}MB, ` +
+        `bulk-sync RAM budget ${bulkSyncRamBudgetMB()}MB`
 }
 
 module.exports = {
     budgetBytes,
     leveldbCacheBytes,
     heapFlushThresholdMB,
+    bulkSyncRamBudgetMB,
     describe
 }
