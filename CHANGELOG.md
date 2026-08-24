@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Startup logs the resolved memory budget, what bound it, and the sizes derived from it.
 
 ### Fixed
+- Block decoding resolves each coin's wire format from the canonical coin registry and refuses a coin it cannot handle, instead of silently falling through to the wrong parse.
+- A block's claimed transaction count is bounded against the bytes actually remaining, so a forged count is refused by name rather than surfacing as a buffer over-read.
 - A reorg too deep to recover from now names the commands that rebuild the index, instead of advising a resync from the snapshot that may have caused it.
 
 ## [0.10.0] - 2026-08-18

@@ -207,15 +207,22 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
       const cases = [
         ['bitcoin-mainnet', 'bitcoin'],
         ['litecoin-testnet', 'litecoin'],
-        ['dogecoin-regtest', 'dogecoin'],
-        ['singleword', 'singleword'],
-        ['a-b-c', 'a'],
-        ['', '']
+        ['dogecoin-regtest', 'dogecoin']
       ];
 
       for (const [input, expected] of cases) {
         const decoder = new XChainBlockDecoder(input);
         expect(decoder.coin).to.equal(expected);
+      }
+    });
+
+    // A name whose leading segment is not a registered coin has no declared
+    // block/tx wire format, so construction refuses rather than handing back a
+    // decoder that would parse under the strict bitcoinjs default.
+    it('refuses a network name whose coin is not in the registry', function () {
+      for (const input of ['singleword', 'a-b-c', '']) {
+        expect(() => new XChainBlockDecoder(input), input)
+          .to.throw(/no block\/tx wire-format contract declared/);
       }
     });
   });
