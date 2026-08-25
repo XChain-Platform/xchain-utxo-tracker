@@ -129,14 +129,18 @@ function bulkSyncRamBudgetMB() {
 // Logged once at startup: when a tracker is killed for memory, the first
 // question is what it thought it was allowed to use, and on a capped
 // container that answer is not something an operator can infer from the host.
-function describe() {
+function describe(effectiveBulkSyncMB) {
     const cgroupBytes = readCgroupLimitBytes()
     const hostBytes = os.totalmem()
     const bound = (cgroupBytes !== null && cgroupBytes < hostBytes) ? 'cgroup limit' : 'host memory'
     const mb = (bytes) => Math.round(bytes / MIB)
+    // The caller injects the budget the orchestrator is actually spawned with,
+    // because api.js resolves and floor-checks BULK_SYNC_RAM_BUDGET and must
+    // stay the only validator for that knob.
+    const bulkSyncMB = Number.isInteger(effectiveBulkSyncMB) ? effectiveBulkSyncMB : bulkSyncRamBudgetMB()
     return `memory budget ${mb(budgetBytes())}MB (${bound}); ` +
         `LevelDB block cache ${mb(leveldbCacheBytes())}MB, heap-flush threshold ${heapFlushThresholdMB()}MB, ` +
-        `bulk-sync RAM budget ${bulkSyncRamBudgetMB()}MB`
+        `bulk-sync RAM budget ${bulkSyncMB}MB`
 }
 
 module.exports = {

@@ -134,6 +134,22 @@ describe('computeFreshness', function () {
       expect(site).to.not.match(/isSynced\(\)/);
     }
   });
+
+  // The two harnesses that stand in for these routes hand-copy the header line,
+  // and their copies outlived the fix: both kept building it from raw isSynced(),
+  // so they would have stayed green through the very regression guarded above.
+  it('lets no route harness rebuild the header from the raw sync flag', function () {
+    const harnesses = ['../security/rest-route-surface.test.js', '../unit/api.test.js'];
+    for (const rel of harnesses) {
+      const src = fs.readFileSync(path.join(__dirname, rel), 'utf8');
+      const sites = src.match(/res\.set\('X-Mempool-Ready'[^\n]*\)/g) || [];
+      expect(sites.length, `${rel} must still pin the readiness header`).to.be.above(0);
+      for (const site of sites) {
+        expect(site, `${rel} must read the floored meta`).to.match(/mempool_ready/);
+        expect(site, `${rel} must not rebuild the header from isSynced()`).to.not.match(/isSynced\(\)/);
+      }
+    }
+  });
 });
 
 // Regression: bootstrap/restore recovery must not freeze or strand.

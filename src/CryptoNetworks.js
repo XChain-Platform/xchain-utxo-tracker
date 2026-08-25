@@ -17,22 +17,38 @@
  * Thin adapter over the canonical coin registry (src/coins). The tracker only
  * needs the bitcoinjs network object (address coding); it builds no transactions,
  * so the relay-only fields it now inherits from canonical (e.g.
- * singleOpReturnPolicy) are unused here. Returns undefined for an unknown network
- * name, matching the prior no-default behavior.
+ * singleOpReturnPolicy) are unused here. THROWS on an unknown network name,
+ * matching the xchain-decoder and xchain-encoder twins (item 5879). The previous
+ * `undefined` return made safety a property of every caller remembering to check
+ * it, and bitcoinjs-lib treats an undefined network object as BTC mainnet, so the
+ * first caller to forget would decode addresses and scripts under the wrong
+ * chain's parameters rather than fail.
  *
  ********************************************************************/
 
 const coins = require('./coins');
 
+const SUPPORTED = 'bitcoin-mainnet, bitcoin-testnet, bitcoin-regtest, dogecoin-mainnet, ' +
+    'dogecoin-testnet, dogecoin-regtest, litecoin-mainnet, litecoin-testnet, litecoin-regtest';
+
+// Split a "<fullname>-<network>" key (e.g. "bitcoin-mainnet") into a canonical
+// {tick, net} pair, or null when it names no known coin/network. Same shape as
+// the decoder twin, so the two files stay textually comparable.
+function parseNetworkName(networkName){
+    const s = String(networkName);
+    const i = s.lastIndexOf('-');
+    if(i < 0) return null;
+    const tick = coins.FULL_NAME_TO_TICK[s.slice(0, i)];
+    const net  = s.slice(i + 1);
+    if(!tick || !coins.NETWORKS.includes(net)) return null;
+    return { tick, net };
+}
+
 class CryptoNetworks {
     static getBitcoinJsNetwork(networkName){
-        const s = String(networkName);
-        const i = s.lastIndexOf('-');
-        if(i < 0) return undefined;
-        const tick = coins.FULL_NAME_TO_TICK[s.slice(0, i)];
-        const net  = s.slice(i + 1);
-        if(!tick || !coins.NETWORKS.includes(net)) return undefined;
-        return coins.getCoinConfig(tick, net).net;
+        const p = parseNetworkName(networkName);
+        if(!p) throw new TypeError(`Unknown network: "${networkName}". Supported: ${SUPPORTED}`);
+        return coins.getCoinConfig(p.tick, p.net).net;
     }
 }
 

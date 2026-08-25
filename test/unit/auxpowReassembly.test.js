@@ -102,4 +102,112 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
             expect(AUXPOW_REASSEMBLE_AFTER).to.be.below(MAX_BLOCK_FETCH_RETRIES);
         });
     });
+
+    // Reassembly issues one getrawtransaction per transaction in the block. Aiming
+    // that fan-out at a node that is merely unreachable makes an outage worse, so
+    // only a tagged AuxPoW-strip fault may feed the streak that triggers it. The
+    // decoder twin has counted the two separately since its own escalation misfired
+    // on ~15s of node unavailability; the tracker counted every failure alike.
+    describe('XChainUtxoTracker.noteAuxPowParseFailure (transport vs content)', function () {
+        const note   = (...args) => XChainUtxoTracker.prototype.noteAuxPowParseFailure.call({}, ...args);
+        const should = (streak) => XChainUtxoTracker.prototype.shouldReassembleBlock.call(
+            { auxPow: true }, 100, streak.height, streak.count);
+
+        function run(height, errors) {
+            let streak = { height: null, count: 0 };
+            for (const e of errors) streak = note(height, streak.height, streak.count, e);
+            return streak;
+        }
+        const transport = () => Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+        const bare      = () => new Error('There were problems getting a block hex. ');
+        const content   = () => Object.assign(new Error('cannot traverse auxpow'), { auxPowParseFailure: true });
+        const times     = (n, f) => Array.from({ length: n }, f);
+
+        it('does not escalate on transport faults, however long the streak', function () {
+            const n = AUXPOW_REASSEMBLE_AFTER + 3;
+            expect(run(100, times(n, transport)).count).to.equal(0);
+            expect(should(run(100, times(n, transport)))).to.equal(false);
+            expect(should(run(100, times(n, bare)))).to.equal(false);
+        });
+
+        it('escalates once the strip itself has failed at the threshold', function () {
+            const streak = run(100, times(AUXPOW_REASSEMBLE_AFTER, content));
+            expect(streak.count).to.equal(AUXPOW_REASSEMBLE_AFTER);
+            expect(should(streak)).to.equal(true);
+            expect(should(run(100, times(AUXPOW_REASSEMBLE_AFTER - 1, content)))).to.equal(false);
+        });
+
+        it('a transport blip mid-recovery holds the parse streak rather than rewinding it', function () {
+            const errors = times(AUXPOW_REASSEMBLE_AFTER - 1, content).concat([transport(), content()]);
+            expect(should(run(100, errors))).to.equal(true);
+        });
+
+        it('a height change restarts the parse streak', function () {
+            let streak = run(100, times(AUXPOW_REASSEMBLE_AFTER, content));
+            streak = note(101, streak.height, streak.count, content());
+            expect(streak).to.deep.equal({ height: 101, count: 1 });
+            streak = note(102, streak.height, streak.count, transport());
+            expect(streak).to.deep.equal({ height: 102, count: 0 });
+        });
+    });
+
+    describe('BlockchainConnector AuxPoW fault tagging', function () {
+        // AuxPoW version bit set, 160-char header, and a block body skipAuxPow cannot
+        // traverse: the throw comes from the bytes, which is the content fault.
+        const UNSTRIPPABLE_BLOCK = HEADER_HEX + 'ff';
+        const transport = () => Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+
+        it('getBlockWithoutAuxPow rethrows a transport fault untagged, code intact', async function () {
+            for (const overrides of [
+                { getBlockHeader: async () => { throw transport(); }, getBlock: async () => 'ignored' },
+                { getBlockHeader: async () => HEADER_HEX, getBlock: async () => { throw transport(); } },
+            ]) {
+                let err = null;
+                try { await makeConnector(overrides).getBlockWithoutAuxPow('hash'); } catch (e) { err = e; }
+                expect(err).to.be.an('error');
+                expect(err.code).to.equal('ECONNRESET');
+                expect(err.auxPowParseFailure).to.equal(undefined);
+            }
+        });
+
+        it('getBlockWithoutAuxPow tags a strip fault and keeps the cause', async function () {
+            const connector = makeConnector({
+                getBlockHeader: async () => HEADER_HEX,
+                getBlock: async () => UNSTRIPPABLE_BLOCK,
+            });
+            let err = null;
+            try { await connector.getBlockWithoutAuxPow('hash'); } catch (e) { err = e; }
+            expect(err).to.be.an('error');
+            expect(err.auxPowParseFailure).to.equal(true);
+            expect(err.cause).to.be.an('error');
+        });
+
+        it('getBlocksBatchWithoutAuxPow tags a strip fault but not a batch RPC fault', async function () {
+            // The prefetch queue is the tracker's normal block source on an AuxPoW
+            // chain, so this is where a genuinely malformed block actually fails.
+            const batchOk = async (payload) => ({
+                data: payload.map((p, i) => ({
+                    id: i,
+                    result: p.method === 'getblockhash' ? 'h'.repeat(64)
+                        : (p.method === 'getblockheader' ? HEADER_HEX : UNSTRIPPABLE_BLOCK)
+                }))
+            });
+            let err = null;
+            try {
+                await makeConnector({ postWithRetry: batchOk }).getBlocksBatchWithoutAuxPow([100]);
+            } catch (e) { err = e; }
+            expect(err).to.be.an('error');
+            expect(err.auxPowParseFailure).to.equal(true);
+            expect(err.message).to.match(/block 100/);
+
+            err = null;
+            try {
+                await makeConnector({ postWithRetry: async () => { throw transport(); } })
+                    .getBlocksBatchWithoutAuxPow([100]);
+            } catch (e) { err = e; }
+            expect(err).to.be.an('error');
+            expect(err.code).to.equal('ECONNRESET');
+            expect(err.auxPowParseFailure).to.equal(undefined);
+        });
+    });
 });

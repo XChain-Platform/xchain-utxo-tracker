@@ -63,3 +63,65 @@ describe('resolveUndoBlocks opts validation', function () {
     expect(consoleErrorStub.called).to.equal(false);
   });
 });
+
+// AML #5803: the network->coin step was a hardcoded bitcoin/litecoin/dogecoin
+// prefix list returning null for anything else, even though the constructor
+// comment above `this.auxPow = WIRE_FORMAT[coinFromNetwork(network)]` promised
+// the answer came from the canonical registry "so onboarding a merge-mined
+// chain is a registry edit". It did not: a chain added to src/coins alone
+// resolved to null, so auxPow silently read false and the reorg window silently
+// fell to the flat 12-block fallback, i.e. merged-mined headers parsed as plain
+// Bitcoin headers with a window sized for 10-minute blocks.
+describe('undo-blocks resolves the coin through the canonical registry (#5803)', function () {
+  const coins = require('../../src/coins');
+  const { coinFromNetwork } = require('../../src/undo-blocks');
+
+  // Onboard a coin the way the comment advertises - registry only - and see
+  // what the two consensus-relevant decisions do with it.
+  function withRegisteredCoin(tick, fullName, wireFormat, fn) {
+    coins.FULL_NAME_TO_TICK[fullName] = tick;
+    coins.WIRE_FORMAT[tick] = wireFormat;
+    try { return fn(); }
+    finally {
+      delete coins.FULL_NAME_TO_TICK[fullName];
+      delete coins.WIRE_FORMAT[tick];
+    }
+  }
+
+  it('resolves every registered coin from the registry, not a name literal', function () {
+    expect(coins.ALLOWED_COINS.length, 'sanity: the registry is not empty').to.be.at.least(1);
+    for (const tick of coins.ALLOWED_COINS) {
+      const full = coins.COIN_FULL_NAME[tick];
+      for (const net of coins.NETWORKS) {
+        expect(coinFromNetwork(`${full}-${net}`), `${full}-${net}`).to.equal(tick);
+      }
+    }
+  });
+
+  it('resolves a coin that exists ONLY in the registry', function () {
+    withRegisteredCoin('MONA', 'monacoin', 'auxpow', function () {
+      expect(coinFromNetwork('monacoin-mainnet')).to.equal('MONA');
+      expect(coins.WIRE_FORMAT[coinFromNetwork('monacoin-mainnet')]).to.equal('auxpow');
+    });
+  });
+
+  it('refuses a registered coin that has no per-chain reorg window, rather than defaulting to 12', function () {
+    withRegisteredCoin('MONA', 'monacoin', 'auxpow', function () {
+      expect(() => resolveUndoBlocks('monacoin-mainnet')).to.throw(/monacoin-mainnet|MONA/);
+      // An explicit override must not mask the gap either: the missing window is
+      // a registry-onboarding bug, not something a caller can opt out of.
+      expect(() => resolveUndoBlocks('monacoin-mainnet', 30)).to.throw(/monacoin-mainnet|MONA/);
+    });
+  });
+
+  it('refuses a network name no registered coin claims', function () {
+    expect(coinFromNetwork('unknowncoin-mainnet')).to.equal(null);
+    expect(() => resolveUndoBlocks('unknowncoin-mainnet')).to.throw(/unknowncoin-mainnet/);
+  });
+
+  it('still resolves the three shipped chains to their pinned windows', function () {
+    expect(resolveUndoBlocks('bitcoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.BTC);
+    expect(resolveUndoBlocks('litecoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.LTC);
+    expect(resolveUndoBlocks('dogecoin-regtest')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE);
+  });
+});

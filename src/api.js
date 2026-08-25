@@ -904,7 +904,7 @@ async function startApi(){
 
     app.listen(UTXO_TRACKER_API_PORT, () => {
       console.log('API listening on port '+UTXO_TRACKER_API_PORT)
-      console.log(memoryBudget.describe())
+      console.log(memoryBudget.describe(BULK_SYNC_RAM_BUDGET))
     })
 }
 

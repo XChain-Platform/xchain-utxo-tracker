@@ -65,7 +65,8 @@ function loadWith({ hostGiB, cgroupBytes = null, cgroupRaw = null, version = 'v2
         cacheBytes: mod.leveldbCacheBytes(),
         heapFlushMB: mod.heapFlushThresholdMB(),
         bulkSyncMB: mod.bulkSyncRamBudgetMB(),
-        description: mod.describe()
+        description: mod.describe(),
+        describeInjected: mod.describe(777)
     }
 
     os.totalmem = realTotalmem
@@ -234,6 +235,36 @@ describe('utxo-tracker memory budget', function () {
         it('says host memory when nothing caps the process', function () {
             const { description } = loadWith({ hostGiB: 8 })
             expect(description).to.contain('host memory')
+        })
+    })
+
+    // The other two figures read their own override, so the third one printing a
+    // derived default made the startup line disagree with the argv the child was
+    // spawned with, on the one knob the line exists to answer for.
+    describe('the startup line states the bulk-sync budget actually spawned', function () {
+
+        it('prints the effective budget the caller injects', function () {
+            const { describeInjected } = loadWith({ hostGiB: 64, cgroupBytes: 2 * GIB })
+            expect(describeInjected).to.contain('bulk-sync RAM budget 777MB')
+            expect(describeInjected).to.not.contain('bulk-sync RAM budget 1024MB')
+        })
+
+        it('falls back to the derived budget when no caller value is given', function () {
+            const { description } = loadWith({ hostGiB: 64, cgroupBytes: 2 * GIB })
+            expect(description).to.contain('bulk-sync RAM budget 1024MB')
+        })
+
+        it('leaves the other two figures untouched by the injected value', function () {
+            const { description, describeInjected } = loadWith({ hostGiB: 64, cgroupBytes: 2 * GIB })
+            const strip = (line) => line.replace(/bulk-sync RAM budget \d+MB/, '')
+            expect(strip(describeInjected)).to.equal(strip(description))
+        })
+
+        it('is fed the resolved BULK_SYNC_RAM_BUDGET at the startup call site', function () {
+            const apiSrc = fs.readFileSync(path.resolve(__dirname, '../../src/api.js'), 'utf8')
+            expect(apiSrc, 'the log must state the value the orchestrator is spawned with')
+                .to.match(/memoryBudget\.describe\(BULK_SYNC_RAM_BUDGET\)/)
+            expect(apiSrc).to.not.match(/memoryBudget\.describe\(\s*\)/)
         })
     })
 })

@@ -390,22 +390,31 @@ class BlockchainConnector {
         }
     }
 
+    // The two RPC fetches are deliberately OUTSIDE the try, matching the decoder twin
+    // (xchain-decoder/src/BlockchainConnector.js getBlockWithoutAuxPow). A transport
+    // fault (a Dogecoin 1.14 node dropping the connection when its RPC queue fills, a
+    // restart, a network blip) must propagate unwrapped with error.code intact, because
+    // the caller's escalation decision turns on cause: only a strip fault is evidence
+    // that THIS BLOCK's bytes are the problem. Wrapping everything in a bare Error
+    // erased that distinction and let ~15s of node unavailability flip the tracker into
+    // per-tx block reassembly aimed at the node that was already saturated.
     async getBlockWithoutAuxPow(blockhash) {
-        try {
-            let blockHeaderHex = await this.getBlockHeader(blockhash, true)
-            let blockHex = await this.getBlock(blockhash, true)
+        let blockHeaderHex = await this.getBlockHeader(blockhash, true)
+        let blockHex = await this.getBlock(blockhash, true)
 
+        try {
             // Dogecoin Core 1.14.x getblockheader always returns the pure 80-byte header
             // (160 hex chars) regardless of whether the block is merge-mined. When the
             // header is longer than 160 chars the legacy path (length-based strip) works;
             // when it is exactly 160 chars and the AuxPoW version bit (0x100) is set we
             // must parse the AuxPoW size from the block hex itself to find where the
             // AuxPoW section ends and the tx-count varint begins.
-            blockHex = stripAuxPowFromBlockHex(blockHeaderHex, blockHex)
-
-            return blockHex
+            return stripAuxPowFromBlockHex(blockHeaderHex, blockHex)
         } catch (err) {
-            throw new Error("There were problems getting a block hex without auxpow. " + err.message)
+            const parseErr = new Error("There were problems getting a block hex without auxpow. " + err.message)
+            parseErr.auxPowParseFailure = true
+            parseErr.cause = err
+            throw parseErr
         }
     }
 
@@ -621,11 +630,25 @@ class BlockchainConnector {
             return r.result
         })
 
+        // Only the strip is wrapped, for the reason given on getBlockWithoutAuxPow: the
+        // three postWithRetry batches and their !r.result guards above are transport and
+        // must stay untagged. This path matters more than the single-block one on an
+        // AuxPoW chain - the prefetch queue is the tracker's normal block source, so a
+        // genuinely malformed block fails HERE, and an untagged failure here would leave
+        // the malformed-AuxPoW reassembly recovery unable to fire at all.
         return heights.map((h, i) => {
             const headerHex = headers[i]
             let blockHex    = blocks[i]
 
-            blockHex = stripAuxPowFromBlockHex(headerHex, blockHex)
+            try {
+                blockHex = stripAuxPowFromBlockHex(headerHex, blockHex)
+            } catch (err) {
+                const parseErr = new Error('There were problems stripping auxpow from block ' + h +
+                    ' (' + hashes[i] + ') in batch. ' + err.message)
+                parseErr.auxPowParseFailure = true
+                parseErr.cause = err
+                throw parseErr
+            }
 
             return {
                 height: h,

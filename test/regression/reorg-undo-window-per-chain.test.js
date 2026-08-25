@@ -17,20 +17,21 @@
 // fix sizes the window by coin (BTC 12, LTC 48, DOGE 120) so an ordinary reorg
 // inside the cross-chain confirmation gate auto-recovers instead of forcing a
 // manual resync. The window is resolved at construction into this.undoBlocks,
-// with an env override (XCHAIN_UNDO_BLOCKS_<COIN>) and a 12-block fallback for
-// a coin the window map does not name. A reversion to a flat constant would
-// silently shrink DOGE/LTC headroom; this pins each coin's value and the
-// override/fallback behaviour.
+// with an env override (XCHAIN_UNDO_BLOCKS_<COIN>). A reversion to a flat
+// constant would silently shrink DOGE/LTC headroom; this pins each coin's value
+// and the override behaviour.
 //
-// An unrecognised NETWORK is a separate case: the constructor rejects it
-// outright, because bitcoinjs-lib silently treats an undefined network as BTC
-// mainnet, so a typo would run under the wrong network parameters. The window
-// fallback therefore guards only a coin bitcoinjs resolves but the window map
-// omits, never an unknown network name.
+// An unrecognised NETWORK is rejected at construction, because bitcoinjs-lib
+// silently treats an undefined network as BTC mainnet, so a typo would run under
+// the wrong network parameters. Item 5803 REMOVED the 12-block fallback for "a coin
+// the window map omits": the coin that reaches that path is a newly onboarded
+// one, so a window sized for 10-minute BTC blocks is wrong in exactly the
+// unsafe direction. It is a refusal now, pinned in
+// test/unit/undo-blocks.test.js.
 
 const { expect } = require('chai');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
-const { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS } = require('../../src/undo-blocks');
+const { DEFAULT_UNDO_BLOCKS } = require('../../src/undo-blocks');
 
 // Construct a tracker WITHOUT starting it (mirrors createTestTracker) so we only
 // exercise the constructor's window resolution.
@@ -60,8 +61,8 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
     expect(() => undoBlocksFor('unknowncoin-mainnet')).to.throw(/unknown network/i);
   });
 
-  it('keeps a 12-block fallback for a coin the window map omits', function () {
-    expect(FALLBACK_UNDO_BLOCKS).to.equal(12);
+  it('exposes no generic fallback window for a coin the map omits (item 5803)', function () {
+    expect(require('../../src/undo-blocks')).to.not.have.property('FALLBACK_UNDO_BLOCKS');
     expect(DEFAULT_UNDO_BLOCKS).to.not.have.property('XXX');
   });
 
