@@ -5,17 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.11.0] - 2026-08-25
 
 ### Changed
 - The LevelDB block cache and the heap-flush threshold are now sized from the memory the process may actually use, reading the cgroup limit when one applies, instead of a fixed 4 GiB and 2048 MB.
 - The bulk-sync sort budget is derived from that same memory budget instead of a fixed 4096 MB, so a memory-capped tracker no longer hands its own subprocess more memory than the cap allows.
 - Startup logs the resolved memory budget, what bound it, and the sizes derived from it.
+- Updated the BTC mainnet validator reward pool address.
+- Moved the BTC, LTC and DOGE testnet genesis start points forward to just under the live chain tip and regenerated the consensus pin, so the public testnet launches with no pre-announcement test history.
 
 ### Fixed
 - Block decoding resolves each coin's wire format from the canonical coin registry and refuses a coin it cannot handle, instead of silently falling through to the wrong parse.
 - A block's claimed transaction count is bounded against the bytes actually remaining, so a forged count is refused by name rather than surfacing as a buffer over-read.
 - A reorg too deep to recover from now names the commands that rebuild the index, instead of advising a resync from the snapshot that may have caused it.
+- An unrecognised network name now fails at startup instead of silently decoding under Bitcoin mainnet parameters.
+- Cumulative log-shipper totals are now reported as counters instead of gauges, so rate queries over them return correct values instead of being undefined.
 
 ## [0.10.0] - 2026-08-18
 
