@@ -102,7 +102,7 @@ const SPENDS_HEADER_SIZE  = 64
 // the live undo window, the orchestrator tip-safety clamp, and api.js can never
 // drift under the same env (uuid:65309b82). Re-exported below so existing
 // callers (orchestrator.js, api.js) keep importing it from here unchanged.
-const { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS, resolveUndoBlocks } = require('../../undo-blocks.js')
+const { DEFAULT_UNDO_BLOCKS, resolveUndoBlocks } = require('../../undo-blocks.js')
 
 // Per-prefix (keySize, valueSize, recordSize).
 const LAYOUT = {

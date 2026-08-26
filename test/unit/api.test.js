@@ -92,10 +92,28 @@ function createTestApp(mockTracker, adminApiKey = '') {
     return mockTracker.getBalanceInfo(address);
   }
 
+  // Mirror of src/api.js setFreshnessHeaders. The readiness verdict comes off the
+  // REAL computeFreshness, which floors it on a negative lag; building it from the
+  // raw isSynced() flag here would pin the contract production dropped.
+  async function setFreshnessHeaders(res) {
+    let committedHeight = -1;
+    try { committedHeight = await mockTracker.db.getLastBlockHeight(); } catch (e) {}
+    const rawTip = (typeof mockTracker.latestKnownChainTip === 'number') ? mockTracker.latestKnownChainTip : -1;
+    const f = XChainUtxoTracker.computeFreshness(committedHeight, rawTip, mockTracker.isSynced(), {
+      mempoolReconverged: mockTracker.isMempoolReconverged()
+    });
+    res.set('X-Tracker-Height', String(f.tracker_height));
+    res.set('X-Node-Height', String(f.node_height));
+    if (f.lag !== null) res.set('X-Sync-Lag', String(f.lag));
+    res.set('X-Synced', String(f.synced));
+    return f;
+  }
+
   app.get('/utxos/:address', async (req, res) => {
     try {
       const utxos = await getUtxos(req.params.address);
-      res.set('X-Mempool-Ready', String(mockTracker.isSynced()));
+      const freshness = await setFreshnessHeaders(res);
+      res.set('X-Mempool-Ready', String(freshness.mempool_ready));
       res.json(utxos);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -114,7 +132,8 @@ function createTestApp(mockTracker, adminApiKey = '') {
   app.get('/balance/:address', async (req, res) => {
     try {
       const balance = await getBalance(req.params.address);
-      res.set('X-Mempool-Ready', String(mockTracker.isSynced()));
+      const freshness = await setFreshnessHeaders(res);
+      res.set('X-Mempool-Ready', String(freshness.mempool_ready));
       res.json(balance);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -124,9 +143,9 @@ function createTestApp(mockTracker, adminApiKey = '') {
   app.get('/info/:address', async (req, res) => {
     try {
       const info = await getInfo(req.params.address);
-      const mempoolReady = mockTracker.isSynced();
-      res.set('X-Mempool-Ready', String(mempoolReady));
-      if (info && typeof info === 'object') info.mempool_ready = mempoolReady;
+      const freshness = await setFreshnessHeaders(res);
+      res.set('X-Mempool-Ready', String(freshness.mempool_ready));
+      if (info && typeof info === 'object') info.mempool_ready = freshness.mempool_ready;
       res.json(info);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -189,8 +208,11 @@ describe('API', function () {
       getFirstSeen: sinon.stub(),
       getBalanceInfo: sinon.stub(),
       isSynced: sinon.stub().returns(true),
+      isMempoolReconverged: sinon.stub().returns(true),
+      latestKnownChainTip: 100,
       db: {
-        getValuesFromKeyPattern: sinon.stub()
+        getValuesFromKeyPattern: sinon.stub(),
+        getLastBlockHeight: sinon.stub().resolves(100)
       }
     };
     app = createTestApp(mockTracker);
@@ -286,6 +308,23 @@ describe('API', function () {
       expect(utxosRes.headers['x-mempool-ready']).to.equal('false');
       expect(balanceRes.headers['x-mempool-ready']).to.equal('false');
       expect(infoRes.headers['x-mempool-ready']).to.equal('false');
+      expect(infoRes.body.mempool_ready).to.equal(false);
+    });
+
+    it('floors readiness on an orphaned view even while isSynced() reports true', async function () {
+      // Committed tip above the node's: the node reindexed or reset underneath
+      // the tracker, so the raw catch-up flag is no longer the right answer and
+      // the header must follow the floored verdict instead.
+      mockTracker.getUtxosAddress.resolves([]);
+      mockTracker.getBalanceInfo.resolves({ address: 'a', balances: {}, utxos: {} });
+      mockTracker.db.getLastBlockHeight.resolves(120);
+      mockTracker.latestKnownChainTip = 100;
+
+      const utxosRes = await supertest(app).get('/utxos/a').expect(200);
+      const infoRes = await supertest(app).get('/info/a').expect(200);
+
+      expect(utxosRes.headers['x-synced']).to.equal('false');
+      expect(utxosRes.headers['x-mempool-ready']).to.equal('false');
       expect(infoRes.body.mempool_ready).to.equal(false);
     });
 

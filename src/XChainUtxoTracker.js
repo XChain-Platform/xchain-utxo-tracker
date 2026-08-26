@@ -17,6 +17,7 @@
  ********************************************************************/
 
 const util = require('./util')
+const memoryBudget = require('./memoryBudget')
 const crypto = require('crypto');
 const bs58check = require('bs58check')
 const bitcoin = require('bitcoinjs-lib')
@@ -40,22 +41,21 @@ bitcoin.initEccLib(ecc)
 const CHECK_BLOCK_DELAY_MS = 1000 //1 second to continously ask for new block when all has been parsed
 const BLOCKCHAIN_INFO_REFRESH_MS = 30000 //Re-poll the node tip at least this often during catch-up so the tracked tip stays current
 const DB_TRANSACTION_BLOCKS_QUANTITY = 200
-// Heap-pressure flush guard: modern BTC blocks (~4k tx avg, 10k+ in dense
-// windows) accumulate ~17–90 MB of staged Buffer writes per block in
-// `transactionArray`. A full 200-block batch can push V8 heap past the
-// 4 GB --max-old-space-size cap mid-parse and abort the process. Flush
-// early when heap exceeds this threshold so the block-count constant
-// acts as an upper bound rather than the sole trigger.
-const HEAP_FLUSH_THRESHOLD_MB = 2048
+// Heap-pressure flush guard: dense BTC blocks stage ~17-90 MB of Buffer writes
+// each, so a full 200-block batch can push V8 past its ceiling mid-parse. Flush
+// early instead, at a threshold that must trip before any cgroup limit does.
+const HEAP_FLUSH_THRESHOLD_MB = memoryBudget.heapFlushThresholdMB()
 const PARSE_MODE_FILES = 0
 const PARSE_MODE_BULK_INSERTS = 1
 const SYNCED_THRESHOLD = 3
 const SATOSHI_BIGINT = 100000000n
 const DEBUG_TRACE = process.env.DEBUG_TRACE === 'true' || process.env.DEBUG_TRACE === '1'
 
-// Exact satoshi -> decimal-string conversion. Plain float division (value / 1e8)
+// Exact satoshi -> decimal-string conversion: takes SATOSHIS, returns COIN units
+// (a fixed-8 decimal string). Plain float division (value / 1e8)
 // loses precision once a total exceeds Number.MAX_SAFE_INTEGER (e.g. DOGE balances
 // above ~90M), so all balance/amount formatting goes through this BigInt path.
+// The return value is display-denominated: never feed it back into a satoshi field.
 function satoshiToDecimalString(satoshis) {
     const val = BigInt(satoshis)
     const abs = val < 0n ? -val : val
@@ -123,7 +123,7 @@ const MAX_ADDRESS_OUTPUTS = Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS) > 0
 // reorg inside the trust window is auto-recovered, never a manual resync). On
 // 1-minute DOGE blocks the old flat value of 10 was only ~10 minutes of headroom.
 // Single-sourced in undo-blocks.js so the live worker and the bulk seeder can never drift.
-const { DEFAULT_UNDO_BLOCKS, FALLBACK_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS, coinFromNetwork, resolveUndoBlocks } = require('./undo-blocks.js')
+const { DEFAULT_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS, coinFromNetwork, resolveUndoBlocks } = require('./undo-blocks.js')
 
 // Per-coin block/tx wire-serialization family from the canonical coin registry
 // (src/coins). Used to gate AuxPoW stripping on the coin's declared wireFormat
@@ -144,11 +144,13 @@ class XChainUtxoTracker {
 
     constructor(network, nodeUrl, nodePort, nodeUser, nodePassword, dbName, auxPow) {
       this.network = CryptoNetworks.getBitcoinJsNetwork(network)
-      // getBitcoinJsNetwork returns undefined for an unrecognized coin/network
-      // name (e.g. a typo in the NETWORK env var). Left unguarded, bitcoinjs-lib
-      // silently defaults an undefined network to BTC mainnet at address/script
-      // decode time, so a misconfiguration would run under the wrong network
-      // parameters instead of failing. Fail loud at construction instead.
+      // An unrecognized coin/network name (a typo in the NETWORK env var) now
+      // throws inside getBitcoinJsNetwork itself (item 5879), so this guard is no
+      // longer what catches it. Kept as the backstop for the other route to the
+      // same hazard: a coin the registry resolves whose config carries no `net`
+      // object. bitcoinjs-lib silently defaults an undefined network to BTC
+      // mainnet at address/script decode time, so either way construction must
+      // fail rather than run under the wrong network parameters.
       if (!this.network) {
         throw new Error(`XChainUtxoTracker: unknown network "${network}" -- no bitcoinjs network config resolved. Check the configured network name.`)
       }
@@ -198,10 +200,15 @@ class XChainUtxoTracker {
       // AUX_POW=true would otherwise parse every DOGE block as a plain Bitcoin
       // block, and a BTC/LTC deployment started WITH it would strip a section those
       // chains never carry, truncating any block whose version signals bit 0x100.
-      // The answer comes from the coin's declared wireFormat in the
-      // canonical registry (src/coins) rather than a coin-name literal, matching the
-      // decoder and the bulk seeder (bulk-sync/dump.js), so onboarding a merge-mined
-      // chain is a registry edit. LTC's MWEB handling is unaffected: that is the
+      // The answer comes from the coin's declared wireFormat in the canonical
+      // registry (src/coins), matching the decoder and the bulk seeder
+      // (bulk-sync/dump.js). coinFromNetwork resolves the tick through that same
+      // registry (item 5803): it was a hardcoded coin-name list until then, so a
+      // chain onboarded by registry edit alone resolved to null here and read as
+      // NOT merge-mined. The remaining per-chain value that is not in src/coins is
+      // the reorg window on the next line, and resolveUndoBlocks now refuses a
+      // registered coin that has none rather than defaulting it. LTC's MWEB
+      // handling is unaffected: that is the
       // 'mweb' wireFormat branch inside XChainBlockDecoder, not this fetch path. The
       // `auxPow` parameter is retained for call-site stability and is deliberately no
       // longer consulted.
@@ -362,6 +369,35 @@ class XChainUtxoTracker {
         return true
     }
 
+    // Decides whether the block-fetch loop should stop retrying the AuxPoW strip
+    // path for this height and rebuild the block per-tx instead.
+    //
+    // The streak this reads is the AUXPOW-PARSE streak, never the generic
+    // block-fetch streak, and the difference is the whole point. Reassembly fans
+    // out one getrawtransaction RPC per transaction in the block; escalating on a
+    // transport fault would aim that fan-out at the node that is already failing
+    // to answer. Only a fault in the strip itself is evidence that THIS BLOCK's
+    // bytes are the problem, and the connector tags exactly those with
+    // auxPowParseFailure (getBlockWithoutAuxPow and the per-block strip inside
+    // getBlocksBatchWithoutAuxPow). The decoder twin has counted the two
+    // separately since its own escalation misfired on ~15s of node
+    // unavailability; see xchain-decoder/src/XChainDecoder.js.
+    shouldReassembleBlock(height, streakHeight, streakCount){
+        return !!this.auxPow && streakHeight === height && streakCount >= AUXPOW_REASSEMBLE_AFTER
+    }
+
+    // Advance the AuxPoW-parse streak for a failure at `height`. Same streak
+    // shape as noteBlockFetchFailure (counts while the SAME height keeps failing,
+    // restarts on a height change), but an UNTAGGED error leaves the count where
+    // it is rather than clearing it: a node that flaps mid-recovery must not
+    // rewind progress toward the reassembly that fixes a genuinely malformed
+    // block. Only a success clears it, at the call site.
+    noteAuxPowParseFailure(height, streakHeight, streakCount, error){
+        if (streakHeight !== height) return { height: height, count: (error && error.auxPowParseFailure) ? 1 : 0 }
+        if (!(error && error.auxPowParseFailure)) return { height: streakHeight, count: streakCount }
+        return { height: height, count: streakCount + 1 }
+    }
+
     // Evaluate a block-fetch failure at `height`. `streakHeight`/`streakCount`
     // are the caller's running streak; the count increments while the SAME height
     // keeps failing and resets to 1 on a height change (we advanced past the stuck
@@ -372,14 +408,10 @@ class XChainUtxoTracker {
     // top-level guard logs [fatal] and exits for a supervised restart, instead of
     // retrying every few seconds forever with no signal. Returns the updated
     // { height, count } streak for the caller to carry forward on a non-fatal miss.
-    // Decides whether the block-fetch loop should stop retrying the AuxPoW strip
-    // path for this height and rebuild the block per-tx instead (a failure streak
-    // this long at ONE height on an AuxPoW chain reads as deterministic, e.g. an
-    // AuxPoW section skipAuxPow cannot traverse, not a transient RPC blip).
-    shouldReassembleBlock(height, streakHeight, streakCount){
-        return !!this.auxPow && streakHeight === height && streakCount >= AUXPOW_REASSEMBLE_AFTER
-    }
-
+    //
+    // This counts EVERY failure, transport included: "can the node serve this
+    // block at all" is a different question from noteAuxPowParseFailure's "are
+    // this block's bytes the problem", and only the latter may escalate.
     noteBlockFetchFailure(height, streakHeight, streakCount, error){
         const count = (streakHeight === height) ? streakCount + 1 : 1
         const msg = error && error.message ? error.message : String(error)
@@ -782,6 +814,15 @@ class XChainUtxoTracker {
 
             nextOutput.txid = txid
             nextOutput.confirmations = confirmations
+            // Two money fields, units differing by 10^8, and both are served.
+            // `value` is SATOSHIS as an exact decimal string (it can exceed
+            // 2^53-1 on DOGE, so parse it as a BigInt): it is the field to spend
+            // and to sum, and the only one the encoder validates. `amount` is
+            // COIN-denominated, derived from `value` for display, and must never
+            // be spent or summed as satoshis. Confusing the two cost xchain-hub a
+            // live incident (satoshis summed into a whole-coin floor left the
+            // guard inert); its xchain-hub/src/lib/utxo_balance.js helper exists
+            // because of it.
             nextOutput.amount = satoshiToDecimalString(nextOutput.value)
             nextOutput.scriptPubKey = scriptPubKeyHex
             results.push(nextOutput)
@@ -818,6 +859,9 @@ class XChainUtxoTracker {
             nextOutput.txid = txid
             nextOutput.height = null
             nextOutput.confirmations = 0
+            // Same dual-unit contract as the confirmed loop above: `value` is
+            // satoshis and is what gets spent, `amount` is the derived
+            // coin-denominated display string.
             nextOutput.amount = satoshiToDecimalString(nextOutput.value)
             nextOutput.scriptPubKey = scriptPubKeyHex
             results.push(nextOutput)
@@ -1069,6 +1113,30 @@ class XChainUtxoTracker {
         return inputCounts.reduce((acc, n) => acc + n, 0)
     }
 
+    // Commit a LAST_BLOCK_* pointer repair in its OWN batch so it reaches disk
+    // before the caller re-reads getLastBlockHeight/Hash (which read disk only).
+    //
+    // setLastBlockHash/Height STAGE into transactionArray rather than writing
+    // through, and at boot that array is the still-open constructor Map that no
+    // flush ever commits: a repair written without this ends up discarded by the
+    // next beginTransaction, leaving the durable pointer above the node tip while
+    // the in-memory cursor reads correct. Every disk-reading consumer then
+    // disagrees with the loop (get_sync_status / computeFreshness floor `synced`
+    // to false on the negative lag), and if the loop then sleeps synced nothing
+    // ever flushes, so the wrong pointer persists across restarts.
+    //
+    // PRECONDITION, and it is why this is one method rather than two copies:
+    // beginTransaction() REPLACES transactionArray outright, so the caller must
+    // have discarded or committed any in-flight batch first. verifyReorg's callers
+    // all do; start()'s repair branch does it through
+    // discardInflightBatchForReorg() immediately above the call.
+    async commitLastBlockPointerRepair(hash, height){
+        await this.db.beginTransaction()
+        await this.db.setLastBlockHash(hash)
+        await this.db.setLastBlockHeight(height)
+        await this.db.endTransaction()
+    }
+
     async verifyReorg(nodeTipHeight = null){
         let thereAreDifferences = true
         let blocksDeleted = []
@@ -1103,18 +1171,11 @@ class XChainUtxoTracker {
                 if (lastBlock && (lastBlockDb.height != lastBlock["h"])){
                     throw Error("There are inconsistents in a block height. It should be "+lastBlockIndex+" but "+lastBlock["h"]+" was found")
                 } else {
-                    // Commit the pointer repair in its OWN batch so it reaches disk
-                    // before the loop re-reads getLastBlockHeight/Hash (which read disk
-                    // only). setLastBlockHash/Height stage into transactionArray; at
-                    // boot that is the still-open constructor Map that no flush ever
-                    // commits, so without an explicit endTransaction the re-read below
-                    // sees the unrepaired pointer and this branch spins forever. All
-                    // verifyReorg callers discard any prior batch first, so opening a
-                    // fresh one here strands nothing.
-                    await this.db.beginTransaction()
-                    await this.db.setLastBlockHash(lastBlockDb.hash)
-                    await this.db.setLastBlockHeight(lastBlockDb.height)
-                    await this.db.endTransaction()
+                    // Own batch, or the re-read below sees the unrepaired pointer and
+                    // this branch spins forever. Rationale in full at
+                    // commitLastBlockPointerRepair(); all verifyReorg callers discard
+                    // any prior batch first, so opening a fresh one here strands nothing.
+                    await this.commitLastBlockPointerRepair(lastBlockDb.hash, lastBlockDb.height)
                     console.log("The new last block hash in the db is "+lastBlockDb.hash)
                     console.log("The new last block index in the db is "+lastBlockDb.height)
                     console.log("Last block index was fixed!")
@@ -1151,13 +1212,23 @@ class XChainUtxoTracker {
                     // in those blocks. A loud abort is strictly safer than a silently
                     // corrupt index: stop here and require an operator-driven resync.
                     if (blocksDeleted.length >= this.undoBlocks){
+                        // Naming the remedy rather than the category, because the
+                        // operator most likely to read this line arrived by
+                        // restoring a published bootstrap whose tip had drifted:
+                        // "resync from a known-good snapshot" sends them back to
+                        // the snapshot that put them here, and doing it again
+                        // halts again at the same block.
                         const msg = "verifyReorg: reorg depth exceeds the recovery window "
                             + "(UNDO_BLOCKS=" + this.undoBlocks + "). Already rolled back "
                             + blocksDeleted.length + " blocks; spent-output recovery records "
                             + "for block height " + lastBlockIndex + " and below have already "
                             + "been purged, so continuing would silently leave the UTXO index "
-                            + "under-counted. Aborting. Recovery: perform a full resync from a "
-                            + "known-good snapshot."
+                            + "under-counted. Aborting. Recovery: this index cannot be walked "
+                            + "back onto the node's chain and has to be rebuilt. Under xchain-node "
+                            + "run `xchain-node reset xchain-utxo-tracker <coin> <network>`, which "
+                            + "drops the volume and takes the bulk-sync path; standalone, stop the "
+                            + "tracker, empty its data directory and restart it. Restoring the same "
+                            + "bootstrap again lands back here if its tip is the drifted one."
                         console.error(msg)
                         throw XChainUtxoTracker.markUnrecoverableReorg(new Error(msg))
                     }
@@ -1341,6 +1412,15 @@ class XChainUtxoTracker {
         let blockFetchFailures = 0
         let blockFetchFailureHeight = null
 
+        // A SECOND streak, counting only AuxPoW-strip (content) faults. The one
+        // above answers "can this node serve this block at all" and drives the
+        // fail-loud desync halt; this one answers "are this block's bytes the
+        // problem" and is the only thing allowed to trigger per-tx reassembly.
+        // Merging them aimed the reassembly RPC fan-out at whatever node had just
+        // gone unreachable for five polls.
+        let auxPowParseFailures = 0
+        let auxPowParseFailureHeight = null
+
         while (true){
             if (this.keepParsing){
                 // Refresh node tip when: no info yet, caught up to the previously-seen tip,
@@ -1431,8 +1511,13 @@ class XChainUtxoTracker {
                             lastProcessedBlockHash = await this.db.getLastBlockHash()
                             continue
                         } else {
-                            await this.db.setLastBlockHash(lastBlockDb.hash)
-                            await this.db.setLastBlockHeight(lastBlockDb.height)
+                            // Same repair as verifyReorg's, and it needs the same own
+                            // batch: bare setters STAGE, and at boot they stage into the
+                            // constructor Map nothing commits, which makes the log line
+                            // below claim a fix that never reaches disk. The
+                            // discardInflightBatchForReorg() call above satisfies the
+                            // precondition. Rationale at commitLastBlockPointerRepair().
+                            await this.commitLastBlockPointerRepair(lastBlockDb.hash, lastBlockDb.height)
                             lastProcessedBlockIndex = lastBlockDb.height
                             lastProcessedBlockHash = lastBlockDb.hash
                             console.log("Last block index was fixed!")
@@ -1534,12 +1619,13 @@ class XChainUtxoTracker {
                     let nextBlockHex = null
                     try {
                         let fetched
-                        if (this.shouldReassembleBlock(nextBlockHeight, blockFetchFailureHeight, blockFetchFailures)) {
-                            // Deterministic-looking failure streak at this height on an
-                            // AuxPoW chain: bypass the prefetch queue (its batch
-                            // strip would just fail the same way) and rebuild the pure
-                            // block per-tx, never reading the AuxPoW bytes.
-                            console.error('Block fetch at height ' + nextBlockHeight + ' failed ' + blockFetchFailures +
+                        if (this.shouldReassembleBlock(nextBlockHeight, auxPowParseFailureHeight, auxPowParseFailures)) {
+                            // The AuxPoW STRIP has failed this many times at this height,
+                            // which is evidence about the block's bytes rather than the
+                            // node's health: bypass the prefetch queue (its batch strip
+                            // would just fail the same way) and rebuild the pure block
+                            // per-tx, never reading the AuxPoW bytes.
+                            console.error('AuxPoW strip at height ' + nextBlockHeight + ' failed ' + auxPowParseFailures +
                                 ' consecutive times; falling back to per-tx block reassembly (malformed-AuxPoW recovery).')
                             prefetchQueue = []
                             const hash = await this.connector.getBlockHash(nextBlockHeight)
@@ -1554,15 +1640,24 @@ class XChainUtxoTracker {
                         nextBlockHash = fetched.hash
                         nextBlockHex = fetched.hex
                         // Successful fetch: clear the desync streak so a future
-                        // transient blip starts counting from zero again.
+                        // transient blip starts counting from zero again, and the
+                        // parse streak with it (this block's bytes are readable, by
+                        // the strip or by reassembly).
                         blockFetchFailures = 0
                         blockFetchFailureHeight = null
+                        auxPowParseFailures = 0
+                        auxPowParseFailureHeight = null
                     } catch (e){
                         prefetchQueue = []
                         // noteBlockFetchFailure counts consecutive failures at this
                         // height and THROWS a diagnosable desync error once the bound
                         // is hit, so a node pruned past our cursor fails loud instead
-                        // of spinning every 3s forever.
+                        // of spinning every 3s forever. It counts EVERY failure; the
+                        // parse streak beside it counts only the tagged content faults
+                        // that may escalate to reassembly.
+                        const _p = this.noteAuxPowParseFailure(nextBlockHeight, auxPowParseFailureHeight, auxPowParseFailures, e)
+                        auxPowParseFailureHeight = _p.height
+                        auxPowParseFailures = _p.count
                         const _s = this.noteBlockFetchFailure(nextBlockHeight, blockFetchFailureHeight, blockFetchFailures, e)
                         blockFetchFailureHeight = _s.height
                         blockFetchFailures = _s.count

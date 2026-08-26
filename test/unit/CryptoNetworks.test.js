@@ -82,14 +82,21 @@ describe('CryptoNetworks', function () {
       expect(net.bech32).to.equal('rltc');
     });
 
-    it('returns undefined for unknown network', function () {
-      const net = CryptoNetworks.getBitcoinJsNetwork('ethereum-mainnet');
-      expect(net).to.be.undefined;
+    // Item 5879: these two pinned an `undefined` return, which bitcoinjs-lib
+    // reads as BTC mainnet. The tracker now throws like the decoder and encoder
+    // twins, so an unresolvable name can never reach a decode path at all.
+    it('throws for an unknown network instead of returning undefined', function () {
+      expect(() => CryptoNetworks.getBitcoinJsNetwork('ethereum-mainnet'))
+        .to.throw(TypeError, /Unknown network: "ethereum-mainnet"/);
     });
 
-    it('returns undefined for empty string', function () {
-      const net = CryptoNetworks.getBitcoinJsNetwork('');
-      expect(net).to.be.undefined;
+    it('throws for an empty string', function () {
+      expect(() => CryptoNetworks.getBitcoinJsNetwork('')).to.throw(TypeError, /Unknown network/);
+    });
+
+    it('names the supported keys in the refusal, so the typo is fixable from the message', function () {
+      expect(() => CryptoNetworks.getBitcoinJsNetwork('bitcoin-mainet'))
+        .to.throw(TypeError, /Supported: .*bitcoin-mainnet/);
     });
 
     it('all networks have required fields', function () {

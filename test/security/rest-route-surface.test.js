@@ -33,9 +33,29 @@ const bodyParser = require('body-parser');
 const helmet = require('helmet');
 const cors = require('cors');
 const supertest = require('supertest');
+const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 
-// Build the app with the SAME route bodies as src/api.js (verbatim), backed by a
-// mock tracker so we can observe exactly what the HTTP layer forwards.
+// Mirrors src/api.js's setFreshnessHeaders, and deliberately calls the REAL
+// computeFreshness rather than restating its verdict: that static is where the
+// negative-lag floor lives, so a copy of the rule here could drift back to the
+// raw isSynced() flag with no assertion noticing.
+async function setFreshnessHeaders(res, tracker) {
+  let committedHeight = -1;
+  try { committedHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
+  const rawTip = (typeof tracker.latestKnownChainTip === 'number') ? tracker.latestKnownChainTip : -1;
+  const f = XChainUtxoTracker.computeFreshness(committedHeight, rawTip, tracker.isSynced(), {
+    mempoolReconverged: tracker.isMempoolReconverged()
+  });
+  res.set('X-Tracker-Height', String(f.tracker_height));
+  res.set('X-Node-Height', String(f.node_height));
+  if (f.lag !== null) res.set('X-Sync-Lag', String(f.lag));
+  res.set('X-Synced', String(f.synced));
+  return f;
+}
+
+// Stand-in app carrying the readiness and passthrough behaviour of src/api.js's
+// address routes. The middleware stack and the /balance body shape are NOT
+// production's, so read the two properties this file names and nothing wider.
 function createRealRoutesApp(tracker) {
   const app = express();
   app.use(helmet());
@@ -45,7 +65,8 @@ function createRealRoutesApp(tracker) {
   app.get('/utxos/:address', async (req, res) => {
     const address = req.params.address;
     const utxos = await tracker.getUtxosAddress(address);
-    res.set('X-Mempool-Ready', String(tracker.isSynced()));
+    const freshness = await setFreshnessHeaders(res, tracker);
+    res.set('X-Mempool-Ready', String(freshness.mempool_ready));
     res.send(utxos);
   });
 
@@ -54,16 +75,17 @@ function createRealRoutesApp(tracker) {
     const utxos = await tracker.getUtxosAddress(address);
     let balance = 0;
     for (const u of utxos) balance += u.amount;
-    res.set('X-Mempool-Ready', String(tracker.isSynced()));
+    const freshness = await setFreshnessHeaders(res, tracker);
+    res.set('X-Mempool-Ready', String(freshness.mempool_ready));
     res.send(String(balance));
   });
 
   app.get('/info/:address', async (req, res) => {
     const address = req.params.address;
     const info = await tracker.getBalanceInfo(address);
-    const mempoolReady = tracker.isSynced();
-    res.set('X-Mempool-Ready', String(mempoolReady));
-    if (info && typeof info === 'object') info.mempool_ready = mempoolReady;
+    const freshness = await setFreshnessHeaders(res, tracker);
+    res.set('X-Mempool-Ready', String(freshness.mempool_ready));
+    if (info && typeof info === 'object') info.mempool_ready = freshness.mempool_ready;
     res.send(info);
   });
 
@@ -79,6 +101,9 @@ describe('Security: REST address-route input surface', function () {
       getUtxosAddress: sinon.stub().resolves([]),
       getBalanceInfo: sinon.stub().resolves({ address: 'x', balances: { confirmed: '0.00000000' } }),
       isSynced: sinon.stub().returns(true),
+      isMempoolReconverged: sinon.stub().returns(true),
+      latestKnownChainTip: 100,
+      db: { getLastBlockHeight: sinon.stub().resolves(100) },
     };
     app = createRealRoutesApp(tracker);
   });
@@ -91,6 +116,25 @@ describe('Security: REST address-route input surface', function () {
   it('exposes X-Mempool-Ready=false when the mempool is still reconverging', async function () {
     tracker.isSynced.returns(false);
     const res = await supertest(app).get('/balance/anyaddr').expect(200);
+    expect(res.headers['x-mempool-ready']).to.equal('false');
+  });
+
+  it('floors X-Mempool-Ready to false on an orphaned view, isSynced() notwithstanding', async function () {
+    // Committed tip ABOVE the node's: the node reindexed or reset underneath us,
+    // so the outputs this view would authorize sit in blocks the node no longer
+    // recognizes. The raw isSynced() flag is height-catchup state and knows
+    // nothing of that, which is why the header comes off the floored verdict.
+    tracker.db.getLastBlockHeight.resolves(120);
+    tracker.latestKnownChainTip = 100;
+    const res = await supertest(app).get('/utxos/anyaddr').expect(200);
+    expect(res.headers['x-synced']).to.equal('false');
+    expect(res.headers['x-mempool-ready']).to.equal('false');
+  });
+
+  it('exposes X-Mempool-Ready=false while the mempool has not reconverged', async function () {
+    tracker.isMempoolReconverged.returns(false);
+    const res = await supertest(app).get('/utxos/anyaddr').expect(200);
+    expect(res.headers['x-synced']).to.equal('true');
     expect(res.headers['x-mempool-ready']).to.equal('false');
   });
 

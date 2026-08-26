@@ -45,6 +45,7 @@
  ********************************************************************/
 
 const util = require('./util')
+const memoryBudget = require('./memoryBudget')
 
 // Debug-only tracing for the missing-O-record investigation. Gated behind
 // TRACE_UTXO=1 to keep prod cost at zero. Emits one line per insertOutput,
@@ -562,10 +563,11 @@ class LevelUpStore {
                 this.db = new MemoryLevel({ keyEncoding: 'buffer', valueEncoding: 'buffer' })
             } else {
                 // A large block cache keeps hot UTXO index blocks resident: on big
-                // mainnet DBs sat on spinning disks, the 8 MB default turns every cold
-                // lookup into a random seek and IO-bounds catch-up. Tunable via env.
+                // mainnet DBs on spinning disks, the 8 MB default turns every cold
+                // lookup into a random seek. Sized by memoryBudget against what this
+                // process may use; LEVELDB_CACHE_BYTES overrides outright.
                 this.db = new ClassicLevel("/data/"+this.dbName, { keyEncoding: 'buffer', valueEncoding: 'buffer',
-                    cacheSize: parseInt(process.env.LEVELDB_CACHE_BYTES ?? String(4 * 1024 * 1024 * 1024), 10),
+                    cacheSize: memoryBudget.leveldbCacheBytes(),
                     writeBufferSize: parseInt(process.env.LEVELDB_WRITE_BUFFER_BYTES ?? String(64 * 1024 * 1024), 10) })
             }
             // abstract-level opens lazily on first op; open explicitly so any

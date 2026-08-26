@@ -118,7 +118,9 @@ describe('XChainUtxoTracker', function () {
     it('throws for an unresolvable network name instead of decoding under a default network', function () {
       expect(() => new XChainUtxoTracker(
         'not-a-real-network', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
-      )).to.throw(/unknown network/);
+      // Spans both refusals: getBitcoinJsNetwork's own TypeError ("Unknown
+      // network: ...", item 5879) and the constructor's `net`-object backstop.
+      )).to.throw(/[Uu]nknown network/);
     });
   });
 

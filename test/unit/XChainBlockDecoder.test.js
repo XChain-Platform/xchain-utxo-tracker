@@ -31,6 +31,24 @@ describe('XChainBlockDecoder', function () {
       const decoder = new XChainBlockDecoder('litecoin-regtest');
       expect(decoder.coin).to.equal('litecoin');
     });
+
+    // The parse shape comes from the canonical coin registry (src/coins), not a
+    // coin-name literal, so onboarding a chain declares it in one place.
+    it('resolves wireFormat from the coin registry', function () {
+      expect(new XChainBlockDecoder('bitcoin-regtest').wireFormat).to.equal('default');
+      expect(new XChainBlockDecoder('litecoin-mainnet').wireFormat).to.equal('mweb');
+      expect(new XChainBlockDecoder('dogecoin-testnet').wireFormat).to.equal('auxpow');
+    });
+
+    // Construction refuses an unregistered coin rather than falling through to the
+    // strict bitcoinjs default parser, which misparses at the first AuxPoW/MWEB block.
+    // Matches xchain-decoder's twin of this class.
+    it('throws for a coin with no declared wire-format contract', function () {
+      expect(() => new XChainBlockDecoder('namecoin-mainnet'))
+        .to.throw(/no block\/tx wire-format contract declared for coin "namecoin"/);
+      expect(() => new XChainBlockDecoder('some-extra-dashed-name'))
+        .to.throw(/no block\/tx wire-format contract declared for coin "some"/);
+    });
   });
 
   describe('doubleSha256AndReverse', function () {
@@ -257,6 +275,17 @@ describe('XChainBlockDecoder', function () {
       const block = decoder.blockFromHex(blockHex);
       expect(block.transactions).to.have.length(1);
       expect(block.transactions[0].outs).to.have.length(1);
+    });
+
+    // The bound rejects a forged varint tx count by name before the loop starts, rather
+    // than leaving it to surface as an unnamed buffer over-read inside Transaction
+    // .fromBuffer. The two honest cases above are the negative control: they carry one
+    // tx in ~65 bytes and stay well inside remaining/10.
+    it('rejects a tx count structurally impossible for the remaining bytes', function () {
+      const normalTx = '01000000' + txAfterVersion;
+      // 0xc8 = 200 transactions claimed, one ~65-byte transaction actually present.
+      const forgedHex = header() + 'c8' + normalTx;
+      expect(() => decoder.blockFromHex(forgedHex)).to.throw(/invalid transaction count/);
     });
   });
 });
