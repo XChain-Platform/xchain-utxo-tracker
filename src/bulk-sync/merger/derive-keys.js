@@ -97,12 +97,15 @@ const SPENDS_HEADER_SIZE  = 64
 
 // Per-chain N-window defaults, single-sourced in undo-blocks.js so the bulk-seeded
 // N-prefix always covers at least as many blocks as the live reorg depth guard allows
-// (a hand-copied second table previously risked re-opening the per-chain reorg gap).
+// (a hand-copied second table re-opens the per-chain reorg gap).
 // resolveUndoBlocks is single-sourced in undo-blocks.js so the seeded N-window,
 // the live undo window, the orchestrator tip-safety clamp, and api.js can never
 // drift under the same env (uuid:65309b82). Re-exported below so existing
 // callers (orchestrator.js, api.js) keep importing it from here unchanged.
-const { DEFAULT_UNDO_BLOCKS, resolveUndoBlocks } = require('../../undo-blocks.js')
+// The DEFAULTS table itself is deliberately NOT imported: the seeder reads the
+// window only through the resolver, and a binding to the raw table here is how a
+// hand-copied second table gets started again.
+const { resolveUndoBlocks } = require('../../undo-blocks.js')
 
 // Per-prefix (keySize, valueSize, recordSize).
 const LAYOUT = {

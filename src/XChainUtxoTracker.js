@@ -123,7 +123,10 @@ const MAX_ADDRESS_OUTPUTS = Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS) > 0
 // reorg inside the trust window is auto-recovered, never a manual resync). On
 // 1-minute DOGE blocks the old flat value of 10 was only ~10 minutes of headroom.
 // Single-sourced in undo-blocks.js so the live worker and the bulk seeder can never drift.
-const { DEFAULT_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS, coinFromNetwork, resolveUndoBlocks } = require('./undo-blocks.js')
+// Import the RESOLVER only, never the table or the MAX_SAFE_UNDO_BLOCKS ceiling: this
+// worker consults neither, and naming them here reads as a second clamp that does not
+// exist. Both live inside resolveUndoBlocks, which is the one place they may live.
+const { coinFromNetwork, resolveUndoBlocks } = require('./undo-blocks.js')
 
 // Per-coin block/tx wire-serialization family from the canonical coin registry
 // (src/coins). Used to gate AuxPoW stripping on the coin's declared wireFormat

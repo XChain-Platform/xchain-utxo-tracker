@@ -992,7 +992,17 @@ async function compressDirPigz(taskId, source, destination) {
                 // key lives in the tracker container), so restoring it does need the
                 // separate BOOTSTRAP_RESTORE_ALLOW_UNSIGNED=1 provenance opt-out:
                 // a locally-produced archive has no publisher to authenticate.
-                sha256File(destination)
+                // Hash the flushed file, not the bytes pigz emitted: the child
+                // exiting leaves the stream mid-write, and a small archive may
+                // already be finished, so a bare 'finish' wait would never fire.
+                const flushed = outputStream.writableFinished
+                    ? Promise.resolve()
+                    : new Promise((onFlush, onFail) => {
+                        outputStream.once('finish', onFlush)
+                        outputStream.once('error', onFail)
+                    })
+                flushed
+                    .then(() => sha256File(destination))
                     .then((digest) => fs.promises.writeFile(
                         destination + '.sha256',
                         `${digest}  ${path.basename(destination)}\n`))
@@ -1004,6 +1014,9 @@ async function compressDirPigz(taskId, source, destination) {
         tar.on('error', (err) => reject(new Error(`tar failed to init: ${err.message}`)))
         pv.on('error', (err) => reject(new Error(`pv failed to init: ${err.message}`)))
         pigz.on('error', (err) => reject(new Error(`pigz fail to init: ${err.message}`)))
+        // Route a write failure (a full disk, a read-only mount) into the same
+        // rejection: an unhandled 'error' on this stream takes the process down.
+        outputStream.on('error', (err) => reject(new Error(`snapshot write failed: ${err.message}`)))
     })
 }
 

@@ -28,6 +28,17 @@
 #     └── data.sha256    = "<sha256 of data.tar.gz>  data.tar.gz"
 #   restore: tar xzf outer -> verify data.sha256 -> gunzip data.tar.gz | tar xf - -C /data
 #
+# Provenance: the output is UNSIGNED. data.sha256 proves the archive is internally
+# consistent, not who made it, and no ed25519 signing key belongs in a throwaway
+# migration sidecar - so this script deliberately writes no <out>.sig. Both restore
+# paths are fail-closed on provenance, so an unsigned archive is REFUSED by default:
+#   xchain-node bootstrap restore  -> XCHAIN_NODE_REQUIRE_SIGNED_BOOTSTRAP=0
+#   tracker restorebootstrap       -> BOOTSTRAP_RESTORE_ALLOW_UNSIGNED=1
+# Sign it on the key-holding host instead where the archive is to be published:
+# publish-bootstraps.sh signs with XCHAIN_NODE_BOOTSTRAP_SIGNING_KEY, and refuses to
+# ship an archive that has no .sig. Same posture as a locally-taken `getbootstrap`
+# snapshot (src/api.js): unsigned, and it says so.
+#
 # Run INSIDE the migration sidecar (needs rocksdb + classic-level + node + tar + gzip):
 #   MIGRATE_JS  path to migrate-rocksdb-to-classiclevel.js
 #               (default /XChainUtxoTracker/src/bulk-sync/migrate-rocksdb-to-classiclevel.js)
@@ -96,4 +107,11 @@ rm -rf "$WORK/wrap" "$WORK/outer"
 
 ls -la "$OUT"
 log "DONE: classic-level bootstrap written to $OUT"
-log "Restore with: xchain-node bootstrap restore xchain-utxo-tracker <coin> <network>  (after placing it in the bootstrap dir)"
+log "NOTE: this archive is UNSIGNED (no $OUT.sig). Both restore paths are fail-closed on"
+log "      provenance, so it is REFUSED by default. Pick one before you restore:"
+log "  publish  - sign it on the key-holding host (publish-bootstraps.sh, XCHAIN_NODE_BOOTSTRAP_SIGNING_KEY),"
+log "             which is also what lets it be published and advertised at all"
+log "  local    - restore it in place, accepting that provenance is unchecked:"
+log "               XCHAIN_NODE_REQUIRE_SIGNED_BOOTSTRAP=0 xchain-node bootstrap restore xchain-utxo-tracker <coin> <network>"
+log "               (tracker-side restorebootstrap uses BOOTSTRAP_RESTORE_ALLOW_UNSIGNED=1 instead)"
+log "Place it in the bootstrap dir first, either way."
