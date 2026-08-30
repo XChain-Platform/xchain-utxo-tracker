@@ -408,7 +408,7 @@ class XChainUtxoTracker {
     // height, the node cannot serve that block (pruned past our cursor, or a
     // permanent missing-block fault): record a diagnosable desync state on the
     // instance (surfaced by get_sync_status) and THROW so the polling loop's
-    // top-level guard logs [fatal] and exits for a supervised restart, instead of
+    // top-level guard records a CRASH and exits for a supervised restart, instead of
     // retrying every few seconds forever with no signal. Returns the updated
     // { height, count } streak for the caller to carry forward on a non-fatal miss.
     //

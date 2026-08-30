@@ -50,6 +50,7 @@ const { isWrapperArchive, parseSha256Sidecar,
         hasRequiredLevelDbMembers, parseDetachedSignature } = require('./restore-validation.js')
 const { installObservability } = require('./observability');   // default-off /metrics + structured log shim
 const { installUtxoTrackerMetrics } = require('./utxoTrackerMetrics');   // sync-freshness heartbeat gauges
+const { installCrashHandlers, noteCrash } = require('./crashHandlers.js')
 const jsonRouter = require('express-json-rpc-router')
 const concurrencyGate = require('./concurrencyGate.js')
 const { parseCorsOrigin } = require('./corsOrigin.js')
@@ -187,7 +188,7 @@ function launchTracker(tracker){
             tracker.haltForResync(err && err.message)
             return
         }
-        console.error('[fatal] UTXO tracker polling loop terminated: ' + (err && err.message), err)
+        noteCrash('pollingLoopTerminated', err)
         process.exit(1)
     })
 }
@@ -1560,11 +1561,13 @@ async function runBulkSyncIfEmpty() {
 // unit test, skip the bulk-sync/startApi boot so the pure helpers below can be
 // exercised in isolation.
 if (require.main === module) {
+    // Ahead of the bulk-sync boot, so a throw anywhere in it is a CRASH record
+    // rather than node's bare stderr dump.
+    installCrashHandlers()
     runBulkSyncIfEmpty()
         .then(() => startApi())
         .catch(err => {
-            console.error('[fatal]', err.message)
-            if (err.stack) console.error(err.stack)
+            noteCrash('bootFailed', err)
             process.exit(1)
         })
 }
