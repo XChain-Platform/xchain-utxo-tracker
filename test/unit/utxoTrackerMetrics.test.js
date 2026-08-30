@@ -50,11 +50,24 @@ function fakeTracker(overrides = {}){
 
 describe('utxo-tracker sync-freshness metrics', function () {
 
-    it('registers nothing when metrics are off', function () {
+    // The observability registry is process-wide (one process is one service),
+    // so a case asserting a series is ABSENT has to start from a clean registry
+    // rather than inheriting the previous case's series.
+    afterEach(function () { require('../../src/observability')._resetObservability(); });
+
+    it('still registers the series when metrics are off, where only the endpoint is gated', function () {
+        // Gating the registry on METRICS_ENABLED would leave these counters
+        // absent on the default fleet, which is every box: nothing could record
+        // into them, so enabling metrics later starts from zero history instead
+        // of revealing what happened.
         const observability = realObservability(false);
-        assert.strictEqual(observability.registry, null,
-            'the vendored module leaves the registry null unless METRICS_ENABLED');
-        assert.strictEqual(installUtxoTrackerMetrics(observability, fakeTracker()), false);
+        assert.strictEqual(observability.enabled, false, 'the endpoint stays off');
+        assert.ok(observability.registry, 'the registry itself is not gated');
+        assert.strictEqual(installUtxoTrackerMetrics(observability, fakeTracker()), true);
+    });
+
+    it('refuses to register without a registry at all', function () {
+        assert.strictEqual(installUtxoTrackerMetrics({ registry: null }, fakeTracker()), false);
     });
 
     it('registers nothing without a tracker', function () {

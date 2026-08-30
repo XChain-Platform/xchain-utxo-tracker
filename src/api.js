@@ -21,6 +21,17 @@
 const dotenv = require('dotenv')
 dotenv.config()
 
+// Before anything else logs. The UTXO_TRACKER_API_KEY notice immediately below
+// is exactly the line an operator needs levelled and timestamped, and
+// installObservability does not run until ~390 lines further down.
+const { patchConsole } = require('./observability');
+patchConsole({
+    service: 'xchain-utxo-tracker',
+    version: require('../package.json').version,
+    coin:    process.env.COIN || '',
+    network: process.env.NETWORK || ''
+});
+
 const { spawn, spawnSync } = require('child_process');
 const os = require('os')
 const LevelUpStore = require('./LevelUpDb.js')
