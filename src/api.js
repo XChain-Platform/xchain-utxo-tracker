@@ -21,6 +21,17 @@
 const dotenv = require('dotenv')
 dotenv.config()
 
+// Before anything else logs. The UTXO_TRACKER_API_KEY notice immediately below
+// is exactly the line an operator needs levelled and timestamped, and
+// installObservability does not run until ~390 lines further down.
+const { patchConsole } = require('./observability');
+patchConsole({
+    service: 'xchain-utxo-tracker',
+    version: require('../package.json').version,
+    coin:    process.env.COIN || '',
+    network: process.env.NETWORK || ''
+});
+
 const { spawn, spawnSync } = require('child_process');
 const os = require('os')
 const LevelUpStore = require('./LevelUpDb.js')
@@ -39,6 +50,7 @@ const { isWrapperArchive, parseSha256Sidecar,
         hasRequiredLevelDbMembers, parseDetachedSignature } = require('./restore-validation.js')
 const { installObservability } = require('./observability');   // default-off /metrics + structured log shim
 const { installUtxoTrackerMetrics } = require('./utxoTrackerMetrics');   // sync-freshness heartbeat gauges
+const { installCrashHandlers, noteCrash } = require('./crashHandlers.js')
 const jsonRouter = require('express-json-rpc-router')
 const concurrencyGate = require('./concurrencyGate.js')
 const { parseCorsOrigin } = require('./corsOrigin.js')
@@ -176,7 +188,7 @@ function launchTracker(tracker){
             tracker.haltForResync(err && err.message)
             return
         }
-        console.error('[fatal] UTXO tracker polling loop terminated: ' + (err && err.message), err)
+        noteCrash('pollingLoopTerminated', err)
         process.exit(1)
     })
 }
@@ -992,7 +1004,17 @@ async function compressDirPigz(taskId, source, destination) {
                 // key lives in the tracker container), so restoring it does need the
                 // separate BOOTSTRAP_RESTORE_ALLOW_UNSIGNED=1 provenance opt-out:
                 // a locally-produced archive has no publisher to authenticate.
-                sha256File(destination)
+                // Hash the flushed file, not the bytes pigz emitted: the child
+                // exiting leaves the stream mid-write, and a small archive may
+                // already be finished, so a bare 'finish' wait would never fire.
+                const flushed = outputStream.writableFinished
+                    ? Promise.resolve()
+                    : new Promise((onFlush, onFail) => {
+                        outputStream.once('finish', onFlush)
+                        outputStream.once('error', onFail)
+                    })
+                flushed
+                    .then(() => sha256File(destination))
                     .then((digest) => fs.promises.writeFile(
                         destination + '.sha256',
                         `${digest}  ${path.basename(destination)}\n`))
@@ -1004,6 +1026,9 @@ async function compressDirPigz(taskId, source, destination) {
         tar.on('error', (err) => reject(new Error(`tar failed to init: ${err.message}`)))
         pv.on('error', (err) => reject(new Error(`pv failed to init: ${err.message}`)))
         pigz.on('error', (err) => reject(new Error(`pigz fail to init: ${err.message}`)))
+        // Route a write failure (a full disk, a read-only mount) into the same
+        // rejection: an unhandled 'error' on this stream takes the process down.
+        outputStream.on('error', (err) => reject(new Error(`snapshot write failed: ${err.message}`)))
     })
 }
 
@@ -1536,11 +1561,13 @@ async function runBulkSyncIfEmpty() {
 // unit test, skip the bulk-sync/startApi boot so the pure helpers below can be
 // exercised in isolation.
 if (require.main === module) {
+    // Ahead of the bulk-sync boot, so a throw anywhere in it is a CRASH record
+    // rather than node's bare stderr dump.
+    installCrashHandlers()
     runBulkSyncIfEmpty()
         .then(() => startApi())
         .catch(err => {
-            console.error('[fatal]', err.message)
-            if (err.stack) console.error(err.stack)
+            noteCrash('bootFailed', err)
             process.exit(1)
         })
 }

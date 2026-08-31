@@ -3,6 +3,19 @@ version: '3'
 services:
   xchain_utxo_tracker:
     build: .
+    # Without this block the tracker is the one XChain service whose container
+    # logs are unbounded: docker's json-file driver rotates nothing by default,
+    # so a compose-run tracker grows until the host disk fills (spec
+    # proactive-system-watch, 2.0.4/2.0.5). 30m x 10 = 300 MB matches the
+    # decoder, encoder, explorer and sdk compose files. The tracker measured
+    # 6.7 KB/h on regtest 2026-08-30; even at the 10x fleet inflation and 2x
+    # headroom the 48 h floor asks for 6.4 MB, so this cap is a disk ceiling
+    # rather than a retention limit.
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "30m"
+        max-file: "10"
     volumes:
       - xchain_utxo_tracker_data:/data/
     networks: 
