@@ -4,8 +4,8 @@
 # XChain Platform UTXO Tracker
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.11.0-blue" alt="Version">
-  <img src="https://img.shields.io/badge/tests-990%2B%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/version-0.12.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/tests-1%2C349%2B%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/node-%3E%3D22-green" alt="Node">
   <img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue" alt="License">
 </p>
@@ -129,21 +129,21 @@ defaults hold on an unconfigured box:
 | Command | Description |
 |---|---|
 | `npm run api` | Start the tracker and API server |
-| `npm test` | Unit tests (~247 tests) |
-| `npm run test:smoke` | Smoke tests (11 tests) |
+| `npm test` | Unit tests (~819 tests) |
+| `npm run test:smoke` | Smoke tests (9 tests) |
 | `npm run test:integration` | Integration tests (~69 tests) |
 | `npm run test:e2e` | End-to-end tests (~36 tests) |
-| `npm run test:boundary` | Boundary condition tests (~20 tests) |
-| `npm run test:security` | Security tests (~27 tests) |
-| `npm run test:regression` | Regression tests (~120 tests) |
-| `npm run test:fuzz` | Fuzz tests (13 campaigns, 1000 iterations each) |
-| `npm run test:fuzz:quick` | Quick fuzz (100 iterations) |
-| `npm run test:fuzz:deep` | Deep fuzz (10,000 iterations) |
-| `npm run test:perf` | Performance tests (~29 tests) |
-| `npm run test:perf:quick` | Quick performance (small scale) |
-| `npm run test:perf:deep` | Deep performance (large scale, 4 GB heap) |
+| `npm run test:boundary` | Boundary condition tests (~29 tests) |
+| `npm run test:security` | Security tests (~65 tests) |
+| `npm run test:regression` | Regression tests (~142 tests) |
+| `npm run test:fuzz` | Fuzz tests (13 campaigns, 1000 iterations each, 106 tests) |
+| `npm run test:fuzz:quick` | Quick fuzz (100 iterations, 106 tests) |
+| `npm run test:fuzz:deep` | Deep fuzz (10,000 iterations, 106 tests) |
+| `npm run test:perf` | Performance tests (~32 tests) |
+| `npm run test:perf:quick` | Quick performance (small scale, 32 tests) |
+| `npm run test:perf:deep` | Deep performance (large scale, 4 GB heap, 32 tests) |
 | `npm run test:chaos` | Chaos engineering tests (~31 tests) |
-| `npm run test:all` | All unit + integration + e2e tests |
+| `npm run test:all` | All unit + integration + e2e tests (1,180 tests) |
 | `npm run mutate` | Mutation testing (Stryker Mutator) |
 | `npm run mutate:quick` | Quick mutation testing |
 | `npm run mutate:p1` | P1 priority mutation testing |
