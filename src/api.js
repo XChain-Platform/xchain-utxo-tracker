@@ -605,6 +605,15 @@ async function startApi(){
             // frequent reorganizations and know the depth of the last one.
             result.reorg_count      = tracker.reorgCount;
             result.last_reorg_depth = tracker.lastReorgDepth;
+            // Remaining rollback budget. Every rollback deletes one entry from the
+            // persisted undo window and only forward sync puts it back, so a window
+            // sitting below undo_window_blocks says a reorg was interrupted (a
+            // restart mid-reorg) and names how much depth is left before this index
+            // can no longer be walked onto the node's chain. reorg_count and
+            // last_reorg_depth are in-memory lifetime counters and read zero after
+            // that restart, so they cannot show this on their own.
+            result.undo_window_blocks    = tracker.undoBlocks;
+            result.undo_window_remaining = Array.isArray(tracker.lastBlocks) ? tracker.lastBlocks.length : 0;
             // Surface an unrecoverable block-fetch desync so a monitor can
             // name the fault. Set just before the polling loop fails loud on a node
             // pruned past our cursor; visible in the brief window before exit.
@@ -1532,7 +1541,7 @@ async function runBulkSyncIfEmpty() {
     const info      = await connector.getBlockchainInfo()
     // The floor must match the orchestrator's actual stop point, not the raw
     // tip-safety. We always spawn it with --to unpinned, so effectiveTipSafety()
-    // clamps tip-safety up to resolveUndoBlocks(network) (BTC 12 / LTC 48 /
+    // clamps tip-safety up to resolveUndoBlocks(network) (BTC 12 / LTC 120 /
     // DOGE 120) and dump.js stops at chainTip - max(tipSafety, undoBlocks). If
     // this pre-flight only required tipSafety+1, a chain whose tip sits in
     // [tipSafety+1, undoBlocks) would pass here, then dump.js computes a negative

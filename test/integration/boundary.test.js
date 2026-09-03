@@ -304,7 +304,7 @@ describe('Boundary: Reorg at UNDO_BLOCKS limit', function () {
   });
 
   it('cleans up K/M for blocks exiting the UNDO_BLOCKS window', async function () {
-    // The window is per-chain (src/undo-blocks.js: BTC 12 / LTC 48 / DOGE 120), so
+    // The window is per-chain (src/undo-blocks.js: BTC 12 / LTC 120 / DOGE 120), so
     // size the chain from tracker.undoBlocks rather than the flat 10 this test was
     // written against; two blocks past the window must age out of lastBlocks.
     const window = tracker.undoBlocks;

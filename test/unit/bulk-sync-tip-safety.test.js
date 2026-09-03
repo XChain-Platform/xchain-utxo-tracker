@@ -16,7 +16,7 @@
 // reorg), so it must stop at least undoBlocks below the tip so the live
 // incremental worker builds W/K/M for every block inside the reorg window.
 // The prior default tip-safety (10) was below every chain's undoBlocks
-// (BTC 12, LTC 48, DOGE 120), so a reorg into the freshly seeded range left
+// (BTC 12, LTC 120, DOGE 120), so a reorg into the freshly seeded range left
 // phantom (unspent, never-deleted) or missing (spent, never-restored) UTXOs.
 // effectiveTipSafety() now clamps tip-safety up to undoBlocks (the same value
 // derive-keys uses to size the seeded N-window) whenever --to is not pinned.
@@ -30,7 +30,7 @@ describe('bulk-sync tip-safety clamp @regression', function () {
     it('raises a too-small tip-safety up to the per-chain undoBlocks', function () {
         // Default orchestrator tip-safety of 10 is below every chain's undoBlocks.
         expect(effectiveTipSafety(10, null, 'bitcoin-mainnet')).to.equal(12);
-        expect(effectiveTipSafety(10, null, 'litecoin-mainnet')).to.equal(48);
+        expect(effectiveTipSafety(10, null, 'litecoin-mainnet')).to.equal(120);
         expect(effectiveTipSafety(10, null, 'dogecoin-mainnet')).to.equal(120);
     });
 

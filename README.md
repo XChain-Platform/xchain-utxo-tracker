@@ -24,7 +24,7 @@ UTXO indexing service for the XChain Platform. Continuously polls the coin nodes
 - **Active-UTXO-only storage**: only unspent outputs in the live index; spent outputs archived temporarily for reorg recovery
 - **Real-time mempool tracking**: unconfirmed transactions in a separate in-memory LevelDB, updated every 60 seconds
 - **BigInt precision**: JSON-RPC `get_info` returns full-precision balance strings via `satoshiToDecimalString()`; the REST `/balance` endpoint returns a float (use `get_info` when precision matters)
-- **Reorg handling**: per-chain undo history (BTC: 12, LTC: 48, DOGE: 120 blocks) with K/M archive records and automatic rollback on chain reorganization; depth overridable via `XCHAIN_UNDO_BLOCKS_<COIN>`
+- **Reorg handling**: per-chain undo history (BTC: 12, LTC: 120, DOGE: 120 blocks) with K/M archive records and automatic rollback on chain reorganization; depth overridable via `XCHAIN_UNDO_BLOCKS_<COIN>`
 - **Concurrent block prefetch**: up to 10 blocks pre-fetched concurrently via JSON-RPC batch requests with HTTP keep-alive
 - **Batch writes**: LevelDB writes batched in groups of 200 blocks with atomic commit
 - **Two-pass transaction processing**: outputs inserted before inputs within each block, correctly handling intra-block spends

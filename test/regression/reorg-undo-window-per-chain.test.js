@@ -14,7 +14,7 @@
 //
 // Commit 0e8c043 made the reorg recovery window per-chain instead of a flat 10.
 // On 1-minute DOGE blocks a flat window was only ~10 minutes of headroom; the
-// fix sizes the window by coin (BTC 12, LTC 48, DOGE 120) so an ordinary reorg
+// fix sizes the window by coin (BTC 12, LTC 120, DOGE 120) so an ordinary reorg
 // inside the cross-chain confirmation gate auto-recovers instead of forcing a
 // manual resync. The window is resolved at construction into this.undoBlocks,
 // with an env override (XCHAIN_UNDO_BLOCKS_<COIN>). A reversion to a flat
@@ -47,8 +47,15 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
     expect(undoBlocksFor('bitcoin-regtest')).to.equal(12);
   });
 
-  it('Litecoin widens to 48 blocks', function () {
-    expect(undoBlocksFor('litecoin-mainnet')).to.equal(48);
+  // Raised from 48 on 2026-09-01: a litecoin testnet fork walked past the
+  // ~2-hour window a 48-block sizing gives, exhausted the rollback budget and
+  // forced a full tracker rebuild. 120 is the deepest value available without
+  // moving MAX_SAFE_UNDO_BLOCKS and the decoder's DISPENSER_EXPIRE_SAFE_DEPTH
+  // in lockstep.
+  it('Litecoin widens to 120 blocks', function () {
+    expect(undoBlocksFor('litecoin-mainnet')).to.equal(120);
+    // Assert we are NOT back to the window the testnet fork outran.
+    expect(undoBlocksFor('litecoin-mainnet')).to.not.equal(48);
   });
 
   it('Dogecoin widens to 120 blocks (the flat-10 regression target)', function () {
@@ -106,7 +113,7 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
   // second table to drift).
   describe('bulk seeder shares the live per-chain window (single-source)', function () {
     const { resolveUndoBlocks: seederResolve } = require('../../src/bulk-sync/merger/derive-keys.js');
-    for (const [network, expected] of [['bitcoin-mainnet', 12], ['litecoin-mainnet', 48], ['dogecoin-mainnet', 120]]) {
+    for (const [network, expected] of [['bitcoin-mainnet', 12], ['litecoin-mainnet', 120], ['dogecoin-mainnet', 120]]) {
       it(network + ' matches between live worker and bulk seeder (' + expected + ')', function () {
         expect(undoBlocksFor(network)).to.equal(expected);
         expect(seederResolve(network)).to.equal(expected);
