@@ -182,7 +182,16 @@ class XChainUtxoTracker {
       
       this.parseMode = PARSE_MODE_BULK_INSERTS
       this.xchainBlockDecoder = new XChainBlockDecoder(network)
-      
+
+      // Prove the BigInt-safe bufferutils patch actually took before any block is
+      // decoded, matching the decoder's boot check. In the constructor for the same
+      // reason as verifyConsensusPin above: api.js does not await start(), so a
+      // check there would let the HTTP surface bind and serve first. Runs after the
+      // decoder construction that requires the patch module.
+      require('./assertBigIntBufferutils').assertBigIntBufferutils(
+          this.xchainBlockDecoder.coin, 'utxo-tracker')
+
+
       this.debugTime = {}
       
       this.synced = false

@@ -168,6 +168,10 @@ function main() {
     // Lazy require so --help works without bitcoinjs-lib installed.
     const XChainBlockDecoder = require('../XChainBlockDecoder.js')
     const decoder = new XChainBlockDecoder(`${reader.chain}-${reader.network}`)
+    // Same fail-closed patch check the tracker constructor runs. This worker is its
+    // own process and never constructs a tracker, so that check cannot reach it.
+    // Below the lazy require, so --help still works without bitcoinjs-lib.
+    require('../assertBigIntBufferutils').assertBigIntBufferutils(decoder.coin, 'bulk-sync parse-worker')
 
     const outputs = new OutputsWriter(paths.outputs, reader.chain, reader.network, reader.firstHeight, reader.lastHeight)
     const spends  = new SpendsWriter(paths.spends,   reader.chain, reader.network, reader.firstHeight, reader.lastHeight)

@@ -154,6 +154,10 @@ function verifyBlockSequence(blocks, opts = {}) {
         // Lazy require so --help and header-only runs work without bitcoinjs-lib.
         const XChainBlockDecoder = require('../XChainBlockDecoder.js')
         decoder = new XChainBlockDecoder(`${opts.coin}-any`)
+        // Same fail-closed patch check the tracker constructor runs. This CLI bypasses
+        // start() entirely, so that check cannot reach it; a merkle verdict computed
+        // over misparsed DOGE outputs would pass or fail for the wrong reason.
+        require('../assertBigIntBufferutils').assertBigIntBufferutils(decoder.coin, 'bulk-sync validate-chain')
     }
     let blocksChecked = 0
     let firstHeight   = null
