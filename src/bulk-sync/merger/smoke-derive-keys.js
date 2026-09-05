@@ -132,6 +132,11 @@ async function main() {
         outDir, tmpDir: derTmp,
         ramBudgetBytes: 1024 * 1024,
         outputsRecordSize: 121,
+        // deriveKeys resolves the N-window through the canonical coin registry and
+        // refuses an unnamed chain; the explicit window keeps the scenario's
+        // "window of 10" expectations independent of the per-chain default.
+        network: 'bitcoin',
+        undoBlocks: 10,
     })
 
     // Asserts: counts per prefix

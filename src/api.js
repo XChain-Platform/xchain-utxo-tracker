@@ -427,8 +427,10 @@ async function startApi(){
     // Sync-freshness heartbeat. Commit recency, halt state and reorg counters
     // live in get_sync_status / GET /status only, so a wedged or halted tracker
     // leaves no trace on the scrape and is undetectable if that polling rail
-    // itself regresses. No-ops when metrics are off (registry null unless
-    // METRICS_ENABLED). See src/utxoTrackerMetrics.js.
+    // itself regresses. Registration is unconditional: the registry is always
+    // built and only the /metrics route is gated, so the series exist even where
+    // METRICS_ENABLED is off; their values come from a scrape-time collector, so
+    // they are sampled only once something scrapes. See src/utxoTrackerMetrics.js.
     installUtxoTrackerMetrics(observability, tracker);
 
     // API key enforcement for admin JSON-RPC methods. Fails closed: without a

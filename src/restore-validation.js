@@ -102,5 +102,4 @@ module.exports = {
     parseSha256Sidecar,
     hasRequiredLevelDbMembers,
     parseDetachedSignature,
-    WRAPPER_MEMBER_NAMES,
 };
