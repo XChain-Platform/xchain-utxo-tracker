@@ -237,6 +237,19 @@ function deriveSyncedVerdict({ lag, nodeHeightStale = false, threshold = XChainU
     return lag >= 0 && lag <= threshold
 }
 
+// Bounds the `route` label of the HTTP metrics: the observability shim labels an
+// unmatched request by its first path segment, so caller-invented paths mint one
+// series each and fill the per-metric cap, dropping real routes from the scrape.
+const UNMATCHED_ROUTE_LABEL = '/*unmatched';
+
+// Mounts FIRST, ahead of every layer that can shed a request, so a shed request
+// is labelled too; a specific route later in the stack overwrites the label, and
+// bare `/` matches no wildcard segment and keeps its own single series.
+function installUnmatchedRouteLabel(app){
+    app.all(UNMATCHED_ROUTE_LABEL, (req, res, next) => next());
+    return app;
+}
+
 async function startApi(){
     const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
     launchTracker(tracker)
@@ -343,6 +356,9 @@ async function startApi(){
 
     // Create the app
     const app = express();
+
+    // Ahead of every middleware below; rationale at installUnmatchedRouteLabel.
+    installUnmatchedRouteLabel(app);
 
     // Use Helmet to increase security
     app.use(helmet());
@@ -1648,6 +1664,8 @@ module.exports = {
     listArchiveMembers,
     sha256File,
     envInt,
+    installUnmatchedRouteLabel,
+    UNMATCHED_ROUTE_LABEL,
     // Exported for the recovery regression test only: the bootstrap task map and
     // the compressor that must leave a record behind for handleBootstrapFailure
     // to stamp. Nothing outside src/api.js consumes either at runtime.
