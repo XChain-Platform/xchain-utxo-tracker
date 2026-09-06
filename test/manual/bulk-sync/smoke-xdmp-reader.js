@@ -20,7 +20,7 @@ const os     = require('os')
 const path   = require('path')
 const assert = require('assert')
 
-const { XdmpReader, HEADER_SIZE } = require('./xdmp-reader.js')
+const { XdmpReader, HEADER_SIZE } = require('../../../src/bulk-sync/xdmp-reader.js')
 
 const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-xdmp-reader-'))
 console.log('[smoke/xdmp-reader] tmp dir:', TMP_DIR)

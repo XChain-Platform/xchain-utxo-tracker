@@ -19,8 +19,8 @@ const os     = require('os')
 const path   = require('path')
 const assert = require('assert')
 
-const { loadKeys } = require('./loader.js')
-const { LAYOUT }   = require('./derive-keys.js')
+const { loadKeys } = require('../../../../src/bulk-sync/merger/loader.js')
+const { LAYOUT }   = require('../../../../src/bulk-sync/merger/derive-keys.js')
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-loader-'))
 console.log('[smoke/loader] tmp dir:', TMP)

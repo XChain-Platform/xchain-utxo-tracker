@@ -557,7 +557,31 @@ class LevelUpStore {
         await this.db.close()
     }
 
+    // Drop every process-global cache that DESCRIBES the on-disk store. Both are pure
+    // read accelerators rebuilt from disk on the next miss, so a reset can only cost a
+    // re-warm, never a wrong answer. Called from createDatabase so no cache can outlive
+    // the database it describes: restorebootstrap wipes /data, extracts an OLDER
+    // snapshot and re-runs XChainUtxoTracker.start() in the SAME process, and a
+    // knownScripts entry for a script first seen AFTER that snapshot makes replay
+    // Tier-0 hit and skip rewriting its S/Z records, losing that script's first-seen
+    // height permanently (api.js restorebootstrap -> launchTracker -> start).
+    static resetCaches(){
+        LevelUpStore.outputCache = new Map()
+        LevelUpStore.outputCacheHits = 0
+        LevelUpStore.outputCacheMisses = 0
+        LevelUpStore.knownScripts = new Set()
+        LevelUpStore.knownScriptsHits = 0
+        LevelUpStore.knownScriptsMisses = 0
+    }
+
     async createDatabase() {
+        // Open time is the one moment a store is guaranteed to have no batch in flight,
+        // which is why the reset lives here and not in the constructor: an in-flight
+        // batch's staged outputs are in outputCache but not yet on disk, so clearing it
+        // mid-batch would turn a Phase 2 cache hit into a DB miss. Every production
+        // caller (tracker start, mempool store, api.js isDbEmpty, which runs to
+        // completion before startApi launches the tracker) opens cold.
+        LevelUpStore.resetCaches()
         try {
             if (this.inMemory){
                 this.db = new MemoryLevel({ keyEncoding: 'buffer', valueEncoding: 'buffer' })

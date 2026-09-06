@@ -50,7 +50,7 @@ function resolveLimit(rawValue, defaultLimit){
  * @param {number}   [options.retryAfter=1] Retry-After header value, seconds.
  * @param {function} [options.skip]      (req) => true to exempt a request from the cap.
  * @param {object|function} [options.body] 429 JSON body, or (req) => body.
- * @returns {function} Express middleware, with .getStats() and .limit attached.
+ * @returns {function} Express middleware, with .getStats(), .limit and .hold() attached.
  */
 function createConcurrencyGate(options){
     options = options || {};
@@ -62,6 +62,10 @@ function createConcurrencyGate(options){
 
     let inFlight = 0;
     let shed     = 0;
+
+    // Per-gate slot key. The probe reserve and the main cap are both mounted on
+    // one app, so a module-level key would let either gate claim the other's slot.
+    const SLOT = Symbol('concurrencyGateSlot');
 
     const middleware = function concurrencyGate(req, res, next){
         if(limit <= 0 || skip(req)) return next();
@@ -80,15 +84,49 @@ function createConcurrencyGate(options){
             released = true;
             inFlight--;
         };
+        const slot = { release, claimed: false };
+        req[SLOT] = slot;
+
         // 'finish' fires on a fully-sent response; 'close' on a client abort or
         // a handler that never answers. Whichever lands first frees the slot,
         // and the guard makes the pair idempotent (both fire on a normal
         // response). Without the 'close' leg an aborted request would leak its
         // slot permanently and the gate would ratchet shut on a live service.
-        res.on('finish', release);
-        res.on('close', release);
+        //
+        // The socket lifetime is NOT the work lifetime, though. Express never
+        // awaits an async handler, so a client that hangs up mid-read frees its
+        // slot here while the LevelDB scan behind it runs on: abort-spam then
+        // admits work past the cap while in_flight reads zero. A handler wrapped
+        // in hold() claims its slot and answers for it itself, which leaves
+        // these legs as the anti-leak path for whatever nobody wrapped.
+        const releaseIfUnclaimed = () => { if(!slot.claimed) release(); };
+        res.on('finish', releaseIfUnclaimed);
+        res.on('close', releaseIfUnclaimed);
 
         next();
+    };
+
+    /**
+     * Bind a handler's slot to the WORK instead of to the socket.
+     *
+     * The wrapped handler owns its slot from entry until its promise settles, so
+     * an aborted request keeps counting against the cap for exactly as long as
+     * its backend read is still running. A request with no slot (gate disabled
+     * by a cap <= 0, or exempted by `skip`) is passed straight through, so
+     * wrapping is safe on every route the gate may or may not have admitted.
+     *
+     * @param {function} handler Express handler or middleware.
+     * @returns {function} The handler, holding its slot until it settles.
+     */
+    middleware.hold = (handler) => async function heldHandler(req, res, next){
+        const slot = req[SLOT];
+        if(!slot) return handler(req, res, next);
+        slot.claimed = true;
+        try {
+            return await handler(req, res, next);
+        } finally {
+            slot.release();
+        }
     };
 
     middleware.limit    = limit;

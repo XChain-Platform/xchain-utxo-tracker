@@ -468,7 +468,12 @@ async function startApi(){
         next();
     });
 
-    app.get('/utxos/:address', async (req, res) => {
+    // Every route below that awaits a LevelDB read is wrapped in the gate's
+    // hold(): the slot then spans the read instead of the client's socket, so a
+    // client that hangs up mid-scan cannot free capacity for the next request
+    // while its own scan is still running. Adding a route here without the
+    // wrapper puts it back outside the cap.
+    app.get('/utxos/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
             const utxos = await getUtxos(address, parsePageOpts(req.query));
@@ -490,9 +495,9 @@ async function startApi(){
         } catch (err) {
             sendAddressError(res, err);
         }
-    })
+    }))
 
-    app.get('/firstseen/:address', async (req, res) => {
+    app.get('/firstseen/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
             const firstSeen = await getFirstSeen(address);
@@ -501,9 +506,9 @@ async function startApi(){
         } catch (err) {
             sendAddressError(res, err);
         }
-    })
+    }))
 
-    app.get('/balance/:address', async (req, res) => {
+    app.get('/balance/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
             const balance = await getBalance(address);
@@ -515,9 +520,9 @@ async function startApi(){
         } catch (err) {
             sendAddressError(res, err);
         }
-    })
+    }))
 
-    app.get('/info/:address', async (req, res) => {
+    app.get('/info/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
             const info = await getInfo(address);
@@ -537,7 +542,7 @@ async function startApi(){
         } catch (err) {
             sendAddressError(res, err);
         }
-    })
+    }))
 
     const jsonRpcController = {
 
@@ -873,7 +878,10 @@ async function startApi(){
     // store is reachable and returns 503 when it is not. The JSON-RPC catch-all
     // would otherwise respond 200 to any GET (serving the method-not-found
     // error body), making a DB-down tracker appear healthy to healthchecks.
-    app.get('/status', async (req, res) => {
+    // Held on the PROBE gate, not the main one: /status is exempt from the main
+    // cap by `skip`, so its slot lives in probeGate's reserve and only that
+    // gate's hold() finds it.
+    app.get('/status', probeGate.hold(async (req, res) => {
         let dbOk = false
         let committedHeight = -1
         try {
@@ -913,7 +921,7 @@ async function startApi(){
             body.stale_for_ms   = Date.now() - tracker.lastNodeRpcOkAt
         }
         res.json(body)
-    })
+    }))
 
     // Express 5 / body-parser 2.x leaves req.body undefined when a request carries
     // no JSON body (a GET, or a POST without application/json), whereas body-parser
@@ -923,7 +931,12 @@ async function startApi(){
     // response instead of crashing the request.
     app.use((req, res, next) => { if (req.body === undefined) req.body = {}; next(); });
 
-    app.use(jsonRouter({methods: jsonRpcController}))
+    // One wrap covers every JSON-RPC method, batches included: the router
+    // returns an async middleware whose promise settles only once every method
+    // it dispatched has finished and the response has been sent. The internal
+    // get_sync_status() call above still goes through the bare controller
+    // object, so an in-process call never touches gate accounting.
+    app.use(requestGate.hold(jsonRouter({methods: jsonRpcController})))
 
     app.listen(UTXO_TRACKER_API_PORT, () => {
       console.log('API listening on port '+UTXO_TRACKER_API_PORT)
@@ -1286,6 +1299,35 @@ async function assertLevelDbArchiveOrThrow(archivePath, reportedSource) {
             + `tracker on an empty database.`)
 }
 
+// Post-extraction ground truth: the store must be AT the database root, because that
+// is the only place ClassicLevel("/data/<DB_NAME>") will look for it. The pre-wipe
+// member gate can only predict the layout from the tar listing, and `tar -x -C <root>`
+// preserves whatever directories the archive carries, so an archive whose store sits
+// one level down (the publisher tars the whole tracker volume, yielding
+// `./xchain-utxo-tracker/CURRENT`) satisfies that gate and still leaves nothing at the
+// root. Throwing here routes the restore into handleRestoreFailure's fail-loud branch:
+// the DB is already gone either way, so the choice is between an operator who knows
+// the restore failed and a tracker that quietly serves an empty database.
+function assertExtractedStoreOrThrow(destination) {
+    let entries = []
+    try { entries = fs.readdirSync(destination) }
+    catch (err) {
+        throw new Error(`Restore extracted to "${destination}" but that directory cannot be read `
+            + `(${err && err.message}); the database was wiped and must be resynced.`)
+    }
+    const hasCurrent  = entries.includes('CURRENT')
+    const hasManifest = entries.some(name => /^MANIFEST-\d+$/.test(name))
+    if (hasCurrent && hasManifest) return
+    const nested = entries.filter(name => {
+        try { return fs.statSync(path.join(destination, name)).isDirectory() } catch (e) { return false }
+    })
+    throw new Error(`Restore extracted successfully but left no LevelDB store at "${destination}" `
+        + `(CURRENT=${hasCurrent}, MANIFEST-<n>=${hasManifest})`
+        + (nested.length ? `; the archive nests its store under ${nested.map(n => `"${n}"`).join(', ')}, `
+            + `which must be repacked from inside the store directory (tar -cf - -C <store> .)` : '')
+        + `. The database was wiped by the restore and must be resynced.`)
+}
+
 // Validate a restore archive BEFORE the destructive /data wipe. Returns the effective
 // source to feed the pigz/tar pipeline plus an optional temp dir the caller must clean
 // up. Three gates, in trust order: provenance (a detached signature over the outer
@@ -1429,6 +1471,16 @@ async function decompressPigzInner(taskId, source, destination) {
             if (pigzError || pvError || tarError) {
                 reject(pigzError || pvError || tarError);
             } else {
+                // tar exiting 0 says the members were written SOMEWHERE under
+                // `destination`, never that they landed as a usable store at its root:
+                // extraction preserves the archive's own directories, so a store packed
+                // one level down lands at destination/<dir>/CURRENT and the tracker
+                // reopens onto an empty DB while this path reports success. Assert the
+                // ground truth on disk instead, after the wipe has already happened, so
+                // the restore fails loud through handleRestoreFailure rather than
+                // clearing the halt and relaunching over a database that is not there.
+                try { assertExtractedStoreOrThrow(destination) }
+                catch (err) { return reject(err) }
                 console.log(`Process completed. Dir "${destination}".`);
                 resolve(destination)
             }
@@ -1592,6 +1644,7 @@ module.exports = {
     unwrapBootstrapArchive,
     verifyBootstrapProvenanceOrThrow,
     assertLevelDbArchiveOrThrow,
+    assertExtractedStoreOrThrow,
     listArchiveMembers,
     sha256File,
     envInt,

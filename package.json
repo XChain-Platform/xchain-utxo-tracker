@@ -34,6 +34,7 @@
     "ci:regression": "mocha --timeout 30000 --recursive 'test/regression/**/*.test.js' --exit",
     "ci:smoke": "mocha --timeout 10000 test/smoke/smoke.test.js --exit",
     "test:smoke": "mocha --timeout 10000 test/smoke/smoke.test.js",
+    "test:manual:bulk-sync": "node test/manual/bulk-sync/smoke-writers.js && node test/manual/bulk-sync/smoke-xdmp-reader.js && node test/manual/bulk-sync/smoke-process-block.js && node test/manual/bulk-sync/merger/smoke-external-sort.js && node test/manual/bulk-sync/merger/smoke-streaming-join.js && node test/manual/bulk-sync/merger/smoke-derive-keys.js && node test/manual/bulk-sync/merger/smoke-loader.js",
     "test:boundary": "mocha --timeout 30000 --recursive test/boundary/**/*.test.js --exit",
     "test:security": "mocha --timeout 30000 --recursive test/security/**/*.test.js --exit",
     "test:regression": "mocha --timeout 30000 --recursive test/regression/**/*.test.js --exit",

@@ -94,14 +94,6 @@ const MAX_BLOCK_FETCH_RETRIES = Number(process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIE
 // streak is misdiagnosed as a pruned-node desync and halts the tracker.
 const AUXPOW_REASSEMBLE_AFTER = 5
 const REMOVE_SPENT = true
-// Coinbase outputs are unspendable until they reach this many confirmations
-// (consensus rule: 100 on BTC/LTC/DOGE and their regtest/testnet variants).
-// Serving immature coinbase as spendable hands a caller an input that
-// every node will reject, so getUtxosAddress withholds coinbase outputs below
-// this depth. Overridable for test harnesses that mine short chains.
-const COINBASE_MATURITY = Number(process.env.XCHAIN_COINBASE_MATURITY) > 0
-    ? Number(process.env.XCHAIN_COINBASE_MATURITY)
-    : 100
 const ETA_WINDOW_BLOCKS = 1000 //Rolling window size for ETA calculation
 const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node need to have to start parsing
 
@@ -127,6 +119,13 @@ const MAX_ADDRESS_OUTPUTS = Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS) > 0
 // worker consults neither, and naming them here reads as a second clamp that does not
 // exist. Both live inside resolveUndoBlocks, which is the one place they may live.
 const { coinFromNetwork, resolveUndoBlocks } = require('./undo-blocks.js')
+
+// Per-coin/network coinbase maturity, resolved the same way and for the same
+// reason as the reorg window above. Import the RESOLVER only, never the table:
+// the flat module-level constant that stood here asserted 100 for every chain,
+// which is wrong for DOGE (240 at the tip), and a second copy of the numbers in
+// this file is how that drifts back.
+const { resolveCoinbaseMaturity } = require('./coinbase-maturity.js')
 
 // Per-coin block/tx wire-serialization family from the canonical coin registry
 // (src/coins). Used to gate AuxPoW stripping on the coin's declared wireFormat
@@ -279,10 +278,15 @@ class XChainUtxoTracker {
       this.parsingAborted = false
 
       // Coinbase maturity depth used by getUtxosAddress to withhold immature
-      // coinbase outputs. Instance-scoped (not a bare const) so test
-      // harnesses that mine short chains can relax it; production keeps the
-      // consensus default. Setting it to 0 disables the gate.
-      this.coinbaseMaturity = COINBASE_MATURITY
+      // coinbase outputs, resolved per coin/network (src/coinbase-maturity.js).
+      // Instance-scoped (not a bare const) so test harnesses that mine short
+      // chains can relax it; production keeps the consensus default. Setting it
+      // to 0 disables the gate. The resolver refuses an unresolvable chain
+      // rather than defaulting, but it cannot newly reject a network that
+      // constructs today: getBitcoinJsNetwork above already rejected anything
+      // outside the registry's '<fullname>-<net>' keys, and every one of those
+      // keys has a declared maturity.
+      this.coinbaseMaturity = resolveCoinbaseMaturity(network)
     }
     
     async addToLastBlocks(blockHash){
@@ -854,6 +858,7 @@ class XChainUtxoTracker {
             // Withhold immature coinbase outputs: every node rejects a spend
             // of a coinbase output below coinbaseMaturity confirmations, so serving
             // it as spendable would hand a caller an input that can never confirm.
+            // The depth is per coin/network, not a universal 100 (src/coinbase-maturity.js).
             // Legacy O-records carry coinbase=false and are unaffected. Coinbase
             // outputs only exist in the confirmed store, so no equivalent filter is
             // needed on the mempool loop below.
@@ -1016,8 +1021,8 @@ class XChainUtxoTracker {
     
     // A coinbase transaction is the block's generation tx: exactly one input
     // whose prevout index is 0xFFFFFFFF (the same marker the input passes use to
-    // skip tracing it). Its outputs are unspendable until COINBASE_MATURITY
-    // confirmations, so they must be marked at insert time.
+    // skip tracing it). Its outputs are unspendable until this chain's coinbase
+    // maturity depth (this.coinbaseMaturity), so they must be marked at insert time.
     // Pure freshness computation shared by the API's per-query freshness surface
     // and its regression test, so the lag/synced contract cannot drift.
     // lag is null when nothing is indexed yet or the node tip is unknown; callers
@@ -1394,7 +1399,12 @@ class XChainUtxoTracker {
 
         // Recover any K/M cleanup work that was staged but not completed before a prior crash.
         // abstract-level .get returns undefined on a missing key (no throw); real
-        // I/O errors still propagate.
+        // I/O errors still propagate. Clear first: start() re-runs on the SAME tracker
+        // object after restorebootstrap replaces the store, and the read below only
+        // assigns when the P key exists, so without this the restored database inherits
+        // the previous database's pending list and cleanupAgedBlocks prunes K/M/W/Z
+        // records against block hashes that store never held.
+        this.pendingKMCleanup = []
         const pVal = await this.db.db.get(P_PENDING_CLEANUP_KEY)
         if (pVal !== undefined) {
             this.pendingKMCleanup = JSON.parse(pVal.toString())
@@ -2202,4 +2212,9 @@ module.exports.MAX_ADDRESS_OUTPUTS = MAX_ADDRESS_OUTPUTS
 module.exports.MAX_BLOCK_FETCH_RETRIES = MAX_BLOCK_FETCH_RETRIES
 // Exported for the malformed-AuxPoW fallback regression test.
 module.exports.AUXPOW_REASSEMBLE_AFTER = AUXPOW_REASSEMBLE_AFTER
-module.exports.COINBASE_MATURITY = COINBASE_MATURITY
+// The flat COINBASE_MATURITY scalar that stood here is gone: no caller in any
+// repo consumed it (verified by git grep for `.COINBASE_MATURITY` across the
+// platform), and a single exported number is the shape of the bug, since it can
+// only be right for one chain. Callers that need the depth read
+// tracker.coinbaseMaturity, or resolve it per network through this resolver.
+module.exports.resolveCoinbaseMaturity = resolveCoinbaseMaturity

@@ -12,12 +12,16 @@
 
 // Regression: immature coinbase outputs must not be served spendable.
 //
-// The tracker previously served every confirmed UTXO as spendable, including
-// coinbase outputs younger than COINBASE_MATURITY (100) confirmations. Every
-// node rejects a spend of an immature coinbase, so selecting one hands a caller
-// an input that can never confirm. The fix marks coinbase-ness on the O-record
-// (an optional 45th byte, so non-coinbase records stay 44 bytes and no reindex
-// is forced) and withholds immature coinbase from getUtxosAddress.
+// Every node rejects a spend of an immature coinbase, so serving one hands the
+// caller an input that can never confirm. Coinbase-ness is therefore marked on
+// the O-record as an optional 45th byte, which keeps non-coinbase records at 44
+// bytes and forces no reindex, and getUtxosAddress withholds any coinbase output
+// below its chain's maturity depth.
+//
+// That depth is per coin/network and resolves in src/coinbase-maturity.js: 100 on
+// Bitcoin and Litecoin, 240 on Dogecoin at the tip, 60 on Dogecoin regtest. A
+// single flat constant is wrong for at least one live chain in each direction,
+// which is what the Dogecoin blocks below pin.
 
 const { expect } = require('chai');
 const crypto = require('crypto');
@@ -135,6 +139,74 @@ describe('coinbase maturity', function () {
 
       const utxos = await tracker.getUtxosAddress(address);
       expect(utxos.map(u => u.txid)).to.include(FULL_TXID_A);
+    });
+  });
+
+  // The per-chain half of the same rule. This block deliberately never assigns
+  // tracker.coinbaseMaturity: the depth under test is the one the CONSTRUCTOR
+  // resolved, so a reversion to any flat constant turns the 150-confirmation case
+  // red. Against the old flat 100 the first case failed outright, serving a DOGE
+  // coinbase Dogecoin rejects as immature.
+  describe('Dogecoin maturity is 240 at the tip, not Bitcoin\'s 100', function () {
+    let tracker, db, mempoolDb, address, scriptHash;
+
+    beforeEach(async function () {
+      tracker = new XChainUtxoTracker('dogecoin-mainnet', '127.0.0.1', '22555', 'u', 'p', 'cb-mat-doge-db', false);
+      db = new LevelUpStore('cb-doge-' + Date.now() + '-' + Math.random(), true);
+      mempoolDb = new LevelUpStore('cb-doge-mp-' + Date.now() + '-' + Math.random(), true);
+      await db.createDatabase();
+      await mempoolDb.createDatabase();
+      tracker.db = db;
+      tracker.mempoolDb = mempoolDb;
+
+      // P2PKH, not P2WPKH: Dogecoin has no segwit and no bech32 addresses.
+      const pubkeyHash = crypto.createHash('sha256').update(Buffer.from('doge-coinbase-maturity-fixture')).digest().subarray(0, 20);
+      address = bitcoin.payments.p2pkh({ hash: pubkeyHash, network: tracker.network }).address;
+      const script = bitcoin.address.toOutputScript(address, tracker.network);
+      scriptHash = crypto.createHash('sha256').update(script).digest('hex');
+    });
+
+    afterEach(async function () {
+      try { await db.close(); } catch (e) {}
+      try { await mempoolDb.close(); } catch (e) {}
+    });
+
+    async function insertCoinbaseAt(fullTxid, height) {
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: fullTxid.substring(0, 16), outputIndex: 0, value: BigInt(1000000000000), height, fullTxHash: fullTxid, coinbase: true });
+      await db.endTransaction(true);
+      await db.beginTransaction();
+    }
+
+    it('resolves 240 at construction', function () {
+      expect(tracker.coinbaseMaturity).to.equal(240);
+    });
+
+    it('withholds a DOGE coinbase at 150 confirmations, which a flat 100 served', async function () {
+      tracker.blockchainInfoLastBlock = 1000000;
+      // height 999851 -> 150 confs: mature under a flat 100, immature on DOGE.
+      await insertCoinbaseAt(FULL_TXID_A, 999851);
+
+      const utxos = await tracker.getUtxosAddress(address);
+      expect(utxos.map(u => u.txid)).to.not.include(FULL_TXID_A);
+    });
+
+    it('serves the same output once it reaches 240 confirmations', async function () {
+      tracker.blockchainInfoLastBlock = 1000000;
+      // height 999761 -> 240 confs: the first depth Dogecoin accepts.
+      await insertCoinbaseAt(FULL_TXID_B, 999761);
+
+      const utxos = await tracker.getUtxosAddress(address);
+      expect(utxos.map(u => u.txid)).to.include(FULL_TXID_B);
+    });
+  });
+
+  // Dogecoin regtest is 60, LOWER than the old flat 100, so the flat value was
+  // withholding coinbase a regtest node would have accepted. Pinned because a
+  // harness that mines exactly to depth depends on the real number.
+  describe('Dogecoin regtest maturity is 60', function () {
+    it('resolves 60 at construction', function () {
+      const t = new XChainUtxoTracker('dogecoin-regtest', '127.0.0.1', '18332', 'u', 'p', 'cb-mat-doge-rt-db', false);
+      expect(t.coinbaseMaturity).to.equal(60);
     });
   });
 
