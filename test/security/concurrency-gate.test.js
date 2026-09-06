@@ -136,13 +136,21 @@ function get(server, path, ipSuffix, init){
     }, init || {}));
 }
 
-async function waitFor(predicate, label){
-    const deadline = Date.now() + 2000;
+/**
+ * Poll until predicate() holds, or REJECT naming what was being waited for.
+ * The rejection is the whole point: a waiter that cannot time out converts a
+ * flake into a test that passes unconditionally, which is strictly worse than
+ * the flake. timeoutMs is a bound, not a knob - a site that needs a longer one
+ * is a finding about that site, not something to widen here.
+ */
+async function waitFor(predicate, label, timeoutMs = 2000){
+    const deadline = Date.now() + timeoutMs;
     while(Date.now() < deadline){
         if(predicate()) return;
+        // The helper's own poll interval, not a synchronization sleep.
         await new Promise(r => setTimeout(r, 5));
     }
-    throw new Error('timed out waiting for: ' + label);
+    throw new Error('timed out after ' + timeoutMs + 'ms waiting for: ' + label);
 }
 
 describe('Security: global in-flight concurrency cap', function () {
@@ -235,8 +243,12 @@ describe('Security: global in-flight concurrency cap', function () {
 
         controller.abort();
         await aborted.catch(() => {});
-        // Give 'close' every chance to fire and be ignored; without the wrapper
-        // the slot is already back by now.
+        // Deliberate delay, NOT a synchronization point: do not convert this to
+        // waitFor. The claim is that in_flight STAYS 1 across a window in which
+        // 'close' had every chance to fire and be ignored, so the elapsed time
+        // IS the measurement. A predicate on in_flight === 1 already holds on
+        // entry and would return on its first tick, asserting nothing; without
+        // the wrapper the slot is already back by the end of this window.
         await new Promise(r => setTimeout(r, 50));
 
         expect(gate.getStats().in_flight).to.equal(1);
