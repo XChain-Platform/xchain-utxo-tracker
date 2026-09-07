@@ -23,7 +23,7 @@ const {
     OutputsWriter, SpendsWriter, MetaWriter,
     HEADER_SIZE, OUTPUTS_RECORD_SIZE, SPENDS_RECORD_SIZE,
     MAGIC_OUTPUTS, MAGIC_SPENDS, MAGIC_META,
-} = require('./writers.js')
+} = require('../../../src/bulk-sync/writers.js')
 
 const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bulk-sync-smoke-'))
 console.log('[smoke] tmp dir:', TMP_DIR)

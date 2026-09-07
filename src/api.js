@@ -237,6 +237,19 @@ function deriveSyncedVerdict({ lag, nodeHeightStale = false, threshold = XChainU
     return lag >= 0 && lag <= threshold
 }
 
+// Bounds the `route` label of the HTTP metrics: the observability shim labels an
+// unmatched request by its first path segment, so caller-invented paths mint one
+// series each and fill the per-metric cap, dropping real routes from the scrape.
+const UNMATCHED_ROUTE_LABEL = '/*unmatched';
+
+// Mounts FIRST, ahead of every layer that can shed a request, so a shed request
+// is labelled too; a specific route later in the stack overwrites the label, and
+// bare `/` matches no wildcard segment and keeps its own single series.
+function installUnmatchedRouteLabel(app){
+    app.all(UNMATCHED_ROUTE_LABEL, (req, res, next) => next());
+    return app;
+}
+
 async function startApi(){
     const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
     launchTracker(tracker)
@@ -344,6 +357,9 @@ async function startApi(){
     // Create the app
     const app = express();
 
+    // Ahead of every middleware below; rationale at installUnmatchedRouteLabel.
+    installUnmatchedRouteLabel(app);
+
     // Use Helmet to increase security
     app.use(helmet());
 
@@ -427,8 +443,10 @@ async function startApi(){
     // Sync-freshness heartbeat. Commit recency, halt state and reorg counters
     // live in get_sync_status / GET /status only, so a wedged or halted tracker
     // leaves no trace on the scrape and is undetectable if that polling rail
-    // itself regresses. No-ops when metrics are off (registry null unless
-    // METRICS_ENABLED). See src/utxoTrackerMetrics.js.
+    // itself regresses. Registration is unconditional: the registry is always
+    // built and only the /metrics route is gated, so the series exist even where
+    // METRICS_ENABLED is off; their values come from a scrape-time collector, so
+    // they are sampled only once something scrapes. See src/utxoTrackerMetrics.js.
     installUtxoTrackerMetrics(observability, tracker);
 
     // API key enforcement for admin JSON-RPC methods. Fails closed: without a
@@ -466,7 +484,12 @@ async function startApi(){
         next();
     });
 
-    app.get('/utxos/:address', async (req, res) => {
+    // Every route below that awaits a LevelDB read is wrapped in the gate's
+    // hold(): the slot then spans the read instead of the client's socket, so a
+    // client that hangs up mid-scan cannot free capacity for the next request
+    // while its own scan is still running. Adding a route here without the
+    // wrapper puts it back outside the cap.
+    app.get('/utxos/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
             const utxos = await getUtxos(address, parsePageOpts(req.query));
@@ -488,9 +511,9 @@ async function startApi(){
         } catch (err) {
             sendAddressError(res, err);
         }
-    })
+    }))
 
-    app.get('/firstseen/:address', async (req, res) => {
+    app.get('/firstseen/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
             const firstSeen = await getFirstSeen(address);
@@ -499,9 +522,9 @@ async function startApi(){
         } catch (err) {
             sendAddressError(res, err);
         }
-    })
+    }))
 
-    app.get('/balance/:address', async (req, res) => {
+    app.get('/balance/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
             const balance = await getBalance(address);
@@ -513,9 +536,9 @@ async function startApi(){
         } catch (err) {
             sendAddressError(res, err);
         }
-    })
+    }))
 
-    app.get('/info/:address', async (req, res) => {
+    app.get('/info/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
             const info = await getInfo(address);
@@ -535,7 +558,7 @@ async function startApi(){
         } catch (err) {
             sendAddressError(res, err);
         }
-    })
+    }))
 
     const jsonRpcController = {
 
@@ -605,6 +628,15 @@ async function startApi(){
             // frequent reorganizations and know the depth of the last one.
             result.reorg_count      = tracker.reorgCount;
             result.last_reorg_depth = tracker.lastReorgDepth;
+            // Remaining rollback budget. Every rollback deletes one entry from the
+            // persisted undo window and only forward sync puts it back, so a window
+            // sitting below undo_window_blocks says a reorg was interrupted (a
+            // restart mid-reorg) and names how much depth is left before this index
+            // can no longer be walked onto the node's chain. reorg_count and
+            // last_reorg_depth are in-memory lifetime counters and read zero after
+            // that restart, so they cannot show this on their own.
+            result.undo_window_blocks    = tracker.undoBlocks;
+            result.undo_window_remaining = Array.isArray(tracker.lastBlocks) ? tracker.lastBlocks.length : 0;
             // Surface an unrecoverable block-fetch desync so a monitor can
             // name the fault. Set just before the polling loop fails loud on a node
             // pruned past our cursor; visible in the brief window before exit.
@@ -862,7 +894,10 @@ async function startApi(){
     // store is reachable and returns 503 when it is not. The JSON-RPC catch-all
     // would otherwise respond 200 to any GET (serving the method-not-found
     // error body), making a DB-down tracker appear healthy to healthchecks.
-    app.get('/status', async (req, res) => {
+    // Held on the PROBE gate, not the main one: /status is exempt from the main
+    // cap by `skip`, so its slot lives in probeGate's reserve and only that
+    // gate's hold() finds it.
+    app.get('/status', probeGate.hold(async (req, res) => {
         let dbOk = false
         let committedHeight = -1
         try {
@@ -902,7 +937,7 @@ async function startApi(){
             body.stale_for_ms   = Date.now() - tracker.lastNodeRpcOkAt
         }
         res.json(body)
-    })
+    }))
 
     // Express 5 / body-parser 2.x leaves req.body undefined when a request carries
     // no JSON body (a GET, or a POST without application/json), whereas body-parser
@@ -912,7 +947,12 @@ async function startApi(){
     // response instead of crashing the request.
     app.use((req, res, next) => { if (req.body === undefined) req.body = {}; next(); });
 
-    app.use(jsonRouter({methods: jsonRpcController}))
+    // One wrap covers every JSON-RPC method, batches included: the router
+    // returns an async middleware whose promise settles only once every method
+    // it dispatched has finished and the response has been sent. The internal
+    // get_sync_status() call above still goes through the bare controller
+    // object, so an in-process call never touches gate accounting.
+    app.use(requestGate.hold(jsonRouter({methods: jsonRpcController})))
 
     app.listen(UTXO_TRACKER_API_PORT, () => {
       console.log('API listening on port '+UTXO_TRACKER_API_PORT)
@@ -1275,6 +1315,35 @@ async function assertLevelDbArchiveOrThrow(archivePath, reportedSource) {
             + `tracker on an empty database.`)
 }
 
+// Post-extraction ground truth: the store must be AT the database root, because that
+// is the only place ClassicLevel("/data/<DB_NAME>") will look for it. The pre-wipe
+// member gate can only predict the layout from the tar listing, and `tar -x -C <root>`
+// preserves whatever directories the archive carries, so an archive whose store sits
+// one level down (the publisher tars the whole tracker volume, yielding
+// `./xchain-utxo-tracker/CURRENT`) satisfies that gate and still leaves nothing at the
+// root. Throwing here routes the restore into handleRestoreFailure's fail-loud branch:
+// the DB is already gone either way, so the choice is between an operator who knows
+// the restore failed and a tracker that quietly serves an empty database.
+function assertExtractedStoreOrThrow(destination) {
+    let entries = []
+    try { entries = fs.readdirSync(destination) }
+    catch (err) {
+        throw new Error(`Restore extracted to "${destination}" but that directory cannot be read `
+            + `(${err && err.message}); the database was wiped and must be resynced.`)
+    }
+    const hasCurrent  = entries.includes('CURRENT')
+    const hasManifest = entries.some(name => /^MANIFEST-\d+$/.test(name))
+    if (hasCurrent && hasManifest) return
+    const nested = entries.filter(name => {
+        try { return fs.statSync(path.join(destination, name)).isDirectory() } catch (e) { return false }
+    })
+    throw new Error(`Restore extracted successfully but left no LevelDB store at "${destination}" `
+        + `(CURRENT=${hasCurrent}, MANIFEST-<n>=${hasManifest})`
+        + (nested.length ? `; the archive nests its store under ${nested.map(n => `"${n}"`).join(', ')}, `
+            + `which must be repacked from inside the store directory (tar -cf - -C <store> .)` : '')
+        + `. The database was wiped by the restore and must be resynced.`)
+}
+
 // Validate a restore archive BEFORE the destructive /data wipe. Returns the effective
 // source to feed the pigz/tar pipeline plus an optional temp dir the caller must clean
 // up. Three gates, in trust order: provenance (a detached signature over the outer
@@ -1418,6 +1487,16 @@ async function decompressPigzInner(taskId, source, destination) {
             if (pigzError || pvError || tarError) {
                 reject(pigzError || pvError || tarError);
             } else {
+                // tar exiting 0 says the members were written SOMEWHERE under
+                // `destination`, never that they landed as a usable store at its root:
+                // extraction preserves the archive's own directories, so a store packed
+                // one level down lands at destination/<dir>/CURRENT and the tracker
+                // reopens onto an empty DB while this path reports success. Assert the
+                // ground truth on disk instead, after the wipe has already happened, so
+                // the restore fails loud through handleRestoreFailure rather than
+                // clearing the halt and relaunching over a database that is not there.
+                try { assertExtractedStoreOrThrow(destination) }
+                catch (err) { return reject(err) }
                 console.log(`Process completed. Dir "${destination}".`);
                 resolve(destination)
             }
@@ -1532,7 +1611,7 @@ async function runBulkSyncIfEmpty() {
     const info      = await connector.getBlockchainInfo()
     // The floor must match the orchestrator's actual stop point, not the raw
     // tip-safety. We always spawn it with --to unpinned, so effectiveTipSafety()
-    // clamps tip-safety up to resolveUndoBlocks(network) (BTC 12 / LTC 48 /
+    // clamps tip-safety up to resolveUndoBlocks(network) (BTC 12 / LTC 120 /
     // DOGE 120) and dump.js stops at chainTip - max(tipSafety, undoBlocks). If
     // this pre-flight only required tipSafety+1, a chain whose tip sits in
     // [tipSafety+1, undoBlocks) would pass here, then dump.js computes a negative
@@ -1581,9 +1660,12 @@ module.exports = {
     unwrapBootstrapArchive,
     verifyBootstrapProvenanceOrThrow,
     assertLevelDbArchiveOrThrow,
+    assertExtractedStoreOrThrow,
     listArchiveMembers,
     sha256File,
     envInt,
+    installUnmatchedRouteLabel,
+    UNMATCHED_ROUTE_LABEL,
     // Exported for the recovery regression test only: the bootstrap task map and
     // the compressor that must leave a record behind for handleBootstrapFailure
     // to stamp. Nothing outside src/api.js consumes either at runtime.

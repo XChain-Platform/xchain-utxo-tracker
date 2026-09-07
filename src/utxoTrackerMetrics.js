@@ -40,9 +40,13 @@
  * await), so an async read here (tracker.db.getLastBlockHeight()) would resolve
  * after the scrape had already been serialized and silently publish nothing.
  *
- * @param {?{registry: ?object}} observability  installObservability() handle; its registry
- *                                              is null unless METRICS_ENABLED, and a null
- *                                              registry registers nothing.
+ * @param {?{registry: ?object}} observability  installObservability() handle; its registry is
+ *                                              ALWAYS built and only the /metrics route is gated
+ *                                              by METRICS_ENABLED, so these series register even
+ *                                              where metrics are off. Values are written by the
+ *                                              collector below, which only Registry#render calls,
+ *                                              so an unscraped box holds the series unsampled.
+ *                                              Only an absent handle or registry registers nothing.
  * @param {?object} tracker  the live XChainUtxoTracker, read at scrape time.
  * @returns {boolean} true when the metrics were registered.
  */

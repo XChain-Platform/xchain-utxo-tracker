@@ -62,23 +62,42 @@ function parseSha256Sidecar(text) {
 // plus the `MANIFEST-<n>` that file points at. Anything else is not a LevelDB store.
 const LEVELDB_MANIFEST_PATTERN = /^MANIFEST-\d+$/;
 
+// Normalize an archive member to `<dir>` / `<base>`, with `.` and a leading `./`
+// collapsing to the empty directory so `CURRENT` and `./CURRENT` compare equal.
+function memberParts(raw) {
+    const clean = raw.trim().replace(/\/+$/, '');
+    const dir = path.posix.dirname(clean);
+    return { dir: (dir === '.' || dir === '/') ? '' : dir.replace(/^\.\//, ''),
+             base: path.posix.basename(clean) };
+}
+
 // True when the archive's member list looks like a LevelDB store: `CURRENT` AND at
-// least one `MANIFEST-<n>`. A checksum proves only that the archive is the one that
-// was published, never that it holds a store, so without this a correctly-checksummed
-// tar of unrelated files passes validation and the unconditional pre-extract /data
-// wipe leaves the tracker on a fresh empty DB. Basenames are compared, as in
-// isWrapperArchive, so a `./` or directory prefix does not hide the members.
+// least one `MANIFEST-<n>`, IN THE SAME DIRECTORY. A checksum proves only that the
+// archive is the one that was published, never that it holds a store, so without this
+// a correctly-checksummed tar of unrelated files passes validation and the
+// unconditional pre-extract /data wipe leaves the tracker on a fresh empty DB.
+//
+// The same-directory requirement is the part that is easy to get wrong. Comparing
+// bare basenames also accepted a `CURRENT` under one directory and a `MANIFEST-<n>`
+// under an unrelated one, which is no store anywhere in the tree and still wiped the
+// live DB. It deliberately does NOT require depth 0: the publisher (xchain-node
+// BootstrapService) tars the whole tracker volume, so a genuine published archive
+// carries the store one level down (`./xchain-utxo-tracker/CURRENT`), and refusing
+// that here would make the only restore path reject every official bootstrap. A
+// nested store that this gate passes but `tar -x -C <dbroot>` cannot place correctly
+// is caught after extraction by assertExtractedStoreOrThrow in api.js, which fails
+// loud instead of reporting success over a wiped database.
 function hasRequiredLevelDbMembers(memberNames) {
     if (!Array.isArray(memberNames)) return false;
-    let hasCurrent = false;
-    let hasManifest = false;
+    const currentDirs = new Set();
+    const manifestDirs = new Set();
     for (const raw of memberNames) {
         if (typeof raw !== 'string') continue;
-        const base = path.posix.basename(raw.trim().replace(/\/+$/, ''));
-        if (base === 'CURRENT') hasCurrent = true;
-        else if (LEVELDB_MANIFEST_PATTERN.test(base)) hasManifest = true;
-        if (hasCurrent && hasManifest) return true;
+        const { dir, base } = memberParts(raw);
+        if (base === 'CURRENT') currentDirs.add(dir);
+        else if (LEVELDB_MANIFEST_PATTERN.test(base)) manifestDirs.add(dir);
     }
+    for (const dir of currentDirs) if (manifestDirs.has(dir)) return true;
     return false;
 }
 
@@ -102,5 +121,4 @@ module.exports = {
     parseSha256Sidecar,
     hasRequiredLevelDbMembers,
     parseDetachedSignature,
-    WRAPPER_MEMBER_NAMES,
 };

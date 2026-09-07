@@ -21,7 +21,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { createHash, generateKeyPairSync, sign: signAsymmetric } = require('crypto');
 
-const { validateBootstrapArchiveOrThrow } = require('../../src/api.js');
+const { validateBootstrapArchiveOrThrow, assertExtractedStoreOrThrow } = require('../../src/api.js');
 
 function sha256Hex(buf) {
     return createHash('sha256').update(buf).digest('hex');
@@ -288,6 +288,44 @@ describe('validateBootstrapArchiveOrThrow', function () {
             fs.writeFileSync(archive + '.sha256', `${sha256File(archive)}  single.tar.gz\n`);
             const res = await validateBootstrapArchiveOrThrow(archive);
             expect(res.effectiveSource).to.equal(archive);
+        });
+    });
+
+    // The pre-wipe member gate predicts the layout from the tar listing; only the disk
+    // knows where the members actually landed. `tar -x -C <dbroot>` preserves the
+    // archive's own directories, so a store packed one level down passes every gate and
+    // still leaves nothing at the root, after which the restore path cleared the halt
+    // and relaunched over a wiped database while reporting progress 100.
+    describe('post-extraction store assertion', function () {
+        let tmp;
+        beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-extract-test-')); });
+        afterEach(function () { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+        it('accepts a store extracted flat at the database root', function () {
+            writeStoreFiles(tmp);
+            expect(() => assertExtractedStoreOrThrow(tmp)).to.not.throw();
+        });
+
+        it('throws when the archive nested the store one level down', function () {
+            writeStoreFiles(path.join(tmp, 'xchain-utxo-tracker'));
+            expect(() => assertExtractedStoreOrThrow(tmp)).to.throw(/left no LevelDB store/);
+            // The message must name the nesting directory: that is the whole repair
+            // instruction the operator gets after their database is already gone.
+            expect(() => assertExtractedStoreOrThrow(tmp)).to.throw(/xchain-utxo-tracker/);
+        });
+
+        it('throws when extraction left the database root empty', function () {
+            expect(() => assertExtractedStoreOrThrow(tmp)).to.throw(/left no LevelDB store/);
+        });
+
+        it('throws when CURRENT is present but its MANIFEST is not', function () {
+            fs.writeFileSync(path.join(tmp, 'CURRENT'), 'MANIFEST-000001\n');
+            expect(() => assertExtractedStoreOrThrow(tmp)).to.throw(/left no LevelDB store/);
+        });
+
+        it('throws when the database root cannot be read at all', function () {
+            expect(() => assertExtractedStoreOrThrow(path.join(tmp, 'does-not-exist')))
+                .to.throw(/cannot be read/);
         });
     });
 });

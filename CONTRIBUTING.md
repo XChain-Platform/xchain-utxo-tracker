@@ -72,6 +72,9 @@ The tracker runs a layered suite. Pick the tier that matches your change:
 | Fuzz | `npm run test:fuzz` (`:quick` for 100 iterations) | No |
 | Performance | `npm run test:perf` | No |
 | Chaos | `npm run test:chaos` | No |
+| Bulk-sync manual smoke | `npm run test:manual:bulk-sync` | No |
+
+The bulk-sync manual smoke scripts live in `test/manual/bulk-sync/`, not in `src/`. They are plain-assert scripts (no mocha) that exercise the writers, xdmp reader, block processor and merger stages end to end against synthetic fixtures in a tmpdir. They stay out of the CI tiers on purpose (external-sort file I/O), so run them by hand after any change to `src/bulk-sync/`.
 
 Run the no-external-services tiers before every commit; the README documents the full script catalogue. Changes to UTXO accounting, balance math, reorg handling, or the query API should come with fuzz and security coverage, since balance correctness flows directly into encoder-built transactions.
 

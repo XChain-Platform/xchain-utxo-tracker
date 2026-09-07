@@ -89,6 +89,20 @@ describe('restore-validation', function () {
             expect(hasRequiredLevelDbMembers(null)).to.equal(false);
             expect(hasRequiredLevelDbMembers(undefined)).to.equal(false);
         });
+        it('rejects CURRENT and MANIFEST split across unrelated directories', function () {
+            // Neither directory holds a store, so extracting this over the wiped /data
+            // leaves the tracker on an empty DB. Comparing bare basenames accepted it.
+            expect(hasRequiredLevelDbMembers(['a/CURRENT', 'b/MANIFEST-000007'])).to.equal(false);
+            expect(hasRequiredLevelDbMembers(['CURRENT', 'store/MANIFEST-000007'])).to.equal(false);
+            expect(hasRequiredLevelDbMembers(['store/CURRENT', 'MANIFEST-000007'])).to.equal(false);
+        });
+        it('still accepts a store when a decoy CURRENT sits elsewhere in the tree', function () {
+            expect(hasRequiredLevelDbMembers(['docs/CURRENT', './CURRENT', './MANIFEST-000007']))
+                .to.equal(true);
+        });
+        it('treats "CURRENT" and "./CURRENT" as the same directory', function () {
+            expect(hasRequiredLevelDbMembers(['./CURRENT', 'MANIFEST-000007'])).to.equal(true);
+        });
     });
 
     describe('parseDetachedSignature', function () {

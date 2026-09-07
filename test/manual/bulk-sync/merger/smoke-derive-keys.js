@@ -37,11 +37,11 @@ const assert = require('assert')
 
 const { OutputsWriter,
         SpendsWriter,
-        MetaWriter }     = require('../writers.js')
-const { externalSort }   = require('./external-sort.js')
-const { leftAntiJoin }   = require('./streaming-join.js')
+        MetaWriter }     = require('../../../../src/bulk-sync/writers.js')
+const { externalSort }   = require('../../../../src/bulk-sync/merger/external-sort.js')
+const { leftAntiJoin }   = require('../../../../src/bulk-sync/merger/streaming-join.js')
 const { deriveKeys,
-        LAYOUT }         = require('./derive-keys.js')
+        LAYOUT }         = require('../../../../src/bulk-sync/merger/derive-keys.js')
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-derive-keys-'))
 console.log('[smoke/derive-keys] tmp dir:', TMP)
@@ -132,6 +132,11 @@ async function main() {
         outDir, tmpDir: derTmp,
         ramBudgetBytes: 1024 * 1024,
         outputsRecordSize: 121,
+        // deriveKeys resolves the N-window through the canonical coin registry and
+        // refuses an unnamed chain; the explicit window keeps the scenario's
+        // "window of 10" expectations independent of the per-chain default.
+        network: 'bitcoin',
+        undoBlocks: 10,
     })
 
     // Asserts: counts per prefix

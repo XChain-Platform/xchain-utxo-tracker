@@ -151,9 +151,5 @@ class XdmpReader {
 module.exports = {
     XdmpReader,
     HEADER_SIZE,
-    RECORD_PREFIX,
     MAX_BLOCK_SIZE,
-    MAGIC_DUMP,
-    CHAIN_NAMES,
-    NETWORK_NAMES,
 }

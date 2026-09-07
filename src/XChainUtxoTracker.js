@@ -94,14 +94,6 @@ const MAX_BLOCK_FETCH_RETRIES = Number(process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIE
 // streak is misdiagnosed as a pruned-node desync and halts the tracker.
 const AUXPOW_REASSEMBLE_AFTER = 5
 const REMOVE_SPENT = true
-// Coinbase outputs are unspendable until they reach this many confirmations
-// (consensus rule: 100 on BTC/LTC/DOGE and their regtest/testnet variants).
-// Serving immature coinbase as spendable hands a caller an input that
-// every node will reject, so getUtxosAddress withholds coinbase outputs below
-// this depth. Overridable for test harnesses that mine short chains.
-const COINBASE_MATURITY = Number(process.env.XCHAIN_COINBASE_MATURITY) > 0
-    ? Number(process.env.XCHAIN_COINBASE_MATURITY)
-    : 100
 const ETA_WINDOW_BLOCKS = 1000 //Rolling window size for ETA calculation
 const MIN_VERIFICATION_PROGRESS_TO_PARSE = 0.99 //How much progress the node need to have to start parsing
 
@@ -127,6 +119,13 @@ const MAX_ADDRESS_OUTPUTS = Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS) > 0
 // worker consults neither, and naming them here reads as a second clamp that does not
 // exist. Both live inside resolveUndoBlocks, which is the one place they may live.
 const { coinFromNetwork, resolveUndoBlocks } = require('./undo-blocks.js')
+
+// Per-coin/network coinbase maturity, resolved the same way and for the same
+// reason as the reorg window above. Import the RESOLVER only, never the table:
+// the flat module-level constant that stood here asserted 100 for every chain,
+// which is wrong for DOGE (240 at the tip), and a second copy of the numbers in
+// this file is how that drifts back.
+const { resolveCoinbaseMaturity } = require('./coinbase-maturity.js')
 
 // Per-coin block/tx wire-serialization family from the canonical coin registry
 // (src/coins). Used to gate AuxPoW stripping on the coin's declared wireFormat
@@ -182,7 +181,16 @@ class XChainUtxoTracker {
       
       this.parseMode = PARSE_MODE_BULK_INSERTS
       this.xchainBlockDecoder = new XChainBlockDecoder(network)
-      
+
+      // Prove the BigInt-safe bufferutils patch actually took before any block is
+      // decoded, matching the decoder's boot check. In the constructor for the same
+      // reason as verifyConsensusPin above: api.js does not await start(), so a
+      // check there would let the HTTP surface bind and serve first. Runs after the
+      // decoder construction that requires the patch module.
+      require('./assertBigIntBufferutils').assertBigIntBufferutils(
+          this.xchainBlockDecoder.coin, 'utxo-tracker')
+
+
       this.debugTime = {}
       
       this.synced = false
@@ -270,10 +278,15 @@ class XChainUtxoTracker {
       this.parsingAborted = false
 
       // Coinbase maturity depth used by getUtxosAddress to withhold immature
-      // coinbase outputs. Instance-scoped (not a bare const) so test
-      // harnesses that mine short chains can relax it; production keeps the
-      // consensus default. Setting it to 0 disables the gate.
-      this.coinbaseMaturity = COINBASE_MATURITY
+      // coinbase outputs, resolved per coin/network (src/coinbase-maturity.js).
+      // Instance-scoped (not a bare const) so test harnesses that mine short
+      // chains can relax it; production keeps the consensus default. Setting it
+      // to 0 disables the gate. The resolver refuses an unresolvable chain
+      // rather than defaulting, but it cannot newly reject a network that
+      // constructs today: getBitcoinJsNetwork above already rejected anything
+      // outside the registry's '<fullname>-<net>' keys, and every one of those
+      // keys has a declared maturity.
+      this.coinbaseMaturity = resolveCoinbaseMaturity(network)
     }
     
     async addToLastBlocks(blockHash){
@@ -457,7 +470,19 @@ class XChainUtxoTracker {
         // list means we have rolled back past the tracked window, which is an
         // error that should abort rather than silently corrupt state.
         if (this.lastBlocks.length === 0){
-            throw XChainUtxoTracker.markUnrecoverableReorg(new Error("Can't delete a block from 'last blocks': list is empty (reorg exceeds tracked window)"))
+            // verifyReorg's budget guard normally fires before the window can run
+            // dry and it names the remedy, so this is the last resort: a caller
+            // that drives a rollback without a maintained window at all. Carry the
+            // same remedy anyway - the pre-fix message stopped at "list is empty",
+            // which told the litecoin-testnet operator nothing about what to do and
+            // sent them into a non-destructive recreate that hit the same wall.
+            throw XChainUtxoTracker.markUnrecoverableReorg(new Error(
+                "Can't delete a block from 'last blocks': list is empty (reorg exceeds tracked window). "
+                + "This index cannot be walked back onto the node's chain and has to be rebuilt. Under "
+                + "xchain-node run `xchain-node reset xchain-utxo-tracker <coin> <network>`, which drops the "
+                + "volume and takes the bulk-sync path; standalone, stop the tracker, empty its data "
+                + "directory and restart it. Restoring the same bootstrap again lands back here if its tip "
+                + "is the drifted one."))
         }
         if (this.lastBlocks.indexOf(blockHash) == this.lastBlocks.length-1){
             this.lastBlocks.pop()
@@ -503,13 +528,36 @@ class XChainUtxoTracker {
         this.haltReason = null
     }
 
+    // Report, at boot, that the undo window came back SHORT. That is the
+    // fingerprint of a process killed mid-reorg: every rollback deletes one N
+    // record and only forward sync puts them back, so a window below its own
+    // depth says a rollback was interrupted and names how much of the budget
+    // survived. Without this line the reorg that resumes a moment later reads as
+    // a fresh fault, and the halt that may follow looks like it arrived out of
+    // nowhere at a depth far shallower than the fork's real one.
+    //
+    // Warn, not log: a collector keys severity on the console method, and a
+    // tracker resuming a deep reorg is not routine progress. Skipped below the
+    // window's own depth, where a short window just means a short chain.
+    // Returns the surviving budget when it reported, else null (for tests).
+    noteInterruptedReorgWindow(committedHeight){
+        if (!(committedHeight >= this.undoBlocks)) return null
+        if (this.lastBlocks.length >= this.undoBlocks) return null
+        const remaining = this.lastBlocks.length
+        console.warn("WARNING! The undo window came back with " + remaining + " of " + this.undoBlocks
+            + " blocks, so a previous process was interrupted mid-reorg after rolling back "
+            + (this.undoBlocks - remaining) + ". Only " + remaining + " more blocks can be walked back "
+            + "onto the node's chain before this index has to be rebuilt.")
+        return remaining
+    }
+
     // getLastStoredBlocks() returns the stored-block hashes in blockHash
     // (lexicographic) order, but the reorg path (removeFromLastBlocks) requires
     // lastBlocks to be in ascending HEIGHT order with the chain tip last.
     // Without sorting, a reorg throws "Can't delete a block from the 'last
     // blocks'…" and wedges the sync loop. Each block's height comes from its
     // B-prefix record; this is at most UNDO_BLOCKS lookups (per-chain
-    // DEFAULT_UNDO_BLOCKS, e.g. BTC=12/LTC=48/DOGE=120, not a fixed 10).
+    // DEFAULT_UNDO_BLOCKS, e.g. BTC=12/LTC=120/DOGE=120, not a fixed 10).
     async loadLastBlocksSortedByHeight(){
         const storedHashes = await this.db.getLastStoredBlocks()
         const withHeight = []
@@ -810,6 +858,7 @@ class XChainUtxoTracker {
             // Withhold immature coinbase outputs: every node rejects a spend
             // of a coinbase output below coinbaseMaturity confirmations, so serving
             // it as spendable would hand a caller an input that can never confirm.
+            // The depth is per coin/network, not a universal 100 (src/coinbase-maturity.js).
             // Legacy O-records carry coinbase=false and are unaffected. Coinbase
             // outputs only exist in the confirmed store, so no equivalent filter is
             // needed on the mempool loop below.
@@ -972,8 +1021,8 @@ class XChainUtxoTracker {
     
     // A coinbase transaction is the block's generation tx: exactly one input
     // whose prevout index is 0xFFFFFFFF (the same marker the input passes use to
-    // skip tracing it). Its outputs are unspendable until COINBASE_MATURITY
-    // confirmations, so they must be marked at insert time.
+    // skip tracing it). Its outputs are unspendable until this chain's coinbase
+    // maturity depth (this.coinbaseMaturity), so they must be marked at insert time.
     // Pure freshness computation shared by the API's per-query freshness surface
     // and its regression test, so the lag/synced contract cannot drift.
     // lag is null when nothing is indexed yet or the node tip is unknown; callers
@@ -1145,6 +1194,27 @@ class XChainUtxoTracker {
         let blocksDeleted = []
         let retryCount = 0
 
+        // ROLLBACK BUDGET. How far back this walk may go is bounded by the
+        // spent-output recovery records (K/M), and those survive exactly for the
+        // blocks the undo window still holds. The window is PERSISTED (the N
+        // records) and every rollback deletes one of its entries, so an
+        // interrupted reorg leaves it SHORT: the surviving window, not the
+        // nominal per-chain undoBlocks, is what a restarted process can still
+        // walk back.
+        //
+        // Deriving the budget from the window at entry makes it restart-safe: the
+        // window IS the durable record of what was already spent. undoBlocks stays
+        // as the upper cap so lowering the XCHAIN_UNDO_BLOCKS_<COIN> override still
+        // tightens the walk rather than being ignored. An empty window at entry
+        // carries no budget to derive; removeFromLastBlocks is the guard there, and
+        // several call sites drive verifyReorg without maintaining a window at all.
+        const windowAtEntry = this.lastBlocks.length
+        const budget = windowAtEntry > 0 ? Math.min(windowAtEntry, this.undoBlocks) : this.undoBlocks
+        // What a previous process already spent out of this chain's window. Only
+        // meaningful once the window is being maintained; reported so the halt
+        // message states the fork's true depth rather than this pass's share of it.
+        const spentBeforeEntry = windowAtEntry > 0 ? Math.max(0, this.undoBlocks - windowAtEntry) : 0
+
         while (thereAreDifferences){
             let lastBlockIndex = await this.db.getLastBlockHeight()
             let lastBlockHash = await this.db.getLastBlockHash()
@@ -1214,16 +1284,28 @@ class XChainUtxoTracker {
                     // index permanently under-counted for any address with outputs spent
                     // in those blocks. A loud abort is strictly safer than a silently
                     // corrupt index: stop here and require an operator-driven resync.
-                    if (blocksDeleted.length >= this.undoBlocks){
+                    if (blocksDeleted.length >= budget){
                         // Naming the remedy rather than the category, because the
                         // operator most likely to read this line arrived by
                         // restoring a published bootstrap whose tip had drifted:
                         // "resync from a known-good snapshot" sends them back to
                         // the snapshot that put them here, and doing it again
                         // halts again at the same block.
+                        //
+                        // State the fork's TOTAL depth when a previous process
+                        // spent part of the window: reporting only this pass's
+                        // rollbacks understates the fork by everything the killed
+                        // process had already walked back, which is exactly the
+                        // number an operator sizing a rebuild needs.
+                        const rolledBack = spentBeforeEntry > 0
+                            ? "Already rolled back " + blocksDeleted.length + " blocks in this pass, "
+                              + "on top of " + spentBeforeEntry + " a previous process spent before this restart "
+                              + "(" + (spentBeforeEntry + blocksDeleted.length) + " of a "
+                              + this.undoBlocks + "-block window, now exhausted); "
+                            : "Already rolled back " + blocksDeleted.length + " blocks; "
                         const msg = "verifyReorg: reorg depth exceeds the recovery window "
-                            + "(UNDO_BLOCKS=" + this.undoBlocks + "). Already rolled back "
-                            + blocksDeleted.length + " blocks; spent-output recovery records "
+                            + "(UNDO_BLOCKS=" + this.undoBlocks + "). " + rolledBack
+                            + "spent-output recovery records "
                             + "for block height " + lastBlockIndex + " and below have already "
                             + "been purged, so continuing would silently leave the UTXO index "
                             + "under-counted. Aborting. Recovery: this index cannot be walked "
@@ -1313,9 +1395,16 @@ class XChainUtxoTracker {
         // restart doesn't trip removeFromLastBlocks. See helper for detail.
         this.lastBlocks = await this.loadLastBlocksSortedByHeight()
 
+        this.noteInterruptedReorgWindow(lastProcessedBlockIndex)
+
         // Recover any K/M cleanup work that was staged but not completed before a prior crash.
         // abstract-level .get returns undefined on a missing key (no throw); real
-        // I/O errors still propagate.
+        // I/O errors still propagate. Clear first: start() re-runs on the SAME tracker
+        // object after restorebootstrap replaces the store, and the read below only
+        // assigns when the P key exists, so without this the restored database inherits
+        // the previous database's pending list and cleanupAgedBlocks prunes K/M/W/Z
+        // records against block hashes that store never held.
+        this.pendingKMCleanup = []
         const pVal = await this.db.db.get(P_PENDING_CLEANUP_KEY)
         if (pVal !== undefined) {
             this.pendingKMCleanup = JSON.parse(pVal.toString())
@@ -2123,4 +2212,9 @@ module.exports.MAX_ADDRESS_OUTPUTS = MAX_ADDRESS_OUTPUTS
 module.exports.MAX_BLOCK_FETCH_RETRIES = MAX_BLOCK_FETCH_RETRIES
 // Exported for the malformed-AuxPoW fallback regression test.
 module.exports.AUXPOW_REASSEMBLE_AFTER = AUXPOW_REASSEMBLE_AFTER
-module.exports.COINBASE_MATURITY = COINBASE_MATURITY
+// The flat COINBASE_MATURITY scalar that stood here is gone: no caller in any
+// repo consumed it (verified by git grep for `.COINBASE_MATURITY` across the
+// platform), and a single exported number is the shape of the bug, since it can
+// only be right for one chain. Callers that need the depth read
+// tracker.coinbaseMaturity, or resolve it per network through this resolver.
+module.exports.resolveCoinbaseMaturity = resolveCoinbaseMaturity

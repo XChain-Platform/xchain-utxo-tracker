@@ -28,7 +28,15 @@ const coins = require('./coins')
 // a generic window (item 5803): the window is a consensus-relevant per-chain
 // value, and the chain that needs one most is a fast one, which is exactly the
 // chain a generic default under-protects.
-const DEFAULT_UNDO_BLOCKS = { BTC: 12, LTC: 48, DOGE: 120 }
+// LTC was 48 (~2 hours at 2.5-minute blocks) until 2026-09-01, when a litecoin
+// testnet fork walked past it: the stored tip was a fork of the node's chain, the
+// rollback exhausted the window, and the only exit was a full tracker rebuild.
+// Nominal block time is the wrong sizing input for a testnet, whose minimum-
+// difficulty rule produces forks far deeper than the same wall-clock span on
+// mainnet. 120 is the deepest value this table can carry without also raising
+// MAX_SAFE_UNDO_BLOCKS below and DISPENSER_EXPIRE_SAFE_DEPTH in the decoder, which
+// move in lockstep, so LTC now sits level with DOGE at the ceiling's edge.
+const DEFAULT_UNDO_BLOCKS = { BTC: 12, LTC: 120, DOGE: 120 }
 
 // The recovery window MUST NOT exceed the decoder's dispenser-expiry safe depth.
 // This value MUST equal `DISPENSER_EXPIRE_SAFE_DEPTH` in the decoder

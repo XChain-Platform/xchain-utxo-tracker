@@ -84,12 +84,23 @@ function buildServer(options){
     // stats carry no signal a test can synchronize on; this is the positive proof
     // that a request got past the gate instead of never having been dispatched.
     let expensiveEntered = 0;
+    let heldEntered      = 0;
 
     app.get('/expensive', async (req, res) => {
         expensiveEntered++;
         await held;
         res.json({ ok: true, ip: req.ip });
     });
+    // The same parked handler, wrapped the way api.js wraps its address routes.
+    // `hold` is stubbed to a pass-through when a test asks for it, which is what
+    // the gate did before it had one: that is the negative control for the
+    // held-slot assertions below, not a second flavour of the same route.
+    const wrap = options.stubHold ? (fn) => fn : gate.hold;
+    app.get('/held', wrap(async (req, res) => {
+        heldEntered++;
+        await held;
+        res.json({ ok: true, ip: req.ip });
+    }));
     // The real /status reads the committed height out of LevelDB, so it can be
     // made to park exactly like an expensive route; opts in per test.
     app.get('/status', async (req, res) => {
@@ -104,7 +115,8 @@ function buildServer(options){
         app, gate, probeGate, server,
         release:      () => releaseHeld(),
         releaseProbe: () => releaseProbe(),
-        entered:      () => expensiveEntered
+        entered:      () => expensiveEntered,
+        enteredHeld:  () => heldEntered
     };
 }
 
@@ -124,13 +136,21 @@ function get(server, path, ipSuffix, init){
     }, init || {}));
 }
 
-async function waitFor(predicate, label){
-    const deadline = Date.now() + 2000;
+/**
+ * Poll until predicate() holds, or REJECT naming what was being waited for.
+ * The rejection is the whole point: a waiter that cannot time out converts a
+ * flake into a test that passes unconditionally, which is strictly worse than
+ * the flake. timeoutMs is a bound, not a knob - a site that needs a longer one
+ * is a finding about that site, not something to widen here.
+ */
+async function waitFor(predicate, label, timeoutMs = 2000){
+    const deadline = Date.now() + timeoutMs;
     while(Date.now() < deadline){
         if(predicate()) return;
+        // The helper's own poll interval, not a synchronization sleep.
         await new Promise(r => setTimeout(r, 5));
     }
-    throw new Error('timed out waiting for: ' + label);
+    throw new Error('timed out after ' + timeoutMs + 'ms waiting for: ' + label);
 }
 
 describe('Security: global in-flight concurrency cap', function () {
@@ -206,6 +226,80 @@ describe('Security: global in-flight concurrency cap', function () {
         controller.abort();
         await aborted.catch(() => {});
         await waitFor(() => gate.getStats().in_flight === 0, 'aborted slot to be released');
+    });
+
+    it('keeps a held slot while the backend work runs on after the client aborts', async function () {
+        // Express never awaits an async handler, so releasing on the socket's
+        // 'close' let a client free its slot while its LevelDB scan was still
+        // running: repeat the abort and the cap admits work it already counted
+        // out. hold() binds the slot to the handler's promise instead.
+        const { server, gate, release, enteredHeld } = buildServer({ limit: 1 });
+        await listen(server);
+
+        const controller = new AbortController();
+        const aborted = get(server, '/held', 1, { signal: controller.signal });
+        await waitFor(() => gate.getStats().in_flight === 1, 'gate to reach its cap');
+        await waitFor(() => enteredHeld() === 1, 'the handler to have entered');
+
+        controller.abort();
+        await aborted.catch(() => {});
+        // Deliberate delay, NOT a synchronization point: do not convert this to
+        // waitFor. The claim is that in_flight STAYS 1 across a window in which
+        // 'close' had every chance to fire and be ignored, so the elapsed time
+        // IS the measurement. A predicate on in_flight === 1 already holds on
+        // entry and would return on its first tick, asserting nothing; without
+        // the wrapper the slot is already back by the end of this window.
+        await new Promise(r => setTimeout(r, 50));
+
+        expect(gate.getStats().in_flight).to.equal(1);
+        // The behavioural half: the next caller is refused because the work the
+        // first one started is still running.
+        const overflow = await get(server, '/held', 2);
+        expect(overflow.status).to.equal(429);
+        expect((await overflow.json()).code).to.equal('SERVER_BUSY');
+        expect(enteredHeld()).to.equal(1);
+
+        release();
+        await waitFor(() => gate.getStats().in_flight === 0, 'slot to come back once the work settled');
+        expect((await get(server, '/held', 3)).status).to.equal(200);
+    });
+
+    it('negative control: with hold() stubbed out, the aborted slot is handed to the next caller', async function () {
+        // The same scenario against a pass-through wrapper, which is exactly the
+        // pre-fix gate. If this ever goes green the assertion above has stopped
+        // measuring anything.
+        const { server, gate, enteredHeld } = buildServer({ limit: 1, stubHold: true });
+        await listen(server);
+
+        const controller = new AbortController();
+        const aborted = get(server, '/held', 1, { signal: controller.signal });
+        await waitFor(() => gate.getStats().in_flight === 1, 'gate to reach its cap');
+        await waitFor(() => enteredHeld() === 1, 'the handler to have entered');
+
+        controller.abort();
+        await aborted.catch(() => {});
+        await waitFor(() => gate.getStats().in_flight === 0, 'the socket close to free the slot');
+
+        // Over-admission: a second handler is now running the same expensive work
+        // the cap of 1 was meant to forbid. It is never awaited, because it parks
+        // in the handler exactly like the first one did.
+        get(server, '/held', 2).catch(() => {});
+        await waitFor(() => enteredHeld() === 2, 'a second handler to be admitted past the cap');
+        expect(gate.getStats().shed).to.equal(0);
+    });
+
+    it('passes a request through hold() untouched when the gate holds no slot for it', async function () {
+        // A disabled gate hands out no slots, so hold() must not invent one and
+        // must not swallow the handler.
+        const { server, gate, release, enteredHeld } = buildServer({ limit: 0 });
+        await listen(server);
+
+        const parked = get(server, '/held', 1);
+        await waitFor(() => enteredHeld() === 1, 'the wrapped handler to run past the disabled gate');
+        expect(gate.getStats()).to.deep.equal({ limit: 0, in_flight: 0, shed: 0 });
+
+        release();
+        expect((await parked).status).to.equal(200);
     });
 
     it('still answers the /status readiness probe while the main gate sheds', async function () {
@@ -292,6 +386,20 @@ describe('Security: global in-flight concurrency cap', function () {
         it('mounts a bounded reserve for the exempt readiness probe', function () {
             expect(apiSource).to.include('UTXO_TRACKER_MAX_CONCURRENT_PROBES');
             expect(apiSource).to.match(/app\.use\(probeGate\)/);
+        });
+
+        it('holds the slot across every route that awaits a backend read', function () {
+            // A route added without the wrapper is back to counting sockets
+            // instead of work, which is invisible at runtime: assert the wiring
+            // in source so the regression is caught here instead of in traffic.
+            for(const route of ['/utxos/:address', '/firstseen/:address', '/balance/:address', '/info/:address']){
+                expect(apiSource).to.include(`app.get('${route}', requestGate.hold(`);
+            }
+            // /status is exempt from the main cap, so its slot lives in the probe
+            // reserve and only that gate's hold() can claim it.
+            expect(apiSource).to.include("app.get('/status', probeGate.hold(");
+            // One wrap covers every JSON-RPC method, batches included.
+            expect(apiSource).to.match(/app\.use\(requestGate\.hold\(jsonRouter\(/);
         });
 
         it('reports the gate stats so a stampede is visible to operators', function () {
