@@ -107,6 +107,20 @@ function nodeStillCatchingUp(info){
     return !!info && info["initialblockdownload"] === true
 }
 
+// The state published on the health surfaces for ONE poll of that wait. Heights
+// are refreshed every poll so an operator can watch the node close the gap;
+// `since` is carried over from the first poll of the same wait, so its age is
+// the length of THIS wait and not the age of the last poll. `previous` is the
+// value already on the instance: null on the first poll of a wait and after any
+// wait that has ended.
+function catchUpWaitState(previous, nodeHeight, storedHeight){
+    return {
+        node_height:   nodeHeight,
+        stored_height: storedHeight,
+        since:         (previous && previous.since) ? previous.since : new Date().toISOString()
+    }
+}
+
 // Hard ceiling on how many outputs a single-address query will materialize. A
 // mega miner-coinbase/payout address can hold millions of UTXOs; loading them all
 // into one array OOMs the process and takes the tracker down for every caller.
@@ -279,6 +293,14 @@ class XChainUtxoTracker {
       // against a stable process instead of racing a restart loop.
       this.halted = false
       this.haltReason = null
+
+      // Set while the sync loop is waiting out a node in initial block download
+      // whose tip sits below our committed tip. The wait itself is silent past
+      // the one latched log line, so without this an operator watching
+      // `xchain-node ps` sees a tracker that has simply stopped advancing.
+      // Shape: {node_height, stored_height, since} while waiting, null otherwise;
+      // `since` is stamped once per wait so its age is the length of THIS wait.
+      this.nodeCatchingUp = null
 
       // Set when the polling loop leaves by THROWING (the halt path) rather than
       // through its normal-stop branch, which is the only branch that closes the
@@ -1590,7 +1612,16 @@ class XChainUtxoTracker {
                         await this.sleep(3000)
                         continue
                     }
-                    
+
+                    // The usual way a catch-up wait ends: the node's tip reached ours,
+                    // so the branch below is not entered at all and the published wait
+                    // would otherwise stay on the health surfaces for the rest of the
+                    // process. Only the state is cleared here; the latched log lines are
+                    // left to their own transition below.
+                    if (this.nodeCatchingUp && lastProcessedBlockIndex <= this.blockchainInfoLastBlock){
+                        this.nodeCatchingUp = null
+                    }
+
                     if (lastProcessedBlockIndex > this.blockchainInfoLastBlock){
                         // A node still in initial block download has not validated up
                         // to our height yet; its tip below ours is a node catching up,
@@ -1604,12 +1635,16 @@ class XChainUtxoTracker {
                                 console.warn("WARNING! The last processed block height ("+lastProcessedBlockIndex+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"), but the node reports initialblockdownload=true: it is still catching up, not rolled back. Waiting for it to pass "+lastProcessedBlockIndex+" instead of rolling back; the hash compare decides then.")
                             }
                             nodeCatchingUpProblem = true
+                            // Publish it; past the latched line the wait is invisible.
+                            this.nodeCatchingUp = catchUpWaitState(this.nodeCatchingUp,
+                                this.blockchainInfoLastBlock, lastProcessedBlockIndex)
                             await this.sleep(5000)
                             continue
                         }
                         if (nodeCatchingUpProblem){
                             console.log("The node has left initial block download with its tip ("+this.blockchainInfoLastBlock+") still below the last processed block ("+lastProcessedBlockIndex+"); treating the gap as a rollback from here on.")
                             nodeCatchingUpProblem = false
+                            this.nodeCatchingUp = null
                         }
 
                         // Discard any in-flight batch before recovery runs. A
@@ -2290,6 +2325,7 @@ module.exports = XChainUtxoTracker
 module.exports.satoshiToDecimalString = satoshiToDecimalString
 module.exports.SYNCED_THRESHOLD = SYNCED_THRESHOLD
 module.exports.nodeStillCatchingUp = nodeStillCatchingUp
+module.exports.catchUpWaitState = catchUpWaitState
 module.exports.MAX_ADDRESS_OUTPUTS = MAX_ADDRESS_OUTPUTS
 module.exports.MAX_BLOCK_FETCH_RETRIES = MAX_BLOCK_FETCH_RETRIES
 // Exported for the malformed-AuxPoW fallback regression test.

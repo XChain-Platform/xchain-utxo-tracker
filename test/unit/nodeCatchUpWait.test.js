@@ -113,7 +113,10 @@ describe('XChainUtxoTracker: a node still catching up is not a rollback', functi
       const between = src.slice(branchTop, detection);
       expect(between).to.match(/nodeStillCatchingUp\(lastBlockchainInfo\)/);
       const at = between.indexOf('nodeStillCatchingUp(lastBlockchainInfo)');
-      const branch = between.slice(at, at + 900);
+      // Window sized to hold the whole wait branch (it also publishes the wait
+      // state) while still ending well short of the verifyReorg call below it,
+      // which is what the last assertion here is proving stays out of this path.
+      const branch = between.slice(at, at + 1200);
       expect(branch).to.match(/await this\.sleep\(\d+\)/);
       expect(branch).to.match(/continue/);
       expect(branch).to.not.match(/verifyReorg/);

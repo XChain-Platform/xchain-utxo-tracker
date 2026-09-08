@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - A node still in initial block download with its tip below the committed tip is waited on instead of being rolled back to.
+- The health and status payloads now carry `node_catching_up` while that wait is in progress, so `xchain-node ps` can show it.
 - A node-tip gap deeper than the undo window is refused before the first delete, with the index intact and no rebuild owed.
 
 ## [0.15.0] - 2026-09-07
