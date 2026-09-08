@@ -334,11 +334,17 @@ async function startApi(){
         const rawTip = (typeof tracker.latestKnownChainTip === 'number')
             ? tracker.latestKnownChainTip
             : (typeof tracker.blockchainInfoLastBlock === 'number' ? tracker.blockchainInfoLastBlock : -1);
-        return XChainUtxoTracker.computeFreshness(committedHeight, rawTip, tracker.isSynced(), {
+        const freshness = XChainUtxoTracker.computeFreshness(committedHeight, rawTip, tracker.isSynced(), {
             mempoolReconverged: tracker.isMempoolReconverged(),
             halted:             !!tracker.halted,
             haltReason:         tracker.haltReason
         });
+        // Non-null ({node_height, stored_height, since}) while the sync loop is waiting
+        // out a node in initial block download whose tip is below our committed tip:
+        // the tracker is deliberately not advancing and is not stalled. Read through a
+        // guard so a probe answered before the tracker exists still returns a payload.
+        freshness.node_catching_up = (tracker && tracker.nodeCatchingUp) || null;
+        return freshness;
     }
 
     // Stamp the freshness fields onto a REST response as headers, leaving the
@@ -628,6 +634,11 @@ async function startApi(){
             // frequent reorganizations and know the depth of the last one.
             result.reorg_count      = tracker.reorgCount;
             result.last_reorg_depth = tracker.lastReorgDepth;
+            // Non-null ({node_height, stored_height, since}) while the sync loop is
+            // waiting out a node in initial block download whose tip is below our
+            // committed tip: a deliberate wait, not a stall and not a rollback. Always
+            // present (null when not waiting) so `xchain-node ps` can read one shape.
+            result.node_catching_up = (tracker && tracker.nodeCatchingUp) || null;
             // Remaining rollback budget. Every rollback deletes one entry from the
             // persisted undo window and only forward sync puts it back, so a window
             // sitting below undo_window_blocks says a reorg was interrupted (a
