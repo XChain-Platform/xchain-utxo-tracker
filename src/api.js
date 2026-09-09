@@ -237,6 +237,26 @@ function deriveSyncedVerdict({ lag, nodeHeightStale = false, threshold = XChainU
     return lag >= 0 && lag <= threshold
 }
 
+// Node reachability for the health payloads: `node_last_ok_at` (the last successful
+// node RPC, null if there has never been one) and `node_unreachable` (null, or the
+// outage with its age in seconds). A tracker whose node never answered a single RPC
+// is otherwise indistinguishable from a healthy one on every surface an operator polls;
+// these two fields are that difference, reported and never gating.
+//
+// Fail-soft: an absent connector, or one from a build/test stub predating the method,
+// reports the unknown-but-not-failing pair rather than throwing inside a probe.
+function nodeReachabilityFields(tracker){
+    const connector = tracker && tracker.connector
+    if (!connector || typeof connector.nodeReachability !== 'function'){
+        return { node_last_ok_at: null, node_unreachable: null }
+    }
+    try {
+        return connector.nodeReachability()
+    } catch (e) {
+        return { node_last_ok_at: null, node_unreachable: null }
+    }
+}
+
 // Bounds the `route` label of the HTTP metrics: the observability shim labels an
 // unmatched request by its first path segment, so caller-invented paths mint one
 // series each and fill the per-metric cap, dropping real routes from the scrape.
@@ -344,6 +364,13 @@ async function startApi(){
         // the tracker is deliberately not advancing and is not stalled. Read through a
         // guard so a probe answered before the tracker exists still returns a payload.
         freshness.node_catching_up = (tracker && tracker.nodeCatchingUp) || null;
+        // Whether the coin node is answering this tracker at all, and since when it
+        // stopped. Reported, never gated on, for the reason node_height_stale is: a
+        // restart cannot fix an upstream outage. A tracker whose node has NEVER answered
+        // is otherwise indistinguishable here from a healthy one.
+        const reach = nodeReachabilityFields(tracker);
+        freshness.node_last_ok_at  = reach.node_last_ok_at;
+        freshness.node_unreachable = reach.node_unreachable;
         return freshness;
     }
 
@@ -639,6 +666,13 @@ async function startApi(){
             // committed tip: a deliberate wait, not a stall and not a rollback. Always
             // present (null when not waiting) so `xchain-node ps` can read one shape.
             result.node_catching_up = (tracker && tracker.nodeCatchingUp) || null;
+            // Whether the coin node is answering this tracker at all, and since when it
+            // stopped. node_last_ok_at is null until the first successful RPC, and
+            // node_unreachable is non-null ({since, last_ok_at, seconds}) only while the
+            // latest attempt has failed. Always present so one shape reads everywhere.
+            const reach = nodeReachabilityFields(tracker);
+            result.node_last_ok_at  = reach.node_last_ok_at;
+            result.node_unreachable = reach.node_unreachable;
             // Remaining rollback budget. Every rollback deletes one entry from the
             // persisted undo window and only forward sync puts it back, so a window
             // sitting below undo_window_blocks says a reorg was interrupted (a
@@ -1665,6 +1699,7 @@ if (require.main === module) {
 module.exports = {
     deriveHealthStatus,
     isNodeRpcStale,
+    nodeReachabilityFields,
     deriveSyncedVerdict,
     NODE_RPC_STALE_MS,
     validateBootstrapArchiveOrThrow,
