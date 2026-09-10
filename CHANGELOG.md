@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - The health and status payloads carry `node_last_ok_at` and `node_unreachable`, so a coin node that has never answered is visible.
 
+### Fixed
+- A boot with a short undo window now says whether a rollback was interrupted or a raised `UNDO_BLOCKS` is still refilling, using a persisted high-water mark.
+
 ## [0.16.0] - 2026-09-08
 
 ### Fixed
