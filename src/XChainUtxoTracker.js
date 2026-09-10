@@ -733,6 +733,19 @@ class XChainUtxoTracker {
         return this.mempoolReconverged
     }
     
+    // Drain entry for SIGTERM (src/shutdown.js). Unlike stopParsing(), which is
+    // the RPC-facing pause and RESTORES the loop when it cannot stop within ten
+    // seconds, this only asks: the loop takes its else branch at its next
+    // keepParsing check (a block boundary), closes the store and breaks, and
+    // start() resolves. The caller bounds the wait with its hard-exit timer.
+    stop(){
+        this.keepParsing = false
+        if (this.mempoolInterval) {
+            clearInterval(this.mempoolInterval)
+            this.mempoolInterval = null
+        }
+    }
+
     async stopParsing(){
         return new Promise(async(resolve, reject) => {
             this.keepParsing = false

@@ -51,6 +51,7 @@ const { isWrapperArchive, parseSha256Sidecar,
 const { installObservability } = require('./observability');   // default-off /metrics + structured log shim
 const { installUtxoTrackerMetrics } = require('./utxoTrackerMetrics');   // sync-freshness heartbeat gauges
 const { installCrashHandlers, noteCrash } = require('./crashHandlers.js')
+const { createShutdown, createTrackerDrain } = require('./shutdown.js')
 const jsonRouter = require('express-json-rpc-router')
 const concurrencyGate = require('./concurrencyGate.js')
 const { parseCorsOrigin } = require('./corsOrigin.js')
@@ -181,8 +182,10 @@ var bootstrapBusy = false
 // 503, and an operator resyncs (restorebootstrap) against a stable process. Used
 // at EVERY start() site (primary boot + bootstrap/restore restarts) so none can
 // regress to a bare unhandledRejection that skips the rollback.
+// Returns the settled promise so the SIGTERM drain can wait for the loop to
+// break at a block boundary; a halt resolves it too (the process stays up).
 function launchTracker(tracker){
-    tracker.start().catch((err) => {
+    return tracker.start().catch((err) => {
         try { if (tracker.db && tracker.db.endTransaction) tracker.db.endTransaction(false) } catch (_) {}
         if (XChainUtxoTracker.isUnrecoverableReorg(err)) {
             tracker.haltForResync(err && err.message)
@@ -272,7 +275,7 @@ function installUnmatchedRouteLabel(app){
 
 async function startApi(){
     const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
-    launchTracker(tracker)
+    const trackerExited = launchTracker(tracker)
 
     async function getUtxos(address, opts){
         return await tracker.getUtxosAddress(address, opts)
@@ -999,10 +1002,25 @@ async function startApi(){
     // object, so an in-process call never touches gate accounting.
     app.use(requestGate.hold(jsonRouter({methods: jsonRpcController})))
 
-    app.listen(UTXO_TRACKER_API_PORT, () => {
+    const server = app.listen(UTXO_TRACKER_API_PORT, () => {
       console.log('API listening on port '+UTXO_TRACKER_API_PORT)
       console.log(memoryBudget.describe(BULK_SYNC_RAM_BUDGET))
     })
+
+    // Graceful shutdown. node is PID 1 in the image, so `docker stop` delivers
+    // SIGTERM here; without a handler node's default action killed the block
+    // loop wherever it stood and the container exited 1. The drain is bounded
+    // by its own hard-exit timer (src/shutdown.js) because installing a handler
+    // removes node's default terminate.
+    const shutdown = createShutdown({
+        drain: createTrackerDrain({
+            tracker:     tracker,
+            server:      server,
+            loopSettled: trackerExited
+        })
+    })
+    process.on('SIGTERM', () => shutdown('SIGTERM'))
+    process.on('SIGINT', () => shutdown('SIGINT'))
 }
 
 async function compressDirPigz(taskId, source, destination) {
