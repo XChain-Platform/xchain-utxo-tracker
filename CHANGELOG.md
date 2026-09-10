@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-10
+
 ### Added
 - The health and status payloads carry `node_last_ok_at` and `node_unreachable`, so a coin node that has never answered is visible.
 

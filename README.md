@@ -5,7 +5,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-0.16.0-blue" alt="Version">
-  <img src="https://img.shields.io/badge/tests-1%2C425%2B%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-1%2C465%2B%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/node-%3E%3D22-green" alt="Node">
   <img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue" alt="License">
 </p>
@@ -128,13 +128,13 @@ neither source sets one, so these defaults hold on an unconfigured box:
 | Command | Description |
 |---|---|
 | `npm run api` | Start the tracker and API server |
-| `npm test` | Unit tests (~878 tests) |
+| `npm test` | Unit tests (~913 tests) |
 | `npm run test:smoke` | Smoke tests (9 tests) |
 | `npm run test:integration` | Integration tests (~69 tests) |
 | `npm run test:e2e` | End-to-end tests (~36 tests) |
 | `npm run test:boundary` | Boundary condition tests (~29 tests) |
 | `npm run test:security` | Security tests (~69 tests) |
-| `npm run test:regression` | Regression tests (~155 tests) |
+| `npm run test:regression` | Regression tests (~160 tests) |
 | `npm run test:fuzz` | Fuzz tests (13 campaigns, 1000 iterations each, 106 tests) |
 | `npm run test:fuzz:quick` | Quick fuzz (100 iterations, 106 tests) |
 | `npm run test:fuzz:deep` | Deep fuzz (10,000 iterations, 106 tests) |
@@ -142,7 +142,7 @@ neither source sets one, so these defaults hold on an unconfigured box:
 | `npm run test:perf:quick` | Quick performance (small scale, 32 tests) |
 | `npm run test:perf:deep` | Deep performance (large scale, 4 GB heap, 32 tests) |
 | `npm run test:chaos` | Chaos engineering tests (~31 tests) |
-| `npm run test:all` | All unit + integration + e2e tests (1,256 tests) |
+| `npm run test:all` | All unit + integration + e2e tests (1,296 tests) |
 | `npm run mutate` | Mutation testing (Stryker Mutator) |
 | `npm run mutate:quick` | Quick mutation testing |
 | `npm run mutate:p1` | P1 priority mutation testing |
