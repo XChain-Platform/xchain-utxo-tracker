@@ -165,6 +165,22 @@ const PREFETCH_SIZE = 10 //Number of blocks to pre-fetch concurrently while proc
 // 0x50 ('P') is unused by LevelUpDb's key schema (B/T/I/O/H/J/S/Z/K/M/N/W).
 const P_PENDING_CLEANUP_KEY = Buffer.from([0x50])
 
+// Single-byte key holding the deepest undo window this store has actually held
+// (its high-water mark, clamped to the live undoBlocks). 0x51 ('Q') is unused by
+// LevelUpDb's key schema (B/T/I/O/H/J/S/Z/K/M/N/W) and by 'P' above.
+//
+// Why the mark exists: a window shorter than undoBlocks has TWO causes, and the
+// N records alone cannot tell them apart (both leave a contiguous window ending
+// at the committed tip). One is a rollback interrupted mid-reorg. The other is a
+// window that was never that deep yet, because UNDO_BLOCKS was RAISED under an
+// existing store: the on-disk N index keeps the entries the old depth allowed
+// and only grows back one per forward-synced block. LTC mainnet booted "48 of
+// 120" the day after its per-chain default went 48 -> 120 (undo-blocks.js) and
+// the boot line called it a 72-block rollback that never happened. The mark is
+// what the second boot has that the first did not: a record of how deep the
+// window ever got, so a window at or above it never shrank.
+const Q_UNDO_WATERMARK_KEY = Buffer.from([0x51])
+
 class XChainUtxoTracker {
     static parseOutBuckets = { hash: 0, ins: 0, sb: 0 }
 
@@ -250,6 +266,17 @@ class XChainUtxoTracker {
       this.auxPow = WIRE_FORMAT[coinFromNetwork(network)] === 'auxpow'
       this.undoBlocks = resolveUndoBlocks(network)
       this.lastBlocks = []
+
+      // Deepest undo window this store has held, clamped to the live undoBlocks
+      // (see Q_UNDO_WATERMARK_KEY). 0 means "not known yet": a store written
+      // before this key existed, or one that has never committed a block. It is
+      // loaded in start() and maintained by addToLastBlocks; a value on disk that
+      // exceeds the live undoBlocks (the operator LOWERED the window) is clamped
+      // on load, so lowering then raising the override does not read as a
+      // rollback of the difference. `Persisted` tracks what disk holds so the
+      // clamp is written back on the next block rather than only in memory.
+      this.undoWindowWatermark = 0
+      this.undoWindowWatermarkPersisted = null
       
       this.keepParsing = true
       this.pendingKMCleanup = []
@@ -336,6 +363,47 @@ class XChainUtxoTracker {
 
             this.pendingKMCleanup.push(nextBlockHash)
         }
+
+        await this.recordUndoWindowWatermark()
+    }
+
+    // Keep the persisted high-water mark of the undo window in step with the
+    // window this block just left behind. Staged into the caller's open batch
+    // (addLastStoredBlock above opened nothing of its own), so the mark commits
+    // atomically with the N record it describes and a crash cannot leave a mark
+    // deeper than the window on disk.
+    //
+    // Writes are rare by construction: only while a window is still filling
+    // toward undoBlocks, plus one write after the operator LOWERS the window (the
+    // clamp applied on load is flushed back so disk stops carrying the old, now
+    // misleading depth). At the cap the depth stops changing and so do the writes.
+    recordUndoWindowWatermark(){
+        const depth = Math.min(this.lastBlocks.length, this.undoBlocks)
+        if (depth > this.undoWindowWatermark) this.undoWindowWatermark = depth
+        if (this.undoWindowWatermarkPersisted === this.undoWindowWatermark) return
+        this.undoWindowWatermarkPersisted = this.undoWindowWatermark
+        return this.db.addTransaction("put", Q_UNDO_WATERMARK_KEY,
+            Buffer.from(String(this.undoWindowWatermark)))
+    }
+
+    // Read the watermark back at boot, clamped to the live undoBlocks. A missing
+    // key (a store written before the mark existed) reads as 0, which is what
+    // noteInterruptedReorgWindow reports the ambiguity from.
+    async loadUndoWindowWatermark(){
+        let stored = 0
+        try {
+            const raw = await this.db.db.get(Q_UNDO_WATERMARK_KEY)
+            if (raw !== undefined){
+                const parsed = parseInt(raw.toString(), 10)
+                if (Number.isInteger(parsed) && parsed > 0) stored = parsed
+            }
+        } catch (_) {
+            // A store that cannot answer for this one diagnostic key must not stop
+            // the tracker from booting: 0 (unknown) is the safe reading.
+        }
+        this.undoWindowWatermarkPersisted = stored > 0 ? stored : null
+        this.undoWindowWatermark = Math.min(stored, this.undoBlocks)
+        return this.undoWindowWatermark
     }
 
     async cleanupAgedBlocks(){
@@ -560,26 +628,59 @@ class XChainUtxoTracker {
         this.haltReason = null
     }
 
-    // Report, at boot, that the undo window came back SHORT. That is the
-    // fingerprint of a process killed mid-reorg: every rollback deletes one N
-    // record and only forward sync puts them back, so a window below its own
-    // depth says a rollback was interrupted and names how much of the budget
-    // survived. Without this line the reorg that resumes a moment later reads as
-    // a fresh fault, and the halt that may follow looks like it arrived out of
-    // nowhere at a depth far shallower than the fork's real one.
+    // Report, at boot, that the undo window came back SHORT of the nominal
+    // undoBlocks, and say WHICH of the two things that can mean happened.
     //
-    // Warn, not log: a collector keys severity on the console method, and a
-    // tracker resuming a deep reorg is not routine progress. Skipped below the
-    // window's own depth, where a short window just means a short chain.
+    // 1. A rollback interrupted mid-reorg. Every rollback deletes one N record
+    //    and only forward sync puts them back, so the window is below a depth it
+    //    HAD reached. Without this line the reorg that resumes a moment later
+    //    reads as a fresh fault, and the halt that may follow looks like it
+    //    arrived out of nowhere at a depth far shallower than the fork's real one.
+    // 2. The window has never been that deep: UNDO_BLOCKS was RAISED under an
+    //    existing store (LTC's per-chain default went 48 -> 120 on 2026-09-01,
+    //    and the LTC mainnet tracker then booted "48 of 120" and called it a
+    //    72-block rollback that Litecoin mainnet never had). Nothing rolled back;
+    //    the window refills one slot per forward-synced block.
+    //
+    // The watermark is what separates them: a window at or above the deepest this
+    // store ever held never shrank. Below it, the shortfall against the WATERMARK
+    // (not against undoBlocks) is what the previous process actually rolled back.
+    // A store with no watermark yet cannot be told apart, so it says so instead of
+    // asserting the interrupted-rollback reading, and records the mark for next boot.
+    //
+    // Warn only for case 1 and the ambiguous case: a collector keys severity on
+    // the console method, and a window refilling after a raise is routine
+    // progress, where a WARNING is the false alarm this method exists to stop.
+    // Skipped below the window's own depth, where short just means a short chain.
     // Returns the surviving budget when it reported, else null (for tests).
     noteInterruptedReorgWindow(committedHeight){
         if (!(committedHeight >= this.undoBlocks)) return null
         if (this.lastBlocks.length >= this.undoBlocks) return null
         const remaining = this.lastBlocks.length
+        const watermark = Math.min(this.undoWindowWatermark || 0, this.undoBlocks)
+        const tail = "Only " + remaining + " more blocks can be walked back onto the node's chain "
+            + "before this index has to be rebuilt."
+
+        if (watermark > 0 && remaining >= watermark){
+            console.log("The undo window came back with " + remaining + " of " + this.undoBlocks
+                + " blocks. Nothing was rolled back: this store has never held more than " + watermark
+                + ", so the window is still refilling toward a raised UNDO_BLOCKS (one slot per block "
+                + "synced). " + tail)
+            return remaining
+        }
+
+        if (watermark === 0){
+            console.warn("WARNING! The undo window came back with " + remaining + " of " + this.undoBlocks
+                + " blocks. This store predates the undo-window watermark, so the two causes cannot be "
+                + "told apart here: either a previous process was interrupted mid-reorg, or UNDO_BLOCKS "
+                + "was raised under an existing store and the window is still refilling. The watermark is "
+                + "being recorded from now on, so the next boot names which. " + tail)
+            return remaining
+        }
+
         console.warn("WARNING! The undo window came back with " + remaining + " of " + this.undoBlocks
             + " blocks, so a previous process was interrupted mid-reorg after rolling back "
-            + (this.undoBlocks - remaining) + ". Only " + remaining + " more blocks can be walked back "
-            + "onto the node's chain before this index has to be rebuilt.")
+            + (watermark - remaining) + " of the " + watermark + " this store had reached. " + tail)
         return remaining
     }
 
@@ -632,6 +733,19 @@ class XChainUtxoTracker {
         return this.mempoolReconverged
     }
     
+    // Drain entry for SIGTERM (src/shutdown.js). Unlike stopParsing(), which is
+    // the RPC-facing pause and RESTORES the loop when it cannot stop within ten
+    // seconds, this only asks: the loop takes its else branch at its next
+    // keepParsing check (a block boundary), closes the store and breaks, and
+    // start() resolves. The caller bounds the wait with its hard-exit timer.
+    stop(){
+        this.keepParsing = false
+        if (this.mempoolInterval) {
+            clearInterval(this.mempoolInterval)
+            this.mempoolInterval = null
+        }
+    }
+
     async stopParsing(){
         return new Promise(async(resolve, reject) => {
             this.keepParsing = false
@@ -1245,7 +1359,16 @@ class XChainUtxoTracker {
         // What a previous process already spent out of this chain's window. Only
         // meaningful once the window is being maintained; reported so the halt
         // message states the fork's true depth rather than this pass's share of it.
-        const spentBeforeEntry = windowAtEntry > 0 ? Math.max(0, this.undoBlocks - windowAtEntry) : 0
+        //
+        // Measured against the WATERMARK (the deepest window this store has held,
+        // clamped to undoBlocks), not against undoBlocks: a window that is short
+        // only because UNDO_BLOCKS was raised under an existing store spent
+        // nothing, and charging it the difference overstates the fork by exactly
+        // the raise. A store with no watermark (0) falls back to the nominal
+        // depth, which is the pre-watermark reading.
+        const watermarkAtEntry = Math.min(this.undoWindowWatermark || 0, this.undoBlocks)
+        const heldBefore = watermarkAtEntry > 0 ? watermarkAtEntry : this.undoBlocks
+        const spentBeforeEntry = windowAtEntry > 0 ? Math.max(0, heldBefore - windowAtEntry) : 0
 
         while (thereAreDifferences){
             let lastBlockIndex = await this.db.getLastBlockHeight()
@@ -1450,6 +1573,10 @@ class XChainUtxoTracker {
         // Load in ascending height order (tip last) so a reorg right after a
         // restart doesn't trip removeFromLastBlocks. See helper for detail.
         this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+
+        // Before the diagnostic: it is the watermark that says whether a short
+        // window is a rollback that was interrupted or one that never got deeper.
+        await this.loadUndoWindowWatermark()
 
         this.noteInterruptedReorgWindow(lastProcessedBlockIndex)
 

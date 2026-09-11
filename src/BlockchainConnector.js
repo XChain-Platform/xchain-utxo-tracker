@@ -227,6 +227,35 @@ function stripAuxPowFromBlockHex(headerHex, blockHex) {
     return blockHex
 }
 
+// Reduce the three timestamps the connector records into the two fields every health
+// surface publishes. Pure and exported so the rule lives in one place: a surface that
+// re-derived "is the node reachable" from a counter would disagree with this one.
+// Byte-for-byte the same rule as xchain-decoder/src/BlockchainConnector.js.
+//
+// Unreachable means the LATEST attempt failed: either nothing has ever succeeded, or
+// the last failure is newer than the last success. `since` dates the outage from the
+// last success when there was one, and from connector construction when there was
+// never one, which is the case the defect report describes: a service whose node
+// answered nothing in five and a half days while every surface read green.
+//
+// All three inputs are ms epoch, 0 meaning "never".
+function nodeReachabilityFrom(startedAt, lastNodeOkAt, lastNodeFailAt, now = Date.now()) {
+    const lastOkIso = lastNodeOkAt > 0 ? new Date(lastNodeOkAt).toISOString() : null
+    const failing = lastNodeFailAt > 0 && (lastNodeOkAt === 0 || lastNodeFailAt > lastNodeOkAt)
+    if (!failing) return { node_last_ok_at: lastOkIso, node_unreachable: null }
+    const sinceMs = lastNodeOkAt > 0 ? lastNodeOkAt : startedAt
+    return {
+        node_last_ok_at: lastOkIso,
+        node_unreachable: {
+            since: new Date(sinceMs).toISOString(),
+            last_ok_at: lastOkIso,
+            // Floor, and clamped at 0: a health probe racing the recorded instant
+            // must never publish a negative age.
+            seconds: Math.max(0, Math.floor((now - sinceMs) / 1000))
+        }
+    }
+}
+
 class BlockchainConnector {
     constructor(url, port, rpcUser, rpcPassword) {
         this.url = "http://"+url+":"+port
@@ -240,10 +269,50 @@ class BlockchainConnector {
             httpAgent: new http.Agent({ keepAlive: true, maxSockets: 25 }),
             auth: { username: rpcUser, password: rpcPassword }
         })
+
+        // Node reachability, recorded at the single POST choke point below so every
+        // RPC path through this class feeds it, batches included. Reported, never gated
+        // on: the healthy verdict deliberately ignores an upstream node outage (a
+        // restart cannot fix one, and gating re-opens the autoheal restart flap), which
+        // is exactly why the outage needs a surface of its own.
+        //
+        // Distinct from XChainUtxoTracker.lastNodeRpcOkAt, which the /status probe reads:
+        // that one is stamped only by the sync loop's own tip read, so it says nothing
+        // about a tracker whose loop has not yet completed a single poll.
+        this.startedAt = Date.now()
+        this.lastNodeOkAt = 0
+        this.lastNodeFailAt = 0
     }
 
     async sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    // Node reachability as the health surfaces publish it. Cheap and never throws,
+    // so a probe can call it per request.
+    nodeReachability(now = Date.now()) {
+        return nodeReachabilityFrom(this.startedAt, this.lastNodeOkAt, this.lastNodeFailAt, now)
+    }
+
+    // Single POST path for every RPC method in this class. It exists so reachability
+    // has one choke point instead of six near-identical `this.client.post` call sites;
+    // it adds no retry or classification of its own, leaving each method's ladder
+    // exactly as it was.
+    async rpcPost(data) {
+        try {
+            const response = await this.client.post(this.url, data)
+            // The node answered. A JSON-RPC error carried in a 200 body (height out of
+            // range, tx not found) still resolves here and still counts as reached:
+            // this pair reports whether the node is ANSWERING, not whether the answer
+            // was the one the caller wanted.
+            this.lastNodeOkAt = Date.now()
+            return response
+        } catch (error) {
+            // Timeouts (ECONNABORTED), socket/DNS faults and RPC errors delivered as
+            // HTTP 500 all land here, and all mean this attempt got no usable answer.
+            this.lastNodeFailAt = Date.now()
+            throw error
+        }
     }
 
     async getBlockchainInfo(){
@@ -255,7 +324,7 @@ class BlockchainConnector {
 
         let response
         try {
-            response = await this.client.post(this.url, data)
+            response = await this.rpcPost(data)
         } catch (error) {
             // Scrub error.config.auth in place before it escapes: RPC calls carry
             // the node password in axios auth, and upstream sinks (the poll loop's
@@ -281,7 +350,7 @@ class BlockchainConnector {
                 id: 1,
             }
 
-            const response = await this.client.post(this.url, data)
+            const response = await this.rpcPost(data)
 
             if (response.data.result) {
                 return response.data.result;
@@ -309,7 +378,7 @@ class BlockchainConnector {
                     id: 1,
                 }
 
-                const response = await this.client.post(this.url, data)
+                const response = await this.rpcPost(data)
 
                 if (response.data.result) {
                     return response.data.result;
@@ -426,7 +495,7 @@ class BlockchainConnector {
                 id: 1
             }
 
-            const response = await this.client.post(this.url, data)
+            const response = await this.rpcPost(data)
 
             if (response.data.result) {
                 return response.data.result;
@@ -455,7 +524,7 @@ class BlockchainConnector {
                         id: 1
                     }
 
-                    const response = await this.client.post(this.url, data)
+                    const response = await this.rpcPost(data)
 
                     if (response.data.result) {
                         resolve(response.data.result);
@@ -524,7 +593,7 @@ class BlockchainConnector {
 
         while (tries > 0) {
             try {
-                return await this.client.post(this.url, data)
+                return await this.rpcPost(data)
             } catch (error) {
                 if (error.code === 'ECONNABORTED') {
                     tries = tries - 1
@@ -662,3 +731,5 @@ class BlockchainConnector {
 module.exports = BlockchainConnector
 // Exported for the malformed-AuxPoW reassembly regression test.
 module.exports.encodeVarintHex = encodeVarintHex
+// Exported so the reachability reducer can be tested without a connector or a node.
+module.exports.nodeReachabilityFrom = nodeReachabilityFrom

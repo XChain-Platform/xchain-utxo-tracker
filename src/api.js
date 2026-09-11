@@ -51,6 +51,7 @@ const { isWrapperArchive, parseSha256Sidecar,
 const { installObservability } = require('./observability');   // default-off /metrics + structured log shim
 const { installUtxoTrackerMetrics } = require('./utxoTrackerMetrics');   // sync-freshness heartbeat gauges
 const { installCrashHandlers, noteCrash } = require('./crashHandlers.js')
+const { createShutdown, createTrackerDrain } = require('./shutdown.js')
 const jsonRouter = require('express-json-rpc-router')
 const concurrencyGate = require('./concurrencyGate.js')
 const { parseCorsOrigin } = require('./corsOrigin.js')
@@ -181,8 +182,10 @@ var bootstrapBusy = false
 // 503, and an operator resyncs (restorebootstrap) against a stable process. Used
 // at EVERY start() site (primary boot + bootstrap/restore restarts) so none can
 // regress to a bare unhandledRejection that skips the rollback.
+// Returns the settled promise so the SIGTERM drain can wait for the loop to
+// break at a block boundary; a halt resolves it too (the process stays up).
 function launchTracker(tracker){
-    tracker.start().catch((err) => {
+    return tracker.start().catch((err) => {
         try { if (tracker.db && tracker.db.endTransaction) tracker.db.endTransaction(false) } catch (_) {}
         if (XChainUtxoTracker.isUnrecoverableReorg(err)) {
             tracker.haltForResync(err && err.message)
@@ -237,6 +240,26 @@ function deriveSyncedVerdict({ lag, nodeHeightStale = false, threshold = XChainU
     return lag >= 0 && lag <= threshold
 }
 
+// Node reachability for the health payloads: `node_last_ok_at` (the last successful
+// node RPC, null if there has never been one) and `node_unreachable` (null, or the
+// outage with its age in seconds). A tracker whose node never answered a single RPC
+// is otherwise indistinguishable from a healthy one on every surface an operator polls;
+// these two fields are that difference, reported and never gating.
+//
+// Fail-soft: an absent connector, or one from a build/test stub predating the method,
+// reports the unknown-but-not-failing pair rather than throwing inside a probe.
+function nodeReachabilityFields(tracker){
+    const connector = tracker && tracker.connector
+    if (!connector || typeof connector.nodeReachability !== 'function'){
+        return { node_last_ok_at: null, node_unreachable: null }
+    }
+    try {
+        return connector.nodeReachability()
+    } catch (e) {
+        return { node_last_ok_at: null, node_unreachable: null }
+    }
+}
+
 // Bounds the `route` label of the HTTP metrics: the observability shim labels an
 // unmatched request by its first path segment, so caller-invented paths mint one
 // series each and fill the per-metric cap, dropping real routes from the scrape.
@@ -252,7 +275,7 @@ function installUnmatchedRouteLabel(app){
 
 async function startApi(){
     const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
-    launchTracker(tracker)
+    const trackerExited = launchTracker(tracker)
 
     async function getUtxos(address, opts){
         return await tracker.getUtxosAddress(address, opts)
@@ -344,6 +367,13 @@ async function startApi(){
         // the tracker is deliberately not advancing and is not stalled. Read through a
         // guard so a probe answered before the tracker exists still returns a payload.
         freshness.node_catching_up = (tracker && tracker.nodeCatchingUp) || null;
+        // Whether the coin node is answering this tracker at all, and since when it
+        // stopped. Reported, never gated on, for the reason node_height_stale is: a
+        // restart cannot fix an upstream outage. A tracker whose node has NEVER answered
+        // is otherwise indistinguishable here from a healthy one.
+        const reach = nodeReachabilityFields(tracker);
+        freshness.node_last_ok_at  = reach.node_last_ok_at;
+        freshness.node_unreachable = reach.node_unreachable;
         return freshness;
     }
 
@@ -639,6 +669,13 @@ async function startApi(){
             // committed tip: a deliberate wait, not a stall and not a rollback. Always
             // present (null when not waiting) so `xchain-node ps` can read one shape.
             result.node_catching_up = (tracker && tracker.nodeCatchingUp) || null;
+            // Whether the coin node is answering this tracker at all, and since when it
+            // stopped. node_last_ok_at is null until the first successful RPC, and
+            // node_unreachable is non-null ({since, last_ok_at, seconds}) only while the
+            // latest attempt has failed. Always present so one shape reads everywhere.
+            const reach = nodeReachabilityFields(tracker);
+            result.node_last_ok_at  = reach.node_last_ok_at;
+            result.node_unreachable = reach.node_unreachable;
             // Remaining rollback budget. Every rollback deletes one entry from the
             // persisted undo window and only forward sync puts it back, so a window
             // sitting below undo_window_blocks says a reorg was interrupted (a
@@ -965,10 +1002,25 @@ async function startApi(){
     // object, so an in-process call never touches gate accounting.
     app.use(requestGate.hold(jsonRouter({methods: jsonRpcController})))
 
-    app.listen(UTXO_TRACKER_API_PORT, () => {
+    const server = app.listen(UTXO_TRACKER_API_PORT, () => {
       console.log('API listening on port '+UTXO_TRACKER_API_PORT)
       console.log(memoryBudget.describe(BULK_SYNC_RAM_BUDGET))
     })
+
+    // Graceful shutdown. node is PID 1 in the image, so `docker stop` delivers
+    // SIGTERM here; without a handler node's default action killed the block
+    // loop wherever it stood and the container exited 1. The drain is bounded
+    // by its own hard-exit timer (src/shutdown.js) because installing a handler
+    // removes node's default terminate.
+    const shutdown = createShutdown({
+        drain: createTrackerDrain({
+            tracker:     tracker,
+            server:      server,
+            loopSettled: trackerExited
+        })
+    })
+    process.on('SIGTERM', () => shutdown('SIGTERM'))
+    process.on('SIGINT', () => shutdown('SIGINT'))
 }
 
 async function compressDirPigz(taskId, source, destination) {
@@ -1665,6 +1717,7 @@ if (require.main === module) {
 module.exports = {
     deriveHealthStatus,
     isNodeRpcStale,
+    nodeReachabilityFields,
     deriveSyncedVerdict,
     NODE_RPC_STALE_MS,
     validateBootstrapArchiveOrThrow,

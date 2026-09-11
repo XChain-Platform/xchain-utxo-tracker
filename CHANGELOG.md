@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.17.0] - 2026-09-10
+
+### Added
+- The health and status payloads carry `node_last_ok_at` and `node_unreachable`, so a coin node that has never answered is visible.
+
+### Fixed
+- `docker stop` now reaches the tracker: the image runs node as PID 1 instead of npm, and a SIGTERM drain stops the block loop at a block boundary, closes the API listener and the LevelDB store and exits 0 under a `SHUTDOWN_TIMEOUT_MS` hard-exit bound.
+- A boot with a short undo window now says whether a rollback was interrupted or a raised `UNDO_BLOCKS` is still refilling, using a persisted high-water mark.
+
 ## [0.16.0] - 2026-09-08
 
 ### Fixed

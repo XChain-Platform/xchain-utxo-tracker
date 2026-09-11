@@ -18,4 +18,11 @@ COPY ./src /XChainUtxoTracker/src
 COPY ./src/bufferutils.js /XChainUtxoTracker/node_modules/bitcoinjs-lib/src/bufferutils.js
 COPY ./.en[v] /XChainUtxoTracker/.env
 
-CMD ["npm", "run", "api"]
+# Exec-form node, not `npm run api` (which is this exact command). npm builds an
+# npm -> sh -c -> node tree and no wrapper forwards signals, so `docker stop`
+# killed npm while node was never told anything and the container exited 1.
+# This image registers real drain work on SIGTERM (src/shutdown.js: stop the
+# block loop at a boundary, close the listener and the store), which only runs
+# when node is PID 1 and receives the signal itself. --max-old-space-size is
+# carried verbatim from the package.json `api` script.
+CMD ["node", "--max-old-space-size=4096", "./src/api.js"]
