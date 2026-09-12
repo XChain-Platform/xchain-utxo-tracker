@@ -3,6 +3,9 @@ version: '3'
 services:
   xchain_utxo_tracker:
     build: .
+    # The image bakes no .env (Dockerfile); the README's .env is handed to the
+    # container here instead.
+    env_file: .env
     # Without this block the tracker is the one XChain service whose container
     # logs are unbounded: docker's json-file driver rotates nothing by default,
     # so a compose-run tracker grows until the host disk fills (spec
