@@ -50,7 +50,7 @@ class MinHeap {
     constructor() { this._nodes = [] }
     get size() { return this._nodes.length }
 
-    _less(a, b) {
+    less(a, b) {
         const cmp = Buffer.compare(a.key, b.key)
         if (cmp !== 0) return cmp < 0
         return (a.seq || 0) < (b.seq || 0)
@@ -62,7 +62,7 @@ class MinHeap {
         let i = nodes.length - 1
         while (i > 0) {
             const parent = (i - 1) >> 1
-            if (this._less(nodes[i], nodes[parent])) {
+            if (this.less(nodes[i], nodes[parent])) {
                 const tmp = nodes[i]; nodes[i] = nodes[parent]; nodes[parent] = tmp
                 i = parent
             } else break
@@ -82,8 +82,8 @@ class MinHeap {
                 const l = 2 * i + 1
                 const r = 2 * i + 2
                 let smallest = i
-                if (l < n && this._less(nodes[l], nodes[smallest])) smallest = l
-                if (r < n && this._less(nodes[r], nodes[smallest])) smallest = r
+                if (l < n && this.less(nodes[l], nodes[smallest])) smallest = l
+                if (r < n && this.less(nodes[r], nodes[smallest])) smallest = r
                 if (smallest === i) break
                 const tmp = nodes[i]; nodes[i] = nodes[smallest]; nodes[smallest] = tmp
                 i = smallest

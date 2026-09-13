@@ -54,20 +54,20 @@ class XdmpReader {
         const hdr = Buffer.alloc(HEADER_SIZE)
         const n   = fs.readSync(this._fd, hdr, 0, HEADER_SIZE, 0)
         if (n !== HEADER_SIZE) {
-            this._fail(`short header read: ${n}/${HEADER_SIZE} bytes`)
+            this.fail(`short header read: ${n}/${HEADER_SIZE} bytes`)
         }
         this._pos = HEADER_SIZE
 
         if (hdr.slice(0, 8).compare(MAGIC_DUMP) !== 0) {
-            this._fail(`bad magic: expected XCHNDMP1, got ${hdr.slice(0, 8).toString('ascii')}`)
+            this.fail(`bad magic: expected XCHNDMP1, got ${hdr.slice(0, 8).toString('ascii')}`)
         }
 
         const chainCode = hdr.readUInt8(8)
         const netCode   = hdr.readUInt8(9)
         const version   = hdr.readUInt16LE(10)
-        if (!(chainCode in CHAIN_NAMES))   this._fail(`unknown chain_code ${chainCode}`)
-        if (!(netCode   in NETWORK_NAMES)) this._fail(`unknown net_code ${netCode}`)
-        if (version !== FILE_VERSION)      this._fail(`unsupported version ${version}`)
+        if (!(chainCode in CHAIN_NAMES))   this.fail(`unknown chain_code ${chainCode}`)
+        if (!(netCode   in NETWORK_NAMES)) this.fail(`unknown net_code ${netCode}`)
+        if (version !== FILE_VERSION)      this.fail(`unsupported version ${version}`)
 
         this.chain          = CHAIN_NAMES[chainCode]
         this.network        = NETWORK_NAMES[netCode]
@@ -79,11 +79,11 @@ class XdmpReader {
 
         const expectedCount = this.lastHeight - this.firstHeight + 1
         if (this.blockCount !== expectedCount) {
-            this._fail(`block_count mismatch: header says ${this.blockCount}, heights imply ${expectedCount}`)
+            this.fail(`block_count mismatch: header says ${this.blockCount}, heights imply ${expectedCount}`)
         }
     }
 
-    _fail(msg) {
+    fail(msg) {
         this.close()
         throw new Error(`[xdmp-reader] ${this._filePath}: ${msg}`)
     }
@@ -106,7 +106,7 @@ class XdmpReader {
         while (blocksRead < this.blockCount) {
             const prefixRead = fs.readSync(this._fd, this._prefixBuf, 0, RECORD_PREFIX, this._pos)
             if (prefixRead !== RECORD_PREFIX) {
-                this._fail(`short prefix read at block ${blocksRead}/${this.blockCount}: ${prefixRead} bytes`)
+                this.fail(`short prefix read at block ${blocksRead}/${this.blockCount}: ${prefixRead} bytes`)
             }
             this._pos += RECORD_PREFIX
 
@@ -114,10 +114,10 @@ class XdmpReader {
             const height    = this._prefixBuf.readUInt32LE(4)
 
             if (blockSize === 0 || blockSize > MAX_BLOCK_SIZE) {
-                this._fail(`invalid block_size ${blockSize} at height ${height}`)
+                this.fail(`invalid block_size ${blockSize} at height ${height}`)
             }
             if (height !== prevHeight + 1) {
-                this._fail(`height gap: expected ${prevHeight + 1}, got ${height}`)
+                this.fail(`height gap: expected ${prevHeight + 1}, got ${height}`)
             }
             prevHeight = height
 
@@ -129,7 +129,7 @@ class XdmpReader {
             }
             const dataRead = fs.readSync(this._fd, this._dataBuf, 0, blockSize, this._pos)
             if (dataRead !== blockSize) {
-                this._fail(`short data read at height ${height}: expected ${blockSize}, got ${dataRead}`)
+                this.fail(`short data read at height ${height}: expected ${blockSize}, got ${dataRead}`)
             }
             this._pos += blockSize
 

@@ -90,8 +90,8 @@ function installCrashHandlers({ proc = process, exitOnUncaught = true } = {}) {
 }
 
 // Tests only: the counter handles are process-wide.
-function _resetCrashCounters() {
+function resetCrashCounters() {
   _counters = null
 }
 
-module.exports = { installCrashHandlers, noteCrash, _resetCrashCounters }
+module.exports = { installCrashHandlers, noteCrash, resetCrashCounters }

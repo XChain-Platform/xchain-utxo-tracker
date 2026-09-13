@@ -75,7 +75,7 @@ class MetaReader {
         this._closed  = false
     }
 
-    _ensureScratch(need) {
+    ensureScratch(need) {
         if (need > this._scratch.length) {
             let cap = this._scratch.length * 2
             while (cap < need) cap *= 2
@@ -83,7 +83,7 @@ class MetaReader {
         }
     }
 
-    _readInto(buf, offset, length, filePos) {
+    readInto(buf, offset, length, filePos) {
         let read = 0
         while (read < length) {
             const n = fs.readSync(this._fd, buf, offset + read, length - read, filePos + read)
@@ -101,8 +101,8 @@ class MetaReader {
             }
 
             // Read the fixed 76-byte prefix first, to discover tx_count.
-            this._ensureScratch(MIN_RECORD_SIZE)
-            this._readInto(this._scratch, 0, MIN_RECORD_SIZE, this._pos)
+            this.ensureScratch(MIN_RECORD_SIZE)
+            this.readInto(this._scratch, 0, MIN_RECORD_SIZE, this._pos)
 
             const txCount = this._scratch.readUInt32BE(72)
             const total   = MIN_RECORD_SIZE + 8 * txCount
@@ -110,9 +110,9 @@ class MetaReader {
                 throw new Error(`meta truncated: record at ${this._pos} needs ${total}B, only ${remaining}B left`)
             }
 
-            this._ensureScratch(total)
+            this.ensureScratch(total)
             if (txCount > 0) {
-                this._readInto(this._scratch, MIN_RECORD_SIZE, 8 * txCount, this._pos + MIN_RECORD_SIZE)
+                this.readInto(this._scratch, MIN_RECORD_SIZE, 8 * txCount, this._pos + MIN_RECORD_SIZE)
             }
 
             const height       = this._scratch.readUInt32BE(0)

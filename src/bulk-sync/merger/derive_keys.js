@@ -144,9 +144,9 @@ class FlatWriter {
         slotFiller(this._buf, off)
         this._len++
         this._count++
-        if (this._len * this._recordSize + this._recordSize > this._buf.length) this._flush()
+        if (this._len * this._recordSize + this._recordSize > this._buf.length) this.flush()
     }
-    _flush() {
+    flush() {
         if (this._len === 0) return
         fs.writeSync(this._fd, this._buf, 0, this._len * this._recordSize)
         this._len = 0
@@ -155,7 +155,7 @@ class FlatWriter {
     close() {
         if (this._closed) return
         this._closed = true
-        this._flush()
+        this.flush()
         try { fs.closeSync(this._fd) } catch (_) {}
     }
 }

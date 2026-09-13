@@ -43,7 +43,7 @@ describe('utxo-tracker crash handlers', function () {
 
   beforeEach(function () {
     observability._resetObservability()
-    crash._resetCrashCounters()
+    crash.resetCrashCounters()
     sink = { lines: [] }
     const push = (m) => sink.lines.push(m)
     observability.installObservability(null, {
@@ -53,7 +53,7 @@ describe('utxo-tracker crash handlers', function () {
 
   afterEach(function () {
     observability._resetObservability()
-    crash._resetCrashCounters()
+    crash.resetCrashCounters()
   })
 
   it('an uncaught exception emits one CRASH record and exits non-zero', function () {

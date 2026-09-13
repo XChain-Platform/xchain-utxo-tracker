@@ -71,7 +71,7 @@ class RecordReader {
         this._closed  = false
     }
 
-    _refill() {
+    refill() {
         if (this._closed || this._pos >= this._end) {
             this._bufLen = 0
             this._bufOff = 0
@@ -96,7 +96,7 @@ class RecordReader {
      */
     next() {
         if (this._bufOff >= this._bufLen) {
-            if (!this._refill()) return null
+            if (!this.refill()) return null
         }
         const view = this._buf.subarray(this._bufOff, this._bufOff + this._recordSize)
         this._bufOff += this._recordSize
