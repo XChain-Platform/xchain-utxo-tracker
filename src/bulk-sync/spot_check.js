@@ -73,7 +73,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-    console.log(`Usage: node spot-check.js --truth <dir> --candidate <dir> [options]
+    console.log(`Usage: node spot_check.js --truth <dir> --candidate <dir> [options]
 
 Required:
   --truth <dir>       path to ground-truth DB (must be closed / not in use)

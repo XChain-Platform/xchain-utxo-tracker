@@ -12,7 +12,7 @@
 // contact legal@dankest.llc.
 
 // CLI wrapper for loader.js
-// Usage: node run-loader.js --keys <dir> --out <db-path>
+// Usage: node run_loader.js --keys <dir> --out <db-path>
 // (DB is classic-level / LevelDB.)
 
 const { loadKeys } = require('./merger/loader.js')
@@ -28,7 +28,7 @@ const keysDir = getArg('--keys')
 const dbPath  = getArg('--out')
 
 if (!keysDir || !dbPath) {
-    console.error('Usage: node run-loader.js --keys <dir> --out <db-path>')
+    console.error('Usage: node run_loader.js --keys <dir> --out <db-path>')
     process.exit(1)
 }
 

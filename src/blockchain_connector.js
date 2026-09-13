@@ -733,7 +733,13 @@ class BlockchainConnector {
 }
 
 module.exports = BlockchainConnector
-// Exported for the malformed-AuxPoW reassembly regression test.
-module.exports.encodeVarintHex = encodeVarintHex
-// Exported so the reachability reducer can be tested without a connector or a node.
-module.exports.nodeReachabilityFrom = nodeReachabilityFrom
+
+// Attached to the class rather than exported one line at a time: one export
+// shape per file, and every call site already reaches these through the module
+// object, so nothing outside changes.
+Object.assign(module.exports, {
+    // Exported for the malformed-AuxPoW reassembly regression test.
+    encodeVarintHex,
+    // Exported so the reachability reducer can be tested without a connector or a node.
+    nodeReachabilityFrom,
+})

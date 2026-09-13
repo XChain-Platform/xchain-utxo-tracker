@@ -36,6 +36,7 @@ const path = require('path')
 const { XdmpReader }     = require('./xdmp_reader.js')
 const { processBlock }   = require('./process_block.js')
 const XChainBlockDecoder = require('../XChainBlockDecoder.js');
+const { assertBigIntBufferutils } = require('../assert_bigint_bufferutils.js');
 const {
     OutputsWriter,
     SpendsWriter,
@@ -166,12 +167,10 @@ function main() {
         return
     }
 
-    // Lazy require so --help works without bitcoinjs-lib installed.
     const decoder = new XChainBlockDecoder(`${reader.chain}-${reader.network}`)
     // Same fail-closed patch check the tracker constructor runs. This worker is its
     // own process and never constructs a tracker, so that check cannot reach it.
-    // Below the lazy require, so --help still works without bitcoinjs-lib.
-    require('../assert_bigint_bufferutils').assertBigIntBufferutils(decoder.coin, 'bulk-sync parse-worker')
+    assertBigIntBufferutils(decoder.coin, 'bulk-sync parse-worker')
 
     const outputs = new OutputsWriter(paths.outputs, reader.chain, reader.network, reader.firstHeight, reader.lastHeight)
     const spends  = new SpendsWriter(paths.spends,   reader.chain, reader.network, reader.firstHeight, reader.lastHeight)

@@ -64,7 +64,6 @@
 
 const fs = require('fs')
 const path = require('path')
-const rocksdb = require('rocksdb');
 
 // args
 function parseArgs(argv) {
@@ -94,6 +93,7 @@ function log(msg) { console.log(`[${ts()}] ${msg}`) }
 // the pre-migration image needs nothing added. Open read-mostly; we never write
 // to it. keyAsBuffer/valueAsBuffer on the iterator give raw Buffers -> exact bytes.
 function openRocks(dir) {
+    const rocksdb = require('rocksdb')
     const db = rocksdb(dir)
     return new Promise((res, rej) =>
         db.open({ createIfMissing: false, errorIfExists: false }, e => e ? rej(e) : res(db)))

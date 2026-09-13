@@ -18,6 +18,8 @@
 
 const util = require('./util')
 const config = require('./config')
+const coins = require('./coins')
+const { assertBigIntBufferutils } = require('./assert_bigint_bufferutils')
 // Node's own util, under a second name: `util` above is this repo's helper
 // module, and the logger folds a variadic console line through format().
 const nodeUtil = require('node:util')
@@ -213,7 +215,7 @@ class XChainUtxoTracker {
       // this registry). Deliberately not wrapped in try/catch, and deliberately in
       // the constructor rather than start(): api.js does not await start(), so a
       // later check would let the HTTP surface bind and serve queries first.
-      require('./coins').verifyConsensusPin(this.consensusNetwork)
+      coins.verifyConsensusPin(this.consensusNetwork)
 
       this.connector = new BlockchainConnector(nodeUrl, nodePort, nodeUser, nodePassword)
       this.dbName = dbName
@@ -229,8 +231,7 @@ class XChainUtxoTracker {
       // reason as verifyConsensusPin above: api.js does not await start(), so a
       // check there would let the HTTP surface bind and serve first. Runs after the
       // decoder construction that requires the patch module.
-      require('./assert_bigint_bufferutils').assertBigIntBufferutils(
-          this.xchainBlockDecoder.coin, 'utxo-tracker')
+      assertBigIntBufferutils(this.xchainBlockDecoder.coin, 'utxo-tracker')
 
 
       this.debugTime = {}
@@ -2451,17 +2452,23 @@ class XChainUtxoTracker {
 }
 
 module.exports = XChainUtxoTracker
-module.exports.satoshiToDecimalString = satoshiToDecimalString
-module.exports.SYNCED_THRESHOLD = SYNCED_THRESHOLD
-module.exports.nodeStillCatchingUp = nodeStillCatchingUp
-module.exports.catchUpWaitState = catchUpWaitState
-module.exports.MAX_ADDRESS_OUTPUTS = MAX_ADDRESS_OUTPUTS
-module.exports.MAX_BLOCK_FETCH_RETRIES = MAX_BLOCK_FETCH_RETRIES
-// Exported for the malformed-AuxPoW fallback regression test.
-module.exports.AUXPOW_REASSEMBLE_AFTER = AUXPOW_REASSEMBLE_AFTER
-// The flat COINBASE_MATURITY scalar that stood here is gone: no caller in any
-// repo consumed it (verified by git grep for `.COINBASE_MATURITY` across the
-// platform), and a single exported number is the shape of the bug, since it can
-// only be right for one chain. Callers that need the depth read
-// tracker.coinbaseMaturity, or resolve it per network through this resolver.
-module.exports.resolveCoinbaseMaturity = resolveCoinbaseMaturity
+
+// Attached to the class rather than exported one line at a time: one export
+// shape per file, and every call site already reaches these through the module
+// object, so nothing outside changes.
+Object.assign(module.exports, {
+    satoshiToDecimalString,
+    SYNCED_THRESHOLD,
+    nodeStillCatchingUp,
+    catchUpWaitState,
+    MAX_ADDRESS_OUTPUTS,
+    MAX_BLOCK_FETCH_RETRIES,
+    // Exported for the malformed-AuxPoW fallback regression test.
+    AUXPOW_REASSEMBLE_AFTER,
+    // The flat COINBASE_MATURITY scalar that stood here is gone: no caller in any
+    // repo consumed it (verified by a grep for `.COINBASE_MATURITY` across the
+    // platform), and a single exported number is the shape of the bug, since it can
+    // only be right for one chain. Callers that need the depth read
+    // tracker.coinbaseMaturity, or resolve it per network through this resolver.
+    resolveCoinbaseMaturity,
+})

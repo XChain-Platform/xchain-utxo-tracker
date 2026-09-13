@@ -1688,45 +1688,51 @@ class LevelUpStore {
 }
 
 module.exports = LevelUpStore
-module.exports.AddressTooLargeError = AddressTooLargeError
-module.exports.InvalidCursorError  = InvalidCursorError
-// Exported so the bulk-sync loader can write O-record values byte-identically
-// to the live path (optional 45th coinbase byte), reusing this single
-// source of the encoding instead of duplicating the format.
-module.exports.encodeOutput = encodeOutput
-module.exports.decodeOutput = decodeOutput
-// Exported so the value encoders' width guards can be exercised directly in unit
-// tests, mirroring the key builders' length-guard coverage.
-module.exports.encodeBlock = encodeBlock
-module.exports.encodeTx = encodeTx
-module.exports.encodeInputVal = encodeInputVal
-module.exports.encodeOutHint = encodeOutHint
-// Exported so the bulk-sync loader can assert its seeded W (creation-block
-// reverse index) keys are byte-identical to the live insertOutputBlock path,
-// reusing this single source of the key encoding instead of duplicating it.
-module.exports.kOutBlk = kOutBlk
-// Exported so the Buffer-based key builders' length guards can be exercised
-// directly in unit tests, mirroring their hex-string counterparts.
-module.exports.kOutputFromBuf = kOutputFromBuf
-module.exports.kOutDelFromBuf = kOutDelFromBuf
-module.exports.kScriptBlkFromBuf = kScriptBlkFromBuf
-module.exports.kBlkScriptFromBuf = kBlkScriptFromBuf
-// Exported so the hex-string key builders' length guards can be exercised
-// directly in unit tests, mirroring their *FromBuf counterparts.
-module.exports.kBlock = kBlock
-module.exports.kTx = kTx
-module.exports.kScriptBlk = kScriptBlk
-module.exports.kBlkScript = kBlkScript
-// Exported so the key-schema invariant test can assert, in ONE place, that
-// every key any builder emits sorts at or below rangeEnd(prefix) (the
-// dropped-key hazard fixed twice: 1-byte then 12-byte 0xFF suffixes), that
-// prefix bytes stay unique, and that hex/Buffer builder pairs stay
-// byte-identical. A new or widened key type must pass that suite.
-module.exports.kInput = kInput
-module.exports.kOutput = kOutput
-module.exports.kOutHint = kOutHint
-module.exports.kInHint = kInHint
-module.exports.kOutDel = kOutDel
-module.exports.kHintDel = kHintDel
-module.exports.kStoredBlk = kStoredBlk
-module.exports.rangeEnd = rangeEnd
+
+// Attached to the class rather than exported one line at a time: one export
+// shape per file, and every call site already reaches these through the module
+// object, so nothing outside changes.
+Object.assign(module.exports, {
+    AddressTooLargeError,
+    InvalidCursorError,
+    // Exported so the bulk-sync loader can write O-record values byte-identically
+    // to the live path (optional 45th coinbase byte), reusing this single
+    // source of the encoding instead of duplicating the format.
+    encodeOutput,
+    decodeOutput,
+    // Exported so the value encoders' width guards can be exercised directly in unit
+    // tests, mirroring the key builders' length-guard coverage.
+    encodeBlock,
+    encodeTx,
+    encodeInputVal,
+    encodeOutHint,
+    // Exported so the bulk-sync loader can assert its seeded W (creation-block
+    // reverse index) keys are byte-identical to the live insertOutputBlock path,
+    // reusing this single source of the key encoding instead of duplicating it.
+    kOutBlk,
+    // Exported so the Buffer-based key builders' length guards can be exercised
+    // directly in unit tests, mirroring their hex-string counterparts.
+    kOutputFromBuf,
+    kOutDelFromBuf,
+    kScriptBlkFromBuf,
+    kBlkScriptFromBuf,
+    // Exported so the hex-string key builders' length guards can be exercised
+    // directly in unit tests, mirroring their *FromBuf counterparts.
+    kBlock,
+    kTx,
+    kScriptBlk,
+    kBlkScript,
+    // Exported so the key-schema invariant test can assert, in ONE place, that
+    // every key any builder emits sorts at or below rangeEnd(prefix) (the
+    // dropped-key hazard fixed twice: 1-byte then 12-byte 0xFF suffixes), that
+    // prefix bytes stay unique, and that hex/Buffer builder pairs stay
+    // byte-identical. A new or widened key type must pass that suite.
+    kInput,
+    kOutput,
+    kOutHint,
+    kInHint,
+    kOutDel,
+    kHintDel,
+    kStoredBlk,
+    rangeEnd,
+})

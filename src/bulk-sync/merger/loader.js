@@ -36,6 +36,7 @@ const path = require('path')
 const { LAYOUT }       = require('./derive_keys.js')
 const { RecordReader } = require('./streaming_join.js')
 const { encodeOutput, kOutBlk } = require('../../level_up_db.js')
+const { ClassicLevel } = require('classic-level')
 
 // The intermediate O.dat value is fixed-width (value8 + height4 + fullTxHash32 +
 // coinbase1 = 45B) so the external sort can treat it as a plain record. On the
@@ -83,7 +84,6 @@ function validateWRecord(key, value) {
 function noop() {}
 
 function openDb(dbPath) {
-    const { ClassicLevel } = require('classic-level')
     // Match LevelUpDb.js: open with buffer encodings so Buffer keys/values
     // pass through db.batch() verbatim.
     return new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' })
