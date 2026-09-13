@@ -16,6 +16,8 @@
 const coins = require('./coins')
 // The one strict numeric env reader (see src/config/env_int.js for why parseInt is not it).
 const { envInt } = require('./config/env_int')
+const { getLogger } = require('./observability');
+const logger = getLogger();
 
 // Per-chain reorg-recovery window (the "undo blocks" depth), block-time-scaled so each
 // chain keeps roughly 120 minutes of reorg headroom: DOGE's ~1-minute blocks need a far
@@ -121,7 +123,7 @@ function resolveUndoBlocks(network, optsUndoBlocks){
     // depth. Past that ceiling the decoder aborts reorg recovery while the tracker
     // keeps auto-recovering, silently splitting the two effective reorg windows.
     if (resolved > MAX_SAFE_UNDO_BLOCKS) {
-        console.error(
+        logger.error(
             'WARNING: resolved undo-blocks window for ' + coin + ' is ' + resolved +
             ', which exceeds the decoder dispenser-expiry safe depth (' + MAX_SAFE_UNDO_BLOCKS + '). ' +
             'The decoder will abort reorg recovery past ' + MAX_SAFE_UNDO_BLOCKS + ' blocks while this ' +

@@ -20,6 +20,9 @@
 
 const crypto = require('crypto');
 const { hrtime } = require('node:process');
+const util = require('node:util');
+const { getLogger } = require('./observability');
+const logger = getLogger();
 
 var debugTime = {}
 
@@ -32,7 +35,7 @@ module.exports = {
     },
 
     throwError: function(error){
-        console.error('throwError:', error);
+        logger.error(util.format('throwError:', error));
         throw error;
     },
 
@@ -60,7 +63,7 @@ module.exports = {
     logTotalTime: function(timeName){
         if (timeName+"**TOTAL" in debugTime){
             let diffTime = debugTime[timeName+"**TOTAL"]
-            console.log("Time('"+timeName+"'): "+(diffTime[0] * NS_PER_SEC + diffTime[1])+" ns. It was called "+debugTime[timeName+"**COUNT"]+" times");
+            logger.info("Time('"+timeName+"'): "+(diffTime[0] * NS_PER_SEC + diffTime[1])+" ns. It was called "+debugTime[timeName+"**COUNT"]+" times");
             debugTime[timeName+"**TOTAL"] = [0,0]
             debugTime[timeName+"**COUNT"] = 0
             delete debugTime[timeName+"**TOTAL"]
@@ -69,7 +72,7 @@ module.exports = {
     },
     logTime: function(timeName){
         let diffTime = hrtime(debugTime[timeName])
-        console.log("Time('"+timeName+"'): "+(diffTime[0] * NS_PER_SEC + diffTime[1])+" ns");
+        logger.info("Time('"+timeName+"'): "+(diffTime[0] * NS_PER_SEC + diffTime[1])+" ns");
     },
     startTimer: function(){
         let now = Date.now();
@@ -84,7 +87,7 @@ module.exports = {
         niceString += "\t: " + ms + 'ms';
         if(timeString!='')
             niceString += ' (' + timeString + ')';
-        console.log(niceString);
+        logger.info(niceString);
     },
 
     millisecondsToTimeString: function(ms){

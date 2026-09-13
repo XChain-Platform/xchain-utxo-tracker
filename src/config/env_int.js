@@ -13,6 +13,8 @@
  *********************************************************************/
 
 'use strict'
+const { getLogger } = require('../observability');
+const logger = getLogger();
 
 // Whole-string integer read for operator-supplied numeric config. THE one
 // numeric env reader in this component; new knobs call it rather than hand-roll
@@ -48,7 +50,7 @@ function envInt(name, fallback, min, warnSuffix){
     const read = readInt(raw)
     if (read.absent) return fallback
     if (read.value === null || read.value < min) {
-        console.error(
+        logger.error(
             'WARNING: ' + name + "='" + raw + "' is not an integer >= " + min +
             '; falling back to ' + fallback + '.' + (warnSuffix ? ' ' + warnSuffix : ''))
         return fallback

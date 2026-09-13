@@ -35,6 +35,8 @@
 
 // The one strict numeric reader (see src/config/env_int.js for why parseInt is not it).
 const { readInt } = require('./config/env_int');
+const { getLogger } = require('./observability');
+const logger = getLogger();
 
 // Parse a cap from the environment. A missing or unparseable value keeps the
 // caller's default (fail-safe: a typo must not silently remove the cap), and
@@ -49,7 +51,7 @@ function resolveLimit(rawValue, defaultLimit){
     const read = readInt(rawValue);
     if(read.absent) return fallback;
     if(read.value === null){
-        console.error(
+        logger.error(
             `WARNING: concurrency cap '${rawValue}' is not an integer; keeping the default of ${fallback}. ` +
             'Set the cap to 0 to disable the gate deliberately.');
         return fallback;

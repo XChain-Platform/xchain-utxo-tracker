@@ -125,7 +125,7 @@ describe('XChainUtxoTracker: a node still catching up is not a rollback', functi
     it('announces the wait at warn level, like every other tip-divergence line', function () {
       const at = src.indexOf('but the node reports initialblockdownload=true');
       expect(at).to.be.greaterThan(0);
-      const m = src.slice(0, at).match(/console\.(log|warn|error)\("WARNING! The last processed block height \("[^;]*$/);
+      const m = src.slice(0, at).match(/logger\.(info|warn|error|debug)\("WARNING! The last processed block height \("[^;]*$/);
       expect(m && m[1]).to.equal('warn');
     });
 

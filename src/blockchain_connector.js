@@ -20,6 +20,9 @@
 
 const axios = require('axios');
 const http  = require('http');
+const util = require('node:util');
+const { getLogger } = require('./observability');
+const logger = getLogger();
 
 // Sanitize an axios error before it is logged or re-thrown. RPC calls pass
 // auth:{username,password} to axios, which attaches the request config to the
@@ -361,7 +364,7 @@ class BlockchainConnector {
             // sanitizeRpcError scrubs error.config.auth (the node RPC password) in
             // place, so the rethrow cannot leak the credential through an upstream
             // console.error(..., err) sink (noteBlockFetchFailure, verifyReorg).
-            console.error('Error:', sanitizeRpcError(error));
+            logger.error(util.format('Error:', sanitizeRpcError(error)));
             throw error;
         }
     }
@@ -388,13 +391,13 @@ class BlockchainConnector {
             } catch (error) {
                 if (error.code === 'ECONNABORTED') {
                     tries = tries - 1
-                    console.log("Getting timeout trying to get block hex, trying again...")
+                    logger.info("Getting timeout trying to get block hex, trying again...")
                     // Back off 500ms between attempts so a persistently-flapping node is
                     // not hot-spun through all 10 tries near-instantly; matches the
                     // postWithRetry / getBlock retry cadence.
                     if (tries > 0) await this.sleep(500)
                 } else {
-                    console.error('Error:', sanitizeRpcError(error));
+                    logger.error(util.format('Error:', sanitizeRpcError(error)));
                     throw error;
                 }
             }
@@ -454,7 +457,7 @@ class BlockchainConnector {
                 throw new Error('Error getting verbose block');
             }
         } catch (error) {
-            console.error('Error:', sanitizeRpcError(error));
+            logger.error(util.format('Error:', sanitizeRpcError(error)));
             throw error;
         }
     }
@@ -505,7 +508,7 @@ class BlockchainConnector {
         } catch (error){
             // Scrub the node RPC password from error.config.auth in place before
             // the rethrow reaches updateMempool's console.error(..., error) sink.
-            console.error('Error:', sanitizeRpcError(error));
+            logger.error(util.format('Error:', sanitizeRpcError(error)));
             throw error;
         }
     }
@@ -578,7 +581,7 @@ class BlockchainConnector {
                 throw new Error('Error getting block hex');
             }
         } catch (error) {
-            console.error('Error:', error.message);
+            logger.error(util.format('Error:', error.message));
             throw error;
         }
     }
@@ -597,10 +600,10 @@ class BlockchainConnector {
             } catch (error) {
                 if (error.code === 'ECONNABORTED') {
                     tries = tries - 1
-                    console.log("Getting timeout on a batch RPC call, trying again...")
+                    logger.info("Getting timeout on a batch RPC call, trying again...")
                     await this.sleep(500)
                 } else {
-                    console.error('Error:', sanitizeRpcError(error))
+                    logger.error(util.format('Error:', sanitizeRpcError(error)))
                     throw error
                 }
             }

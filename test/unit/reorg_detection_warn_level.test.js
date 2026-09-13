@@ -12,14 +12,14 @@
  *
  *********************************************************************/
 
-// Tip-divergence detections must be announced at warn level. Nothing in this
-// service routes the block-sync loop through the structured logger, so the
-// console METHOD is the severity: a collector that splits stdout from stderr,
-// or filters warn-and-above, files a console.log reorg as routine progress.
+// Tip-divergence detections must be announced at warn level. The block-sync
+// loop emits through the structured logger, so the logger METHOD is the
+// severity: a collector that filters warn-and-above files an info-level reorg
+// as routine progress and nobody is paged.
 //
 // These branches need a live node and a real divergence to reach, so this is a
 // source-level drift guard in the shape of test/unit/no_key_boot_warning.test.js:
-// it pins the console method each detection message is emitted with.
+// it pins the logger method each detection message is emitted with.
 
 'use strict';
 
@@ -38,13 +38,14 @@ describe('reorg detection log severity @regression', function () {
         'A reorg has been detected.'
     ];
 
-    // The console method a given message literal is emitted with, or null when the
-    // message is absent. Reads backwards from the literal to the console.<method>(
-    // that opens the call, allowing the opening quote of the string literal.
+    // The logger method a given message literal is emitted with, or null when the
+    // message is absent. Reads backwards from the literal to the logger.<method>(
+    // that opens the call, allowing the opening quote of the string literal and
+    // the nodeUtil.format(...) wrapper the variadic lines carry.
     function methodFor(message) {
         const at = src.indexOf(message);
         if (at === -1) return null;
-        const m = src.slice(0, at).match(/console\.(log|warn|error)\(\s*["'`]$/);
+        const m = src.slice(0, at).match(/logger\.(info|warn|error|debug)\(\s*(?:nodeUtil\.format\(\s*)?["'`]$/);
         return m ? m[1] : null;
     }
 
@@ -54,15 +55,15 @@ describe('reorg detection log severity @regression', function () {
             assert.ok(method !== null,
                 'detection message no longer present in src/XChainUtxoTracker.js: ' + message);
             assert.strictEqual(method, 'warn',
-                'tip-divergence detections must use console.warn so a reorg leaves a ' +
+                'tip-divergence detections must use logger.warn so a reorg leaves a ' +
                 'warn-level record even if verifyReorg wedges before the metrics advance; ' +
-                'found console.' + method + ' for: ' + message);
+                'found logger.' + method + ' for: ' + message);
         });
     }
 
     it('leaves the neighbouring progress and error lines alone', function () {
         // Progress output stays info: promoting these is pure alert noise.
-        assert.strictEqual(methodFor('Last block index was fixed!'), 'log');
+        assert.strictEqual(methodFor('Last block index was fixed!'), 'info');
         // The tip-hash re-check failure is a genuine error and stays one.
         assert.strictEqual(methodFor('Error re-checking the committed tip hash from node: '), 'error');
     });

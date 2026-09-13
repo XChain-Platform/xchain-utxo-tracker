@@ -17,6 +17,9 @@
  ********************************************************************/
 
 const util = require('./util')
+// Node's own util, under a second name: `util` above is this repo's helper
+// module, and the logger folds a variadic console line through format().
+const nodeUtil = require('node:util')
 const memoryBudget = require('./memory_budget')
 const crypto = require('crypto');
 const bs58check = require('bs58check')
@@ -155,6 +158,8 @@ const { resolveCoinbaseMaturity } = require('./coinbase_maturity.js')
 // (src/coins). Used to gate AuxPoW stripping on the coin's declared wireFormat
 // ('auxpow') instead of a coin-name literal.
 const { WIRE_FORMAT } = require('./coins')
+const { getLogger } = require('./observability');
+const logger = getLogger();
 
 // coinFromNetwork and resolveUndoBlocks are single-sourced in undo-blocks.js
 // (imported above) so the live worker, seeder, orchestrator, and api.js share
@@ -531,7 +536,7 @@ class XChainUtxoTracker {
     noteBlockFetchFailure(height, streakHeight, streakCount, error){
         const count = (streakHeight === height) ? streakCount + 1 : 1
         const msg = error && error.message ? error.message : String(error)
-        console.error('Error fetching block at height ' + height + ' (attempt ' + count + '/' + MAX_BLOCK_FETCH_RETRIES + '): ' + msg, error)
+        logger.error(nodeUtil.format('Error fetching block at height ' + height + ' (attempt ' + count + '/' + MAX_BLOCK_FETCH_RETRIES + '): ' + msg, error))
         if (count >= MAX_BLOCK_FETCH_RETRIES){
             this.blockFetchDesync = {
                 height: height,
@@ -610,7 +615,7 @@ class XChainUtxoTracker {
         // unreachable on the one state that needs it.
         this.parsingAborted = true
         if (this.mempoolInterval){ clearInterval(this.mempoolInterval); this.mempoolInterval = null }
-        console.error('[halted] xchain-utxo-tracker stopped polling: ' + this.haltReason
+        logger.error('[halted] xchain-utxo-tracker stopped polling: ' + this.haltReason
             + ' - process kept alive for an operator resync (restorebootstrap); NOT auto-wiping. '
             + '/status now returns 503 and get_sync_status.halted=true.')
     }
@@ -662,7 +667,7 @@ class XChainUtxoTracker {
             + "before this index has to be rebuilt."
 
         if (watermark > 0 && remaining >= watermark){
-            console.log("The undo window came back with " + remaining + " of " + this.undoBlocks
+            logger.info("The undo window came back with " + remaining + " of " + this.undoBlocks
                 + " blocks. Nothing was rolled back: this store has never held more than " + watermark
                 + ", so the window is still refilling toward a raised UNDO_BLOCKS (one slot per block "
                 + "synced). " + tail)
@@ -670,7 +675,7 @@ class XChainUtxoTracker {
         }
 
         if (watermark === 0){
-            console.warn("WARNING! The undo window came back with " + remaining + " of " + this.undoBlocks
+            logger.warn("WARNING! The undo window came back with " + remaining + " of " + this.undoBlocks
                 + " blocks. This store predates the undo-window watermark, so the two causes cannot be "
                 + "told apart here: either a previous process was interrupted mid-reorg, or UNDO_BLOCKS "
                 + "was raised under an existing store and the window is still refilling. The watermark is "
@@ -678,7 +683,7 @@ class XChainUtxoTracker {
             return remaining
         }
 
-        console.warn("WARNING! The undo window came back with " + remaining + " of " + this.undoBlocks
+        logger.warn("WARNING! The undo window came back with " + remaining + " of " + this.undoBlocks
             + " blocks, so a previous process was interrupted mid-reorg after rolling back "
             + (watermark - remaining) + " of the " + watermark + " this store had reached. " + tail)
         return remaining
@@ -1375,15 +1380,15 @@ class XChainUtxoTracker {
             let lastBlockHash = await this.db.getLastBlockHash()
             let lastBlock = await this.db.getBlock(lastBlockHash)
             
-            console.log("Last block index is "+lastBlockIndex)
-            console.log("Last block hash is "+lastBlockHash)
-            console.log("Last block height is "+(lastBlock?lastBlock["h"]:"null"))
+            logger.info("Last block index is "+lastBlockIndex)
+            logger.info("Last block hash is "+lastBlockHash)
+            logger.info("Last block height is "+(lastBlock?lastBlock["h"]:"null"))
             
             if (!lastBlock || (lastBlockIndex != lastBlock["h"])){
                 //This shouldn't happen, but let's try to find the real lastBlockIndex
-                console.log("The blocks height for the same hash are not equal. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
+                logger.info("The blocks height for the same hash are not equal. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
                 let lastBlockDb = await this.db.getLastBlock()
-                console.log("Last block from db is "+(lastBlockDb?lastBlockDb:"null"))
+                logger.info("Last block from db is "+(lastBlockDb?lastBlockDb:"null"))
 
                 // getLastBlock() scans the B-prefix and returns null when it is
                 // empty. If a last-block pointer is set but there are no block
@@ -1404,9 +1409,9 @@ class XChainUtxoTracker {
                     // commitLastBlockPointerRepair(); all verifyReorg callers discard
                     // any prior batch first, so opening a fresh one here strands nothing.
                     await this.commitLastBlockPointerRepair(lastBlockDb.hash, lastBlockDb.height)
-                    console.log("The new last block hash in the db is "+lastBlockDb.hash)
-                    console.log("The new last block index in the db is "+lastBlockDb.height)
-                    console.log("Last block index was fixed!")
+                    logger.info("The new last block hash in the db is "+lastBlockDb.hash)
+                    logger.info("The new last block index in the db is "+lastBlockDb.height)
+                    logger.info("Last block index was fixed!")
                     continue
                 }
             } else {
@@ -1446,11 +1451,11 @@ class XChainUtxoTracker {
                     try {
                         blockHashFromNode = await this.connector.getBlockHash(lastBlockIndex)
                     } catch (err){
-                        console.error('Error fetching block hash from node: ' + err.message, err)
+                        logger.error(nodeUtil.format('Error fetching block hash from node: ' + err.message, err))
                         await this.sleep(3000)
                         continue
                     }
-                    console.log("Last block hash from node is "+blockHashFromNode)
+                    logger.info("Last block hash from node is "+blockHashFromNode)
                 }
 
                 if (aboveNodeTip || lastBlockHash != blockHashFromNode){
@@ -1493,7 +1498,7 @@ class XChainUtxoTracker {
                             + "drops the volume and takes the bulk-sync path; standalone, stop the "
                             + "tracker, empty its data directory and restart it. Restoring the same "
                             + "bootstrap again lands back here if its tip is the drifted one."
-                        console.error(msg)
+                        logger.error(msg)
                         throw XChainUtxoTracker.markUnrecoverableReorg(new Error(msg))
                     }
                     try {
@@ -1513,8 +1518,8 @@ class XChainUtxoTracker {
                         await this.db.setLastBlockHeight(lastBlock["h"]-1)
                         await this.db.endTransaction()
 
-                        console.log("Removed block "+lastBlockHash+" ("+lastBlock["h"]+")")
-                        console.log("Rollback to previous block "+lastBlock["ph"]+" ("+(lastBlock["h"]-1)+")")
+                        logger.info("Removed block "+lastBlockHash+" ("+lastBlock["h"]+")")
+                        logger.info("Rollback to previous block "+lastBlock["ph"]+" ("+(lastBlock["h"]-1)+")")
 
                         // Per-block retry budget: reset after each successful rollback so the
                         // 10-attempt limit applies per block, not cumulatively across the whole
@@ -1539,7 +1544,7 @@ class XChainUtxoTracker {
                         // window from disk (which still holds the N records) so the retry
                         // budget actually retries.
                         try { this.lastBlocks = await this.loadLastBlocksSortedByHeight() } catch (_) {}
-                        console.error(`verifyReorg: failed to delete block ${lastBlock["h"]} (${lastBlockHash}): ${err.message}`, err)
+                        logger.error(nodeUtil.format(`verifyReorg: failed to delete block ${lastBlock["h"]} (${lastBlockHash}): ${err.message}`, err))
                         if (++retryCount >= 10) throw new Error('verifyReorg: deleteBlockByIndex failed after 10 attempts, aborting')
                         await this.sleep(3000); continue
                     }
@@ -1550,7 +1555,7 @@ class XChainUtxoTracker {
         }
         
         if (blocksDeleted.length > 0){
-            console.log(blocksDeleted.length+" blocks were removed")
+            logger.info(blocksDeleted.length+" blocks were removed")
             this.reorgCount++
             this.lastReorgDepth = blocksDeleted.length
         }
@@ -1565,7 +1570,7 @@ class XChainUtxoTracker {
         await this.db.createDatabase()
         await this.mempoolDb.createDatabase()
         
-        console.log("Indexing...")
+        logger.info("Indexing...")
         
         let lastProcessedBlockIndex = await this.db.getLastBlockHeight()
         let lastProcessedBlockHash = await this.db.getLastBlockHash()
@@ -1592,7 +1597,7 @@ class XChainUtxoTracker {
         if (pVal !== undefined) {
             this.pendingKMCleanup = JSON.parse(pVal.toString())
             if (this.pendingKMCleanup.length > 0) {
-                console.log(`Recovering ${this.pendingKMCleanup.length} pending K/M cleanup block(s) from prior crash`)
+                logger.info(`Recovering ${this.pendingKMCleanup.length} pending K/M cleanup block(s) from prior crash`)
             }
         }
 
@@ -1716,7 +1721,7 @@ class XChainUtxoTracker {
 
                         if (lastBlockchainInfo["verificationprogress"] < MIN_VERIFICATION_PROGRESS_TO_PARSE){
                             if (!nodeSyncedProblem){
-                                console.log("The node is not synced. Waiting for it to synchronize...")
+                                logger.info("The node is not synced. Waiting for it to synchronize...")
                             }
 
                             lastBlockchainInfo = null
@@ -1735,7 +1740,7 @@ class XChainUtxoTracker {
                         // Never stamped in the catch below.
                         this.lastNodeRpcOkAt = lastBlockchainInfoRefreshAt
                     } catch (e){
-                        console.error('Error fetching blockchain info from node: ' + e.message, e)
+                        logger.error(nodeUtil.format('Error fetching blockchain info from node: ' + e.message, e))
                         await this.sleep(3000)
                         continue
                     }
@@ -1759,7 +1764,7 @@ class XChainUtxoTracker {
                         // happened and halts for a rebuild.
                         if (nodeStillCatchingUp(lastBlockchainInfo)){
                             if (!nodeCatchingUpProblem){
-                                console.warn("WARNING! The last processed block height ("+lastProcessedBlockIndex+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"), but the node reports initialblockdownload=true: it is still catching up, not rolled back. Waiting for it to pass "+lastProcessedBlockIndex+" instead of rolling back; the hash compare decides then.")
+                                logger.warn("WARNING! The last processed block height ("+lastProcessedBlockIndex+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"), but the node reports initialblockdownload=true: it is still catching up, not rolled back. Waiting for it to pass "+lastProcessedBlockIndex+" instead of rolling back; the hash compare decides then.")
                             }
                             nodeCatchingUpProblem = true
                             // Publish it; past the latched line the wait is invisible.
@@ -1769,7 +1774,7 @@ class XChainUtxoTracker {
                             continue
                         }
                         if (nodeCatchingUpProblem){
-                            console.log("The node has left initial block download with its tip ("+this.blockchainInfoLastBlock+") still below the last processed block ("+lastProcessedBlockIndex+"); treating the gap as a rollback from here on.")
+                            logger.info("The node has left initial block download with its tip ("+this.blockchainInfoLastBlock+") still below the last processed block ("+lastProcessedBlockIndex+"); treating the gap as a rollback from here on.")
                             nodeCatchingUpProblem = false
                             this.nodeCatchingUp = null
                         }
@@ -1791,7 +1796,7 @@ class XChainUtxoTracker {
                         }
 
                         //This shouldn't happen, but let's try to find the real lastBlockIndex
-                        console.log("The last processed block height are greater than the last block of the node. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
+                        logger.info("The last processed block height are greater than the last block of the node. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
                         let lastBlockDb = await this.db.getLastBlock()
 
                         // getLastBlock() returns null when the B-prefix is empty. With
@@ -1819,7 +1824,7 @@ class XChainUtxoTracker {
                             // this tip regression is filed as routine progress. See the
                             // reorg-detection-warn-level drift guard.
                             if (!tipBelowCommittedTipRefused){
-                                console.warn("WARNING! The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"). The node likely reset or reorged below our tip; rolling back to its chain.")
+                                logger.warn("WARNING! The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"). The node likely reset or reorged below our tip; rolling back to its chain.")
                             }
                             this.lastBlocks = await this.loadLastBlocksSortedByHeight()
                             try {
@@ -1833,7 +1838,7 @@ class XChainUtxoTracker {
                                 // catching up without reporting IBD resolves it on its own.
                                 if (err && err.tipBelowCommittedTip){
                                     if (!tipBelowCommittedTipRefused){
-                                        console.error(err.message)
+                                        logger.error(err.message)
                                     }
                                     tipBelowCommittedTipRefused = true
                                     await this.sleep(5000)
@@ -1855,7 +1860,7 @@ class XChainUtxoTracker {
                             await this.commitLastBlockPointerRepair(lastBlockDb.hash, lastBlockDb.height)
                             lastProcessedBlockIndex = lastBlockDb.height
                             lastProcessedBlockHash = lastBlockDb.hash
-                            console.log("Last block index was fixed!")
+                            logger.info("Last block index was fixed!")
                             continue
                         }
                     }
@@ -1875,13 +1880,13 @@ class XChainUtxoTracker {
                         try {
                             tipHashFromNode = await this.connector.getBlockHash(lastProcessedBlockIndex)
                         } catch (err){
-                            console.error('Error re-checking the committed tip hash from node: ' + err.message, err)
+                            logger.error(nodeUtil.format('Error re-checking the committed tip hash from node: ' + err.message, err))
                         }
                         if (tipHashFromNode && tipHashFromNode != lastProcessedBlockHash){
                             // console.warn: a tip swap at the same height is a reorg, and it
                             // must leave a warn-level record even if verifyReorg then wedges
                             // before reorgCount/last_reorg_depth advance.
-                            console.warn("A same-height tip reorg has been detected. Cleaning blocks...")
+                            logger.warn("A same-height tip reorg has been detected. Cleaning blocks...")
                             prefetchQueue = []
                             // Discard any in-flight batch before recovery, exactly as the
                             // prev-hash-mismatch and true-regression reorg paths do. This
@@ -1925,7 +1930,7 @@ class XChainUtxoTracker {
                     }
 
                     if (this.mempoolInterval == null){
-                        console.log("Mempool updates started!")
+                        logger.info("Mempool updates started!")
                         this.updateMempool()
                         this.mempoolInterval = setInterval(this.updateMempool.bind(this), MEMPOOL_INTERVAL)
                     }
@@ -1939,7 +1944,7 @@ class XChainUtxoTracker {
                         // before readiness is asserted again.
                         this.mempoolReconverged = false
                         if (this.mempoolInterval != null){
-                            console.log("Mempool updates stopped!")
+                            logger.info("Mempool updates stopped!")
                             clearInterval(this.mempoolInterval)
                             this.mempoolInterval = null
                         }
@@ -1960,7 +1965,7 @@ class XChainUtxoTracker {
                             // node's health: bypass the prefetch queue (its batch strip
                             // would just fail the same way) and rebuild the pure block
                             // per-tx, never reading the AuxPoW bytes.
-                            console.error('AuxPoW strip at height ' + nextBlockHeight + ' failed ' + auxPowParseFailures +
+                            logger.error('AuxPoW strip at height ' + nextBlockHeight + ' failed ' + auxPowParseFailures +
                                 ' consecutive times; falling back to per-tx block reassembly (malformed-AuxPoW recovery).')
                             prefetchQueue = []
                             const hash = await this.connector.getBlockHash(nextBlockHeight)
@@ -2028,7 +2033,7 @@ class XChainUtxoTracker {
                             // console.warn: the prev-hash-mismatch path is the ordinary reorg
                             // trigger, so leaving it at info is what makes a routine reorg
                             // invisible to a warn+ filter.
-                            console.warn("A reorg has been detected. Cleaning blocks...")
+                            logger.warn("A reorg has been detected. Cleaning blocks...")
                             await this.verifyReorg()
                             lastProcessedBlockIndex = await this.db.getLastBlockHeight()
                             lastProcessedBlockHash = await this.db.getLastBlockHash()
@@ -2048,7 +2053,7 @@ class XChainUtxoTracker {
                             this.pendingKMCleanup = []
                             pendingMempoolTxCleanup = []
                             blockTimestamps = []
-                            console.log("Blocks were updated")
+                            logger.info("Blocks were updated")
                             continue
                         }
                     }
@@ -2116,10 +2121,10 @@ class XChainUtxoTracker {
                         (_earlyFlushHeapMB > HEAP_FLUSH_THRESHOLD_MB)                 ? 'heap-pressure' :
                         null
                     if (_flushReason){
-                        console.log("Indexing block "+(nextBlockHeight)+"("+nextBlockHash+")")
+                        logger.info("Indexing block "+(nextBlockHeight)+"("+nextBlockHash+")")
                         await this.db.setLastBlockHeight(nextBlockHeight)
                         await this.db.setLastBlockHash(nextBlockHash)
-                        console.log("Inserting data Blocks ("+blocksCount+") Transactions ("+transactionsCount+") Inputs ("+inputsCount+") Outputs("+outputsCount+")")
+                        logger.info("Inserting data Blocks ("+blocksCount+") Transactions ("+transactionsCount+") Inputs ("+inputsCount+") Outputs("+outputsCount+")")
 
                         // Atomically record which blocks need K/M cleanup so a crash between
                         // endTransaction and cleanupAgedBlocks is recoverable on restart.
@@ -2181,7 +2186,7 @@ class XChainUtxoTracker {
                         const _heapMB = (_mem.heapUsed / 1048576).toFixed(0)
                         const _rssMB = (_mem.rss / 1048576).toFixed(0)
                         const _ocSize = LevelUpStore.outputCache.size
-                        console.log(`⏱ TIMING (${_t.blocks} blocks) flush=${_flushReason} total=${_total}ms | decode=${_t.decode}ms | parse=${_t.parse}ms (out=${_t.parseOut}ms [hash=${_pb.hash}ms ins=${_pb.ins}ms sb=${_pb.sb}ms] in=${_t.parseIn}ms [hintRead=${_pi.hintRead}ms outRead=${_pi.outRead}ms stage=${_pi.stage}ms]) | commit=${_t.commit}ms | cleanup=${_t.cleanup}ms | knownScripts=${_ks.size} hit=${_ksH} miss=${_ksM} rate=${_ksRate}% | heap=${_heapMB}MB heapPre=${_earlyFlushHeapMB.toFixed(0)}MB rss=${_rssMB}MB outCache=${_ocSize}`)
+                        logger.info(`⏱ TIMING (${_t.blocks} blocks) flush=${_flushReason} total=${_total}ms | decode=${_t.decode}ms | parse=${_t.parse}ms (out=${_t.parseOut}ms [hash=${_pb.hash}ms ins=${_pb.ins}ms sb=${_pb.sb}ms] in=${_t.parseIn}ms [hintRead=${_pi.hintRead}ms outRead=${_pi.outRead}ms stage=${_pi.stage}ms]) | commit=${_t.commit}ms | cleanup=${_t.cleanup}ms | knownScripts=${_ks.size} hit=${_ksH} miss=${_ksM} rate=${_ksRate}% | heap=${_heapMB}MB heapPre=${_earlyFlushHeapMB.toFixed(0)}MB rss=${_rssMB}MB outCache=${_ocSize}`)
                         XChainUtxoTracker.parseOutBuckets = { hash: 0, ins: 0, sb: 0 }
                         LevelUpStore.parseInBuckets = { hintRead: 0, outRead: 0, stage: 0 }
                         LevelUpStore.knownScriptsHits = 0
@@ -2213,8 +2218,8 @@ class XChainUtxoTracker {
                             let msPerTx = elapsedMs / totalTx
                             let avgTxPerBlock = totalTx / (newest.height - oldest.height)
                             let msLeft = blocksLeft * avgTxPerBlock * msPerTx
-                            console.log(`⚡ Speed: ${(1000/msPerTx).toFixed(1)} tx/s | avg ${avgTxPerBlock.toFixed(0)} tx/block (last ${newest.height - oldest.height} blocks)`)
-                            console.log("Estimated time to finish: "+this.millisecondsToTimeString(msLeft))
+                            logger.info(`⚡ Speed: ${(1000/msPerTx).toFixed(1)} tx/s | avg ${avgTxPerBlock.toFixed(0)} tx/block (last ${newest.height - oldest.height} blocks)`)
+                            logger.info("Estimated time to finish: "+this.millisecondsToTimeString(msLeft))
                         }
                         
                         blocksQuantity = -1
@@ -2225,7 +2230,7 @@ class XChainUtxoTracker {
                     lastProcessedBlockHash = nextBlockHash
                 }
             } else {
-                console.log("Stopping the parsing...")
+                logger.info("Stopping the parsing...")
                 if (this.mempoolInterval) {
                     clearInterval(this.mempoolInterval)
                     this.mempoolInterval = null
@@ -2264,7 +2269,7 @@ class XChainUtxoTracker {
                 
                 
             } catch (error){
-                console.error('Error updating mempool: ' + error.message, error)
+                logger.error(nodeUtil.format('Error updating mempool: ' + error.message, error))
                 // Reset the busy flag: without this, a single transient
                 // getRawMempool failure permanently locks out further mempool
                 // updates for the lifetime of the process (next setInterval
@@ -2318,7 +2323,7 @@ class XChainUtxoTracker {
                 if (rawMempool.length > MEMPOOL_BATCH_SIZE){
                     let batchCount = Math.ceil(rawMempool.length / MEMPOOL_BATCH_SIZE)
                     let estimatedSeconds = ((batchCount - 1) * MEMPOOL_INTER_BATCH_SLEEP) / 1000
-                    console.log("Mempool update: "+batchCount+" batches required, estimated minimum reconvergence "+estimatedSeconds+"s")
+                    logger.info("Mempool update: "+batchCount+" batches required, estimated minimum reconvergence "+estimatedSeconds+"s")
                 }
 
                 // Phase 2: fetch each batch's raw txs (RPC) and the inter-batch
@@ -2341,7 +2346,7 @@ class XChainUtxoTracker {
                         consecutiveTxFetchFailures = 0
 
                     } catch (err){
-                        console.log(err)
+                        logger.info(err)
                         consecutiveTxFetchFailures = consecutiveTxFetchFailures + 1
                         // Increment the lifetime counter so get_sync_status can surface
                         // that this node is degraded on mempool fetches.
@@ -2364,10 +2369,10 @@ class XChainUtxoTracker {
                         // readiness for this and every other mid-pass fault, and finally
                         // still clears mempoolBusy so the next tick recovers.
                         if (consecutiveTxFetchFailures >= MEMPOOL_MAX_TX_FETCH_RETRIES){
-                            console.warn("Giving up on this mempool pass after "+consecutiveTxFetchFailures+" consecutive getRawTransactions failures; will retry on the next interval.", err)
+                            logger.warn(nodeUtil.format("Giving up on this mempool pass after "+consecutiveTxFetchFailures+" consecutive getRawTransactions failures; will retry on the next interval.", err))
                             throw new Error("mempool fetch incomplete after "+consecutiveTxFetchFailures+" consecutive getRawTransactions failures")
                         }
-                        console.log("There was an error trying to get raw transactions from the mempool. Trying again...", err)
+                        logger.info(nodeUtil.format("There was an error trying to get raw transactions from the mempool. Trying again...", err))
                         await this.sleep(1000)
                         continue
                     }
@@ -2385,7 +2390,7 @@ class XChainUtxoTracker {
                                 let countInfo = await this.parseTransaction(this.mempoolDb, nextTx, null, -1, true)
 
                                 if (transactionsCount % MEMPOOL_BATCH_SIZE == 0){
-                                    console.log(""+transactionsCount+" parsed txs of "+rawMempool.length)
+                                    logger.info(""+transactionsCount+" parsed txs of "+rawMempool.length)
                                 }
 
                                 transactionsCount = transactionsCount + 1
@@ -2420,7 +2425,7 @@ class XChainUtxoTracker {
                 let mempoolEndTime = Date.now()
                 let timeString = this.millisecondsToTimeString(mempoolEndTime-mempoolStartTime)
 
-                console.log("Mempool updated!"
+                logger.info("Mempool updated!"
                     +" Transactions ("+transactionsCount+" more, "+deletedTransactionsCount+" less)"
                     +" Inputs ("+inputsCount+" more, "+deletedInputsCount+" less) "
                     +" Outputs("+outputsCount+" more, "+deletedOutputsCount+" less) ["+timeString+"]")
@@ -2432,7 +2437,7 @@ class XChainUtxoTracker {
                 // mempool silently stagnates for the lifetime of the process. Each
                 // phase above already closes its own transaction on error, so there
                 // is nothing left open to roll back here.
-                console.error('Error during mempool update: ' + error.message, error)
+                logger.error(nodeUtil.format('Error during mempool update: ' + error.message, error))
                 // Every route into this catch leaves a post-prune snapshot that is
                 // missing some advertised mempool txs, so readiness must be withdrawn
                 // rather than left asserted from an earlier good pass. The
@@ -2442,7 +2447,7 @@ class XChainUtxoTracker {
                 this.mempoolBusy = false
             }
         } else {
-            console.log("Mempool is still busy")
+            logger.info("Mempool is still busy")
         }
     }
     

@@ -56,6 +56,8 @@ const DEBUG_TRACE = process.env.TRACE_UTXO === '1' || process.env.TRACE_UTXO ===
 const { ClassicLevel } = require('classic-level')
 const { MemoryLevel } = require('memory-level')
 const bs = require("binary-search")
+const { getLogger } = require('./observability');
+const logger = getLogger();
 
 // String-keyed metadata entries. The DB is opened with keyEncoding:'buffer',
 // so these are stored as their UTF-8 byte Buffers, first byte 'L' = 0x4C.
@@ -709,15 +711,15 @@ class LevelUpStore {
                             if (item.type === 'put') oPut++; else if (item.type === 'del') oDel++
                         }
                     }
-                    console.log(`TRACE endTransaction db=${this.dbName} total=${transactionArrayFromMap.length} puts=${puts} dels=${dels} oPuts=${oPut} oDels=${oDel}`)
+                    logger.info(`TRACE endTransaction db=${this.dbName} total=${transactionArrayFromMap.length} puts=${puts} dels=${dels} oPuts=${oPut} oDels=${oDel}`)
                 }
                 await this.db.batch(transactionArrayFromMap)
             }
             this.transactionArray = null
             this.deletedTransactionArray = null
         } catch (err){
-            console.log("There were errors trying to insert data in a batch")
-            console.log(err)
+            logger.info("There were errors trying to insert data in a batch")
+            logger.info(err)
             // Carry the LevelDB error, not just a label. This is the atomic flush of a
             // whole block batch, and the throw reaches the polling loop's top-level
             // guard, verifyReorg's retry classifier and the supervisor log; without the
@@ -958,7 +960,7 @@ class LevelUpStore {
             : kOutput(output.scriptPubKey, output.txHash, output.outputIndex)
         if (DEBUG_TRACE) {
             const shHex = Buffer.isBuffer(output.scriptPubKey) ? output.scriptPubKey.toString('hex') : output.scriptPubKey
-            console.log(`TRACE insertOutput db=${this.dbName} sh=${shHex} tx8=${output.txHash} idx=${output.outputIndex} val=${output.value} h=${output.height}`)
+            logger.info(`TRACE insertOutput db=${this.dbName} sh=${shHex} tx8=${output.txHash} idx=${output.outputIndex} val=${output.value} h=${output.height}`)
         }
         return await this.addTransaction("put", oKey, oVal)
     }
@@ -1078,9 +1080,9 @@ class LevelUpStore {
                 // the batch path (delOutput) message VERBATIM so an operator grepping for the
                 // divergence signal catches occurrences on both code paths. Leave O/H intact -
                 // deleting H with no K/M undo record would be unrecoverable on reorg unwind.
-                console.log("Warning: Missing output value for input " + JSON.stringify(input) + " while its outputHintKey is present - leaving O/H records intact, not deleting without an undo record")
+                logger.info("Warning: Missing output value for input " + JSON.stringify(input) + " while its outputHintKey is present - leaving O/H records intact, not deleting without an undo record")
             } else {
-                console.log("Warning: Missing outputHintKey for input "+JSON.stringify(input)+" - output may have been indexed before REMOVE_SPENT was enabled")
+                logger.info("Warning: Missing outputHintKey for input "+JSON.stringify(input)+" - output may have been indexed before REMOVE_SPENT was enabled")
             }
             return true
         }
@@ -1130,7 +1132,7 @@ class LevelUpStore {
             for (let j = 0; j < hintDbKeys.length; j++) {
                 const i = hintDbIndices[j]
                 if (hintValues[j] == null) {
-                    console.log("Warning: Missing outputHintKey for input " + JSON.stringify(inputs[i]) + " - output may have been indexed before REMOVE_SPENT was enabled")
+                    logger.info("Warning: Missing outputHintKey for input " + JSON.stringify(inputs[i]) + " - output may have been indexed before REMOVE_SPENT was enabled")
                     resolved[i] = null
                     continue
                 }
@@ -1191,7 +1193,7 @@ class LevelUpStore {
             if (r.inMem) {
                 const inMemOKey = kOutputFromBuf(r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
                 if (DEBUG_TRACE) {
-                    console.log(`TRACE delOutput db=${this.dbName} path=inMem sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+                    logger.info(`TRACE delOutput db=${this.dbName} path=inMem sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
                 }
                 // Capture the staged output value BEFORE removal so a cross-block
                 // spend writes durable K/M restore records (see
@@ -1212,7 +1214,7 @@ class LevelUpStore {
 
             if (r.oVal == null) {
                 if (DEBUG_TRACE) {
-                    console.log(`TRACE delOutput db=${this.dbName} path=noOval sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+                    logger.info(`TRACE delOutput db=${this.dbName} path=noOval sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
                 }
                 // H present, O missing on disk: the single-input path
                 // (removeOutputWithInput) treats this as "do nothing" rather than
@@ -1220,14 +1222,14 @@ class LevelUpStore {
                 // with no K/M undo record to restore it on reorg unwind. Match
                 // that: leave both records intact and log loudly instead of
                 // silently creating an unrecoverable-on-reorg spend.
-                console.log("Warning: Missing output value for input " + JSON.stringify(inp) + " while its outputHintKey is present - leaving O/H records intact, not deleting without an undo record")
+                logger.info("Warning: Missing output value for input " + JSON.stringify(inp) + " while its outputHintKey is present - leaving O/H records intact, not deleting without an undo record")
                 continue
             }
 
             const mKey = kHintDel(inp.blockHash, inp.prevTxHash, inp.prevOutputIndex)
             const kKey = kOutDelFromBuf(inp.blockHash, r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
             if (DEBUG_TRACE) {
-                console.log(`TRACE delOutput db=${this.dbName} path=archive sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+                logger.info(`TRACE delOutput db=${this.dbName} path=archive sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
             }
             await this.addTransaction("put", mKey, r.scriptPubKeyBuf)
             await this.addTransaction("put", kKey, r.oVal)
@@ -1675,8 +1677,8 @@ class LevelUpStore {
                 })
             }
         } catch (err) {
-            console.log("Error getting values from patterns")
-            console.log(err)
+            logger.info("Error getting values from patterns")
+            logger.info(err)
             throw err
         }
 
