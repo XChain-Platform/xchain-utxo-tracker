@@ -119,6 +119,21 @@ describe('computeFreshness', function () {
     expect(body).to.match(/haltReason:\s*tracker\.haltReason/);
   });
 
+  // Same wiring guard, for the rollback counter. Every get_utxos PAGE carries this
+  // object as its `sync` sibling, and a paginating consumer proves two pages are one
+  // snapshot by comparing them. Height cannot do it alone: a rewind that re-applies
+  // to the SAME height leaves tracker_height, lag and synced identical while an early
+  // page's outpoint is already orphaned. The encoder's snapshotDivergence compares
+  // reorg_count when both pages carry it, and until this line existed no page ever
+  // did, so that comparison could never fire.
+  it('publishes the rollback counter on the per-query sibling', function () {
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+    const fn = src.slice(src.indexOf('async function getFreshnessMeta('));
+    const body = fn.slice(0, fn.indexOf('\n    }'));
+    expect(body).to.match(/freshness\.reorg_count\s*=/);
+    expect(body).to.match(/tracker\.reorgCount/);
+  });
+
   // Wiring guard, same reason: the REST address routes live inside startApi()'s
   // closure too. X-Mempool-Ready used to be built from the RAW pair
   // `tracker.isSynced() && tracker.isMempoolReconverged()`, which is not floored on a

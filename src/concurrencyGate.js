@@ -33,13 +33,28 @@
 
 'use strict';
 
+// The one strict numeric reader (see src/env-int.js for why parseInt is not it).
+const { readInt } = require('./env-int');
+
 // Parse a cap from the environment. A missing or unparseable value keeps the
 // caller's default (fail-safe: a typo must not silently remove the cap), and
 // anything <= 0 disables the gate outright as the operator escape hatch.
+//
+// The whole trimmed string is validated BEFORE that escape hatch, because
+// parseInt reads a numeric prefix: '0oops' and '0.5' both parsed to 0, which
+// Number.isFinite accepts, so the hatch fired and a typo disabled admission
+// control (item 7713), the exact opposite of the fail-safe promised above.
 function resolveLimit(rawValue, defaultLimit){
-    let parsed = parseInt(rawValue, 10);
-    let limit  = Number.isFinite(parsed) ? parsed : defaultLimit;
-    return limit > 0 ? limit : 0;
+    const fallback = defaultLimit > 0 ? defaultLimit : 0;
+    const read = readInt(rawValue);
+    if(read.absent) return fallback;
+    if(read.value === null){
+        console.error(
+            `WARNING: concurrency cap '${rawValue}' is not an integer; keeping the default of ${fallback}. ` +
+            'Set the cap to 0 to disable the gate deliberately.');
+        return fallback;
+    }
+    return read.value > 0 ? read.value : 0;
 }
 
 /**

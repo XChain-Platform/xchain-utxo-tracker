@@ -125,3 +125,72 @@ describe('undo-blocks resolves the coin through the canonical registry (#5803)',
     expect(resolveUndoBlocks('dogecoin-regtest')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE);
   });
 });
+
+// The env override ran through parseInt BEFORE the Number.isInteger/> 0 guard,
+// so the guard only ever inspected an already-truncated number and could not
+// refuse anything an operator actually typed: '1.5' resolved to 1 and
+// '12garbage' to 12, silently shortening the reorg-recovery window on every
+// consumer of this single-sourced resolver at once (item 7714).
+describe('resolveUndoBlocks env-override validation (item 7714)', function () {
+
+  const KEY = 'XCHAIN_UNDO_BLOCKS_DOGE';
+  const saved = {};
+  let consoleErrorStub;
+
+  beforeEach(function () {
+    saved.had = Object.prototype.hasOwnProperty.call(process.env, KEY);
+    saved.value = process.env[KEY];
+    consoleErrorStub = sinon.stub(console, 'error');
+  });
+
+  afterEach(function () {
+    consoleErrorStub.restore();
+    if (saved.had) process.env[KEY] = saved.value;
+    else delete process.env[KEY];
+  });
+
+  // The control: what the pre-fix arithmetic did with these same strings. A
+  // reverted resolver returns THESE numbers, which is what reddens the cases
+  // below rather than leaving them vacuously green.
+  it('the parseInt read this replaced truncates the malformed values', function () {
+    expect(parseInt('1.5', 10)).to.equal(1);
+    expect(parseInt('12garbage', 10)).to.equal(12);
+    expect(Number.isInteger(parseInt('1.5', 10))).to.equal(true);
+  });
+
+  for (const bad of ['1.5', '12garbage', '0.9', ' 7.5 ', 'ten']) {
+    it('refuses ' + JSON.stringify(bad) + ' and keeps the per-chain default', function () {
+      process.env[KEY] = bad;
+      expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE);
+      expect(consoleErrorStub.args.join('\n')).to.match(/is not an integer/);
+    });
+  }
+
+  it('accepts a well-formed override, trimmed', function () {
+    process.env[KEY] = '60';
+    expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(60);
+    process.env[KEY] = ' 60 ';
+    expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(60);
+    expect(consoleErrorStub.called).to.equal(false);
+  });
+
+  // Documented decision, not an accident: Number() reads '1e2' as exactly 100.
+  // The defect fixed here is silent truncation, not exponent notation.
+  it('accepts exponent notation as the integer it spells', function () {
+    process.env[KEY] = '1e2';
+    expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(100);
+  });
+
+  it('an unset or blank override takes the default without warning', function () {
+    delete process.env[KEY];
+    expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE);
+    process.env[KEY] = '   ';
+    expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE);
+    expect(consoleErrorStub.called).to.equal(false);
+  });
+
+  it('an explicit opts value still wins over a malformed env override', function () {
+    process.env[KEY] = '1.5';
+    expect(resolveUndoBlocks('dogecoin-mainnet', 30)).to.equal(30);
+  });
+});

@@ -20,10 +20,15 @@
 const assert = require('assert')
 const fs = require('fs')
 const path = require('path')
+const sinon = require('sinon')
 const { createShutdown, createTrackerDrain, closeServer, closeStores, resolveTimeoutMs, DEFAULT_SHUTDOWN_TIMEOUT_MS } = require('../../src/shutdown')
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+// Turn the event loop a bounded number of times. The tracker/server doubles below
+// resolve their callbacks with setImmediate, so a handful of macrotask turns is
+// strictly more than a drain needs to reach its await - with no wall clock in it.
+const flushMacrotasks = async (n = 5) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)) }
 async function waitUntil(predicate, timeoutMs = 5000, intervalMs = 10){
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline){
@@ -100,18 +105,31 @@ describe('graceful shutdown', function(){
 
         it('exits non-zero when the drain throws, and only once', async function(){
             const codes = []
-            const shutdown = createShutdown({ drain: async () => { throw new Error('store refused to close') }, timeoutMs: 50, exit: (c) => codes.push(c), log: silentLog })
-            shutdown('SIGTERM')
-            await sleep(120)
-            assert.deepStrictEqual(codes, [1])
+            // The budget timer is the second exit path, so the claim is that nothing
+            // else arrives after it would have fired. A fake clock makes that window
+            // virtual: advance far past the budget and prove the code list is frozen.
+            const clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+            try {
+                const shutdown = createShutdown({ drain: async () => { throw new Error('store refused to close') }, timeoutMs: 50, exit: (c) => codes.push(c), log: silentLog })
+                shutdown('SIGTERM')
+                await clock.tickAsync(0)
+                assert.deepStrictEqual(codes, [1])
+                await clock.tickAsync(500)
+                assert.deepStrictEqual(codes, [1], 'a cleared timer must not add a second exit')
+            } finally { clock.restore() }
         })
 
         it('does not fire the hard-exit timer after a clean drain', async function(){
             const codes = []
-            const shutdown = createShutdown({ drain: async () => {}, timeoutMs: 20, exit: (c) => codes.push(c), log: silentLog })
-            shutdown('SIGTERM')
-            await sleep(80)
-            assert.deepStrictEqual(codes, [0], 'a cleared timer must not add a second exit')
+            const clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+            try {
+                const shutdown = createShutdown({ drain: async () => {}, timeoutMs: 20, exit: (c) => codes.push(c), log: silentLog })
+                shutdown('SIGTERM')
+                await clock.tickAsync(0)
+                assert.deepStrictEqual(codes, [0])
+                await clock.tickAsync(500)
+                assert.deepStrictEqual(codes, [0], 'a cleared timer must not add a second exit')
+            } finally { clock.restore() }
         })
     })
 
@@ -181,7 +199,7 @@ describe('graceful shutdown', function(){
 
             let settled = false
             const running = drain().then(() => { settled = true })
-            await sleep(30)
+            await flushMacrotasks()
             assert.strictEqual(settled, false, 'the drain must not finish while the block loop is mid-batch')
             assert.strictEqual(tracker.db.closed, false, 'closing the store under an open batch is the abort this fix removes')
 

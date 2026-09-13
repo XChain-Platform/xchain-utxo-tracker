@@ -14,6 +14,8 @@
 
 // Canonical coin registry: the one name->tick table this file may consult.
 const coins = require('./coins')
+// The one strict numeric env reader (see src/env-int.js for why parseInt is not it).
+const { envInt } = require('./env-int')
 
 // Per-chain reorg-recovery window (the "undo blocks" depth), block-time-scaled so each
 // chain keeps roughly 120 minutes of reorg headroom: DOGE's ~1-minute blocks need a far
@@ -97,8 +99,15 @@ function resolveUndoBlocks(network, optsUndoBlocks){
             'per-chain reorg-recovery window. Add one to DEFAULT_UNDO_BLOCKS in src/undo-blocks.js, sized from ' +
             'that chain\'s block time, before onboarding it.')
     }
+    // Whole-string read (src/env-int.js), never parseInt: parseInt reads a numeric
+    // PREFIX, so the isInteger guard below inspected an already-truncated number
+    // and could not refuse anything. '1.5' resolved to 1 and '12garbage' to 12,
+    // shortening the recovery window on the live worker, the seeder, the tip-safety
+    // clamp, dump windowing and the api pre-flight at once (item 7714). A malformed
+    // override now warns and leaves the per-chain default standing.
     const envKey = 'XCHAIN_UNDO_BLOCKS_' + coin
-    const envVal = parseInt(process.env[envKey], 10)
+    const envVal = envInt(envKey, DEFAULT_UNDO_BLOCKS[coin], 1,
+        'The per-chain reorg-recovery window default stands.')
     let resolved
     if (Number.isInteger(optsUndoBlocks) && optsUndoBlocks > 0) {
         resolved = optsUndoBlocks

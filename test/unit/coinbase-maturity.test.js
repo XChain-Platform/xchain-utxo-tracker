@@ -90,11 +90,47 @@ describe('resolveCoinbaseMaturity', function () {
       expect(resolveCoinbaseMaturity('dogecoin-mainnet', 9)).to.equal(9);
     });
 
+    // Swallow the deliberate warnings so a refusal case does not spray the reporter.
+    function quietly(fn) {
+      const prev = console.error;
+      const lines = [];
+      console.error = (...a) => lines.push(a.join(' '));
+      try { return { value: fn(), lines }; }
+      finally { console.error = prev; }
+    }
+
     it('a non-positive or non-integer env override falls back to the per-chain default', function () {
       for (const bad of ['0', '-5', 'abc', '']) {
         process.env.XCHAIN_COINBASE_MATURITY = bad;
-        expect(resolveCoinbaseMaturity('dogecoin-mainnet')).to.equal(240);
+        expect(quietly(() => resolveCoinbaseMaturity('dogecoin-mainnet')).value).to.equal(240);
       }
+    });
+
+    // This knob carried the twin of item 7714's defect: parseInt ran before the
+    // Number.isInteger guard, so the guard inspected an already-truncated number.
+    // 'abc' above is the one shape parseInt rejects, which is why the case passed
+    // while a prefix-numeric typo was read as intent, and a maturity of 1 serves
+    // immature coinbase to a caller as spendable.
+    it('refuses a prefix-numeric or fractional override rather than truncating it', function () {
+      // The control: what the replaced arithmetic produced for these same strings.
+      expect(parseInt('1.5', 10)).to.equal(1);
+      expect(parseInt('24O', 10)).to.equal(24);
+
+      for (const bad of ['1.5', '24O', '240garbage', '2.4e']) {
+        process.env.XCHAIN_COINBASE_MATURITY = bad;
+        const doge = quietly(() => resolveCoinbaseMaturity('dogecoin-mainnet'));
+        const btc  = quietly(() => resolveCoinbaseMaturity('bitcoin-mainnet'));
+        expect(doge.value, 'should have refused ' + bad).to.equal(240);
+        expect(btc.value,  'should have refused ' + bad).to.equal(100);
+        expect(doge.lines.join('\n')).to.match(/is not an integer/);
+      }
+    });
+
+    it('still honours a well-formed env override, trimmed', function () {
+      process.env.XCHAIN_COINBASE_MATURITY = '150';
+      expect(resolveCoinbaseMaturity('dogecoin-mainnet')).to.equal(150);
+      process.env.XCHAIN_COINBASE_MATURITY = ' 150 ';
+      expect(resolveCoinbaseMaturity('dogecoin-mainnet')).to.equal(150);
     });
 
     it('a non-positive or non-integer opts value falls back to the per-chain default', function () {

@@ -54,6 +54,7 @@ const { installCrashHandlers, noteCrash } = require('./crashHandlers.js')
 const { createShutdown, createTrackerDrain } = require('./shutdown.js')
 const jsonRouter = require('express-json-rpc-router')
 const concurrencyGate = require('./concurrencyGate.js')
+const { envInt: sharedEnvInt } = require('./env-int')
 const { parseCorsOrigin } = require('./corsOrigin.js')
 const { randomUUID, timingSafeEqual, createHash,
         createPublicKey, verify: verifyAsymmetric } = require('crypto')
@@ -111,11 +112,14 @@ const MAX_PAGE_LIMIT = Number(process.env.UTXO_MAX_PAGE_LIMIT) > 0
     ? Math.floor(Number(process.env.UTXO_MAX_PAGE_LIMIT))
     : 10000
 
-// Validate-or-fall-back resolver for the bulk-sync numeric env knobs, the same shape
-// resolveUndoBlocks (undo-blocks.js) applies to XCHAIN_UNDO_BLOCKS_<COIN>: a malformed
-// override is refused and the default stands, loudly. Number() rather than parseInt()
-// because parseInt happily truncates '10abc' to 10 and reads a typo as intent; a knob
-// this pipeline FATALs on deserves the strict read.
+// Validate-or-fall-back resolver for the bulk-sync numeric env knobs. The reader
+// itself now lives in src/env-int.js and is the SAME function resolveUndoBlocks
+// (undo-blocks.js) and resolveCoinbaseMaturity call, so the parity is true by
+// construction rather than by hand-copy; before that extraction those two sites
+// were still on parseInt while this comment asserted otherwise.
+// Number() rather than parseInt() because parseInt happily truncates '10abc' to 10
+// and reads a typo as intent; a knob this pipeline FATALs on deserves the strict
+// read. This wrapper adds only the bulk-sync sentence on the warning line.
 //
 // These values are not just forwarded. BULK_SYNC_TIP_SAFETY also feeds the
 // too-short-chain pre-flight in runBulkSyncIfEmpty, and a raw string ran through
@@ -131,16 +135,7 @@ const MAX_PAGE_LIMIT = Number(process.env.UTXO_MAX_PAGE_LIMIT) > 0
 // Warn-and-default rather than throw: the pre-flight's whole purpose is that a
 // misconfigured tracker still comes up on the incremental path.
 function envInt(name, fallback, min){
-    const raw = process.env[name]
-    if (raw === undefined || raw === null || String(raw).trim() === '') return fallback
-    const parsed = Number(String(raw).trim())
-    if (!Number.isInteger(parsed) || parsed < min) {
-        console.error(
-            `WARNING: ${name}='${raw}' is not an integer >= ${min}; falling back to ${fallback}. ` +
-            'Bulk-sync will run with the default for this knob.')
-        return fallback
-    }
-    return parsed
+    return sharedEnvInt(name, fallback, min, 'Bulk-sync will run with the default for this knob.')
 }
 
 // Bulk-sync pre-flight (activates on empty DB). See runBulkSyncIfEmpty below.
@@ -374,6 +369,20 @@ async function startApi(){
         const reach = nodeReachabilityFields(tracker);
         freshness.node_last_ok_at  = reach.node_last_ok_at;
         freshness.node_unreachable = reach.node_unreachable;
+        // The lifetime rollback counter, the same field get_sync_status publishes.
+        // It is here because every get_utxos PAGE carries this object as its `sync`
+        // sibling, and a paginating consumer compares consecutive pages to prove
+        // they describe one snapshot. Height alone cannot: a rewind that re-applies
+        // to the SAME height leaves tracker_height, lag and synced identical on both
+        // pages while an early page's outpoint is already orphaned, so the consumer's
+        // counter comparison (xchain-encoder/src/UtxoTracker.js snapshotDivergence)
+        // was written against a field the producer never sent and could never fire.
+        // Published as a number so a page that omits it still reads as an older
+        // tracker rather than as a moved counter.
+        freshness.reorg_count = (tracker && typeof tracker.reorgCount === 'number')
+            ? tracker.reorgCount
+            : undefined;
+        if (freshness.reorg_count === undefined) delete freshness.reorg_count;
         return freshness;
     }
 
@@ -441,7 +450,19 @@ async function startApi(){
     // a small private reserve rather than a blanket exemption, because it still
     // does a LevelDB read and an uncapped exempt route is just where the
     // stampede would move next.
-    const isProbe = (req) => req.method === 'GET' && req.path === '/status';
+    // Must match exactly the set Express routes to the `/status` handler below.
+    // Under the default routing options the app runs with, a bare `app.get`
+    // also answers HEAD, a trailing slash, and any letter case, so a stricter
+    // predicate here admits those variants on the MAIN gate while the handler
+    // is wrapped in probeGate.hold(): hold() finds no slot under its own gate's
+    // key, degrades to a pass-through, and the main slot is freed by the socket
+    // 'close' leg while the LevelDB read is still running (item 7712). Same
+    // root cause, second symptom: a HEAD healthcheck charged to the 100-slot
+    // main cap can be shed with 429, which is the restart thrash the reserve
+    // exists to prevent. Changing this route, adding a /status alias, or
+    // enabling strict/case-sensitive routing means changing both sites.
+    const PROBE_PATH = /^\/status\/?$/i;
+    const isProbe = (req) => (req.method === 'GET' || req.method === 'HEAD') && PROBE_PATH.test(req.path);
     const BUSY_BODY = { error: 'Server busy, retry shortly', code: 'SERVER_BUSY' };
 
     const probeGate = concurrencyGate.createConcurrencyGate({
@@ -944,7 +965,9 @@ async function startApi(){
     // error body), making a DB-down tracker appear healthy to healthchecks.
     // Held on the PROBE gate, not the main one: /status is exempt from the main
     // cap by `skip`, so its slot lives in probeGate's reserve and only that
-    // gate's hold() finds it.
+    // gate's hold() finds it. `isProbe` / PROBE_PATH above must keep matching
+    // every request this route answers (HEAD, trailing slash, any case), or the
+    // admitting gate stops being the holding gate and hold() silently no-ops.
     app.get('/status', probeGate.hold(async (req, res) => {
         let dbOk = false
         let committedHeight = -1

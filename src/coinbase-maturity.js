@@ -24,6 +24,8 @@
 // spendable and the encoder could fund a PSBT with an input Dogecoin rejects as
 // immature.
 const { coinFromNetwork } = require('./undo-blocks.js')
+// The one strict numeric env reader (see src/env-int.js for why parseInt is not it).
+const { envInt } = require('./env-int')
 
 // Values are the chain's CURRENT rule at the tip, since that is what the node
 // this tracker talks to enforces on a spend it is asked to relay today.
@@ -83,7 +85,11 @@ function resolveCoinbaseMaturity(network, optsMaturity){
             'declared coinbase maturity for net "' + net + '". Add one to DEFAULT_COINBASE_MATURITY in ' +
             'src/coinbase-maturity.js, read from that chain\'s own chainparams, before onboarding it.')
     }
-    const envVal = parseInt(process.env.XCHAIN_COINBASE_MATURITY, 10)
+    // Whole-string read, not parseInt, for the reason src/undo-blocks.js carries:
+    // this knob had the identical prefix-truncation shape, so '1.5' resolved to a
+    // maturity of 1 and served immature coinbase as spendable (item 7714's twin).
+    const envVal = envInt('XCHAIN_COINBASE_MATURITY', DEFAULT_COINBASE_MATURITY[coin][net], 1,
+        'The per-chain default coinbase maturity stands.')
     if (Number.isInteger(optsMaturity) && optsMaturity > 0) return optsMaturity
     if (Number.isInteger(envVal) && envVal > 0) return envVal
     return DEFAULT_COINBASE_MATURITY[coin][net]
