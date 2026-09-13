@@ -389,6 +389,8 @@ class XChainUtxoTracker {
     recordUndoWindowWatermark(){
         const depth = Math.min(this.lastBlocks.length, this.undoBlocks)
         if (depth > this.undoWindowWatermark) this.undoWindowWatermark = depth
+        // Nothing to write when the depth on disk already matches: this runs every
+        // block, and a store write per block for an unchanged number is pure cost.
         if (this.undoWindowWatermarkPersisted === this.undoWindowWatermark) return
         this.undoWindowWatermarkPersisted = this.undoWindowWatermark
         return this.db.addTransaction("put", Q_UNDO_WATERMARK_KEY,
@@ -437,7 +439,10 @@ class XChainUtxoTracker {
         const seen = new Set()
         const toClean = []
         for (const blockHash of this.pendingKMCleanup){
+            // Leave a block alone while it is still inside the recovery window: its
+            // recovery records are exactly what a reorg would need.
             if (liveWindow.has(blockHash)) continue
+            // And clean each block once: the same hash can be queued twice in one pass.
             if (seen.has(blockHash)) continue
             seen.add(blockHash)
             toClean.push(blockHash)
@@ -484,6 +489,7 @@ class XChainUtxoTracker {
     // outside the rolled-back batch) so restart recovery still runs it. Returns
     // true when a batch was discarded; the caller then zeroes its batch counters.
     async discardInflightBatchForReorg(blocksQuantity){
+        // No blocks staged means there is no batch to throw away.
         if (blocksQuantity <= 0) return false
         await this.db.endTransaction(false)
         if (this.pendingKMCleanup.length > 0) {
@@ -518,7 +524,11 @@ class XChainUtxoTracker {
     // rewind progress toward the reassembly that fixes a genuinely malformed
     // block. Only a success clears it, at the call site.
     noteAuxPowParseFailure(height, streakHeight, streakCount, error){
+        // A failure at a NEW height starts a new streak, counted only if it is the
+        // AuxPoW parse failure the reassembly path exists to fix.
         if (streakHeight !== height) return { height: height, count: (error && error.auxPowParseFailure) ? 1 : 0 }
+        // Any other failure at the same height leaves the count where it is, so a
+        // flapping node cannot rewind progress toward the reassembly.
         if (!(error && error.auxPowParseFailure)) return { height: streakHeight, count: streakCount }
         return { height: height, count: streakCount + 1 }
     }
@@ -663,7 +673,10 @@ class XChainUtxoTracker {
     // Skipped below the window's own depth, where short just means a short chain.
     // Returns the surviving budget when it reported, else null (for tests).
     noteInterruptedReorgWindow(committedHeight){
+        // Below the window's own depth a short window just means a short chain,
+        // which is normal and not worth a warning.
         if (!(committedHeight >= this.undoBlocks)) return null
+        // A full window is the healthy case: nothing was interrupted.
         if (this.lastBlocks.length >= this.undoBlocks) return null
         const remaining = this.lastBlocks.length
         const watermark = Math.min(this.undoWindowWatermark || 0, this.undoBlocks)
@@ -1057,6 +1070,8 @@ class XChainUtxoTracker {
             // a point-probe of the confirmed store's live H record, which is page
             // independent, so the outpoint is emitted only from the confirmed store.
             if (confirmedKeys.has(txid + ':' + nextOutput.vout)) continue
+            // Across pages the page's own list cannot see an outpoint emitted on an
+            // earlier page, so ask the confirmed store directly.
             if (paged && await this.db.hasOutputForTx(txid.substring(0, 16), nextOutput.vout)) continue
 
             // Skip mempool outputs that are also spent by another mempool tx
@@ -1087,6 +1102,7 @@ class XChainUtxoTracker {
         const scriptHash = createHash('sha256').update(script).digest('hex')
 
         const record = await this.db.getOutputScriptBlock(scriptHash)
+        // An address this tracker has never seen has no first-seen height to report.
         if (!record) return null
 
         return { height: record.h }
@@ -1118,6 +1134,7 @@ class XChainUtxoTracker {
         const inputCounts = await Promise.all(transaction.ins.map(async (nextInput) => {
             const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
 
+            // A coinbase input spends nothing, so there is no previous output to trace.
             if ((nextInput.index === 4294967295) || !standardInput) { //4294967295 = 0xFFFFFFFF. It's a Coinbase input, there's no need to trace it
                 return 0
             }
@@ -1280,6 +1297,7 @@ class XChainUtxoTracker {
         const inputCounts = await Promise.all(transaction.ins.map(async (nextInput) => {
             const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
 
+            // A coinbase input spends nothing, so there is no previous output to trace.
             if ((nextInput.index === 4294967295) || !standardInput) { //4294967295 = 0xFFFFFFFF. It's a Coinbase input, there's no need to trace it
                 return 0
             }
@@ -1405,6 +1423,8 @@ class XChainUtxoTracker {
                         "Recovery: full resync from a known-good snapshot.")
                 }
 
+                // The pointer and the block it points at must agree on the height; if they
+                // do not, the store is inconsistent and continuing would compound it.
                 if (lastBlock && (lastBlockDb.height != lastBlock["h"])){
                     throw Error("There are inconsistents in a block height. It should be "+lastBlockIndex+" but "+lastBlock["h"]+" was found")
                 } else {
@@ -1549,6 +1569,8 @@ class XChainUtxoTracker {
                         // budget actually retries.
                         try { this.lastBlocks = await this.loadLastBlocksSortedByHeight() } catch (_) {}
                         logger.error(nodeUtil.format(`verifyReorg: failed to delete block ${lastBlock["h"]} (${lastBlockHash}): ${err.message}`, err))
+                        // Ten failed deletes of the same block is not a blip any more: stop and say so
+                        // rather than retry forever against a store that will not accept the write.
                         if (++retryCount >= 10) throw new Error('verifyReorg: deleteBlockByIndex failed after 10 attempts, aborting')
                         await this.sleep(3000); continue
                     }
@@ -2105,6 +2127,7 @@ class XChainUtxoTracker {
                     for (const tx of transactions) {
                         for (const nextInput of tx.ins) {
                             const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
+                            // A coinbase input spends nothing, so there is no previous output to remove.
                             if ((nextInput.index === 4294967295) || !standardInput) continue
                             const prevTxHash8 = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse()).substring(0, 16)
                             removeInputs.push({ prevTxHash: prevTxHash8, prevOutputIndex: nextInput.index, blockHash: nextBlockHash })
