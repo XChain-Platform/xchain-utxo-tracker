@@ -1,0 +1,95 @@
+DEAD-CODE SWEEP, xchain-utxo-tracker
+====================================
+
+VERDICT: nothing is deleted. 46 of 46 tracked src/*.js are reachable, and every
+one of the seven files the first walk proposed as dead turned out to be held by
+a reach the walk could not see. The sweep is committed rather than discarded
+because the interesting result is WHICH reaches were missing.
+
+HOW IT WAS RUN
+--------------
+  node bin/reachability.js --siblings <the tree this checkout sits in>
+
+and, for every candidate, a literal sweep by BASENAME over the tracked files of
+every xchain-* checkout beside this one plus the surrounding tree's own tooling
+and notes. `command grep` throughout: the search tooling most sessions reach for
+honours ignore files and comes back falsely empty, and gitignored local clones
+of sibling repos must not get a vote either way, which listing tracked files
+only is what guarantees.
+
+FIRST WALK: 7 CANDIDATES, ALL FALSE
+-----------------------------------
+  src/bulk-sync/dump.js
+  src/bulk-sync/migrate-rocksdb-to-classiclevel.js
+  src/bulk-sync/orchestrator.js
+  src/bulk-sync/parse-worker.js
+  src/bulk-sync/run-loader.js
+  src/bulk-sync/spot-check.js
+  src/bulk-sync/validate-db.js
+
+plus src/bufferutils.js, which read as test-only.
+
+WHY EACH SURVIVED
+-----------------
+The nine bulk-sync programs are the offline bootstrap pipeline, described in
+src/bulk-sync/SPEC.md. They are COMMANDS, not modules: an operator types them,
+nothing in this repo requires them, and no npm script names them. Reading
+process.argv is what distinguishes them, and it is exact here: all nine read it
+and nothing else under src/ does.
+
+migrate-rocksdb-to-classiclevel.js has a second holder that no require walk
+reaches at all. src/bulk-sync/convert-bootstrap-to-classiclevel.sh runs it
+through a variable whose DEFAULT carries the path:
+
+  MIGRATE_JS="${MIGRATE_JS:-<image path>/src/bulk-sync/migrate-rocksdb-to-classiclevel.js}"
+  node "$MIGRATE_JS" --src "$WORK/rocksdb" --dst "$WORK/classic"
+
+so the token after `node` is a variable and the path is a string three lines
+away. It is the storage-engine migration for a live database.
+
+src/bufferutils.js is the sharpest case and the reason this sweep exists. It is
+required by NOTHING, in this repo or any other, and its own `require('./types')`
+cannot even resolve from where it sits. It is a patch PAYLOAD: the Dockerfile
+copies it over the bitcoinjs-lib module inside the image.
+
+  COPY ./src/bufferutils.js <image path>/node_modules/bitcoinjs-lib/src/bufferutils.js
+
+Deleting it would have left every image without the BigInt-safe reader and
+writer, and nothing in this repo would have gone red.
+
+WHAT THE WALK LEARNED
+---------------------
+bin/reachability.js now reads four entry sources instead of two, each one added
+against a file above that would otherwise have been condemned:
+
+  Dockerfile COPY   as well as CMD and ENTRYPOINT: what the image SHIPS is a
+                    production reach, not only what it RUNS.
+  tracked *.sh      any src/ path a shell script names, matched on the path and
+                    not on the token after `node`, because a wrapper reaches it
+                    through a variable default.
+  process.argv      a src/ module that reads it is a command someone types.
+  npm scripts       unchanged, minus the test, ci, mutate and coverage tiers.
+
+FALSIFIED
+---------
+A file requiring nothing, required by nothing, named by no shell script, reading
+no argv and copied by no image layer was added under src/ and staged. The walk
+named it immediately:
+
+  src/planted_dead_file.js    NOTHING: unreferenced across the platform
+
+unreferencedAcrossPlatform went 0 -> 1 with it present and back to 0 once it was
+removed, so the zero above is a measurement and not a tool that cannot count.
+
+SIBLINGS THAT PIN A PATH IN THIS REPO
+-------------------------------------
+Not deletions, but the same sweep answers it, and a rename breaks them exactly
+as a deletion would:
+
+  src/XChainUtxoTracker.js   xchain-encoder/src/XChainEncoder.js
+  src/bootstrap-recovery.js  xchain-node/src/services/BootstrapService.js
+  src/memoryBudget.js        xchain-node/src/services/MemoryLimitService.js
+  src/undo-blocks.js         xchain-decoder and xchain-e2e-test suites
+  src/CryptoNetworks.js      resolved by a COMPUTED path from an e2e suite that
+                             walks a list of four sibling repos, so no literal
+                             matcher sees it

@@ -182,20 +182,31 @@ function closure(entries, fileSet) {
 }
 
 /**
- * What the service starts. Two sources, both read rather than assumed: the
- * Dockerfile's exec-form CMD or ENTRYPOINT, and every `node <file>` in an npm
- * script (a one-shot migration script is as much a production path as the API
- * server).
+ * What the service starts. Four sources, all read rather than assumed: the
+ * Dockerfile's exec-form CMD or ENTRYPOINT, every `node <file>` in an npm
+ * script, every `node <file>` a tracked shell script runs, and every src/
+ * module that is itself a command an operator types.
+ *
+ * THE LAST TWO ARE WHY THIS IS NOT JUST A REQUIRE WALK, and leaving them out is
+ * how a sweep condemns a live tool. The bulk-sync bootstrap pipeline is nine
+ * standalone programs: nothing in this repo requires them, no npm script names
+ * them, and one of them is reached only through a shell wrapper's default
+ * variable. A walk that knows about requires alone reads all nine as dead.
  */
 function runtimeEntries(fileSet) {
     const entries = new Set();
 
+    // The image, three ways. CMD and ENTRYPOINT are what it runs; COPY is what
+    // it SHIPS, and a file can be the second without ever being the first: this
+    // repo's patched bufferutils is copied over the bitcoinjs-lib module inside
+    // the image and required by nothing here, so a walk that reads only the run
+    // lines condemns a file production depends on.
     const dockerfile = path.join(REPO_ROOT, 'Dockerfile');
     if (fs.existsSync(dockerfile)) {
         for (const line of fs.readFileSync(dockerfile, 'utf8').split('\n')) {
-            if (!/^\s*(CMD|ENTRYPOINT)\b/.test(line)) continue;
-            for (const m of line.matchAll(/["']([^"']+\.js)["']/g)) {
-                const rel = m[1].replace(/^\.\//, '');
+            if (!/^\s*(CMD|ENTRYPOINT)\b/.test(line) && !/^\s*COPY\b/.test(line)) continue;
+            for (const m of line.matchAll(/(?:["']|^|\s)(\.?\/?(?:src|bin|scripts|tools)\/[^"'\s]+\.js)/g)) {
+                const rel = m[1].replace(/^\.?\//, '');
                 if (fileSet.has(rel)) entries.add(rel);
             }
         }
@@ -222,6 +233,33 @@ function runtimeEntries(fileSet) {
             }
         }
     }
+
+    // Shell wrappers. A path can reach the `node` line through a variable's
+    // default (`MIGRATE_JS="${MIGRATE_JS:-/app/src/bulk-sync/migrate.js}"`), so
+    // the match is on the src/ tail of any quoted or bare word, not on the
+    // token that follows `node`.
+    for (const rel of trackedFiles()) {
+        if (!rel.endsWith('.sh')) continue;
+        let text;
+        try { text = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'); } catch (e) { continue; }
+        for (const m of text.matchAll(/(src\/[A-Za-z0-9_@.\-/]+\.js)/g)) {
+            if (fileSet.has(m[1])) entries.add(m[1]);
+        }
+    }
+
+    // Programs rather than modules. A src/ file that reads process.argv is a
+    // command an operator types, whatever requires it, and it is held by the
+    // runbook that tells them to type it. Reading argv is the narrow test on
+    // purpose: a shebang is missing from two of this repo's nine bootstrap
+    // tools and a `require.main` guard from four, while argv is read by all
+    // nine and by nothing else under src/.
+    for (const rel of fileSet) {
+        if (!rel.startsWith('src/')) continue;
+        let text;
+        try { text = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'); } catch (e) { continue; }
+        if (/process\.argv/.test(text)) entries.add(rel);
+    }
+
     return Array.from(entries).sort();
 }
 
