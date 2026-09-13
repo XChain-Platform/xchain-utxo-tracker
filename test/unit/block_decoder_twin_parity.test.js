@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// src/XChainBlockDecoder.js is a deliberate twin of the xchain-decoder file at the
+// src/chain/XChainBlockDecoder.js is a deliberate twin of the xchain-decoder file at the
 // same relative path, and nothing enforced it. The two single-transaction parse
 // entry points already diverged in NAME (txFromHex here, transactionFromHex there)
 // while their logic stayed aligned, which is the drift this guard exists to catch
@@ -37,7 +37,7 @@ const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
 
-const LocalDecoder = require('../../src/XChainBlockDecoder.js');
+const LocalDecoder = require('../../src/chain/XChainBlockDecoder.js');
 
 const DECODER_DIR = process.env.XCHAIN_DECODER_DIR ||
     path.join(__dirname, '../../../xchain-decoder');

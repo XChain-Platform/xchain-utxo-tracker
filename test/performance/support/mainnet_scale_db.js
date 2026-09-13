@@ -46,7 +46,7 @@ const ECPairFactory = require('ecpair');
 const ecc = require('tiny-secp256k1');
 const { ClassicLevel } = require('classic-level');
 
-const LevelUpStore = require('../../../src/level_up_db');
+const LevelUpStore = require('../../../src/store/level_up_db');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker');
 
 const ECPair = ECPairFactory.ECPairFactory(ecc);

@@ -16,7 +16,7 @@
 // wedges the tracker permanently on any non-Docker run.
 
 const { expect } = require('chai');
-const bufferutils = require('../../src/apply_bufferutils_patch');
+const bufferutils = require('../../src/chain/apply_bufferutils_patch');
 const transaction_js_1 = require('bitcoinjs-lib/src/transaction');
 
 // Minimal legacy tx: 1 coinbase-style input, 1 output carrying 2^53 sat

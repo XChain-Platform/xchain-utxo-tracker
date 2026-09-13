@@ -26,7 +26,7 @@
 
 const { expect } = require('chai');
 const { fc, FUZZ_RUNS, arbBuffer, randHash, randHash8 } = require('../support/helpers');
-const LevelUpStore = require('../../../src/level_up_db');
+const LevelUpStore = require('../../../src/store/level_up_db');
 
 const MAX_KEY_LEN = 77;   // K/P_OUT_DEL, the longest key in the schema
 

@@ -29,7 +29,7 @@
 // must LOSE the pointer, or this file proves nothing about durability.
 
 const { expect } = require('chai');
-const LevelUpStore = require('../../src/level_up_db');
+const LevelUpStore = require('../../src/store/level_up_db');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 const fs = require('fs');
 const path = require('path');

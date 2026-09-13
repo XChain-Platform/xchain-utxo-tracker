@@ -18,7 +18,7 @@
 // bytes and forces no reindex, and getUtxosAddress withholds any coinbase output
 // below its chain's maturity depth.
 //
-// That depth is per coin/network and resolves in src/coinbase_maturity.js: 100 on
+// That depth is per coin/network and resolves in src/chain/coinbase_maturity.js: 100 on
 // Bitcoin and Litecoin, 240 on Dogecoin at the tip, 60 on Dogecoin regtest. A
 // single flat constant is wrong for at least one live chain in each direction,
 // which is what the Dogecoin blocks below pin.
@@ -26,7 +26,7 @@
 const { expect } = require('chai');
 const crypto = require('crypto');
 const bitcoin = require('bitcoinjs-lib');
-const LevelUpStore = require('../../src/level_up_db');
+const LevelUpStore = require('../../src/store/level_up_db');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 
 const FULL_TXID_A = 'a'.repeat(64);

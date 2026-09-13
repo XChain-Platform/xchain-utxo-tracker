@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { ClassicLevel } = require('classic-level');
 const { MemoryLevel } = require('memory-level');
-const LevelUpStore = require('../../src/level_up_db');
+const LevelUpStore = require('../../src/store/level_up_db');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 const {
   SATOSHI, TEST_KEYS,

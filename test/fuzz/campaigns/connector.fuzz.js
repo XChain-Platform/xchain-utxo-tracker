@@ -13,7 +13,7 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
 const { fc, FUZZ_RUNS } = require('../support/helpers');
-const BlockchainConnector = require('../../../src/blockchain_connector');
+const BlockchainConnector = require('../../../src/chain/blockchain_connector');
 
 describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
   let connector;

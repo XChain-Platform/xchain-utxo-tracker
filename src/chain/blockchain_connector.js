@@ -22,8 +22,8 @@
 const axios = require('axios');
 const http  = require('http');
 const util = require('node:util');
-const config = require('./config');
-const { getLogger } = require('./observability');
+const config = require('../config');
+const { getLogger } = require('../observability');
 const logger = getLogger();
 
 // Sanitize an axios error before it is logged or re-thrown. RPC calls pass

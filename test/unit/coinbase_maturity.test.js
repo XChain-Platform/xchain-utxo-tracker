@@ -23,7 +23,7 @@
 // only checks the resolver returns some number.
 
 const { expect } = require('chai');
-const { resolveCoinbaseMaturity, DEFAULT_COINBASE_MATURITY } = require('../../src/coinbase_maturity');
+const { resolveCoinbaseMaturity, DEFAULT_COINBASE_MATURITY } = require('../../src/chain/coinbase_maturity');
 
 describe('resolveCoinbaseMaturity', function () {
 

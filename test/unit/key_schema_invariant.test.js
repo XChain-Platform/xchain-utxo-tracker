@@ -25,7 +25,7 @@
 //  4. Parity: hex-string and Buffer builder pairs are byte-identical.
 
 const { expect } = require('chai');
-const LevelUpStore = require('../../src/level_up_db');
+const LevelUpStore = require('../../src/store/level_up_db');
 
 const HASH64 = 'a1'.repeat(32);   // 64-hex / 32-byte hash or scriptPubKey
 const HASH16 = 'b2'.repeat(8);    // 16-hex / 8-byte txid prefix

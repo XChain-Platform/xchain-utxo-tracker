@@ -11,7 +11,7 @@
 // contact legal@dankest.llc.
 
 const { expect } = require('chai');
-const LevelUpStore = require('../../src/level_up_db');
+const LevelUpStore = require('../../src/store/level_up_db');
 const crypto = require('crypto');
 
 // Helper: generate a random 32-byte hex string (64 chars)

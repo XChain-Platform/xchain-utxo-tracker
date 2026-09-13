@@ -35,7 +35,7 @@ const { leftAntiJoin }   = require('../../src/bulk-sync/merger/streaming_join.js
 const { deriveKeys }     = require('../../src/bulk-sync/merger/derive_keys.js');
 const { loadKeys }       = require('../../src/bulk-sync/merger/loader.js');
 const { readOutputsRecordSize } = require('../../src/bulk-sync/orchestrator.js');
-const LevelUpStore       = require('../../src/level_up_db.js');
+const LevelUpStore       = require('../../src/store/level_up_db.js');
 const XChainUtxoTracker  = require('../../src/XChainUtxoTracker.js');
 
 const OUTPUTS_KEY_SIZE = 12; // txHash8(8) + vout(4)

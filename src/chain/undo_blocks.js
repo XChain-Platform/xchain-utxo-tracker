@@ -13,10 +13,10 @@
  *********************************************************************/
 
 // Canonical coin registry: the one name->tick table this file may consult.
-const coins = require('./coins')
+const coins = require('../coins')
 // The one strict numeric env reader (see src/config/env_int.js for why parseInt is not it).
-const { envInt } = require('./config/env_int')
-const { getLogger } = require('./observability');
+const { envInt } = require('../config/env_int')
+const { getLogger } = require('../observability');
 const logger = getLogger();
 
 // Per-chain reorg-recovery window (the "undo blocks" depth), block-time-scaled so each
@@ -98,7 +98,7 @@ function resolveUndoBlocks(network, optsUndoBlocks){
     if (!Number.isInteger(DEFAULT_UNDO_BLOCKS[coin])) {
         throw new Error(
             'undo-blocks: coin ' + coin + ' (network "' + network + '") is registered in src/coins but has no ' +
-            'per-chain reorg-recovery window. Add one to DEFAULT_UNDO_BLOCKS in src/undo_blocks.js, sized from ' +
+            'per-chain reorg-recovery window. Add one to DEFAULT_UNDO_BLOCKS in src/chain/undo_blocks.js, sized from ' +
             'that chain\'s block time, before onboarding it.')
     }
     // Whole-string read (src/config/env_int.js), never parseInt: parseInt reads a numeric

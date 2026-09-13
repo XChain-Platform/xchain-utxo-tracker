@@ -29,7 +29,7 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const childProcess = require('child_process');
 const { expect } = require('chai');
-const { handleBootstrapFailure } = require('../../src/bootstrap_recovery');
+const { handleBootstrapFailure } = require('../../src/bootstrap/bootstrap_recovery');
 
 const API_PATH = require.resolve('../../src/api.js');
 

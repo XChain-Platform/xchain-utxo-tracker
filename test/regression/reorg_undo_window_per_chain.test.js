@@ -31,7 +31,7 @@
 
 const { expect } = require('chai');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
-const { DEFAULT_UNDO_BLOCKS } = require('../../src/undo_blocks');
+const { DEFAULT_UNDO_BLOCKS } = require('../../src/chain/undo_blocks');
 
 // Construct a tracker WITHOUT starting it (mirrors createTestTracker) so we only
 // exercise the constructor's window resolution.
@@ -69,7 +69,7 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
   });
 
   it('exposes no generic fallback window for a coin the map omits (item 5803)', function () {
-    expect(require('../../src/undo_blocks')).to.not.have.property('FALLBACK_UNDO_BLOCKS');
+    expect(require('../../src/chain/undo_blocks')).to.not.have.property('FALLBACK_UNDO_BLOCKS');
     expect(DEFAULT_UNDO_BLOCKS).to.not.have.property('XXX');
   });
 
@@ -108,7 +108,7 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
 
   // The live worker and the bulk seeder must agree on the per-chain window, or the
   // bulk-seeded N-prefix can undershoot the live reorg depth guard for one chain (the gap
-  // commit 51aab3b closed). Both now import the single table in src/undo_blocks.js, so this asserts
+  // commit 51aab3b closed). Both now import the single table in src/chain/undo_blocks.js, so this asserts
   // the bulk seeder resolves the same per-chain values as the live tracker (no hand-copied
   // second table to drift).
   describe('bulk seeder shares the live per-chain window (single-source)', function () {

@@ -12,7 +12,7 @@
 
 const { expect } = require('chai');
 const sinon = require('sinon');
-const BlockchainConnector = require('../../src/blockchain_connector');
+const BlockchainConnector = require('../../src/chain/blockchain_connector');
 
 describe('BlockchainConnector', function () {
   let connector;

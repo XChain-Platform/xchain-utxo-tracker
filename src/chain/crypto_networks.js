@@ -26,7 +26,7 @@
  *
  ********************************************************************/
 
-const coins = require('./coins');
+const coins = require('../coins');
 
 const SUPPORTED = 'bitcoin-mainnet, bitcoin-testnet, bitcoin-regtest, dogecoin-mainnet, ' +
     'dogecoin-testnet, dogecoin-regtest, litecoin-mainnet, litecoin-testnet, litecoin-regtest';

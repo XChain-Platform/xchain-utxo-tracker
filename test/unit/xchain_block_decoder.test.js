@@ -11,7 +11,7 @@
 // contact legal@dankest.llc.
 
 const { expect } = require('chai');
-const XChainBlockDecoder = require('../../src/XChainBlockDecoder');
+const XChainBlockDecoder = require('../../src/chain/XChainBlockDecoder');
 const bitcoinjs = require('bitcoinjs-lib');
 
 describe('XChainBlockDecoder', function () {

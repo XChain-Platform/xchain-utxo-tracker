@@ -105,7 +105,7 @@ const SPENDS_HEADER_SIZE  = 64
 // The DEFAULTS table itself is deliberately NOT imported: the seeder reads the
 // window only through the resolver, and a binding to the raw table here is how a
 // hand-copied second table gets started again.
-const { resolveUndoBlocks } = require('../../undo_blocks.js')
+const { resolveUndoBlocks } = require('../../chain/undo_blocks.js')
 
 // Per-prefix (keySize, valueSize, recordSize).
 const LAYOUT = {

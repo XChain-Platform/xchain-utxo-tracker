@@ -35,7 +35,7 @@ const path = require('path')
 
 const { LAYOUT }       = require('./derive_keys.js')
 const { RecordReader } = require('./streaming_join.js')
-const { encodeOutput, kOutBlk } = require('../../level_up_db.js')
+const { encodeOutput, kOutBlk } = require('../../store/level_up_db.js')
 const { ClassicLevel } = require('classic-level')
 
 // The intermediate O.dat value is fixed-width (value8 + height4 + fullTxHash32 +

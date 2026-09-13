@@ -15,7 +15,7 @@
 
 const { expect } = require('chai');
 const crypto = require('crypto');
-const LevelUpStore = require('../../src/level_up_db');
+const LevelUpStore = require('../../src/store/level_up_db');
 
 function randHash() { return crypto.randomBytes(32).toString('hex'); }
 function randHash8() { return crypto.randomBytes(8).toString('hex'); }

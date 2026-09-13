@@ -16,7 +16,7 @@ const {
   arbTxId, arbTxHash8, arbBlockHash, arbSatoshiValue, arbConfirmedHeight,
   randHash, randHash8
 } = require('../support/helpers');
-const LevelUpStore = require('../../../src/level_up_db');
+const LevelUpStore = require('../../../src/store/level_up_db');
 
 // Helper: create a fresh in-memory DB for isolation
 async function freshDb() {

@@ -11,7 +11,7 @@
 // contact legal@dankest.llc.
 
 const { expect } = require('chai');
-const LevelUpStore = require('../../src/level_up_db');
+const LevelUpStore = require('../../src/store/level_up_db');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 
 const P_PENDING_CLEANUP_KEY = Buffer.from([0x50]);

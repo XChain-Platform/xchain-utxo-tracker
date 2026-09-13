@@ -18,11 +18,11 @@
 // never reading the AuxPoW bytes.
 
 const { expect } = require('chai');
-const BlockchainConnector = require('../../src/blockchain_connector');
-const { encodeVarintHex } = require('../../src/blockchain_connector');
+const BlockchainConnector = require('../../src/chain/blockchain_connector');
+const { encodeVarintHex } = require('../../src/chain/blockchain_connector');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 const { AUXPOW_REASSEMBLE_AFTER, MAX_BLOCK_FETCH_RETRIES } = require('../../src/XChainUtxoTracker');
-const XChainBlockDecoder = require('../../src/XChainBlockDecoder');
+const XChainBlockDecoder = require('../../src/chain/XChainBlockDecoder');
 
 // Minimal legacy tx (1 coinbase-style input, 1 empty-script output).
 const TX_HEX =

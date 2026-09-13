@@ -12,7 +12,7 @@
 
 // Boot-time verification that the BigInt-safe bufferutils patch actually took,
 // mirroring xchain-decoder's check in XChainDecoder.start(). The patch itself
-// (src/apply_bufferutils_patch.js) is applied, never verified: if a shadowed
+// (src/chain/apply_bufferutils_patch.js) is applied, never verified: if a shadowed
 // bitcoinjs-lib copy or a reordered require leaves it inert, the tracker would
 // start normally and then throw mid-parse on the first DOGE output above
 // 2^53-1 sat, or decode it differently from correctly patched peers. The guard
@@ -30,7 +30,7 @@ const fs = require('fs');
 const path = require('path');
 
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
-const { bigIntBufferutilsActive, assertBigIntBufferutils } = require('../../src/assert_bigint_bufferutils');
+const { bigIntBufferutilsActive, assertBigIntBufferutils } = require('../../src/chain/assert_bigint_bufferutils');
 const bufferutils = require('bitcoinjs-lib/src/bufferutils');
 
 function makeTracker(networkKey) {

@@ -26,7 +26,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const { ClassicLevel } = require('classic-level')
-const LevelUpStore = require('../../src/level_up_db')
+const LevelUpStore = require('../../src/store/level_up_db')
 
 const tmpDirs = []
 

@@ -23,7 +23,7 @@
 
 const assert = require('assert');
 
-const { installUtxoTrackerMetrics } = require('../../src/utxo_tracker_metrics.js');
+const { installUtxoTrackerMetrics } = require('../../src/server/utxo_tracker_metrics.js');
 const { installObservability }      = require('../../src/observability');
 
 function realObservability(enabled = true){

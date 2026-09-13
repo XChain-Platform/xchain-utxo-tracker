@@ -15,7 +15,7 @@
 'use strict';
 
 const { expect } = require('chai');
-const LevelUpStore = require('../../src/level_up_db');
+const LevelUpStore = require('../../src/store/level_up_db');
 const { encodeBlock, encodeTx, encodeInputVal, encodeOutHint, encodeOutput } = LevelUpStore;
 
 const HEX64 = 'a'.repeat(64);

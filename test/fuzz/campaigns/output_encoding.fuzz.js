@@ -16,7 +16,7 @@ const {
   arbSatoshiValueExtreme, arbConfirmedHeight, arbHeight, arbHexString,
   createTestTracker, closeTracker, TEST_KEYS, randHash, randHash8
 } = require('../support/helpers');
-const LevelUpStore = require('../../../src/level_up_db');
+const LevelUpStore = require('../../../src/store/level_up_db');
 
 describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
   let db;

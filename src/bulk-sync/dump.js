@@ -42,10 +42,10 @@ dotenv.config()
 
 const fs   = require('fs')
 const path = require('path')
-const BlockchainConnector = require('../blockchain_connector.js')
+const BlockchainConnector = require('../chain/blockchain_connector.js')
 const { XdmpReader } = require('./xdmp_reader.js')
 const coins = require('../coins')
-const { resolveUndoBlocks } = require('../undo_blocks.js')
+const { resolveUndoBlocks } = require('../chain/undo_blocks.js')
 
 const MAGIC               = Buffer.from('XCHNDMP1', 'ascii')
 const HEADER_SIZE         = 64

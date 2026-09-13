@@ -11,7 +11,7 @@
     "config": "test/mutation/.mocharc.stryker.yml"
   },
   "mutate": [
-    "src/level_up_db.js",
+    "src/store/level_up_db.js",
     "src/XChainUtxoTracker.js",
     "src/bufferutils.js"
   ],

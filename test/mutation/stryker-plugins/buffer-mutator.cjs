@@ -235,12 +235,12 @@ function generate(files) {
 }
 
 const DEFAULT_TARGETS = [
-  'src/level_up_db.js',
+  'src/store/level_up_db.js',
   'src/XChainUtxoTracker.js',
   'src/bufferutils.js',
   'src/api.js',
-  'src/blockchain_connector.js',
-  'src/XChainBlockDecoder.js',
+  'src/chain/blockchain_connector.js',
+  'src/chain/XChainBlockDecoder.js',
 ];
 
 // CLI invocation: print mutants as JSON

@@ -27,7 +27,7 @@ const { expect } = require('chai');
 const sinon = require('sinon');
 const fs = require('fs');
 const path = require('path');
-const BlockchainConnector = require('../../src/blockchain_connector');
+const BlockchainConnector = require('../../src/chain/blockchain_connector');
 const { nodeReachabilityFrom } = BlockchainConnector;
 const { nodeReachabilityFields } = require('../../src/api');
 
@@ -41,7 +41,7 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 describe('XChainUtxoTracker: node reachability is visible on the health surfaces', function () {
   this.timeout(0);
 
-  const connectorSrc = fs.readFileSync(path.join(__dirname, '../../src/blockchain_connector.js'), 'utf8');
+  const connectorSrc = fs.readFileSync(path.join(__dirname, '../../src/chain/blockchain_connector.js'), 'utf8');
   const apiSrc = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
 
   function newConnector() {

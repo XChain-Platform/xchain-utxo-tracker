@@ -38,7 +38,7 @@ const {
   closeTracker,
 } = require('../integration/support/helpers');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
-const { AddressTooLargeError } = require('../../src/level_up_db');
+const { AddressTooLargeError } = require('../../src/store/level_up_db');
 
 // Verbatim copy of the api.js JSON-RPC handler body, so a drift in the real
 // guard surfaces here.

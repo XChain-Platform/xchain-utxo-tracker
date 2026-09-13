@@ -28,7 +28,7 @@ const { expect } = require('chai');
 const fs   = require('fs');
 const path = require('path');
 const { envInt } = require('../../src/api');
-const { resolveUndoBlocks } = require('../../src/undo_blocks');
+const { resolveUndoBlocks } = require('../../src/chain/undo_blocks');
 
 const API_SRC = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
 

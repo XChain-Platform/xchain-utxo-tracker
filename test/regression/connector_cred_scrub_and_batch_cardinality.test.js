@@ -12,7 +12,7 @@
 
 const { expect } = require('chai');
 const sinon = require('sinon');
-const BlockchainConnector = require('../../src/blockchain_connector');
+const BlockchainConnector = require('../../src/chain/blockchain_connector');
 
 // Build an axios-shaped error that carries the RPC password on error.config.auth,
 // exactly as axios attaches the request config to a thrown error. The leak:

@@ -14,7 +14,7 @@
  *
  * Fail-closed boot check for the BigInt-safe bufferutils patch.
  *
- * src/apply_bufferutils_patch.js rewrites bitcoinjs-lib's 64-bit reader in
+ * src/chain/apply_bufferutils_patch.js rewrites bitcoinjs-lib's 64-bit reader in
  * process, because the stock one throws above 2^53-1 sat and a Dogecoin
  * output over ~90.07M DOGE would wedge block decode. That patch is applied,
  * not verified: a shadowed bitcoinjs-lib copy, a node_modules dedup change or
@@ -59,7 +59,7 @@ function assertBigIntBufferutils(coin, context, bufferutils){
     throw new Error('CRITICAL: bitcoinjs-lib bufferutils BigInt-safe 64-bit reader is NOT active on a ' +
         'Dogecoin ' + (context || 'utxo-tracker') + '. A DOGE output > 2^53-1 sat (~90.07M DOGE) will ' +
         'throw during block decode and wedge this process permanently, or decode differently than ' +
-        'correctly patched peers. src/apply_bufferutils_patch.js should have applied it in-process; ' +
+        'correctly patched peers. src/chain/apply_bufferutils_patch.js should have applied it in-process; ' +
         'investigate before running on mainnet.')
 }
 

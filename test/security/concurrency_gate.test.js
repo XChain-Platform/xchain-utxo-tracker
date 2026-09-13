@@ -27,7 +27,7 @@ const { expect }  = require('chai');
 const express     = require('express');
 const http        = require('http');
 const rateLimit   = require('express-rate-limit');
-const { createConcurrencyGate, resolveLimit } = require('../../src/concurrency_gate.js');
+const { createConcurrencyGate, resolveLimit } = require('../../src/server/concurrency_gate.js');
 const fs = require('fs');
 const path = require('path');
 

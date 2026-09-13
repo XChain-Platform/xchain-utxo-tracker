@@ -34,8 +34,8 @@
 'use strict';
 
 // The one strict numeric reader (see src/config/env_int.js for why parseInt is not it).
-const { readInt } = require('./config/env_int');
-const { getLogger } = require('./observability');
+const { readInt } = require('../config/env_int');
+const { getLogger } = require('../observability');
 const logger = getLogger();
 
 // Parse a cap from the environment. A missing or unparseable value keeps the

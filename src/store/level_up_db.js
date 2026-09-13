@@ -45,8 +45,8 @@
  ********************************************************************/
 
 // Load required libraries
-const util = require('./util')
-const config = require('./config')
+const util = require('../util')
+const config = require('../config')
 const memoryBudget = require('./memory_budget')
 
 // Debug-only tracing for the missing-O-record investigation. Gated behind
@@ -58,7 +58,7 @@ const DEBUG_TRACE = config.TRACE_UTXO
 const { ClassicLevel } = require('classic-level')
 const { MemoryLevel } = require('memory-level')
 const bs = require("binary-search")
-const { getLogger } = require('./observability');
+const { getLogger } = require('../observability');
 const logger = getLogger();
 
 // String-keyed metadata entries. The DB is opened with keyEncoding:'buffer',

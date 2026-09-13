@@ -14,7 +14,7 @@
 
 // Per-coin/network coinbase maturity: how many confirmations a coinbase output
 // needs before any node will accept a spend of it. Resolved the same way the
-// reorg-recovery window is (src/undo_blocks.js), through the canonical coin
+// reorg-recovery window is (src/chain/undo_blocks.js), through the canonical coin
 // registry, because it is the same class of value: a per-chain consensus
 // constant that a single flat default gets wrong in the unsafe direction.
 //
@@ -25,7 +25,7 @@
 // immature.
 const { coinFromNetwork } = require('./undo_blocks.js')
 // The one strict numeric env reader (see src/config/env_int.js for why parseInt is not it).
-const { envInt } = require('./config/env_int')
+const { envInt } = require('../config/env_int')
 
 // Values are the chain's CURRENT rule at the tip, since that is what the node
 // this tracker talks to enforces on a spend it is asked to relay today.
@@ -83,9 +83,9 @@ function resolveCoinbaseMaturity(network, optsMaturity){
         throw new Error(
             'coinbase-maturity: coin ' + coin + ' (network "' + network + '") is registered in src/coins but has no ' +
             'declared coinbase maturity for net "' + net + '". Add one to DEFAULT_COINBASE_MATURITY in ' +
-            'src/coinbase_maturity.js, read from that chain\'s own chainparams, before onboarding it.')
+            'src/chain/coinbase_maturity.js, read from that chain\'s own chainparams, before onboarding it.')
     }
-    // Whole-string read, not parseInt, for the reason src/undo_blocks.js carries:
+    // Whole-string read, not parseInt, for the reason src/chain/undo_blocks.js carries:
     // this knob had the identical prefix-truncation shape, so '1.5' resolved to a
     // maturity of 1 and served immature coinbase as spendable (item 7714's twin).
     const envVal = envInt('XCHAIN_COINBASE_MATURITY', DEFAULT_COINBASE_MATURITY[coin][net], 1,

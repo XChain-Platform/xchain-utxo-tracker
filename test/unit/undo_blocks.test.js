@@ -22,7 +22,7 @@
 
 const { expect } = require('chai');
 const sinon = require('sinon');
-const { resolveUndoBlocks, DEFAULT_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS } = require('../../src/undo_blocks');
+const { resolveUndoBlocks, DEFAULT_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS } = require('../../src/chain/undo_blocks');
 
 describe('resolveUndoBlocks opts validation', function () {
   let consoleErrorStub;
@@ -73,7 +73,7 @@ describe('resolveUndoBlocks opts validation', function () {
 // fell to the flat 12-block fallback, i.e. merged-mined headers parsed as plain
 // Bitcoin headers with a window sized for 10-minute blocks.
 describe('undo-blocks resolves the coin through the canonical registry (#5803)', function () {
-  const { coinFromNetwork } = require('../../src/undo_blocks');
+  const { coinFromNetwork } = require('../../src/chain/undo_blocks');
 
   const coins = require('../../src/coins');
   // Onboard a coin the way the comment advertises - registry only - and see

@@ -28,7 +28,7 @@
 //
 // Examples:
 //   node test/mutation/stryker-plugins/support/run_custom_mutants.js
-//   node test/mutation/stryker-plugins/support/run_custom_mutants.js src/level_up_db.js src/bufferutils.js
+//   node test/mutation/stryker-plugins/support/run_custom_mutants.js src/store/level_up_db.js src/bufferutils.js
 //   node test/mutation/stryker-plugins/support/run_custom_mutants.js --spec "test/unit/**/*.test.js" --timeout 10000
 
 const fs = require('fs');
@@ -52,11 +52,11 @@ for (let i = 0; i < args.length; i++) {
 }
 
 const DEFAULT_TARGETS = [
-  'src/level_up_db.js',
+  'src/store/level_up_db.js',
   'src/XChainUtxoTracker.js',
   'src/bufferutils.js',
-  'src/blockchain_connector.js',
-  'src/XChainBlockDecoder.js',
+  'src/chain/blockchain_connector.js',
+  'src/chain/XChainBlockDecoder.js',
 ];
 
 const targetFiles = files.length > 0 ? files : DEFAULT_TARGETS;

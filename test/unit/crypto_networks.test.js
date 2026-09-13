@@ -11,7 +11,7 @@
 // contact legal@dankest.llc.
 
 const { expect } = require('chai');
-const CryptoNetworks = require('../../src/crypto_networks');
+const CryptoNetworks = require('../../src/chain/crypto_networks');
 
 describe('CryptoNetworks', function () {
 

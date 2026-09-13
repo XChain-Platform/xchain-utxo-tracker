@@ -35,8 +35,8 @@ const path = require('path')
 
 const { XdmpReader }     = require('./xdmp_reader.js')
 const { processBlock }   = require('./process_block.js')
-const XChainBlockDecoder = require('../XChainBlockDecoder.js');
-const { assertBigIntBufferutils } = require('../assert_bigint_bufferutils.js');
+const XChainBlockDecoder = require('../chain/XChainBlockDecoder.js');
+const { assertBigIntBufferutils } = require('../chain/assert_bigint_bufferutils.js');
 const {
     OutputsWriter,
     SpendsWriter,

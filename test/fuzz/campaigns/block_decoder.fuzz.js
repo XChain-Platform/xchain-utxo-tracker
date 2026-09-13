@@ -12,7 +12,7 @@
 
 const { expect } = require('chai');
 const { fc, FUZZ_RUNS, arbBufferRange, arbHexString } = require('../support/helpers');
-const XChainBlockDecoder = require('../../../src/XChainBlockDecoder');
+const XChainBlockDecoder = require('../../../src/chain/XChainBlockDecoder');
 const bitcoinjs = require('bitcoinjs-lib');
 
 describe('Fuzz: Block Decoder (P0)', function () {

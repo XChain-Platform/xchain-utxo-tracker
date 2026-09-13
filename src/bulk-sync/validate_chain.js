@@ -55,7 +55,7 @@ const path   = require('path')
 const { XdmpReader } = require('./xdmp_reader.js')
 // The patch assertion itself pulls bitcoinjs-lib in only when called, so unlike
 // the decoder below it costs a header-only run nothing to load here.
-const { assertBigIntBufferutils } = require('../assert_bigint_bufferutils.js')
+const { assertBigIntBufferutils } = require('../chain/assert_bigint_bufferutils.js')
 
 const ZERO32       = Buffer.alloc(32, 0)
 const HEADER_BYTES = 80         // version(4) prevHash(32) merkleRoot(32) time(4) bits(4) nonce(4)
@@ -155,7 +155,7 @@ function verifyBlockSequence(blocks, opts = {}) {
     if (opts.merkle) {
         if (!opts.coin) throw new Error('verifyBlockSequence: opts.coin is required when opts.merkle is set')
         // Lazy require so --help and header-only runs work without bitcoinjs-lib.
-        const XChainBlockDecoder = require('../XChainBlockDecoder.js')
+        const XChainBlockDecoder = require('../chain/XChainBlockDecoder.js')
         decoder = new XChainBlockDecoder(`${opts.coin}-any`)
         // Same fail-closed patch check the tracker constructor runs. This CLI bypasses
         // start() entirely, so that check cannot reach it; a merkle verdict computed

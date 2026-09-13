@@ -33,7 +33,7 @@ const os = require('os')
 const fs = require('fs')
 const path = require('path')
 
-const MODULE_PATH = path.join(__dirname, '../../src/memory_budget.js')
+const MODULE_PATH = path.join(__dirname, '../../src/store/memory_budget.js')
 const GIB = 1024 * 1024 * 1024
 const MIB = 1024 * 1024
 

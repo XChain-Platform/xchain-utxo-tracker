@@ -16,7 +16,7 @@
 
 const { expect } = require('chai');
 const { isWrapperArchive, parseSha256Sidecar,
-        hasRequiredLevelDbMembers, parseDetachedSignature } = require('../../src/restore_validation.js');
+        hasRequiredLevelDbMembers, parseDetachedSignature } = require('../../src/bootstrap/restore_validation.js');
 
 describe('restore-validation', function () {
 

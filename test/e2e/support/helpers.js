@@ -24,7 +24,7 @@ const bodyParser = require('body-parser');
 const supertest = require('supertest');
 const jsonRouter = require('express-json-rpc-router');
 
-const LevelUpStore = require('../../../src/level_up_db');
+const LevelUpStore = require('../../../src/store/level_up_db');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker');
 
 const ECPair = ECPairFactory.ECPairFactory(ecc);

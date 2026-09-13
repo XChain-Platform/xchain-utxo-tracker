@@ -14,7 +14,7 @@ const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
-const { handleBootstrapFailure, handleRestoreFailure } = require('../../src/bootstrap_recovery');
+const { handleBootstrapFailure, handleRestoreFailure } = require('../../src/bootstrap/bootstrap_recovery');
 
 // Regression: per-query freshness surface.
 //

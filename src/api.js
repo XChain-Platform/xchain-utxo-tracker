@@ -35,7 +35,7 @@ patchConsole({
 
 const { spawn, spawnSync } = require('child_process');
 const os = require('os')
-const LevelUpStore = require('./level_up_db.js')
+const LevelUpStore = require('./store/level_up_db.js')
 const fs = require('fs')
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -43,20 +43,20 @@ const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const XChainUtxoTracker  = require('./XChainUtxoTracker');
-const BlockchainConnector = require('./blockchain_connector');
+const BlockchainConnector = require('./chain/blockchain_connector');
 const { resolveUndoBlocks } = require('./bulk-sync/merger/derive_keys.js')
-const { handleBootstrapFailure, handleRestoreFailure } = require('./bootstrap_recovery.js')
-const memoryBudget = require('./memory_budget')
+const { handleBootstrapFailure, handleRestoreFailure } = require('./bootstrap/bootstrap_recovery.js')
+const memoryBudget = require('./store/memory_budget')
 const { isWrapperArchive, parseSha256Sidecar,
-        hasRequiredLevelDbMembers, parseDetachedSignature } = require('./restore_validation.js')
+        hasRequiredLevelDbMembers, parseDetachedSignature } = require('./bootstrap/restore_validation.js')
 const { installObservability } = require('./observability');   // default-off /metrics + structured log shim
-const { installUtxoTrackerMetrics } = require('./utxo_tracker_metrics');   // sync-freshness heartbeat gauges
-const { installCrashHandlers, noteCrash } = require('./crash_handlers.js')
+const { installUtxoTrackerMetrics } = require('./server/utxo_tracker_metrics');   // sync-freshness heartbeat gauges
+const { installCrashHandlers, noteCrash } = require('./server/crash_handlers.js')
 const { createShutdown, createTrackerDrain } = require('./shutdown.js')
 const jsonRouter = require('express-json-rpc-router')
-const concurrencyGate = require('./concurrency_gate.js')
+const concurrencyGate = require('./server/concurrency_gate.js')
 const { envInt: sharedEnvInt } = require('./config/env_int')
-const { parseCorsOrigin } = require('./cors_origin.js')
+const { parseCorsOrigin } = require('./server/cors_origin.js')
 const { randomUUID, timingSafeEqual, createHash,
         createPublicKey, verify: verifyAsymmetric } = require('crypto')
 const path = require('path')

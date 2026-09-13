@@ -20,7 +20,7 @@ const { EventEmitter } = require('events')
 const fs = require('fs')
 const path = require('path')
 
-const crash = require('../../src/crash_handlers.js')
+const crash = require('../../src/server/crash_handlers.js')
 const observability = require('../../src/observability')
 
 describe('utxo-tracker crash handlers', function () {

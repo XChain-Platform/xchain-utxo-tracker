@@ -23,7 +23,7 @@ const { expect } = require('chai');
 const sinon = require('sinon');
 const crypto = require('crypto');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
-const LevelUpStore = require('../../src/level_up_db');
+const LevelUpStore = require('../../src/store/level_up_db');
 
 // MEMPOOL_BATCH_SIZE is 1000 in the source; use enough txids to force several
 // batches (and therefore several inter-batch sleeps) so the "spans the whole

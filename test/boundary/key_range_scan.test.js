@@ -29,7 +29,7 @@
 // 0xFF (txHash8 = ff..ff, outputIndex = 0xFFFFFFFF), the precise shape that a
 // too-short upper bound would drop.
 const { expect } = require('chai');
-const LevelUpStore = require('../../src/level_up_db');
+const LevelUpStore = require('../../src/store/level_up_db');
 
 const FF_TXID8 = 'ff'.repeat(8);          // 8-byte O-key txHash8, all 0xFF
 const MAX_VOUT = 0xFFFFFFFF;              // 4-byte outputIndex, all 0xFF

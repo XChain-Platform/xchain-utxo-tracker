@@ -20,7 +20,7 @@ const jsonRouter = require('express-json-rpc-router');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
-const LevelUpStore = require('../../../src/level_up_db');
+const LevelUpStore = require('../../../src/store/level_up_db');
 
 const {
   NETWORK,

@@ -32,7 +32,7 @@
 const assert  = require('assert')
 const express = require('express')
 const cors    = require('cors')
-const { parseCorsOrigin } = require('../../src/cors_origin.js')
+const { parseCorsOrigin } = require('../../src/server/cors_origin.js')
 
 // Mount cors exactly as src/api.js does (including its unset default of `false`,
 // meaning CORS off) and ask what a browser would receive.
