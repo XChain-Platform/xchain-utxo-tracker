@@ -17,16 +17,16 @@
  ********************************************************************/
 
 const util = require('./util')
-const memoryBudget = require('./memoryBudget')
+const memoryBudget = require('./memory_budget')
 const crypto = require('crypto');
 const bs58check = require('bs58check')
 const bitcoin = require('bitcoinjs-lib')
 const ecc = require('tiny-secp256k1')
 const { createHash } = require('crypto');
 const fs = require('fs')
-const LevelUpStore = require('./LevelUpDb.js')
-const BlockchainConnector = require('./BlockchainConnector.js')
-const CryptoNetworks = require('./CryptoNetworks')
+const LevelUpStore = require('./level_up_db.js')
+const BlockchainConnector = require('./blockchain_connector.js')
+const CryptoNetworks = require('./crypto_networks')
 const XChainBlockDecoder = require('./XChainBlockDecoder')
 const bs = require("binary-search")
 const { hrtime } = require('node:process');
@@ -142,14 +142,14 @@ const MAX_ADDRESS_OUTPUTS = Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS) > 0
 // Import the RESOLVER only, never the table or the MAX_SAFE_UNDO_BLOCKS ceiling: this
 // worker consults neither, and naming them here reads as a second clamp that does not
 // exist. Both live inside resolveUndoBlocks, which is the one place they may live.
-const { coinFromNetwork, resolveUndoBlocks } = require('./undo-blocks.js')
+const { coinFromNetwork, resolveUndoBlocks } = require('./undo_blocks.js')
 
 // Per-coin/network coinbase maturity, resolved the same way and for the same
 // reason as the reorg window above. Import the RESOLVER only, never the table:
 // the flat module-level constant that stood here asserted 100 for every chain,
 // which is wrong for DOGE (240 at the tip), and a second copy of the numbers in
 // this file is how that drifts back.
-const { resolveCoinbaseMaturity } = require('./coinbase-maturity.js')
+const { resolveCoinbaseMaturity } = require('./coinbase_maturity.js')
 
 // Per-coin block/tx wire-serialization family from the canonical coin registry
 // (src/coins). Used to gate AuxPoW stripping on the coin's declared wireFormat
@@ -227,7 +227,7 @@ class XChainUtxoTracker {
       // reason as verifyConsensusPin above: api.js does not await start(), so a
       // check there would let the HTTP surface bind and serve first. Runs after the
       // decoder construction that requires the patch module.
-      require('./assertBigIntBufferutils').assertBigIntBufferutils(
+      require('./assert_bigint_bufferutils').assertBigIntBufferutils(
           this.xchainBlockDecoder.coin, 'utxo-tracker')
 
 
@@ -337,7 +337,7 @@ class XChainUtxoTracker {
       this.parsingAborted = false
 
       // Coinbase maturity depth used by getUtxosAddress to withhold immature
-      // coinbase outputs, resolved per coin/network (src/coinbase-maturity.js).
+      // coinbase outputs, resolved per coin/network (src/coinbase_maturity.js).
       // Instance-scoped (not a bare const) so test harnesses that mine short
       // chains can relax it; production keeps the consensus default. Setting it
       // to 0 disables the gate. The resolver refuses an unresolvable chain
@@ -1004,7 +1004,7 @@ class XChainUtxoTracker {
             // Withhold immature coinbase outputs: every node rejects a spend
             // of a coinbase output below coinbaseMaturity confirmations, so serving
             // it as spendable would hand a caller an input that can never confirm.
-            // The depth is per coin/network, not a universal 100 (src/coinbase-maturity.js).
+            // The depth is per coin/network, not a universal 100 (src/coinbase_maturity.js).
             // Legacy O-records carry coinbase=false and are unaffected. Coinbase
             // outputs only exist in the confirmed store, so no equivalent filter is
             // needed on the mempool loop below.

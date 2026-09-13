@@ -19,6 +19,7 @@ const helmet = require('helmet');
 const supertest = require('supertest');
 const { timingSafeEqual } = require('crypto');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
+const jsonRouter = require('express-json-rpc-router');
 
 // Mirror of src/api.js keyEquals: length-guarded constant-time comparison.
 function keyEquals(provided, expected) {
@@ -153,7 +154,6 @@ function createTestApp(mockTracker, adminApiKey = '') {
   });
 
   // JSON-RPC via POST
-  const jsonRouter = require('express-json-rpc-router');
 
   const jsonRpcController = {
     async ping() {

@@ -11,7 +11,7 @@
 // contact legal@dankest.llc.
 
 const { expect } = require('chai');
-const { fc, FUZZ_RUNS } = require('../helpers');
+const { fc, FUZZ_RUNS } = require('../support/helpers');
 
 describe('Fuzz: Bootstrap Filename Validation (P3)', function () {
 

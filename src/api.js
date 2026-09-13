@@ -34,7 +34,7 @@ patchConsole({
 
 const { spawn, spawnSync } = require('child_process');
 const os = require('os')
-const LevelUpStore = require('./LevelUpDb.js')
+const LevelUpStore = require('./level_up_db.js')
 const fs = require('fs')
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -42,20 +42,20 @@ const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const XChainUtxoTracker  = require('./XChainUtxoTracker');
-const BlockchainConnector = require('./BlockchainConnector');
-const { resolveUndoBlocks } = require('./bulk-sync/merger/derive-keys.js')
-const { handleBootstrapFailure, handleRestoreFailure } = require('./bootstrap-recovery.js')
-const memoryBudget = require('./memoryBudget')
+const BlockchainConnector = require('./blockchain_connector');
+const { resolveUndoBlocks } = require('./bulk-sync/merger/derive_keys.js')
+const { handleBootstrapFailure, handleRestoreFailure } = require('./bootstrap_recovery.js')
+const memoryBudget = require('./memory_budget')
 const { isWrapperArchive, parseSha256Sidecar,
-        hasRequiredLevelDbMembers, parseDetachedSignature } = require('./restore-validation.js')
+        hasRequiredLevelDbMembers, parseDetachedSignature } = require('./restore_validation.js')
 const { installObservability } = require('./observability');   // default-off /metrics + structured log shim
-const { installUtxoTrackerMetrics } = require('./utxoTrackerMetrics');   // sync-freshness heartbeat gauges
-const { installCrashHandlers, noteCrash } = require('./crashHandlers.js')
+const { installUtxoTrackerMetrics } = require('./utxo_tracker_metrics');   // sync-freshness heartbeat gauges
+const { installCrashHandlers, noteCrash } = require('./crash_handlers.js')
 const { createShutdown, createTrackerDrain } = require('./shutdown.js')
 const jsonRouter = require('express-json-rpc-router')
-const concurrencyGate = require('./concurrencyGate.js')
-const { envInt: sharedEnvInt } = require('./env-int')
-const { parseCorsOrigin } = require('./corsOrigin.js')
+const concurrencyGate = require('./concurrency_gate.js')
+const { envInt: sharedEnvInt } = require('./config/env_int')
+const { parseCorsOrigin } = require('./cors_origin.js')
 const { randomUUID, timingSafeEqual, createHash,
         createPublicKey, verify: verifyAsymmetric } = require('crypto')
 const path = require('path')
@@ -113,7 +113,7 @@ const MAX_PAGE_LIMIT = Number(process.env.UTXO_MAX_PAGE_LIMIT) > 0
     : 10000
 
 // Validate-or-fall-back resolver for the bulk-sync numeric env knobs. The reader
-// itself now lives in src/env-int.js and is the SAME function resolveUndoBlocks
+// itself now lives in src/config/env_int.js and is the SAME function resolveUndoBlocks
 // (undo-blocks.js) and resolveCoinbaseMaturity call, so the parity is true by
 // construction rather than by hand-copy; before that extraction those two sites
 // were still on parseInt while this comment asserted otherwise.

@@ -16,7 +16,7 @@ const {
   createTestTracker, closeTracker, randHash, randHash8,
   makeTx, makeCoinbaseTx, makeCoinbaseInput, makeSpendInput, makeBlock,
   processAndCommit
-} = require('../helpers');
+} = require('../support/helpers');
 const { satoshiToDecimalString } = require('../../../src/XChainUtxoTracker');
 
 describe('Fuzz: Mempool Operations (P2)', function () {

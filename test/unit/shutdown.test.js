@@ -23,6 +23,7 @@ const path = require('path')
 const sinon = require('sinon')
 const { createShutdown, createTrackerDrain, closeServer, closeStores, resolveTimeoutMs, DEFAULT_SHUTDOWN_TIMEOUT_MS } = require('../../src/shutdown')
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker')
+const pkg = require('../../package.json');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 // Turn the event loop a bounded number of times. The tracker/server doubles below
@@ -243,7 +244,6 @@ describe('graceful shutdown', function(){
             const dockerfile = fs.readFileSync(path.join(__dirname, '../../Dockerfile'), 'utf8')
             const cmd = dockerfile.split('\n').filter(l => l.startsWith('CMD')).pop()
             assert.strictEqual(cmd, 'CMD ["node", "--max-old-space-size=4096", "./src/api.js"]')
-            const pkg = require('../../package.json')
             assert.strictEqual(pkg.scripts.api, 'node --max-old-space-size=4096 ./src/api.js', 'the CMD mirrors the api script; change both together')
         })
     })

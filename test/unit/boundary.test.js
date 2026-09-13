@@ -12,7 +12,7 @@
 
 const { expect } = require('chai');
 const crypto = require('crypto');
-const LevelUpStore = require('../../src/LevelUpDb');
+const LevelUpStore = require('../../src/level_up_db');
 
 // Exercise the REAL exported conversion (restored as exact BigInt in src after the
 // a2774ac float regression), so these precision tests actually guard the source.

@@ -20,7 +20,7 @@ const {
   sleep, waitForHeight, waitForSynced,
   createE2ETracker, patchLevelUpStoreInMemory,
   createApiApp
-} = require('./helpers');
+} = require('./support/helpers');
 
 describe('E2E: API Correctness', function () {
   let tracker;

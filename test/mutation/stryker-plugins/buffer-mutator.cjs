@@ -226,11 +226,11 @@ function generate(files) {
 }
 
 const DEFAULT_TARGETS = [
-  'src/LevelUpDb.js',
+  'src/level_up_db.js',
   'src/XChainUtxoTracker.js',
   'src/bufferutils.js',
   'src/api.js',
-  'src/BlockchainConnector.js',
+  'src/blockchain_connector.js',
   'src/XChainBlockDecoder.js',
 ];
 

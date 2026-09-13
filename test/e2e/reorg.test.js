@@ -19,7 +19,7 @@ const {
   stubBlockchain, addBlockToState,
   sleep, waitForHeight, waitForSynced,
   createE2ETracker, patchLevelUpStoreInMemory
-} = require('./helpers');
+} = require('./support/helpers');
 
 // Poll until predicate() resolves truthy. waitForHeight only waits for the height to
 // climb (h >= target); a rollback moves the committed height/hash backward or sideways,

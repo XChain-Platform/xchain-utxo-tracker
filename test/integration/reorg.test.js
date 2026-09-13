@@ -17,7 +17,7 @@ const {
   makeOutput, makeSpendInput, makeTx, makeCoinbaseTx,
   makeBlock, processBlock, processAndCommit, processBlocksAndCommit,
   createTestTracker, closeTracker, randHash
-} = require('./helpers');
+} = require('./support/helpers');
 
 describe('Integration: Chain Reorganization', function () {
   let tracker;

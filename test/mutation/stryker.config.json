@@ -12,13 +12,13 @@
     "config": "test/mutation/.mocharc.stryker.yml"
   },
   "mutate": [
-    "src/LevelUpDb.js",
+    "src/level_up_db.js",
     "src/XChainUtxoTracker.js",
     "src/bufferutils.js",
     "src/api.js",
-    "src/BlockchainConnector.js",
+    "src/blockchain_connector.js",
     "src/XChainBlockDecoder.js",
-    "src/CryptoNetworks.js",
+    "src/crypto_networks.js",
     "src/util.js"
   ],
   "reporters": ["html", "clear-text", "progress"],

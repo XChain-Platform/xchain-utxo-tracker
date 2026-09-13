@@ -20,9 +20,9 @@ only is what guarantees.
 FIRST WALK: 7 CANDIDATES, ALL FALSE
 -----------------------------------
   src/bulk-sync/dump.js
-  src/bulk-sync/migrate-rocksdb-to-classiclevel.js
+  src/bulk-sync/migrate_rocksdb_to_classiclevel.js
   src/bulk-sync/orchestrator.js
-  src/bulk-sync/parse-worker.js
+  src/bulk-sync/parse_worker.js
   src/bulk-sync/run-loader.js
   src/bulk-sync/spot-check.js
   src/bulk-sync/validate-db.js
@@ -37,11 +37,11 @@ nothing in this repo requires them, and no npm script names them. Reading
 process.argv is what distinguishes them, and it is exact here: all nine read it
 and nothing else under src/ does.
 
-migrate-rocksdb-to-classiclevel.js has a second holder that no require walk
+migrate_rocksdb_to_classiclevel.js has a second holder that no require walk
 reaches at all. src/bulk-sync/convert-bootstrap-to-classiclevel.sh runs it
 through a variable whose DEFAULT carries the path:
 
-  MIGRATE_JS="${MIGRATE_JS:-<image path>/src/bulk-sync/migrate-rocksdb-to-classiclevel.js}"
+  MIGRATE_JS="${MIGRATE_JS:-<image path>/src/bulk-sync/migrate_rocksdb_to_classiclevel.js}"
   node "$MIGRATE_JS" --src "$WORK/rocksdb" --dst "$WORK/classic"
 
 so the token after `node` is a variable and the path is a string three lines

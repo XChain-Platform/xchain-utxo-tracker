@@ -12,6 +12,7 @@
 
 const { expect } = require('chai');
 const util = require('../../src/util');
+const sinon = require('sinon');
 
 describe('util', function () {
 
@@ -107,7 +108,6 @@ describe('util', function () {
   });
 
   describe('debug timers', function () {
-    const sinon = require('sinon');
     let logStub;
     beforeEach(function () { logStub = sinon.stub(console, 'log'); });
     afterEach(function () { sinon.restore(); });

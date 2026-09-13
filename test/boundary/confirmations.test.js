@@ -23,7 +23,7 @@ const {
   TEST_KEYS,
   createTestTracker,
   closeTracker,
-} = require('../integration/helpers');
+} = require('../integration/support/helpers');
 
 const ADDR = TEST_KEYS[0];
 

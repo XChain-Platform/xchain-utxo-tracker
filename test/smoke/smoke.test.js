@@ -29,7 +29,7 @@ const {
   processAndCommit,
   createTestTracker,
   closeTracker
-} = require('../integration/helpers');
+} = require('../integration/support/helpers');
 
 describe('UTXO Tracker Smoke Tests', function () {
   let tracker;

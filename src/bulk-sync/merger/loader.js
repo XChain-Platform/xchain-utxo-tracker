@@ -33,9 +33,9 @@
 const fs   = require('fs')
 const path = require('path')
 
-const { LAYOUT }       = require('./derive-keys.js')
-const { RecordReader } = require('./streaming-join.js')
-const { encodeOutput, kOutBlk } = require('../../LevelUpDb.js')
+const { LAYOUT }       = require('./derive_keys.js')
+const { RecordReader } = require('./streaming_join.js')
+const { encodeOutput, kOutBlk } = require('../../level_up_db.js')
 
 // The intermediate O.dat value is fixed-width (value8 + height4 + fullTxHash32 +
 // coinbase1 = 45B) so the external sort can treat it as a plain record. On the

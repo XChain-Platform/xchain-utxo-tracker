@@ -153,12 +153,12 @@ neither source sets one, so these defaults hold on an unconfigured box:
 
 | Type | Tests | Description |
 |---|---|---|
-| Unit | ~544 | `LevelUpDb.test.js`, `XChainUtxoTracker.test.js`, `BlockchainConnector.test.js`, `api.test.js`, `XChainBlockDecoder.test.js`, `bufferutils.test.js`, `CryptoNetworks.test.js`, `util.test.js`, `boundary.test.js` |
-| Integration | ~69 | `core-indexing.test.js`, `reorg.test.js`, `mempool.test.js`, `api-queries.test.js`, `batch-boundaries.test.js`, `boundary.test.js` |
+| Unit | ~544 | `level_up_db.test.js`, `xchain_utxo_tracker.test.js`, `blockchain_connector.test.js`, `api.test.js`, `xchain_block_decoder.test.js`, `bufferutils.test.js`, `crypto_networks.test.js`, `util.test.js`, `boundary.test.js` |
+| Integration | ~69 | `core_indexing.test.js`, `reorg.test.js`, `mempool.test.js`, `api_queries.test.js`, `batch_boundaries.test.js`, `boundary.test.js` |
 | E2E | ~36 | `lifecycle.test.js`, `persistence.test.js`, `reorg.test.js`, `api.test.js`, `mempool.test.js` |
 | Smoke | 9 | `smoke.test.js`: module loading, config, API liveness |
-| Boundary | ~20 | `confirmations.test.js`, `key-range-scan.test.js`, `varint-thresholds.test.js` |
-| Security | ~27 | `address-validation.test.js`, `concurrency-gate.test.js`, `key-pattern-injection.test.js`, `rest-route-surface.test.js` |
+| Boundary | ~20 | `confirmations.test.js`, `key_range_scan.test.js`, `varint_thresholds.test.js` |
+| Security | ~27 | `address_validation.test.js`, `concurrency_gate.test.js`, `key_pattern_injection.test.js`, `rest_route_surface.test.js` |
 | Fuzz | ~105 | 13 campaigns: blockDecoder, txProcessing, connector, addressValidation, balanceCalc, outputEncoding, leveldbKeys, apiEndpoints, bootstrap, config, reorgHandling, mempool, keySchema |
 | Regression | ~120 | Curated critical-path suite: bulk-sync chain continuity/coinbase/merkle/resume, reorg/undo-window, coinbase maturity, connector cred scrub, satoshi precision |
 | Performance | ~29 | Indexing throughput, query load, mempool stress, DB growth, reorg under load, mainnet-scale queries |

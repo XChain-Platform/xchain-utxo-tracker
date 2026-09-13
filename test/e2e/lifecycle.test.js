@@ -19,7 +19,7 @@ const {
   stubBlockchain, addBlockToState,
   sleep, waitForHeight, waitForSynced,
   createE2ETracker, patchLevelUpStoreInMemory
-} = require('./helpers');
+} = require('./support/helpers');
 
 describe('E2E: Lifecycle - start() Loop', function () {
   let tracker;

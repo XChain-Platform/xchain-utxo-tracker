@@ -30,14 +30,14 @@
 const fs             = require('fs')
 const path           = require('path')
 const { fork }       = require('child_process')
-const { externalSort }  = require('./merger/external-sort.js')
-const { leftAntiJoin }  = require('./merger/streaming-join.js')
-const { deriveKeys, resolveUndoBlocks } = require('./merger/derive-keys.js')
+const { externalSort }  = require('./merger/external_sort.js')
+const { leftAntiJoin }  = require('./merger/streaming_join.js')
+const { deriveKeys, resolveUndoBlocks } = require('./merger/derive_keys.js')
 const { loadKeys }      = require('./merger/loader.js')
-const { validateChainFiles } = require('./validate-chain.js')
+const { validateChainFiles } = require('./validate_chain.js')
 const { HEADER_SIZE, OUTPUTS_RECORD_SIZE, SPENDS_RECORD_SIZE } = require('./writers.js')
 const { networkToCodes, validateConcatArtifact, parseDatHeader,
-        writeSortedManifest, checkSortedManifest } = require('./merger/resume-manifest.js')
+        writeSortedManifest, checkSortedManifest } = require('./merger/resume_manifest.js')
 
 // constants
 
@@ -476,7 +476,7 @@ async function phaseParse(args, dirs, xdmpFiles) {
         const batch = xdmpFiles.slice(i, i + maxWorkers)
         const promises = batch.map(xdmpPath => {
             const parseArgs = ['--in', xdmpPath, '--out', dirs.parsed]
-            return runChild(path.join(BULK_SYNC_DIR, 'parse-worker.js'), parseArgs)
+            return runChild(path.join(BULK_SYNC_DIR, 'parse_worker.js'), parseArgs)
         })
         await Promise.all(promises)
         log('PARSE', `batch done: ${Math.min(i + maxWorkers, xdmpFiles.length)}/${xdmpFiles.length}`)

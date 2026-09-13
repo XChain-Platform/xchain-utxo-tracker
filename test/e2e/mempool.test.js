@@ -19,7 +19,7 @@ const {
   stubBlockchain, addBlockToState, addMempoolTx, removeMempoolTx, clearMempool,
   sleep, waitForHeight, waitForSynced,
   createE2ETracker, patchLevelUpStoreInMemory
-} = require('./helpers');
+} = require('./support/helpers');
 
 describe('E2E: Mempool Lifecycle', function () {
   let tracker;

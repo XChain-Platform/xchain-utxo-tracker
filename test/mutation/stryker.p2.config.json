@@ -12,7 +12,7 @@
   },
   "mutate": [
     "src/api.js",
-    "src/BlockchainConnector.js",
+    "src/blockchain_connector.js",
     "src/XChainBlockDecoder.js"
   ],
   "reporters": ["html", "clear-text", "progress"],

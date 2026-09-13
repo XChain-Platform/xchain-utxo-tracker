@@ -11,13 +11,14 @@
 // contact legal@dankest.llc.
 
 const { expect } = require('chai');
+const LevelUpStore = require('../../src/level_up_db');
 const {
   SATOSHI, TEST_KEYS,
   makeOutput, makeSpendInput, makeTx, makeCoinbaseTx,
   makeBlock, processAndCommit, processBlocksAndCommit,
   createTestTracker, closeTracker,
   coinAmount, sumAmounts
-} = require('./helpers');
+} = require('./support/helpers');
 
 describe('Integration: Mempool', function () {
   let tracker;
@@ -40,7 +41,6 @@ describe('Integration: Mempool', function () {
   // Simulates a mempool update that clears stale transactions.
   async function resetMempool() {
     await tracker.mempoolDb.close();
-    const LevelUpStore = require('../../src/LevelUpDb');
     tracker.mempoolDb = new LevelUpStore('mempool-reset-' + Date.now() + '-' + Math.random(), true);
     await tracker.mempoolDb.createDatabase();
   }

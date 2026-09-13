@@ -201,7 +201,7 @@ reason and rebuilds the artifact. If the parsed inputs needed for a rebuild
 are gone, concat fails loud ("no input files") pointing at a re-parse.
 Pre-manifest sorted artifacts are simply re-sorted; there is no
 compatibility shim. Regression coverage:
-`test/regression/bulk-sync-resume-manifest.test.js`.
+`test/regression/bulk_sync_resume_manifest.test.js`.
 
 ## Chain and merkle verification gate
 
@@ -232,7 +232,7 @@ hash of the stripped tx IS the true txid; pure-MWEB txs live outside the
 merkle tree by protocol design, and bulk-sync never reads MWEB payload
 bytes, so they cannot affect the built DB. For DOGE, AuxPoW is stripped at
 dump time, so `.xdmp` blocks are always header + tx section. Regression
-coverage: `test/regression/bulk-sync-merkle.test.js`.
+coverage: `test/regression/bulk_sync_merkle.test.js`.
 
 ## Endianness rationale
 

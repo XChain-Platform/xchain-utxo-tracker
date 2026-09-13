@@ -22,7 +22,7 @@ const crypto = require('crypto');
 const bitcoinjs = require('bitcoinjs-lib');
 // BigInt-safe 64-bit reader/writer, applied in-process so a >2^53-1 sat DOGE
 // output cannot wedge block decode even when the Dockerfile COPY patch is absent.
-const bufferutils_js_1 = require('./applyBufferutilsPatch');
+const bufferutils_js_1 = require('./apply_bufferutils_patch');
 const transaction_js_1 = require('bitcoinjs-lib/src/transaction');
 const coins = require('./coins');
 
