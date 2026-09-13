@@ -21,7 +21,6 @@ const sinon = require('sinon');
 const crypto = require('crypto');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 const LevelUpStore = require('../../src/level_up_db');
-const bitcoin = require('bitcoinjs-lib');
 
 let _dbCounter = 0;
 function uniqueDbName(prefix) {
@@ -166,6 +165,7 @@ describe('XChainUtxoTracker (more)', function () {
             // src/XChainUtxoTracker.js registers tiny-secp256k1 via bitcoin.initEccLib
             // at module load, so payments.p2tr() works and taproot addresses are
             // classified correctly instead of silently falling through to 'unknown'.
+            const bitcoin = require('bitcoinjs-lib');
             const type = tracker.getAddressType(
                 'bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0',
                 bitcoin.networks.bitcoin
@@ -511,6 +511,7 @@ describe('XChainUtxoTracker (more)', function () {
 
     describe('getBalanceInfo (mempool-spent mempool output)', function () {
         it('excludes mempool output spent by another mempool input', async function () {
+            const bitcoin = require('bitcoinjs-lib');
             const { createHash } = require('crypto');
             const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
             const script = bitcoin.address.toOutputScript(address, tracker.network);
@@ -546,6 +547,7 @@ describe('XChainUtxoTracker (more)', function () {
 
     describe('getUtxosAddress pagination', function () {
         it('limits results and sets nextCursor', async function () {
+            const bitcoin = require('bitcoinjs-lib');
             const { createHash } = require('crypto');
             const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
             const script = bitcoin.address.toOutputScript(address, tracker.network);
@@ -573,6 +575,7 @@ describe('XChainUtxoTracker (more)', function () {
         });
 
         it('returns mempool outputs only on first page (after=null)', async function () {
+            const bitcoin = require('bitcoinjs-lib');
             const { createHash } = require('crypto');
             const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
             const script = bitcoin.address.toOutputScript(address, tracker.network);
@@ -602,6 +605,7 @@ describe('XChainUtxoTracker (more)', function () {
         });
 
         it('throws on pre-migration mempool output missing fullTxHash', async function () {
+            const bitcoin = require('bitcoinjs-lib');
             const { createHash } = require('crypto');
             const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
             const script = bitcoin.address.toOutputScript(address, tracker.network);

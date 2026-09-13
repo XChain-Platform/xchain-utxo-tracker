@@ -13,7 +13,6 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
 const BlockchainConnector = require('../../src/blockchain_connector');
-const util = require('util');
 
 describe('BlockchainConnector', function () {
   let connector;
@@ -649,6 +648,7 @@ describe('BlockchainConnector RPC-credential log sanitization', function () {
   afterEach(function () { sinon.restore(); });
 
   it('does not leak the RPC password when an axios call fails', async function () {
+    const util = require('util');
     const FAKE_RPC_PASSWORD = 'FAKEPASS_must_never_be_logged_9c3f';
 
     const err = new Error('Request failed with status code 401');

@@ -23,7 +23,6 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
 const { resolveUndoBlocks, DEFAULT_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS } = require('../../src/undo_blocks');
-const coins = require('../../src/coins');
 
 describe('resolveUndoBlocks opts validation', function () {
   let consoleErrorStub;
@@ -76,6 +75,7 @@ describe('resolveUndoBlocks opts validation', function () {
 describe('undo-blocks resolves the coin through the canonical registry (#5803)', function () {
   const { coinFromNetwork } = require('../../src/undo_blocks');
 
+  const coins = require('../../src/coins');
   // Onboard a coin the way the comment advertises - registry only - and see
   // what the two consensus-relevant decisions do with it.
   function withRegisteredCoin(tick, fullName, wireFormat, fn) {

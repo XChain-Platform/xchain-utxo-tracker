@@ -39,8 +39,6 @@
 
 const { expect } = require('chai');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
-const fs = require('fs');
-const path = require('path');
 const {
     SATOSHI,
     createTestTracker,
@@ -355,6 +353,8 @@ describe('Regression: the reorg rollback budget survives a restart', function ()
     // still in flight. The remaining window is the one durable signal that says
     // so, and get_sync_status is where an operator or monitor reads it.
     it('publishes the remaining undo window on get_sync_status', function () {
+        const fs = require('fs');
+        const path = require('path');
         const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
         const method = src.slice(src.indexOf('async get_sync_status()'));
         expect(method).to.match(/result\.undo_window_blocks\s*=\s*tracker\.undoBlocks/);

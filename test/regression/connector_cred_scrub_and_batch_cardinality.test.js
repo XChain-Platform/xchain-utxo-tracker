@@ -13,7 +13,6 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
 const BlockchainConnector = require('../../src/blockchain_connector');
-const util = require('util');
 
 // Build an axios-shaped error that carries the RPC password on error.config.auth,
 // exactly as axios attaches the request config to a thrown error. The leak:
@@ -66,6 +65,7 @@ describe('RPC credential scrub on the three bypassing methods', function () {
     let caught = null;
     try { await connector.getBlockchainInfo(); } catch (e) { caught = e; }
     // Simulate the upstream sink: util.inspect of the whole error object.
+    const util = require('util');
     const dumped = util.inspect(caught, { depth: 4 });
     expect(dumped).to.not.include('super-secret-rpc-pass');
   });

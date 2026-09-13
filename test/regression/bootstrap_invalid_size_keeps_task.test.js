@@ -30,7 +30,6 @@ const { EventEmitter } = require('events');
 const childProcess = require('child_process');
 const { expect } = require('chai');
 const { handleBootstrapFailure } = require('../../src/bootstrap_recovery');
-const fs = require('fs');
 
 const API_PATH = require.resolve('../../src/api.js');
 
@@ -109,6 +108,7 @@ describe('invalid source size keeps its bootstrap task record', function () {
     // Source guard: the fix is the ABSENCE of a statement, which a behavioural
     // assertion alone cannot pin against a well-meaning re-add.
     it('compressDirPigz contains no delete of its own task record', function () {
+        const fs = require('fs');
         const src = fs.readFileSync(API_PATH, 'utf8');
         const start = src.indexOf('async function compressDirPigz(');
         expect(start, 'compressDirPigz must exist in src/api.js').to.be.greaterThan(-1);

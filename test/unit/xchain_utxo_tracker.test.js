@@ -15,7 +15,6 @@ const sinon = require('sinon');
 const crypto = require('crypto');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 const LevelUpStore = require('../../src/level_up_db');
-const bitcoin = require('bitcoinjs-lib');
 
 // Helpers
 function randHash() { return crypto.randomBytes(32).toString('hex'); }
@@ -301,6 +300,7 @@ describe('XChainUtxoTracker', function () {
   describe('getBalanceInfo', function () {
     it('returns confirmed balance with no mempool activity', async function () {
       // We need to use a valid regtest address
+      const bitcoin = require('bitcoinjs-lib');
       const { createHash } = require('crypto');
       const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
       const script = bitcoin.address.toOutputScript(address, tracker.network);
@@ -330,6 +330,7 @@ describe('XChainUtxoTracker', function () {
     });
 
     it('reflects pending spend from mempool', async function () {
+      const bitcoin = require('bitcoinjs-lib');
       const { createHash } = require('crypto');
       const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
       const script = bitcoin.address.toOutputScript(address, tracker.network);
@@ -367,6 +368,7 @@ describe('XChainUtxoTracker', function () {
     });
 
     it('includes mempool outputs as pending', async function () {
+      const bitcoin = require('bitcoinjs-lib');
       const { createHash } = require('crypto');
       const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
       const script = bitcoin.address.toOutputScript(address, tracker.network);
@@ -402,6 +404,7 @@ describe('XChainUtxoTracker', function () {
 
   describe('getUtxosAddress', function () {
     it('returns confirmed UTXOs with correct fields', async function () {
+      const bitcoin = require('bitcoinjs-lib');
       const { createHash } = require('crypto');
       const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
       const script = bitcoin.address.toOutputScript(address, tracker.network);
@@ -429,6 +432,7 @@ describe('XChainUtxoTracker', function () {
     });
 
     it('excludes confirmed UTXOs spent in mempool', async function () {
+      const bitcoin = require('bitcoinjs-lib');
       const { createHash } = require('crypto');
       const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
       const script = bitcoin.address.toOutputScript(address, tracker.network);
@@ -462,6 +466,7 @@ describe('XChainUtxoTracker', function () {
     });
 
     it('throws on a pre-migration record missing its fullTxHash', async function () {
+      const bitcoin = require('bitcoinjs-lib');
       const { createHash } = require('crypto');
       const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
       const script = bitcoin.address.toOutputScript(address, tracker.network);
@@ -492,6 +497,7 @@ describe('XChainUtxoTracker', function () {
     });
 
     it('includes mempool UTXOs', async function () {
+      const bitcoin = require('bitcoinjs-lib');
       const { createHash } = require('crypto');
       const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
       const script = bitcoin.address.toOutputScript(address, tracker.network);
@@ -516,6 +522,7 @@ describe('XChainUtxoTracker', function () {
 
   describe('getFirstSeen', function () {
     it('returns first-seen block height from S-prefix', async function () {
+      const bitcoin = require('bitcoinjs-lib');
       const { createHash } = require('crypto');
       const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
       const script = bitcoin.address.toOutputScript(address, tracker.network);
