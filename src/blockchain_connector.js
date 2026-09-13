@@ -32,7 +32,7 @@ const logger = getLogger();
 // the tracker logs (util.inspect walks error.config.auth). Scrub the credential
 // fields in place so neither this logger nor any upstream handler leaks them, and
 // return a compact, credential-free string (error.message never carries auth).
-// Kept in sync with xchain-decoder/src/BlockchainConnector.js sanitizeRpcError.
+// Kept in sync with xchain-decoder/src/chain/blockchain_connector.js sanitizeRpcError.
 function sanitizeRpcError(error){
     try {
         if (error && error.config) {
@@ -81,7 +81,7 @@ function orderBatchResults(responseData, expectedCount, label){
 }
 
 // Encode a Bitcoin-style varint as lowercase hex (inverse of readVarint).
-// Keep in sync with xchain-decoder/src/BlockchainConnector.js encodeVarintHex.
+// Keep in sync with xchain-decoder/src/chain/blockchain_connector.js encodeVarintHex.
 function encodeVarintHex(value) {
     if (value < 0xFD) {
         return value.toString(16).padStart(2, '0')
@@ -104,7 +104,7 @@ function encodeVarintHex(value) {
 
 // Decode a Bitcoin-style varint from `buf` at `offset`.
 // Returns { value, bytes } where `bytes` is the number of bytes consumed.
-// Keep in sync with xchain-decoder/src/BlockchainConnector.js readVarint.
+// Keep in sync with xchain-decoder/src/chain/blockchain_connector.js readVarint.
 function readVarint(buf, offset) {
     const first = buf[offset]
     if (first < 0xFD) return { value: first, bytes: 1 }
@@ -124,7 +124,7 @@ function readVarint(buf, offset) {
 //                chain merge-mining branch (same layout) |
 //                parent block header (80 B)
 // Throws if the buffer is too short or structurally invalid.
-// Keep in sync with xchain-decoder/src/BlockchainConnector.js skipAuxPow.
+// Keep in sync with xchain-decoder/src/chain/blockchain_connector.js skipAuxPow.
 function skipAuxPow(buf, start) {
     let offset = start
 
@@ -208,8 +208,8 @@ function skipAuxPow(buf, start) {
 // the block hex (skipAuxPow). Non-AuxPoW blocks pass through unchanged. Shared by the
 // single-block (getBlockWithoutAuxPow) and batch (getBlocksBatchWithoutAuxPow) paths
 // so a strip correction can never land in one and silently miss the other.
-// Keep in sync with xchain-decoder/src/BlockchainConnector.js stripAuxPowFromBlockHex;
-// xchain-decoder/test/unit/auxpowStripParity.test.js asserts byte identity of the two
+// Keep in sync with xchain-decoder/src/chain/blockchain_connector.js stripAuxPowFromBlockHex;
+// xchain-decoder/test/unit/auxpow_strip_parity.test.js asserts byte identity of the two
 // function bodies, so a strip correction here must land there too.
 function stripAuxPowFromBlockHex(headerHex, blockHex) {
     const dataToRemove = headerHex.length - 160  // 160 hex chars = 80-byte standard header
@@ -235,7 +235,7 @@ function stripAuxPowFromBlockHex(headerHex, blockHex) {
 // Reduce the three timestamps the connector records into the two fields every health
 // surface publishes. Pure and exported so the rule lives in one place: a surface that
 // re-derived "is the node reachable" from a counter would disagree with this one.
-// Byte-for-byte the same rule as xchain-decoder/src/BlockchainConnector.js.
+// Byte-for-byte the same rule as xchain-decoder/src/chain/blockchain_connector.js.
 //
 // Unreachable means the LATEST attempt failed: either nothing has ever succeeded, or
 // the last failure is newer than the last success. `since` dates the outage from the
@@ -417,7 +417,7 @@ class BlockchainConnector {
     // produced. Dogecoin 1.14 has no verbosity-2 getblock, so per-txid fetches
     // are the portable route. Deterministic across instances: the output
     // depends only on chain content.
-    // Keep in sync with xchain-decoder/src/BlockchainConnector.js getBlockReassembled.
+    // Keep in sync with xchain-decoder/src/chain/blockchain_connector.js getBlockReassembled.
     async getBlockReassembled(blockhash) {
         try {
             // Older daemons append the AuxPoW bytes to getblockheader; the pure
@@ -465,7 +465,7 @@ class BlockchainConnector {
     }
 
     // The two RPC fetches are deliberately OUTSIDE the try, matching the decoder twin
-    // (xchain-decoder/src/BlockchainConnector.js getBlockWithoutAuxPow). A transport
+    // (xchain-decoder/src/chain/blockchain_connector.js getBlockWithoutAuxPow). A transport
     // fault (a Dogecoin 1.14 node dropping the connection when its RPC queue fills, a
     // restart, a network blip) must propagate unwrapped with error.code intact, because
     // the caller's escalation decision turns on cause: only a strip fault is evidence

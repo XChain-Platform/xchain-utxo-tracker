@@ -41,7 +41,7 @@ const LocalDecoder = require('../../src/XChainBlockDecoder.js');
 
 const DECODER_DIR = process.env.XCHAIN_DECODER_DIR ||
     path.join(__dirname, '../../../xchain-decoder');
-const TWIN_FILE = path.join(DECODER_DIR, 'src', 'XChainBlockDecoder.js');
+const TWIN_FILE = path.join(DECODER_DIR, 'src', 'chain', 'XChainBlockDecoder.js');
 const TWIN_PRESENT = fs.existsSync(TWIN_FILE);
 const REQUIRE_SIBLINGS = process.env.XCHAIN_REQUIRE_SIBLINGS === '1';
 

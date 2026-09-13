@@ -377,7 +377,7 @@ async function startApi(){
         // they describe one snapshot. Height alone cannot: a rewind that re-applies
         // to the SAME height leaves tracker_height, lag and synced identical on both
         // pages while an early page's outpoint is already orphaned, so the consumer's
-        // counter comparison (xchain-encoder/src/UtxoTracker.js snapshotDivergence)
+        // counter comparison (xchain-encoder/src/build/utxo_tracker.js snapshotDivergence)
         // was written against a field the producer never sent and could never fire.
         // Published as a number so a page that omits it still reads as an older
         // tracker rather than as a moved counter.
