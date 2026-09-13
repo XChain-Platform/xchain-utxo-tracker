@@ -45,13 +45,14 @@
  ********************************************************************/
 
 const util = require('./util')
+const config = require('./config')
 const memoryBudget = require('./memory_budget')
 
 // Debug-only tracing for the missing-O-record investigation. Gated behind
 // TRACE_UTXO=1 to keep prod cost at zero. Emits one line per insertOutput,
 // one per staged O deletion in removeOutputsWithInputsBatch, and a summary
 // per endTransaction. Logs go to stdout (docker logs).
-const DEBUG_TRACE = process.env.TRACE_UTXO === '1' || process.env.TRACE_UTXO === 'true'
+const DEBUG_TRACE = config.TRACE_UTXO
 
 const { ClassicLevel } = require('classic-level')
 const { MemoryLevel } = require('memory-level')
@@ -594,7 +595,7 @@ class LevelUpStore {
                 // process may use; LEVELDB_CACHE_BYTES overrides outright.
                 this.db = new ClassicLevel("/data/"+this.dbName, { keyEncoding: 'buffer', valueEncoding: 'buffer',
                     cacheSize: memoryBudget.leveldbCacheBytes(),
-                    writeBufferSize: parseInt(process.env.LEVELDB_WRITE_BUFFER_BYTES ?? String(64 * 1024 * 1024), 10) })
+                    writeBufferSize: config.LEVELDB_WRITE_BUFFER_BYTES })
             }
             // abstract-level opens lazily on first op; open explicitly so any
             // open/create error surfaces here rather than on the first read.

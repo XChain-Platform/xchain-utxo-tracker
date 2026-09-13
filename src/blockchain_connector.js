@@ -21,6 +21,7 @@
 const axios = require('axios');
 const http  = require('http');
 const util = require('node:util');
+const config = require('./config');
 const { getLogger } = require('./observability');
 const logger = getLogger();
 
@@ -268,7 +269,7 @@ class BlockchainConnector {
 
         // Reuse TCP connections across all RPC calls and authenticate once per instance
         this.client = axios.create({
-            timeout: parseInt(process.env.NODE_RPC_TIMEOUT ?? '30000', 10),
+            timeout: config.NODE_RPC_TIMEOUT_MS,
             httpAgent: new http.Agent({ keepAlive: true, maxSockets: 25 }),
             auth: { username: rpcUser, password: rpcPassword }
         })

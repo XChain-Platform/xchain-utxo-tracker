@@ -17,6 +17,7 @@
  ********************************************************************/
 
 const util = require('./util')
+const config = require('./config')
 // Node's own util, under a second name: `util` above is this repo's helper
 // module, and the logger folds a variadic console line through format().
 const nodeUtil = require('node:util')
@@ -52,7 +53,7 @@ const PARSE_MODE_FILES = 0
 const PARSE_MODE_BULK_INSERTS = 1
 const SYNCED_THRESHOLD = 3
 const SATOSHI_BIGINT = 100000000n
-const DEBUG_TRACE = process.env.DEBUG_TRACE === 'true' || process.env.DEBUG_TRACE === '1'
+const DEBUG_TRACE = config.DEBUG_TRACE
 
 // Exact satoshi -> decimal-string conversion: takes SATOSHIS, returns COIN units
 // (a fixed-8 decimal string). Plain float division (value / 1e8)
@@ -85,9 +86,7 @@ const MEMPOOL_MAX_TX_FETCH_RETRIES = 5
 // self-heal: at a 3s backoff this is ~1 minute of retrying before giving up.
 // Override via XCHAIN_MAX_BLOCK_FETCH_RETRIES for slow-recovering nodes.
 const BLOCK_FETCH_RETRY_SLEEP_MS = 3000
-const MAX_BLOCK_FETCH_RETRIES = Number(process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIES) > 0
-    ? Number(process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIES)
-    : 20
+const MAX_BLOCK_FETCH_RETRIES = config.MAX_BLOCK_FETCH_RETRIES
 // After this many consecutive fetch failures at one height on an AuxPoW chain,
 // treat the failure as deterministic (e.g. an AuxPoW section skipAuxPow cannot
 // traverse) and switch to getBlockReassembled, which
@@ -130,9 +129,7 @@ function catchUpWaitState(previous, nodeHeight, storedHeight){
 // Above this ceiling, unbounded queries (get_utxos / get_balance with no page
 // limit) fail loud (HTTP 413) so callers page via /utxos?limit=&after= instead.
 // Tune per host via UTXO_MAX_ADDRESS_OUTPUTS.
-const MAX_ADDRESS_OUTPUTS = Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS) > 0
-    ? Math.floor(Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS))
-    : 500000
+const MAX_ADDRESS_OUTPUTS = config.MAX_ADDRESS_OUTPUTS
 
 // Per-chain reorg recovery window (Tier B, 2026-06-02): how many recent blocks of
 // spent-output recovery records (K/M entries) are retained, and therefore the

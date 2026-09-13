@@ -39,11 +39,13 @@
 // diagnosable, one that ends in the daemon's SIGKILL is not. On a container
 // created before the budget existed docker's ten seconds still applies.
 // SHUTDOWN_TIMEOUT_MS overrides for a slow chain.
+const config = require('./config')
+
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 100000
 
 function resolveTimeoutMs(timeoutMs, env){
     if (Number.isFinite(timeoutMs) && timeoutMs > 0) return timeoutMs
-    const raw = parseInt((env || process.env).SHUTDOWN_TIMEOUT_MS, 10)
+    const raw = parseInt(env ? env.SHUTDOWN_TIMEOUT_MS : config.SHUTDOWN_TIMEOUT_MS, 10)
     return (Number.isFinite(raw) && raw > 0) ? raw : DEFAULT_SHUTDOWN_TIMEOUT_MS
 }
 

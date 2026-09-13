@@ -30,6 +30,7 @@
 
 const os = require('os')
 const fs = require('fs')
+const config = require('./config')
 
 const MIB = 1024 * 1024
 
@@ -106,13 +107,13 @@ function parseEnvInt(raw) {
 // An explicit env value always wins: an operator who has measured their own
 // workload knows something this derivation cannot.
 function leveldbCacheBytes() {
-    const override = parseEnvInt(process.env.LEVELDB_CACHE_BYTES)
+    const override = parseEnvInt(config.LEVELDB_CACHE_BYTES)
     if (override !== null) return override
     return Math.floor(clamp(budgetBytes() / CACHE_FRACTION, CACHE_MIN_BYTES, CACHE_MAX_BYTES))
 }
 
 function heapFlushThresholdMB() {
-    const override = parseEnvInt(process.env.HEAP_FLUSH_THRESHOLD_MB)
+    const override = parseEnvInt(config.HEAP_FLUSH_THRESHOLD_MB)
     if (override !== null) return override
     const derivedMB = budgetBytes() / HEAP_FLUSH_FRACTION / MIB
     return Math.floor(clamp(derivedMB, HEAP_FLUSH_MIN_MB, HEAP_FLUSH_MAX_MB))
