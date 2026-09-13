@@ -167,6 +167,8 @@ function main() {
         return
     }
 
+    // One decoder for the whole range: it holds the coin's wire-format rules and
+    // nothing per-block, so building it per block would be pure cost.
     const decoder = new XChainBlockDecoder(`${reader.chain}-${reader.network}`)
     // Same fail-closed patch check the tracker constructor runs. This worker is its
     // own process and never constructs a tracker, so that check cannot reach it.

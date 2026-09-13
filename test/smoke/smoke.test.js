@@ -115,9 +115,11 @@ describe('UTXO Tracker Smoke Tests', function () {
     });
 
     it('ST-06: removes spent output and creates new output after a spend', async function () {
+      // Get the txid of the coinbase output to spend
       const utxosBefore = await tracker.getUtxosAddress(TEST_KEYS[0].address);
       const prevTxId = utxosBefore[0].txid;
 
+      // Build a transaction spending address[0] -> address[1]
       const spendTx = makeTx({
         ins: [makeSpendInput(prevTxId, 0)],
         outs: [makeOutput(1, 49 * SATOSHI)]
@@ -127,9 +129,11 @@ describe('UTXO Tracker Smoke Tests', function () {
       await processAndCommit(tracker, block1);
 
       // REMOVE_SPENT=true deletes spent outputs, so address 0 drops to zero UTXOs.
+      // Address 0 should now have zero UTXOs (REMOVE_SPENT=true deletes spent outputs)
       const utxosAddr0 = await tracker.getUtxosAddress(TEST_KEYS[0].address);
       expect(utxosAddr0).to.be.an('array').with.lengthOf(0);
 
+      // Address 1 should have the new output
       const utxosAddr1 = await tracker.getUtxosAddress(TEST_KEYS[1].address);
       expect(utxosAddr1).to.be.an('array').with.lengthOf(1);
       expect(utxosAddr1[0].value).to.equal((49 * SATOSHI).toString());

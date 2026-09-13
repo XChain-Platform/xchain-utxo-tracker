@@ -111,6 +111,7 @@ function makeCoinbaseTx(addressIndex, valueSats = 50 * SATOSHI) {
  */
 function makeBlock(height, previousHashHex, transactions, hash) {
   const blockHash = hash || randHash();
+  // Convert previousHashHex to internal byte order (reversed)
   const prevHashBuf = Buffer.from(previousHashHex, 'hex').reverse();
   return {
     hash: blockHash,
@@ -156,10 +157,12 @@ function buildChainFromSpecs(specs) {
     const spec = specs[i];
     const txs = [];
 
+    // Always include a coinbase
     const cbAddr = spec.coinbase ? spec.coinbase.to : 0;
     const cbAmount = spec.coinbase ? spec.coinbase.amount : 50 * SATOSHI;
     txs.push(makeCoinbaseTx(cbAddr, cbAmount));
 
+    // Optional spending transaction
     if (spec.spend) {
       const ins = spec.spend.ins || [makeSpendInput(spec.spend.prevTxId, spec.spend.prevVout || 0)];
       const outs = spec.spend.outs.map(o => makeOutput(o.to, o.amount));
@@ -189,16 +192,19 @@ function stubBlockchain(tracker, initialBlocks) {
     tipHeight() { return this.blocks.length - 1; }
   };
 
+  // Index blocks by hash
   for (const b of state.blocks) {
     state.hashToBlock.set(b.hash, b);
   }
 
+  // Stub getBlockchainInfo
   sinon.stub(tracker.connector, 'getBlockchainInfo').callsFake(async () => ({
     blocks: state.tipHeight(),
     verificationprogress: 1.0,
     headers: state.tipHeight()
   }));
 
+  // Stub getBlockHash
   sinon.stub(tracker.connector, 'getBlockHash').callsFake(async (height) => {
     if (height >= 0 && height < state.blocks.length) {
       return state.blocks[height].hash;
@@ -207,11 +213,13 @@ function stubBlockchain(tracker, initialBlocks) {
   });
 
   // Returns a fake hex string keyed by hash.
+  // Stub getBlock: returns a fake hex string keyed by hash
   sinon.stub(tracker.connector, 'getBlock').callsFake(async (hash) => {
     return 'fakehex_' + hash;
   });
 
   // Used for non-AuxPoW prefetching.
+  // Stub getBlocksBatch: used for non-AuxPoW prefetching
   sinon.stub(tracker.connector, 'getBlocksBatch').callsFake(async (heights) => {
     return heights.map(h => {
       const b = state.blocks[h];
@@ -221,11 +229,14 @@ function stubBlockchain(tracker, initialBlocks) {
   });
 
   // Maps our fake hex back to the mock block object.
+  // Stub blockFromHex: maps our fake hex back to the mock block object
   sinon.stub(tracker.xchainBlockDecoder, 'blockFromHex').callsFake((hex) => {
+    // hex is 'fakehex_<hash>'
     const hash = hex.replace('fakehex_', '');
     const block = state.hashToBlock.get(hash);
     if (!block) throw new Error('Unknown block hex: ' + hex);
     // Fresh object with a fresh prevHash buffer, since start() mutates it via .reverse().
+    // Return a fresh object with a fresh prevHash buffer (start() mutates it via .reverse())
     return {
       prevHash: Buffer.from(block.previousHash, 'hex').reverse(),
       timestamp: block.timestamp,

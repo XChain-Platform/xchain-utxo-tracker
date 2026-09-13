@@ -176,6 +176,7 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
         fc.asyncProperty(
           fc.integer({ min: 1, max: 5 }),
           async (count) => {
+            // Generate mix of success and error responses
             const batchResponse = [];
             for (let i = 0; i < count; i++) {
               batchResponse.push({
@@ -217,6 +218,7 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
             const heights = Array.from({ length: count }, (_, i) => i);
             // getBlocksBatch makes two batched RPC calls: hashes, then blocks
             // by hash, so the stub must answer them in that order.
+            // First call returns hashes, second returns blocks
             clientStub.onCall(0).resolves({
               data: heights.map((h, i) => ({ result: 'a'.repeat(64), id: i }))
             });

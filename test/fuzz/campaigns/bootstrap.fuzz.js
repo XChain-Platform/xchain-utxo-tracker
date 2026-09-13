@@ -20,6 +20,8 @@ describe('Fuzz: Bootstrap Filename Validation (P3)', function () {
   // and shell injection, rather than exercising a specific implementation.
 
   describe('filename sanitization', function () {
+    // These are defensive tests that check whether filenames with
+    // dangerous patterns are handled safely.
     const dangerousFilenames = [
       '../../../etc/passwd',
       '../../.env',
@@ -38,6 +40,7 @@ describe('Fuzz: Bootstrap Filename Validation (P3)', function () {
 
     it('identifies path traversal patterns', function () {
       for (const filename of dangerousFilenames) {
+        // Verify each dangerous filename is detectable by at least one check
         const hasDotDot = filename.includes('..');
         const hasAbsPath = filename.startsWith('/') || /^[A-Z]:/.test(filename);
         const hasNullByte = filename.includes('\x00');
@@ -54,6 +57,7 @@ describe('Fuzz: Bootstrap Filename Validation (P3)', function () {
         fc.asyncProperty(
           fc.stringMatching(/^[a-zA-Z0-9_-]{1,50}\.tar\.gz$/),
           async (filename) => {
+            // A filename matching this pattern should be safe
             expect(filename).to.not.include('..');
             expect(filename).to.not.include('/');
             expect(filename).to.not.include('\x00');
@@ -92,6 +96,8 @@ describe('Fuzz: Bootstrap Filename Validation (P3)', function () {
           async (filename) => {
             // 255 chars is the conventional filesystem basename limit that a
             // validator should enforce.
+            // Any reasonable filename should be < 255 characters
+            // A validator should reject overly long filenames
             const isOverLong = filename.length > 255;
             if (isOverLong) {
               expect(filename.length).to.be.greaterThan(255);

@@ -108,11 +108,13 @@ describe('Fuzz: Transaction Processing (P1)', function () {
               const recipientIdx = addrIdx;
               const spendToIdx = (addrIdx + 1) % 10;
 
+              // Coinbase creates output
               const coinbaseTx = makeTx({
                 ins: [makeCoinbaseInput()],
                 outs: [{ value, script: TEST_KEYS[recipientIdx].script }]
               });
 
+              // Second tx spends the coinbase output in the same block
               const spendTx = makeTx({
                 ins: [makeSpendInput(coinbaseTx._txid, 0)],
                 outs: [{ value, script: TEST_KEYS[spendToIdx].script }]
@@ -121,9 +123,11 @@ describe('Fuzz: Transaction Processing (P1)', function () {
               const block = makeBlock(0, '0'.repeat(64), [coinbaseTx, spendTx]);
               await processAndCommit(t, block);
 
+              // Original recipient should have zero (output spent in same block)
               const origInfo = await t.getBalanceInfo(TEST_KEYS[recipientIdx].address);
               expect(origInfo.balances.confirmed).to.equal('0.00000000');
 
+              // Spend-to address should have the value
               const spendInfo = await t.getBalanceInfo(TEST_KEYS[spendToIdx].address);
               expect(spendInfo.balances.confirmed).to.equal(satoshiToDecimalString(value));
             } finally {
@@ -149,15 +153,18 @@ describe('Fuzz: Transaction Processing (P1)', function () {
               let prevHash = '0'.repeat(64);
               let prevTxId = null;
 
+              // Each block: coinbase to addrIdx, optionally spend previous output
               for (let i = 0; i < chainLength; i++) {
                 const txs = [];
 
+                // Coinbase
                 const cbTx = makeTx({
                   ins: [makeCoinbaseInput()],
                   outs: [{ value: coinbaseValue, script: TEST_KEYS[addrIdx].script }]
                 });
                 txs.push(cbTx);
 
+                // Spend the previous block's coinbase (if exists) to a different address
                 if (prevTxId) {
                   const otherIdx = (addrIdx + 1) % 10;
                   const spendTx = makeTx({
@@ -173,6 +180,7 @@ describe('Fuzz: Transaction Processing (P1)', function () {
                 prevTxId = cbTx._txid;
               }
 
+              // addrIdx should have exactly 1 UTXO (the last block's coinbase, unspent)
               const info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);
               expect(info.balances.confirmed).to.equal(satoshiToDecimalString(coinbaseValue));
               expect(info.utxos.confirmed).to.equal(1);
@@ -192,6 +200,7 @@ describe('Fuzz: Transaction Processing (P1)', function () {
       const block = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
       await processAndCommit(tracker, block);
 
+      // Should only have the coinbase output, no inputs tracked
       const info = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info.balances.confirmed).to.equal(satoshiToDecimalString(BigInt(50 * SATOSHI)));
     });

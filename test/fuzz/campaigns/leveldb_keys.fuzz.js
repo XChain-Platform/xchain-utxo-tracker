@@ -18,6 +18,7 @@ const {
 } = require('../support/helpers');
 const LevelUpStore = require('../../../src/level_up_db');
 
+// Helper: create a fresh in-memory DB for isolation
 async function freshDb() {
   const d = new LevelUpStore('fuzz-keys-' + Date.now() + '-' + Math.random(), true);
   await d.createDatabase();

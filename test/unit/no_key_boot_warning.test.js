@@ -12,6 +12,13 @@
  *
  *********************************************************************/
 
+// Platform-wide no-API-key posture.
+//
+// Running keyless is allowed and is the documented shape for a read-only
+// deployment, but which of the two postures a process came up in has to be
+// announced loudly at boot, or an operator cannot tell an open admin surface
+// from a closed one by reading the log.
+//
 // Platform-wide no-API-key posture: running keyless is allowed, but the
 // open/closed state must be announced loudly at boot. api.js cannot be
 // require()d in tests (it self-starts and hits real env vars), so this is a

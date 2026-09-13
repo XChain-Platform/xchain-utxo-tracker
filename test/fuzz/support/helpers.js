@@ -61,10 +61,12 @@ function arbBlockHash() { return arbHexString(32); }
 // 8-byte hex (16 chars): for txHash8
 function arbTxHash8() { return arbHexString(8); }
 
+// Satoshi value as BigInt in valid range
 function arbSatoshiValue() {
   return fc.bigInt({ min: 0n, max: MAX_SATOSHI });
 }
 
+// Satoshi value including extreme/boundary values
 function arbSatoshiValueExtreme() {
   return fc.oneof(
     fc.constant(0n),
@@ -78,6 +80,7 @@ function arbSatoshiValueExtreme() {
 
 const SATOSHI_BIGINT = 100000000n;
 
+// Block height
 function arbHeight() {
   return fc.oneof(
     fc.constant(0),
@@ -113,18 +116,22 @@ function arbAddress() {
   );
 }
 
+// Valid regtest address only
 function arbValidAddress() {
   return fc.integer({ min: 0, max: 9 }).map(i => TEST_KEYS[i].address);
 }
 
+// Script buffer of random length
 function arbScript() {
   return fc.uint8Array({ minLength: 1, maxLength: 100 }).map(arr => Buffer.from(arr));
 }
 
+// Random buffer of exact size
 function arbBuffer(size) {
   return fc.uint8Array({ minLength: size, maxLength: size }).map(arr => Buffer.from(arr));
 }
 
+// Random buffer of variable size
 function arbBufferRange(minLen, maxLen) {
   return fc.uint8Array({ minLength: minLen, maxLength: maxLen }).map(arr => Buffer.from(arr));
 }
@@ -147,6 +154,7 @@ function arbTxOutput(addressIndex) {
   }));
 }
 
+// Coinbase input shape
 function makeCoinbaseInput() {
   return {
     hash: Buffer.alloc(32, 0),
@@ -154,6 +162,7 @@ function makeCoinbaseInput() {
   };
 }
 
+// Spending input shape
 function makeSpendInput(prevTxIdHex, prevVout = 0) {
   const hashBuf = Buffer.from(prevTxIdHex, 'hex').reverse();
   return {
@@ -256,6 +265,7 @@ async function processBlocksAndCommit(tracker, blocks) {
   await tracker.cleanupAgedBlocks();
 }
 
+// Build a chain of coinbase-only blocks
 function buildCoinbaseChain(count, addressIndex = 0, startHeight = 0) {
   const blocks = [];
   let prevHash = '0'.repeat(64);

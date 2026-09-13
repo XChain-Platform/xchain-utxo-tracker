@@ -12,6 +12,10 @@
 
 // Generator for a production-scale, ON-DISK tracker LevelDB.
 //
+// This is the first of two legs: this file BUILDS the store and the query
+// suite beside it TIMES it. They are split because building a mainnet-tier
+// store takes about an hour while the timing run takes minutes.
+//
 // Why this exists: every other perf harness in this repo builds its store by
 // replaying synthetic BLOCKS, which caps out in the low hundreds of thousands
 // of outputs before the block-decode path, not the key schema, dominates the

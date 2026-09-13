@@ -25,6 +25,11 @@ const varuint = require('varuint-bitcoin');
 // required directly here). The code that runs locally (XChainBlockDecoder's
 // BufferReader) loads the installed lib copy instead, the real path this
 // file pins; see unit/bufferutils.test.js for the resolver shim.
+// src/bufferutils.js is a Docker-only override of bitcoinjs-lib/src/bufferutils
+// (its require('./types') only resolves inside the lib's src/). The code that
+// runs locally (XChainBlockDecoder's BufferReader) loads the installed lib
+// copy, so that is the real, exercised path we pin here (same API). See
+// unit/bufferutils.test.js for the resolver shim that also covers the patch.
 const {
   BufferWriter,
   BufferReader,
@@ -115,6 +120,8 @@ describe('Boundary: writeUInt64LE / readUInt64LE verifuint limit', function () {
   it('reading a stored 2**53 (above the ceiling) is rejected, not silently rounded', function () {
     // writeUInt64LE would itself reject 2**53, so encode it by hand here to
     // test the read-side check independently.
+    // Hand-encode 2**53 little-endian and confirm the reader's verifuint trips
+    // rather than returning a lossy Number.
     const buf = Buffer.alloc(8);
     buf.writeUInt32LE(0x00000000, 0);
     buf.writeUInt32LE(0x00200000, 4); // high dword = 2**53 / 2**32

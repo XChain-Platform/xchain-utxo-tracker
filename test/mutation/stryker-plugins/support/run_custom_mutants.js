@@ -78,9 +78,11 @@ for (let i = 0; i < mutants.length; i++) {
   const absPath = path.resolve(mutant.fileName);
   const original = fs.readFileSync(absPath, 'utf8');
 
+  // Apply mutation: replace text at the specified location
   const lines = original.split('\n');
   const { start, end } = mutant.location;
 
+  // Convert location to flat offsets
   let startOffset = 0;
   for (let l = 0; l < start.line; l++) {
     startOffset += lines[l].length + 1; // +1 for \n
@@ -95,6 +97,7 @@ for (let i = 0; i < mutants.length; i++) {
 
   const mutated = original.slice(0, startOffset) + mutant.replacement + original.slice(endOffset);
 
+  // Write mutated file
   fs.writeFileSync(absPath, mutated, 'utf8');
 
   const label = `[${i + 1}/${mutants.length}] ${mutant.fileName}:${start.line + 1} ${mutant.mutatorName}: ${mutant.description}`;
@@ -126,6 +129,7 @@ for (let i = 0; i < mutants.length; i++) {
       process.stdout.write(`  ERROR     ${label}\n`);
     }
   } finally {
+    // Always restore original
     fs.writeFileSync(absPath, original, 'utf8');
   }
 }

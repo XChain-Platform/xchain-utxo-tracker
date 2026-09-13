@@ -204,6 +204,7 @@ describe('BlockchainConnector', function () {
     // Version bytes in little-endian: 0x00000101 -> 01 01 00 00
     const standardHeader = '01010000' + '00'.repeat(76)  // version (4 B) + 76 B padding = 80 B total = 160 hex chars
 
+    // Minimal coinbase tx: version(4) + nIns(1=0x01) + prevout(32 zeros + ffffffff) + scriptLen(0) + seq(ffffffff) + nOuts(1) + value(0 8B) + scriptLen(0) + locktime(4)
     const coinbaseTx = (
       '01000000'        +  // version (4 B)
       '01'              +  // nIns = 1
@@ -386,6 +387,7 @@ describe('BlockchainConnector', function () {
 
     it('retries on failure up to 10 times', async function () {
       // Stub sleep so the retry backoff resolves instantly, keeping the test fast.
+      // Use a real short sleep to keep tests fast
       sinon.stub(connector, 'sleep').resolves();
 
       clientStub.rejects(new Error('timeout'));

@@ -16,6 +16,18 @@
 // from the scan. The existing "all-ff scriptHash prefix" case only stores
 // outputIndex 0, so it never exercises a maximal suffix like this one.
 
+// rangeEnd(prefix) caps a prefix scan with `prefix + 12 bytes of 0xFF`. The
+// source comment (LevelUpDb.js) records that a *single* 0xFF byte is wrong:
+// LevelDB's lexicographic compare ranks a longer key as greater than a shorter
+// upper bound, so a record whose suffix is itself all-0xFF sorts ABOVE a 1-byte
+// 0xFF cap and silently vanishes from the scan. That exact regression landed
+// (39696e8) and was later reverted (a2774ac).
+//
+// The existing unit/boundary "all-ff scriptHash prefix" case only stores
+// outputIndex 0 (suffix = txHash8 + 00000000), so it never exercises a maximal
+// suffix. Here the suffix bytes after the 33-byte O-prefix are themselves all
+// 0xFF (txHash8 = ff..ff, outputIndex = 0xFFFFFFFF), the precise shape that a
+// too-short upper bound would drop.
 const { expect } = require('chai');
 const LevelUpStore = require('../../src/level_up_db');
 
@@ -158,6 +170,13 @@ describe('Boundary: getValuesFromKeyPattern hex-decode + inclusive bounds', func
     // silently dropped. The same failure mode hits the reorg-restore scans
     // elsewhere in the store, where a dropped key means a spent output never
     // gets restored on rollback (a permanent balance under-count).
+    // Regression for the widened rangeEnd cap. An all-0xFF scriptHash scanned by a
+    // 2-byte prefix [O][0xFF] leaves a 43-byte all-0xFF suffix. The old 12-byte
+    // rangeEnd upper bound sorted BELOW such a key and silently dropped it - the
+    // exact failure mode of the K/P_OUT_DEL reorg-restore scan (44-byte suffix) and
+    // the Z/P_BLK_SCRIPT scan (32-byte suffix), where a dropped key means a spent
+    // output is never restored on rollback (permanent balance under-count). The
+    // widened cap must include it.
     const scriptHash = 'ff'.repeat(32);
     await db.beginTransaction();
     await db.insertOutput({ scriptPubKey: scriptHash, txHash: FF_TXID8, outputIndex: MAX_VOUT, value: 999, height: 1, fullTxHash: FF_FULLTXID });

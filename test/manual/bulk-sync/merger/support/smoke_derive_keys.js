@@ -125,6 +125,7 @@ async function main() {
     assert.strictEqual(joinRes.orphanSpends, 0)
 
     // Derive keys
+    // ── Derive keys ──
     const outDir = path.join(TMP, 'keys')
     const derTmp = path.join(TMP, 'derive-tmp')
     const { stats } = await deriveKeys({
@@ -176,6 +177,7 @@ async function main() {
     console.log('[smoke/derive-keys] sort order OK')
 
     // Specific records
+    // ── Specific records ──
     const B = fs.readFileSync(path.join(outDir, 'B.dat'))
     // Find the B record for block H0; verify height=0, ts=..., prev=zero.
     function findB(hash) {
@@ -294,6 +296,7 @@ async function main() {
     assert.strictEqual(findO(SCRIPT_X, T0_8, 0), -1, 'O must NOT contain spent X')
 
     // T records
+    // ── T records ──
     const T = fs.readFileSync(path.join(outDir, 'T.dat'))
     function findT(txHash8) {
         const rs = LAYOUT.T.recordSize
@@ -325,6 +328,7 @@ async function main() {
     assert.ok(hasN(H1))
 
     // L.json
+    // ── L.json ──
     const L = JSON.parse(fs.readFileSync(path.join(outDir, 'L.json'), 'utf8'))
     assert.strictEqual(L.LAST_BLOCK_HEIGHT, '1') // 1 in hex = "1"
     assert.strictEqual(L.LAST_BLOCK_HASH, H1.toString('hex'))

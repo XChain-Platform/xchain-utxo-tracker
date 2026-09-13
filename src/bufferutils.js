@@ -42,6 +42,14 @@ function readUInt64LE(buffer, offset) {
   return b + a;
 }
 exports.readUInt64LE = readUInt64LE;
+/**
+ * Writes a 64-bit unsigned integer in little-endian format to the specified buffer at the given offset.
+ *
+ * @param buffer - The buffer to write the value to.
+ * @param value - The 64-bit unsigned integer value to write.
+ * @param offset - The offset in the buffer where the value should be written.
+ * @returns The new offset after writing the value.
+ */
 function writeUInt64LE(buffer, value, offset) {
   verifuint(value, 0x001fffffffffffff);
   buffer.writeInt32LE(value & -1, offset);
@@ -49,7 +57,14 @@ function writeUInt64LE(buffer, value, offset) {
   return offset + 8;
 }
 exports.writeUInt64LE = writeUInt64LE;
-// Reverses a buffer's bytes in place and returns it (not a copy).
+/**
+ * Reverses the order of bytes in a buffer, IN PLACE. The upstream documentation
+ * for this function says it returns a new buffer; it does not, and a caller that
+ * believed it would find its own input reversed under it.
+ *
+ * @param buffer - The buffer to reverse.
+ * @returns The same buffer, its bytes reversed.
+ */
 function reverseBuffer(buffer) {
   if (buffer.length < 1) return buffer;
   let j = buffer.length - 1;

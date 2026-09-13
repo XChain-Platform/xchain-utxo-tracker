@@ -78,6 +78,9 @@ describe('Boundary: confirmation count at the chain tip', function () {
   });
 
   it('an output whose height exceeds a stale cached tip reports 0 confirmations, unclamped', async function () {
+    // The tracker's cached tip can momentarily trail the indexed height during
+    // catch-up. The formula is not clamped to >= 1, so this pins the observable
+    // boundary: height == tip+1 yields exactly 0 (a value a stale tip can emit).
     tracker.blockchainInfoLastBlock = 1000;
     await storeConfirmedOutput(tracker, { height: 1001, txHash: '44'.repeat(8) });
 

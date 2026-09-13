@@ -125,6 +125,7 @@ describe('Fuzz: Block Decoder (P0)', function () {
             } catch (e) {
               // Looser than the Error-instance checks elsewhere: non-hex input
               // may reach a throw of a non-Error value, which is still a pass.
+              // Must not crash with unhandled error types
               expect(e).to.exist;
             }
           }
@@ -187,6 +188,7 @@ describe('Fuzz: Block Decoder (P0)', function () {
     it('txFromHex handles HogEx flag combinations', async function () {
       // Structured rather than pure-random input, so runs actually exercise
       // the version/marker/flag parsing path instead of failing before it.
+      // Generate hex that starts with valid-looking version + marker + flag patterns
       await fc.assert(
         fc.asyncProperty(
           fc.constantFrom('01000000', '02000000', 'ffffffff'),

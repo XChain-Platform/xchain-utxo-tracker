@@ -25,16 +25,20 @@ describe('Fuzz: Reorg Handling (P1)', function () {
   // This matches the production flow: verifyReorg() compares DB state with node,
   // rolls back mismatched blocks, then the main loop re-processes from fork point.
   async function setupAndRunReorg(tracker, originalBlocks, forkBlocks) {
+    // Build lookup for what the "node" reports
     const forkHeight = forkBlocks[0].height;
     const nodeHashes = {};
 
+    // Blocks before the fork point match the original
     for (let i = 0; i < forkHeight; i++) {
       nodeHashes[i] = originalBlocks[i].hash;
     }
+    // Blocks at and after fork point use the fork
     for (const fb of forkBlocks) {
       nodeHashes[fb.height] = fb.hash;
     }
 
+    // Stub the connector
     sinon.stub(tracker.connector, 'getBlockHash').callsFake(async (height) => {
       if (height in nodeHashes) return nodeHashes[height];
       throw new Error('Block height out of range: ' + height);
@@ -51,6 +55,7 @@ describe('Fuzz: Reorg Handling (P1)', function () {
 
     sinon.restore();
 
+    // Re-process fork blocks
     for (const block of forkBlocks) {
       await processAndCommit(tracker, block);
     }
@@ -68,6 +73,7 @@ describe('Fuzz: Reorg Handling (P1)', function () {
 
             const t = await createTestTracker();
             try {
+              // Build and process original chain
               const originalBlocks = [];
               let prevHash = '0'.repeat(64);
               for (let i = 0; i < chainLen; i++) {
@@ -81,6 +87,7 @@ describe('Fuzz: Reorg Handling (P1)', function () {
 
               expect(await t.db.getLastBlockHeight()).to.equal(chainLen - 1);
 
+              // Build fork chain
               const forkStart = chainLen - depth;
               const forkBlocks = [];
               prevHash = originalBlocks[forkStart - 1].hash;
@@ -92,12 +99,15 @@ describe('Fuzz: Reorg Handling (P1)', function () {
 
               await setupAndRunReorg(t, originalBlocks, forkBlocks);
 
+              // After reorg + reprocess, tip should be at original chain length
               expect(await t.db.getLastBlockHeight()).to.equal(chainLen - 1);
 
+              // Reorged block records should be gone
               for (let i = forkStart; i < chainLen; i++) {
                 expect(await t.db.getBlock(originalBlocks[i].hash)).to.be.null;
               }
 
+              // Fork block records should exist
               for (const fb of forkBlocks) {
                 const b = await t.db.getBlock(fb.hash);
                 expect(b).to.not.be.null;
@@ -125,6 +135,7 @@ describe('Fuzz: Reorg Handling (P1)', function () {
             try {
               const otherIdx = (addrIdx + 1) % 10;
 
+              // Block 0: coinbase to addrIdx
               const coinbaseTx = makeTx({
                 ins: [makeCoinbaseInput()],
                 outs: [{ value, script: TEST_KEYS[addrIdx].script }]
@@ -132,6 +143,7 @@ describe('Fuzz: Reorg Handling (P1)', function () {
               const block0 = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
               await processAndCommit(t, block0);
 
+              // Block 1: spend to otherIdx
               const spendTx = makeTx({
                 ins: [makeSpendInput(coinbaseTx._txid, 0)],
                 outs: [{ value, script: TEST_KEYS[otherIdx].script }]
@@ -139,14 +151,17 @@ describe('Fuzz: Reorg Handling (P1)', function () {
               const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx((addrIdx + 2) % 10), spendTx]);
               await processAndCommit(t, block1);
 
+              // Verify addrIdx balance is 0 (output was spent)
               let info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);
               expect(info.balances.confirmed).to.equal('0.00000000');
 
+              // Reorg: replace block 1 with a block that doesn't spend the output
               const altBlock1 = makeBlock(1, block0.hash, [makeCoinbaseTx((addrIdx + 3) % 10)]);
               await setupAndRunReorg(t, [block0, block1], [altBlock1]);
 
               // Recovered from the K/M deleted-output archive that verifyReorg
               // restores when the spending block is rolled back.
+              // addrIdx's output should be recovered from K/M archive
               info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);
               expect(info.balances.confirmed).to.equal(satoshiToDecimalString(value));
             } finally {
@@ -164,6 +179,7 @@ describe('Fuzz: Reorg Handling (P1)', function () {
     it('blocks before the fork point are preserved after reorg', async function () {
       const t = await createTestTracker();
       try {
+        // 5-block chain
         const blocks = [];
         let prevHash = '0'.repeat(64);
         for (let i = 0; i < 5; i++) {
@@ -175,6 +191,7 @@ describe('Fuzz: Reorg Handling (P1)', function () {
           await processAndCommit(t, block);
         }
 
+        // Reorg last 2 blocks
         const forkBlocks = [];
         prevHash = blocks[2].hash;
         for (let i = 3; i < 5; i++) {
@@ -185,6 +202,7 @@ describe('Fuzz: Reorg Handling (P1)', function () {
 
         await setupAndRunReorg(t, blocks, forkBlocks);
 
+        // Blocks 0-2 should be intact
         for (let i = 0; i <= 2; i++) {
           const b = await t.db.getBlock(blocks[i].hash);
           expect(b).to.not.be.null;

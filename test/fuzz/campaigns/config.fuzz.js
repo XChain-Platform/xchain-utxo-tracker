@@ -53,8 +53,10 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
           const tracker = new XChainUtxoTracker(
             network, '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
           );
+        // Should succeed
         } catch (e) {
           // Some listed networks may not be supported yet; that is not a failure here.
+        // Some networks may not be supported yet, that's fine
         }
       }
     });

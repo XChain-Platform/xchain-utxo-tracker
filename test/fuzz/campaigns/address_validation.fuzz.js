@@ -35,6 +35,7 @@ describe('Fuzz: Address Validation (P1)', function () {
         fc.asyncProperty(
           fc.string({ minLength: 0, maxLength: 200 }),
           async (addr) => {
+            // Must not throw; should return a string type
             const result = tracker.getAddressType(addr, NETWORK);
             expect(result).to.be.a('string');
             expect(['p2pkh', 'p2sh', 'p2wpkh', 'p2tr', 'unknown']).to.include(result);
@@ -75,6 +76,7 @@ describe('Fuzz: Address Validation (P1)', function () {
       for (const bad of badInputs) {
         try {
           const result = tracker.getAddressType(bad, NETWORK);
+          // If it returns, it should be a string
           expect(result).to.be.a('string');
         } catch (e) {
           // Throwing is acceptable here: only a returned string is checked.
@@ -136,6 +138,7 @@ describe('Fuzz: Address Validation (P1)', function () {
 
   describe('getUtxosAddress with fuzzed addresses', function () {
     it('returns array for valid addresses', async function () {
+      // First, add some data
       const block = makeBlock(0, '0'.repeat(64), [makeCoinbaseTx(0)]);
       await processAndCommit(tracker, block);
 

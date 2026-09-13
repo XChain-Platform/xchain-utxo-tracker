@@ -66,6 +66,8 @@ describe('Perf: Mempool Stress', function () {
   });
 
   it('measures balance query time with populated mempool', async function () {
+    // Mempool should already be populated from previous test
+    // Query a sample of addresses
     const sampleSize = Math.min(SCALE.addresses, 50);
     const queryAddresses = addressPool.slice(0, sampleSize);
 
@@ -92,6 +94,7 @@ describe('Perf: Mempool Stress', function () {
     const roundTimes = [];
 
     for (let round = 0; round < 5; round++) {
+      // Clear mempool
       await clearMempoolDb(tracker);
 
       // Use a different slice of UTXOs each round to avoid conflicts

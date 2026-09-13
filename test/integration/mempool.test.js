@@ -32,6 +32,7 @@ describe('Integration: Mempool', function () {
   });
 
   // Mimics updateMempool: parses a transaction into the mempool DB.
+  // Helper: parse a transaction into the mempool DB (mimics updateMempool logic)
   async function addToMempool(tx) {
     await tracker.mempoolDb.beginTransaction();
     await tracker.parseTransaction(tracker.mempoolDb, tx, null, -1, true);
@@ -39,6 +40,7 @@ describe('Integration: Mempool', function () {
   }
 
   // Simulates a mempool update that clears stale transactions.
+  // Helper: reset the mempool DB to empty (simulates mempool update that clears stale txs)
   async function resetMempool() {
     await tracker.mempoolDb.close();
     tracker.mempoolDb = new LevelUpStore('mempool-reset-' + Date.now() + '-' + Math.random(), true);
@@ -51,6 +53,7 @@ describe('Integration: Mempool', function () {
       const block0 = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
       await processAndCommit(tracker, block0);
 
+      // Mempool: addr0 sends 10 BTC to addr1, 39.99 change
       const mempoolTx = makeTx({
         ins: [makeSpendInput(coinbaseTx._txid, 0)],
         outs: [
@@ -60,11 +63,13 @@ describe('Integration: Mempool', function () {
       });
       await addToMempool(mempoolTx);
 
+      // Address 1: has pending balance from mempool
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('0.00000000');
       expect(info1.balances.pending).to.equal('10.00000000');
       expect(info1.utxos.pending).to.equal(1);
 
+      // Address 0: mempool change appears as pending
       const info0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info0.balances.confirmed).to.equal('50.00000000');
       // pending is the signed net movement: -50 spent + 39.99 change back.
@@ -80,23 +85,28 @@ describe('Integration: Mempool', function () {
       const block0 = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
       await processAndCommit(tracker, block0);
 
+      // Add to mempool
       const spendTx = makeTx({
         ins: [makeSpendInput(coinbaseTx._txid, 0)],
         outs: [makeOutput(1, 10 * SATOSHI), makeOutput(0, 3999000000)]
       });
       await addToMempool(spendTx);
 
+      // Verify pending state for addr1
       const infoBefore = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(infoBefore.balances.pending).to.equal('10.00000000');
 
+      // Now confirm the transaction in a block and reset mempool
       const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(2), spendTx]);
       await processAndCommit(tracker, block1);
       await resetMempool();
 
+      // Address 1: now confirmed
       const infoAfter = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(infoAfter.balances.confirmed).to.equal('10.00000000');
       expect(infoAfter.balances.pending).to.equal('0.00000000');
 
+      // Address 0: confirmed change only
       const info0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info0.balances.confirmed).to.equal('39.99000000');
       expect(info0.balances.pending).to.equal('0.00000000');
@@ -109,21 +119,26 @@ describe('Integration: Mempool', function () {
       const block0 = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
       await processAndCommit(tracker, block0);
 
+      // Add tx to mempool
       const mempoolTx = makeTx({
         ins: [makeSpendInput(coinbaseTx._txid, 0)],
         outs: [makeOutput(1, 10 * SATOSHI)]
       });
       await addToMempool(mempoolTx);
 
+      // Verify addr1 has pending
       const infoPending = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(infoPending.balances.pending).to.equal('10.00000000');
 
+      // Simulate dropped: clear entire mempool
       await resetMempool();
 
+      // Address 0: back to full confirmed balance, no pending
       const info0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info0.balances.confirmed).to.equal('50.00000000');
       expect(info0.balances.pending).to.equal('0.00000000');
 
+      // Address 1: no more pending
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('0.00000000');
       expect(info1.balances.pending).to.equal('0.00000000');
@@ -132,12 +147,14 @@ describe('Integration: Mempool', function () {
 
   describe('multiple mempool transactions', function () {
     it('tracks pending from multiple unconfirmed txs to different addresses', async function () {
+      // Two confirmed UTXOs to address 0
       const cb0 = makeCoinbaseTx(0, 20 * SATOSHI);
       const cb1 = makeCoinbaseTx(0, 30 * SATOSHI);
       const block0 = makeBlock(0, '0'.repeat(64), [cb0]);
       const block1 = makeBlock(1, block0.hash, [cb1]);
       await processBlocksAndCommit(tracker, [block0, block1]);
 
+      // Two mempool txs spending different UTXOs
       const mempoolTx1 = makeTx({
         ins: [makeSpendInput(cb0._txid, 0)],
         outs: [makeOutput(1, 5 * SATOSHI)]
@@ -150,6 +167,7 @@ describe('Integration: Mempool', function () {
       await addToMempool(mempoolTx1);
       await addToMempool(mempoolTx2);
 
+      // Address 1 and 2 have pending outputs
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.pending).to.equal('5.00000000');
 
@@ -164,6 +182,7 @@ describe('Integration: Mempool', function () {
       const block0 = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
       await processAndCommit(tracker, block0);
 
+      // Mempool sends to addr3
       const mempoolTx = makeTx({
         ins: [makeSpendInput(coinbaseTx._txid, 0)],
         outs: [makeOutput(3, 7 * SATOSHI)]
@@ -177,6 +196,7 @@ describe('Integration: Mempool', function () {
       expect(info3.utxos.pending).to.equal(1);
 
       // getUtxosAddress also surfaces the mempool UTXO, not just getBalanceInfo.
+      // getUtxosAddress should include the mempool UTXO
       const utxos3 = await tracker.getUtxosAddress(TEST_KEYS[3].address);
       expect(utxos3).to.have.length(1);
       expect(utxos3[0].confirmations).to.equal(0);

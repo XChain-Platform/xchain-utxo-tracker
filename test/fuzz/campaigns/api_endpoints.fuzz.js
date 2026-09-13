@@ -113,6 +113,7 @@ describe('Fuzz: API Endpoints (P3)', function () {
 
   beforeEach(async function () {
     tracker = await createTestTracker();
+    // Add some data so queries have something to work with
     const block = makeBlock(0, '0'.repeat(64), [makeCoinbaseTx(0)]);
     await processAndCommit(tracker, block);
     app = createTestApiApp(tracker);
@@ -133,6 +134,7 @@ describe('Fuzz: API Endpoints (P3)', function () {
             if (!encodedAddr) return;
             const res = await request.get('/utxos/' + encodedAddr);
             expect(res.status).to.be.oneOf([200, 500]);
+            // Body should always be valid JSON
             expect(res.body).to.exist;
           }
         ),
@@ -222,6 +224,7 @@ describe('Fuzz: API Endpoints (P3)', function () {
               .post('/')
               .send({ jsonrpc: '2.0', method: 'get_input_from_key_pattern', params: { pattern }, id: 1 });
             expect(res.status).to.equal(200);
+            // Should return an error about pattern being too short
             if (res.body.result && res.body.result.error) {
               expect(res.body.result.error).to.include('too short');
             }
@@ -240,6 +243,7 @@ describe('Fuzz: API Endpoints (P3)', function () {
               .post('/')
               .send({ jsonrpc: '2.0', method, id: 1 });
             // Unknown methods must fail gracefully, not crash the server.
+            // Should return 200 with a JSON-RPC error for unknown methods, not crash
             expect(res.status).to.be.oneOf([200, 404]);
           }
         ),

@@ -21,6 +21,9 @@ const { satoshiToDecimalString } = require('../../../src/XChainUtxoTracker');
 
 describe('Fuzz: Mempool Operations (P2)', function () {
 
+  // Helper: put one transaction into the mempool store, the way the service
+  // does when it polls the node. A fuzz case that built the record by hand
+  // would be testing its own idea of the shape rather than the tracker's.
   // Mirrors the real updateMempool() flow: parseTransaction(mempoolDb, tx, null, -1, addHints=true).
   async function addToMempool(tracker, transaction) {
     const mdb = tracker.mempoolDb;
@@ -41,6 +44,7 @@ describe('Fuzz: Mempool Operations (P2)', function () {
             try {
               const otherIdx = (addrIdx + 1) % 10;
 
+              // Confirmed: coinbase to addrIdx
               const coinbaseTx = makeTx({
                 ins: [makeCoinbaseInput()],
                 outs: [{ value: confirmedValue, script: TEST_KEYS[addrIdx].script }]
@@ -48,15 +52,18 @@ describe('Fuzz: Mempool Operations (P2)', function () {
               const block = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
               await processAndCommit(t, block);
 
+              // Mempool: someone creates output to otherIdx
               const mempoolTx = makeTx({
                 ins: [makeCoinbaseInput()],
                 outs: [{ value: mempoolValue, script: TEST_KEYS[otherIdx].script }]
               });
               await addToMempool(t, mempoolTx);
 
+              // addrIdx: only confirmed balance
               const info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);
               expect(info.balances.confirmed).to.equal(satoshiToDecimalString(confirmedValue));
 
+              // otherIdx: only pending balance
               const otherInfo = await t.getBalanceInfo(TEST_KEYS[otherIdx].address);
               expect(otherInfo.balances.pending).to.equal(satoshiToDecimalString(mempoolValue));
               expect(otherInfo.balances.confirmed).to.equal('0.00000000');
@@ -136,6 +143,7 @@ describe('Fuzz: Mempool Operations (P2)', function () {
               const inputByTxHash8 = await t.mempoolDb.getInput(txHash8, 0);
               expect(inputByTxHash8).to.not.be.null;
 
+              // addrIdx: confirmed stays, pending shows negative (being spent)
               const info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);
               expect(info.balances.confirmed).to.equal(satoshiToDecimalString(value));
               expect(info.balances.pending).to.equal(satoshiToDecimalString(-value));
@@ -171,9 +179,11 @@ describe('Fuzz: Mempool Operations (P2)', function () {
               });
               await addToMempool(t, spendTx);
 
+              // UTXO list for addrIdx should be empty (output is being spent)
               const utxos = await t.getUtxosAddress(TEST_KEYS[addrIdx].address);
               expect(utxos.length).to.equal(0);
 
+              // otherIdx should have the mempool UTXO
               const otherUtxos = await t.getUtxosAddress(TEST_KEYS[otherIdx].address);
               expect(otherUtxos.length).to.equal(1);
               expect(otherUtxos[0].confirmations).to.equal(0);

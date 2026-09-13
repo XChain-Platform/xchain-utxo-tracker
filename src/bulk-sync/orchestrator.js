@@ -472,6 +472,7 @@ async function phaseParse(args, dirs, xdmpFiles) {
     const maxWorkers = args.workers || xdmpFiles.length
     log('PARSE', `parsing ${xdmpFiles.length} dumps with up to ${maxWorkers} parallel workers`)
 
+    // Process in batches of maxWorkers
     for (let i = 0; i < xdmpFiles.length; i += maxWorkers) {
         const batch = xdmpFiles.slice(i, i + maxWorkers)
         const promises = batch.map(xdmpPath => {

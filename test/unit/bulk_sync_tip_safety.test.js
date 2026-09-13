@@ -11,6 +11,10 @@
 // contact legal@dankest.llc.
 
 // Regression: bulk-sync tip-safety must cover the reorg window.
+//
+// The design relies on the bulk load stopping short of the tip, and the number
+// of blocks it stops short by is the thing that was wrong.
+//
 // The bulk-sync merger emits no K/M reorg-recovery indices (SPEC.md; W IS
 // seeded, windowed to the derive-keys range, but W alone cannot recover a
 // reorg), so it must stop at least undoBlocks below the tip so the live

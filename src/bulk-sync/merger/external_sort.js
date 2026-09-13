@@ -167,8 +167,8 @@ async function externalSort(opts) {
         expectedRuns: Math.ceil(totalRecords / recordsPerRun),
     })
 
-    // Phase 1: create sorted runs
 
+    // Phase 1: create sorted runs
     const runPaths = []
     const fdIn = fs.openSync(inputPath, 'r')
     try {

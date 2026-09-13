@@ -67,6 +67,7 @@ describe('E2E: Lifecycle - start() Loop', function () {
 
       expect(await tracker.db.getLastBlockHeight()).to.equal(2);
 
+      // Add 3 more blocks to a different address
       for (let i = 3; i < 6; i++) {
         const prevHash = state.blocks[state.blocks.length - 1].hash;
         const newBlock = makeBlock(i, prevHash, [makeCoinbaseTx(1, 10 * SATOSHI)]);
@@ -104,6 +105,7 @@ describe('E2E: Lifecycle - start() Loop', function () {
       tracker.start();
       await waitForSynced(tracker);
 
+      // Verify each recipient
       const expected = [
         { addr: 1, balance: '10.00000000', count: 1 },
         { addr: 2, balance: '15.00000000', count: 1 },
@@ -117,6 +119,7 @@ describe('E2E: Lifecycle - start() Loop', function () {
         expect(info.utxos.confirmed, `addr ${e.addr} count`).to.equal(e.count);
       }
 
+      // Sender should have 0 (spent)
       const info0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info0.balances.confirmed).to.equal('0.00000000');
     });
@@ -133,10 +136,12 @@ describe('E2E: Lifecycle - start() Loop', function () {
       expect(await tracker.db.getLastBlockHeight()).to.equal(149);
 
       // 150 outputs of 1 BTC each (1 * SATOSHI = 100000000 sats)
+      // 150 coinbase outputs of 1 BTC each (1 * SATOSHI = 100000000 sats)
       const info = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info.balances.confirmed).to.equal('150.00000000');
       expect(info.utxos.confirmed).to.equal(150);
 
+      // Verify blocks at batch boundaries exist
       const block99 = await tracker.db.getBlock(blocks[99].hash);
       expect(block99).to.not.be.null;
       expect(block99.h).to.equal(99);
@@ -177,6 +182,7 @@ describe('E2E: Lifecycle - start() Loop', function () {
 
   describe('B2: drain address (spend all UTXOs)', function () {
     it('leaves sender with zero balance after spending all UTXOs', async function () {
+      // 3 coinbases to addr 0
       const cb0 = makeCoinbaseTx(0, 10 * SATOSHI);
       const cb1 = makeCoinbaseTx(0, 20 * SATOSHI);
       const cb2 = makeCoinbaseTx(0, 30 * SATOSHI);
@@ -184,6 +190,7 @@ describe('E2E: Lifecycle - start() Loop', function () {
       const block1 = makeBlock(1, block0.hash, [cb1]);
       const block2 = makeBlock(2, block1.hash, [cb2]);
 
+      // Block 3: spend all 3 UTXOs to addr 1
       const drainTx = makeTx({
         ins: [
           makeSpendInput(cb0._txid, 0),
@@ -228,9 +235,11 @@ describe('E2E: Lifecycle - start() Loop', function () {
       await waitForSynced(tracker);
 
       // addr1 received and spent within the same block, so its balance nets to 0.
+      // addr1: created and spent in same block = 0
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('0.00000000');
 
+      // addr2: received from tx2
       const info2 = await tracker.getBalanceInfo(TEST_KEYS[2].address);
       expect(info2.balances.confirmed).to.equal('24.00000000');
     });

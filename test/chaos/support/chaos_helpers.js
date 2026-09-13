@@ -12,6 +12,7 @@
 
 const integrationHelpers = require('../../integration/support/helpers');
 
+// Re-export everything from integration helpers
 module.exports = { ...integrationHelpers };
 
 function sleep(ms) {
@@ -39,8 +40,11 @@ function injectBatchWriteFailure(levelUpStore, error) {
 }
 
 /**
- * Delays LevelDB get() (point lookups) and iterator() (range scans, e.g.
- * getOutputsScriptPubKey/getBalanceInfo) to simulate read latency.
+ * Wraps the underlying LevelDB get() and iterator() with delays, to simulate a
+ * slow disk under load. The two are separated because the tracker uses them for
+ * different things: get() serves point lookups, and iterator() serves the range
+ * scans behind getOutputsScriptPubKey, getBalanceInfo and their neighbours, so a
+ * test can slow one without slowing the other.
  * Returns { restore() }.
  */
 function injectReadLatency(levelUpStore, delayMs) {

@@ -58,9 +58,11 @@ function generateAddressPool(n) {
   if (_addressCache.has(n)) return _addressCache.get(n);
 
   const pool = [];
+  // Reuse TEST_KEYS for the first 10
   for (let i = 0; i < Math.min(n, 10); i++) {
     pool.push(TEST_KEYS[i]);
   }
+  // Generate additional addresses beyond 10
   for (let i = 10; i < n; i++) {
     const privKey = createHash('sha256').update('perf-key-' + i).digest();
     const keyPair = ECPair.fromPrivateKey(privKey, { network: NETWORK });
@@ -94,6 +96,7 @@ function buildDenseChain(count, addressPool, txsPerBlock) {
     const txs = [];
     for (let t = 0; t < txsPerBlock; t++) {
       const addrIdx = (i * txsPerBlock + t) % addressPool.length;
+      // Build coinbase-style tx targeting the address pool entry
       const key = addressPool[addrIdx];
       const tx = makeTx({
         ins: [makeCoinbaseInput()],
@@ -182,6 +185,7 @@ class MetricsCollector {
       this.meta.set(label, extras);
     }
     this.entries.get(label).push(durationMs);
+    // Merge extras
     Object.assign(this.meta.get(label), extras);
   }
 

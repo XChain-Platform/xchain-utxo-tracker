@@ -34,6 +34,7 @@ describe('Chaos: RPC Faults', function () {
     await closeTracker(tracker);
   });
 
+  // Experiment 4: Complete RPC Connection Loss (RPC-01)
   describe('Exp 4: RPC Connection Loss', function () {
 
     it('verifyReorg retries after transient RPC failures and succeeds', async function () {
@@ -46,6 +47,8 @@ describe('Chaos: RPC Faults', function () {
         return blocks[height].hash;
       });
 
+      // verifyReorg should retry through the failures and eventually confirm
+      // the chain is consistent (no actual reorg)
       await forceVerifyReorg(tracker);
 
       // Height unchanged: no reorg occurred, just transient failures
@@ -59,6 +62,7 @@ describe('Chaos: RPC Faults', function () {
     it('stale-but-consistent data remains queryable during RPC outage', async function () {
       const blocks = await buildCommittedChain(tracker, 5, 0);
 
+      // Even if the connector is completely broken, local queries work
       sinon.stub(tracker.connector, 'getBlockHash')
         .rejects(new Error('ECONNREFUSED'));
 
@@ -84,6 +88,7 @@ describe('Chaos: RPC Faults', function () {
     });
   });
 
+  // Experiment 5: Malformed RPC Response (RPC-03)
   describe('Exp 5a: Null RPC Response', function () {
 
     it('null getBlockHash response triggers retry, eventually succeeds', async function () {
@@ -94,18 +99,23 @@ describe('Chaos: RPC Faults', function () {
         calls++;
         // A null (malformed) response won't match the stored hash, so it
         // causes a phantom rollback of one block before subsequent calls succeed.
+        // First call returns null (malformed), which won't match stored hash
+        // causing a "reorg" rollback of one block, then subsequent calls succeed
         if (calls === 1) return null;
         return blocks[height].hash;
       });
 
       await forceVerifyReorg(tracker);
 
+      // The null response at height 4 caused a phantom rollback of block 4,
+      // then the retry at height 3 succeeds with the correct hash
       const finalHeight = await tracker.db.getLastBlockHeight();
       expect(finalHeight).to.equal(3);
 
       // Block 4 was deleted by the phantom rollback
       expect(await tracker.db.getBlock(blocks[4].hash)).to.be.null;
 
+      // Blocks 0–3 are intact
       for (let i = 0; i <= 3; i++) {
         expect(await tracker.db.getBlock(blocks[i].hash)).to.not.be.null;
       }
@@ -122,17 +132,23 @@ describe('Chaos: RPC Faults', function () {
       let calls = 0;
       sinon.stub(tracker.connector, 'getBlockHash').callsFake(async (height) => {
         calls++;
+        // First call returns truncated hash → mismatch → rollback
+        // Second call returns correct hash → stable
         if (calls === 1) return truncatedHash;
         return blocks[height].hash;
       });
 
       await forceVerifyReorg(tracker);
 
+      // Truncated hash triggered a phantom rollback of block 4
       const finalHeight = await tracker.db.getLastBlockHeight();
       expect(finalHeight).to.equal(3);
 
       // Documents a weakness: a single malformed node response can cause a
       // 1-block rollback. The system recovers but that block must be re-indexed.
+    // This documents a weakness: a single malformed response from the node
+    // can cause a 1-block rollback. The system recovers but loses one block
+    // that must be re-indexed.
     });
   });
 
@@ -145,6 +161,8 @@ describe('Chaos: RPC Faults', function () {
       sinon.stub(tracker.connector, 'getBlockHash').callsFake(async (height) => {
         calls++;
         // Simulates a flaky proxy returning garbage intermittently
+        // Alternate: fail at current tip, succeed at lower heights
+        // This simulates a flaky proxy returning garbage intermittently
         if (calls <= 2) return randHash(); // wrong hash → rollback
         return blocks[height].hash;
       });
@@ -156,6 +174,7 @@ describe('Chaos: RPC Faults', function () {
       expect(finalHeight).to.be.at.most(6);
       expect(finalHeight).to.be.at.least(4);
 
+      // Chain is still consistent at whatever height it stabilized
       const finalHash = await tracker.db.getLastBlockHash();
       const block = await tracker.db.getBlock(finalHash);
       expect(block).to.not.be.null;
@@ -178,6 +197,7 @@ describe('Chaos: RPC Faults', function () {
       await forceVerifyReorg(tracker);
       sinon.restore();
 
+      // After RPC recovery, process new blocks normally
       const block3 = makeBlock(3, blocks[2].hash, [makeCoinbaseTx(1, 25 * 100000000)]);
       await processAndCommit(tracker, block3);
 

@@ -33,16 +33,20 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
   let origCreateDatabase;
 
   before(function () {
+    // Save original createDatabase
     origCreateDatabase = LevelUpStore.prototype.createDatabase;
   });
 
   beforeEach(function () {
+    // Create a unique temp directory for each test
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utxo-e2e-'));
   });
 
   afterEach(function () {
     sinon.restore();
+    // Restore original createDatabase
     LevelUpStore.prototype.createDatabase = origCreateDatabase;
+    // Clean up temp directory
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch (e) { /* ignore cleanup errors */ }
@@ -73,6 +77,7 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
     it('survives a full stop/restart cycle with data intact', async function () {
       patchLevelUpStoreDisk();
 
+      // First run: index 5 blocks
       const blocks = buildCoinbaseChain(5, 0, 0, 10 * SATOSHI);
       const tracker1 = createE2ETracker();
       const state1 = stubBlockchain(tracker1, blocks);
@@ -84,12 +89,17 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
       const hashBefore = await tracker1.db.getLastBlockHash();
       expect(heightBefore).to.equal(4);
 
+      // Verify data before shutdown
       const infoBefore = await tracker1.getBalanceInfo(TEST_KEYS[0].address);
       expect(infoBefore.balances.confirmed).to.equal('50.00000000');
 
+      // Stop the tracker. The mempool store is in memory, so it is discarded
+      // here; only the disk-backed confirmed state survives a restart.
       await tracker1.stopParsing();
       sinon.restore();
 
+      // Second run: a new tracker on the SAME database name, so the question is
+      // whether what the first run wrote is still there.
       // Reusing tracker1.dbName re-opens the same disk-backed LevelDB directory.
       const tracker2 = new XChainUtxoTracker(
         'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass',
@@ -100,6 +110,7 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
       tracker2.start();
       await waitForSynced(tracker2);
 
+      // Verify data survived the restart
       const heightAfter = await tracker2.db.getLastBlockHeight();
       expect(heightAfter).to.equal(4);
       expect(await tracker2.db.getLastBlockHash()).to.equal(hashBefore);
@@ -114,6 +125,7 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
     it('resumes indexing from where it left off', async function () {
       patchLevelUpStoreDisk();
 
+      // First run: index 3 blocks
       const initialBlocks = buildCoinbaseChain(3, 0, 0, 10 * SATOSHI);
       const tracker1 = createE2ETracker();
       const state1 = stubBlockchain(tracker1, initialBlocks);
@@ -125,13 +137,16 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
       await tracker1.stopParsing();
       sinon.restore();
 
+      // Build extended chain (5 blocks total)
       const extendedBlocks = buildCoinbaseChain(5, 0, 0, 10 * SATOSHI);
       // Reuse the first run's exact blocks 0-2 so their hashes match, then
       // relink blocks 3-4 onto that chain (buildCoinbaseChain regenerates
       // hashes independently each call).
+      // Ensure first 3 blocks have same hashes
       for (let i = 0; i < 3; i++) {
         extendedBlocks[i] = initialBlocks[i];
       }
+      // Fix chain linkage for blocks 3-4
       extendedBlocks[3] = makeBlock(3, initialBlocks[2].hash, extendedBlocks[3].transactions);
       extendedBlocks[4] = makeBlock(4, extendedBlocks[3].hash, extendedBlocks[4].transactions);
 
@@ -256,6 +271,7 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
     it('rebuilds pending balances from the mempool after a stop/restart cycle', async function () {
       patchLevelUpStoreDisk();
 
+      // First run: one coinbase block funding addr0 with 50 BTC (confirmed).
       const cb = makeCoinbaseTx(0, 50 * SATOSHI);
       const block0 = makeBlock(0, '0'.repeat(64), [cb]);
       const tracker1 = createE2ETracker();
@@ -264,6 +280,7 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
       tracker1.start();
       await waitForSynced(tracker1);
 
+      // Unconfirmed tx: addr0 → addr1 (10 BTC), addr0 keeps the rest as change.
       const mempoolTx = makeTx({
         ins: [makeSpendInput(cb._txid, 0)],
         outs: [
@@ -274,6 +291,7 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
       addMempoolTx(state1, mempoolTx);
       await tracker1.updateMempool();
 
+      // Pending is reflected before the restart.
       const pendingBefore = await tracker1.getBalanceInfo(TEST_KEYS[1].address);
       expect(pendingBefore.balances.pending).to.equal('10.00000000');
       expect(pendingBefore.utxos.pending).to.equal(1);
@@ -299,6 +317,7 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
       tracker2.start();
       await waitForSynced(tracker2);
 
+      // Confirmed UTXO state survived; pending was wiped and not yet rebuilt.
       const reconvergeWindowAddr1 = await tracker2.getBalanceInfo(TEST_KEYS[1].address);
       expect(reconvergeWindowAddr1.balances.pending).to.equal('0.00000000');
       expect(reconvergeWindowAddr1.utxos.pending).to.equal(0);
@@ -306,9 +325,11 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
       expect(reconvergeWindowAddr0.balances.confirmed).to.equal('50.00000000');
       expect(reconvergeWindowAddr0.balances.pending).to.equal('0.00000000');
 
+      // The node's mempool still holds the unconfirmed tx; the next scan rebuilds it.
       addMempoolTx(state2, mempoolTx);
       await tracker2.updateMempool();
 
+      // Pending reconverges to the live mempool state.
       const reconvergedAddr1 = await tracker2.getBalanceInfo(TEST_KEYS[1].address);
       expect(reconvergedAddr1.balances.pending).to.equal('10.00000000');
       expect(reconvergedAddr1.utxos.pending).to.equal(1);

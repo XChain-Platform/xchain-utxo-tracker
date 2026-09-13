@@ -37,6 +37,9 @@
 //   mainnet  ~40M UTXOs / 5M scripts      - BTC-mainnet order of magnitude,
 //                                           needs ~15 GB of disk, ~1 h to build
 //
+// A tier is chosen, not derived: the point is to run the SAME assertions over a
+// store two thousand times larger and watch the numbers not move.
+//
 // Run the mainnet tier before a cohort bootstrap:
 //   UTXO_PERF_DB_SCALE=mainnet UTXO_PERF_DB_DIR=/big/disk npm run test:perf:mainnet
 

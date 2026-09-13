@@ -215,6 +215,7 @@ async function deriveKeys(opts) {
         throw new Error(`deriveKeys: unsupported outputsRecordSize ${outputsRecordSize} (expected 120 or 121)`)
     }
     // Coinbase flag lives at byte 120, present only in 121-byte records.
+    // Coinbase flag lives at byte 120, present only in 121-byte (L-4) records.
     const hasCoinbaseByte = outputsRecordSize === OUTPUTS_RECORD_SIZE_CB
 
     if (!metaPath || !outputsPath || !liveUtxosPath || !spendsByPrevPath) {
@@ -334,6 +335,7 @@ async function deriveKeys(opts) {
             //   [56..88]  scriptPubKey
             //   [88..120] blockHash
             const txHash8      = rec.subarray(0, 8)
+            // voutBE is stored in-place at [8..12]; we'll slice it.
             const voutBE       = rec.subarray(8, 12)
             const valBE        = rec.subarray(12, 20)
             const heightBE     = rec.subarray(20, 24)

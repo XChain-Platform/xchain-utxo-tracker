@@ -16,6 +16,7 @@
  *
  ********************************************************************/
 
+// Load required libraries
 const util = require('./util')
 const config = require('./config')
 const coins = require('./coins')
@@ -197,6 +198,11 @@ class XChainUtxoTracker {
       // object. bitcoinjs-lib silently defaults an undefined network to BTC
       // mainnet at address/script decode time, so either way construction must
       // fail rather than run under the wrong network parameters.
+      // getBitcoinJsNetwork returns undefined for an unrecognized coin/network
+      // name (e.g. a typo in the NETWORK env var). Left unguarded, bitcoinjs-lib
+      // silently defaults an undefined network to BTC mainnet at address/script
+      // decode time, so a misconfiguration would run under the wrong network
+      // parameters instead of failing. Fail loud at construction instead.
       if (!this.network) {
         throw new Error(`XChainUtxoTracker: unknown network "${network}" -- no bitcoinjs network config resolved. Check the configured network name.`)
       }
@@ -1710,6 +1716,12 @@ class XChainUtxoTracker {
                 // Refresh node tip when: no info yet, caught up to the previously-seen tip,
                 // OR periodically so blockchainInfoLastBlock stays current during catch-up
                 // (synced flag and confirmations reflect the true tip, not a frozen startup value).
+                //Getting the last block from the blockchain.
+                //Refresh when we have no info yet, when we have caught up to the
+                //previously-seen tip, OR periodically on a wall-clock interval: the
+                //last condition keeps blockchainInfoLastBlock tracking the live chain
+                //during a long catch-up, so the synced flag and reported confirmations
+                //reflect the true chain tip instead of a frozen startup value.
                 if (!lastBlockchainInfo
                     || (lastProcessedBlockIndex >= this.blockchainInfoLastBlock)
                     || (Date.now() - lastBlockchainInfoRefreshAt >= BLOCKCHAIN_INFO_REFRESH_MS)){
@@ -1864,6 +1876,7 @@ class XChainUtxoTracker {
                     }
                 }
                 
+                //If there is no new block, wait for some seconds to ask again
                 if (lastProcessedBlockIndex == this.blockchainInfoLastBlock){
                     this.synced = true
 
@@ -1935,6 +1948,7 @@ class XChainUtxoTracker {
 
                     await this.sleep(CHECK_BLOCK_DELAY_MS)
                 } else {
+                    //Put the flag synced false if there are too many blocks behind
                     if ((this.blockchainInfoLastBlock - lastProcessedBlockIndex) > SYNCED_THRESHOLD){
                         this.synced = false
                         // Falling out of sync invalidates mempool readiness: the
@@ -1948,6 +1962,7 @@ class XChainUtxoTracker {
                         }
                     }
 
+                    //Get the next block
                     let nextBlockHeight = lastProcessedBlockIndex + 1
 
                     // Kick off pre-fetches for upcoming blocks while we process the current one
@@ -2008,7 +2023,9 @@ class XChainUtxoTracker {
                     let previousBlockHash = util.uint8ArrayToHex(Buffer.from(block.prevHash).reverse())
                     _t.decode += Date.now() - _tDecode
 
+                    //Check if there is a reorg
                     if (nextBlockHeight > 0){
+                        //previousBlockHash is not the same, it must be a reorg
                         if (previousBlockHash != lastProcessedBlockHash){
                             prefetchQueue = []
                             await this.db.endTransaction(false)
@@ -2055,13 +2072,19 @@ class XChainUtxoTracker {
                             continue
                         }
                     }
+                    //Start a transaction if there are no blocks processed yet
                     if (blocksQuantity == 0){
                         await this.db.beginTransaction()
                     }
 
+                    //Insert the processed block
                     await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp, previousHash:previousBlockHash})
                     blocksCount = blocksCount + 1               
                     
+                    //Parse the transactions (two-pass approach to allow full parallelism):
+                    //  Pass 1: insert all outputs for every tx concurrently
+                    //  Pass 2: process all inputs concurrently (same-block outputs are
+                    //          now in transactionArray so removeOutputWithInput finds them)
                     var transactions = block.transactions
 
                     const _tParse = Date.now()
@@ -2109,9 +2132,15 @@ class XChainUtxoTracker {
                         pendingMempoolTxCleanup.push("id" in tx ? tx["id"] : tx.getId())
                     }
 
+                    //Add the block to the last blocks
                     await this.addToLastBlocks(nextBlockHash)
 
                     // Flush triggers: batch full, at chain tip, or heap pressure.
+                    //If there are enough processed blocks, then add them to the database.
+                    //Three triggers: batch full, at chain tip, or heap under pressure.
+                    //Heap-pressure flush keeps the block-count constant working as an
+                    //upper bound while preventing V8 OOM on dense chain windows where a
+                    //full 200-block batch would push staged Buffers past the heap cap.
                     const _earlyFlushHeapMB = process.memoryUsage().heapUsed / 1048576
                     const _flushReason =
                         (nextBlockHeight == this.blockchainInfoLastBlock)             ? 'tip' :
@@ -2172,6 +2201,7 @@ class XChainUtxoTracker {
                         await this.cleanupAgedBlocks()
                         _t.cleanup += Date.now() - _tCleanup
 
+                        // ── Print timing summary ──
                         _t.blocks = blocksQuantity + 1
                         const _total = _t.decode + _t.parse + _t.commit + _t.cleanup
                         const _pb = XChainUtxoTracker.parseOutBuckets

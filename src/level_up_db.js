@@ -44,6 +44,7 @@
  *
  ********************************************************************/
 
+// Load required libraries
 const util = require('./util')
 const config = require('./config')
 const memoryBudget = require('./memory_budget')
@@ -493,6 +494,7 @@ function decodeOutput(buf) {
         // ZERO_HASH is the "no full txid" sentinel (see encodeOutput).
         t: fullTxHash === ZERO_HASH ? null : fullTxHash,
         // Optional coinbase flag; legacy 44-byte records read as false.
+        // Optional coinbase flag (L-4); legacy 44-byte records read as false.
         cb: buf.length > 44 && buf[44] === 1
     }
 }
@@ -1018,6 +1020,31 @@ class LevelUpStore {
     // restores it normally; cleanupAgedBlocks still prunes them once they age
     // out. spendBlockHeight comes from this batch's B record; createdHeight
     // from the spent output's value, since the input object carries no height.
+    // Cross-block in-memory spend recovery.
+    //
+    // When an output is created and spent within the SAME uncommitted batch the
+    // spend takes the in-memory path: the O/H entries are dropped from the
+    // staging map and the only restore record is the per-spend-block entry in
+    // deletedTransactionArray. That in-memory record is discarded the moment the
+    // batch commits (endTransaction nulls the maps), so it cannot survive to a
+    // later reorg. For a same-block create+spend that is harmless: a reorg can
+    // never split a single block, so the output never needs restoring on its own.
+    // But a batch spans up to DB_TRANSACTION_BLOCKS_QUANTITY blocks, so a create
+    // at block N and a spend at block N+k (k>0) is also in-memory yet CAN be split
+    // by a reorg to a fork between N and N+k. After commit there are no K/M records
+    // on disk, so processDeletedOutputs finds nothing to restore and the spent
+    // output's balance is silently lost.
+    //
+    // Fix: when the spent output was created in a strictly earlier block than the
+    // spending input, write the same M (hint) + K (output) restore records the
+    // DB/archive branch writes, keyed by the spend blockHash. A reorg that rolls
+    // back the spend block then restores the output exactly as for a normal
+    // committed spend. The records are still pruned by cleanupAgedBlocks once the
+    // spend block ages out of the undoBlocks window.
+    //
+    // spendBlockHeight is read from the B record inserted for this block earlier
+    // in the same batch; createdHeight is decoded from the spent output's value.
+    // Both are needed because the input object carries no height.
     spendBlockHeightInBatch(blockHashHex){
         const blkVal = this.getTransactionValue(kBlock(blockHashHex))
         if (blkVal == null) return null

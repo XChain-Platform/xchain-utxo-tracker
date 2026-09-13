@@ -25,8 +25,8 @@ const { XdmpReader, HEADER_SIZE } = require('../../../../src/bulk-sync/xdmp_read
 const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-xdmp-reader-'))
 console.log('[smoke/xdmp-reader] tmp dir:', TMP_DIR)
 
-// helpers to build a synthetic .xdmp in memory
 
+// helpers to build a synthetic .xdmp in memory
 function buildHeader({ chain=1, net=3, version=1, firstHeight, lastHeight, chainTip }) {
     const buf = Buffer.alloc(HEADER_SIZE)
     Buffer.from('XCHNDMP1', 'ascii').copy(buf, 0)

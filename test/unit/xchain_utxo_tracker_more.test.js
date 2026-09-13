@@ -125,6 +125,7 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
+    // ── coinFromNetwork / resolveUndoBlocks (via constructor side-effects) ──
     describe('undoBlocks per-network resolution', function () {
         it('bitcoin-mainnet resolves to BTC default', function () {
             const t = new XChainUtxoTracker('bitcoin-mainnet', '127.0.0.1', '8332', 'u', 'p', 'db', false);
@@ -149,6 +150,10 @@ describe('XChainUtxoTracker (more)', function () {
             // relying on the guard below it; either way an unknown network never
             // gets far enough to decode addresses under bitcoinjs's BTC-mainnet
             // default. The regex spans both messages on purpose.
+            // getBitcoinJsNetwork returns undefined for an unresolvable network name;
+            // the constructor now asserts on that before it would otherwise reach
+            // resolveUndoBlocks' own fallback, so an unknown network never gets far
+            // enough to silently decode addresses under bitcoinjs's BTC-mainnet default.
             expect(() => new XChainUtxoTracker('unknown-mainnet', '127.0.0.1', '1234', 'u', 'p', 'db', false))
                 .to.throw(/[Uu]nknown network/);
         });
@@ -197,6 +202,7 @@ describe('XChainUtxoTracker (more)', function () {
         });
     });
 
+    // ── addToLastBlocks: deletedTransactionArray branch (lines 159-161) ──
     describe('addToLastBlocks deletedTransactionArray cleanup', function () {
         it('removes block from deletedTransactionArray when it ages out', async function () {
             // Fill lastBlocks to capacity by setting undoBlocks=2 then adding 3 blocks.
@@ -260,10 +266,12 @@ describe('XChainUtxoTracker (more)', function () {
             const h200 = randHash();
             const h50 = randHash();
 
+            // Populate the db with blocks
             await db.beginTransaction();
             await db.insertBlock({ hash: h100, height: 100, timestamp: 0, previousHash: randHash() });
             await db.insertBlock({ hash: h200, height: 200, timestamp: 0, previousHash: randHash() });
             await db.insertBlock({ hash: h50,  height: 50,  timestamp: 0, previousHash: randHash() });
+            // Insert them as "last stored blocks"
             db.addLastStoredBlock(h100);
             db.addLastStoredBlock(h200);
             db.addLastStoredBlock(h50);
@@ -693,6 +701,9 @@ describe('XChainUtxoTracker (more)', function () {
             expect(tracker.mempoolBusy).to.be.false;
             // Sleep runs after each failure except the bail-out attempt: 5 failures,
             // breaks on attempt 5, so sleep is called on failures 1-4.
+            // Sleep stub should have been called RETRIES times (one per failure before bail)
+            // The implementation sleeps after each failure except the bail-out one
+            // Actually: fails 5 times. On attempt 5 it breaks. Sleep called on failures 1-4.
             expect(tracker.sleep.callCount).to.be.at.least(RETRIES - 1);
         });
 

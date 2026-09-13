@@ -546,6 +546,8 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.endTransaction(true);
 
             // Phase 2 of removeOutputsWithInputsBatch should now see a cache hit.
+            // Cache should now contain the entry (populated by insertOutput above)
+            // Run batch removal; Phase 2 should see a cache hit
             await db.beginTransaction();
             const hitsBefore = LevelUpStore.outputCacheHits;
             await db.removeOutputsWithInputsBatch([
@@ -794,6 +796,7 @@ describe('LevelUpDb (extended coverage)', function () {
 
             // Add the block in a batch but do NOT commit yet, then remove it
             // from the same in-flight batch.
+            // Add the block in a batch but do NOT commit yet
             await db.addLastStoredBlock(blockHash);
             const result = await db.removeLastStoredBlock(blockHash);
             await db.endTransaction(true);

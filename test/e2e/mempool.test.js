@@ -45,6 +45,7 @@ describe('E2E: Mempool Lifecycle', function () {
       tracker.start();
       await waitForSynced(tracker);
 
+      // Add mempool tx: addr0 sends 10 BTC to addr1
       const mempoolTx = makeTx({
         ins: [makeSpendInput(cb._txid, 0)],
         outs: [
@@ -55,6 +56,7 @@ describe('E2E: Mempool Lifecycle', function () {
       addMempoolTx(state, mempoolTx);
 
       // Call updateMempool() directly rather than waiting on the 60s poll interval.
+      // Manually trigger mempool update (don't wait for the 60s interval)
       await tracker.updateMempool();
 
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
@@ -62,6 +64,7 @@ describe('E2E: Mempool Lifecycle', function () {
       expect(info1.balances.pending).to.equal('10.00000000');
       expect(info1.utxos.pending).to.equal(1);
 
+      // Addr0: confirmed 50, pending includes mempool change
       const info0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info0.balances.confirmed).to.equal('50.00000000');
       expect(parseFloat(info0.balances.pending)).to.be.greaterThan(0);
@@ -77,6 +80,7 @@ describe('E2E: Mempool Lifecycle', function () {
       tracker.start();
       await waitForSynced(tracker);
 
+      // Add to mempool
       const spendTx = makeTx({
         ins: [makeSpendInput(cb._txid, 0)],
         outs: [makeOutput(1, 10 * SATOSHI), makeOutput(0, 3999000000)]
@@ -84,23 +88,29 @@ describe('E2E: Mempool Lifecycle', function () {
       addMempoolTx(state, spendTx);
       await tracker.updateMempool();
 
+      // Verify pending
       const infoBefore = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(infoBefore.balances.pending).to.equal('10.00000000');
       expect(infoBefore.balances.confirmed).to.equal('0.00000000');
 
+      // Mine the tx in a block
       const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(2), spendTx]);
       addBlockToState(state, block1);
+      // Clear mempool (tx was mined)
       clearMempool(state);
 
       await waitForHeight(tracker, 1);
       // updateMempool() must run again after the block is applied, otherwise
       // the now-mined tx's stale mempool entry keeps counting as pending.
+      // Re-run mempool update to clear stale entries
       await tracker.updateMempool();
 
+      // Verify confirmed
       const infoAfter = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(infoAfter.balances.confirmed).to.equal('10.00000000');
       expect(infoAfter.balances.pending).to.equal('0.00000000');
 
+      // Addr0: change is now confirmed
       const info0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info0.balances.confirmed).to.equal('39.99000000');
       expect(info0.balances.pending).to.equal('0.00000000');
@@ -116,6 +126,7 @@ describe('E2E: Mempool Lifecycle', function () {
       tracker.start();
       await waitForSynced(tracker);
 
+      // Add to mempool
       const mempoolTx = makeTx({
         ins: [makeSpendInput(cb._txid, 0)],
         outs: [makeOutput(1, 10 * SATOSHI)]
@@ -123,16 +134,20 @@ describe('E2E: Mempool Lifecycle', function () {
       addMempoolTx(state, mempoolTx);
       await tracker.updateMempool();
 
+      // Verify addr1 has pending
       const infoPending = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(infoPending.balances.pending).to.equal('10.00000000');
 
+      // Evict from mempool
       clearMempool(state);
       await tracker.updateMempool();
 
+      // Addr0: back to full confirmed
       const info0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info0.balances.confirmed).to.equal('50.00000000');
       expect(info0.balances.pending).to.equal('0.00000000');
 
+      // Addr1: no more pending
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.pending).to.equal('0.00000000');
       expect(info1.balances.confirmed).to.equal('0.00000000');
@@ -141,6 +156,7 @@ describe('E2E: Mempool Lifecycle', function () {
 
   describe('C4: multiple mempool transactions', function () {
     it('tracks pending from multiple unconfirmed txs to different addresses', async function () {
+      // Two confirmed UTXOs to addr 0
       const cb0 = makeCoinbaseTx(0, 20 * SATOSHI);
       const cb1 = makeCoinbaseTx(0, 30 * SATOSHI);
       const block0 = makeBlock(0, '0'.repeat(64), [cb0]);
@@ -150,6 +166,7 @@ describe('E2E: Mempool Lifecycle', function () {
       tracker.start();
       await waitForSynced(tracker);
 
+      // Two mempool txs spending different UTXOs
       const mpTx1 = makeTx({
         ins: [makeSpendInput(cb0._txid, 0)],
         outs: [makeOutput(1, 5 * SATOSHI)]

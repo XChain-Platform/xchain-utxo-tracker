@@ -155,10 +155,12 @@ async function processBlock(tracker, block) {
 
   // Two passes: outputs must be written before inputs are parsed, so a
   // same-block spend can find the output it's spending.
+  // Pass 1: all outputs
   for (const tx of block.transactions) {
     await tracker.parseTxOutputs(db, tx, block.hash, block.height, false, true);
   }
 
+  // Pass 2: all inputs
   for (const tx of block.transactions) {
     await tracker.parseTxInputs(db, tx, block.hash, false, true);
   }

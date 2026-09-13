@@ -19,6 +19,12 @@
 // xchain-hub copy). When the sibling xchain-hub checkout is absent, the
 // identity tier skips instead of failing; set XCHAIN_REQUIRE_SIBLINGS=1 in CI
 // so a missing sibling hard-fails instead of going green by skip.
+//
+// The registry is five files (BTC, LTC, DOGE, index.js, consensus_pin.js), and
+// the two tiers catch different edits: conformance catches a pin and a coin
+// file that were not changed in lockstep, identity catches any consumer-only
+// edit, even a self-consistent one. XCHAIN_HUB_DIR points the identity tier at
+// a hub checkout that is not beside this one.
 
 const assert = require('assert');
 const fs     = require('fs');

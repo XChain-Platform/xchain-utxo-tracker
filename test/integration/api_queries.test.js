@@ -88,6 +88,7 @@ describe('Integration: API Queries', function () {
     await closeTracker(tracker);
   });
 
+  // Seed some data: 3 blocks, addr0 gets coinbase each time
   async function seedData() {
     const block0 = makeBlock(0, '0'.repeat(64), [makeCoinbaseTx(0, 10 * SATOSHI)]);
     const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(0, 20 * SATOSHI)]);
@@ -201,6 +202,7 @@ describe('Integration: API Queries', function () {
       const res1 = await request.get('/balance/' + TEST_KEYS[0].address).expect(200);
       expect(res1.body).to.equal(coinAmount(60));
 
+      // Process one more block
       const lastHash = (await tracker.db.getLastBlockHash());
       const block3 = makeBlock(3, lastHash, [makeCoinbaseTx(0, 40 * SATOSHI)]);
       await processAndCommit(tracker, block3);

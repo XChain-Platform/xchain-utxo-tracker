@@ -56,6 +56,8 @@ async function setFreshnessHeaders(res, tracker) {
 // Stand-in app carrying the readiness and passthrough behaviour of src/api.js's
 // address routes. The middleware stack and the /balance body shape are NOT
 // production's, so read the two properties this file names and nothing wider.
+// Build the app with the SAME route bodies as src/api.js (verbatim), backed by a
+// mock tracker so we can observe exactly what the HTTP layer forwards.
 function createRealRoutesApp(tracker) {
   const app = express();
   app.use(helmet());

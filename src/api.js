@@ -18,6 +18,7 @@
  * 
  ********************************************************************/
 
+// Load required libraries
 const dotenv = require('dotenv')
 dotenv.config()
 
@@ -269,6 +270,7 @@ function installUnmatchedRouteLabel(app){
 }
 
 async function startApi(){
+    //Start the tracker
     const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
     const trackerExited = launchTracker(tracker)
 
@@ -408,6 +410,7 @@ async function startApi(){
     // Use Helmet to increase security
     app.use(helmet());
 
+    // Allow JSON requests
     app.use(bodyParser.json());
 
     // CORS disabled by default. CORS_ORIGIN is a comma-separated ALLOWLIST, not a
@@ -639,6 +642,17 @@ async function startApi(){
         // `tracker_height` and `committed_height` are aliases, both report
         // the last committed block. `committed_height` is the canonical name
         // going forward; `tracker_height` retained for existing callers.
+        // The tracker's height fields all report the LAST COMMITTED state,
+        // not in-flight processing. This matters because the tracker buffers
+        // up to DB_TRANSACTION_BLOCKS_QUANTITY blocks before flushing via
+        // endTransaction(). During a mid-batch state, in-memory has the new
+        // UTXOs but disk doesn't; and getLastBlockHeight() reads from disk.
+        // So getLastBlockHeight() returning N is a hard guarantee that every
+        // output in blocks 0..N is queryable via get_utxos / get_balance.
+        // is_quiescent() builds on this: it returns ready=true only when the
+        // committed height matches the node tip AND the node's mempool is
+        // empty, giving callers a barrier they can wait on without needing
+        // to know any of the tracker's batching internals.
         async get_sync_status() {
             let committedHeight = -1;
             try { committedHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
@@ -797,6 +811,7 @@ async function startApi(){
         // path, so wrapping it (the null case included) would change historical
         // outcomes. Callers needing freshness use get_first_seen_status below or
         // the REST /firstseen/:address headers.
+        // Function to retrieve the height of the block where an address was first seen
         async get_first_seen({address}) {
             return await getFirstSeen(address)
         },
@@ -815,12 +830,15 @@ async function startApi(){
             let balance = await getBalance(address)
 
             // sync is an additive freshness surface; see getFreshnessMeta above.
+            // Return balance; sync is an additive freshness surface (M-11).
             return { balance: balance, sync: await getFreshnessMeta() }
         },
 
+        // Function to retrieve the confirmed, pending balances of an address
         async get_info({address}) {
             const info = await getInfo(address)
             // Additive freshness surface; leaves existing fields intact.
+            // Additive freshness surface (M-11); leaves existing fields intact.
             if (info && typeof info === 'object') info.sync = await getFreshnessMeta()
             return info
         },
@@ -1149,6 +1167,7 @@ async function compressDirPigz(taskId, source, destination) {
             }
         })
 
+        // Handling init errors
         tar.on('error', (err) => reject(new Error(`tar failed to init: ${err.message}`)))
         pv.on('error', (err) => reject(new Error(`pv failed to init: ${err.message}`)))
         pigz.on('error', (err) => reject(new Error(`pigz fail to init: ${err.message}`)))
@@ -1553,6 +1572,7 @@ async function decompressPigzInner(taskId, source, destination) {
         }
     })
 
+    // Handling errors
     pigz.stderr.on('data', (data) => { console.error(`Error from pigz: ${data}`) })
     tar.stderr.on('data', (data) => { console.error(`Error from tar: ${data}`) })
 
