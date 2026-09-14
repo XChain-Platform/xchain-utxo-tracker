@@ -140,3 +140,14 @@ jobs:
             }
             console.log("consensus pin conformance OK (testnet, regtest)");
           '
+
+      # Identity pin: bin/pins/identity.json records the sha256 of every tracked
+      # file under the vendored src/coins/ and src/observability/ trees. Re-hash
+      # the tree against it and fail on any changed, added or removed file, so a
+      # stale pin cannot reach develop or master green through a direct push or
+      # a release pull request. bin/ci-full.sh runs the same command before a
+      # push. The tool lists files with git ls-files, which the checkout above
+      # provides, and otherwise uses only node builtins, so no install.
+      - name: Identity pin (vendored coins, observability)
+        working-directory: xchain-utxo-tracker
+        run: node bin/pin-identity.js --compare bin/pins/identity.json
