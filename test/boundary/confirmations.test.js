@@ -76,6 +76,18 @@ describe('Boundary: confirmation count at the chain tip', function () {
     const utxos = await tracker.getUtxosAddress(ADDR.address);
     expect(utxos[0].confirmations).to.equal(6); // 5 - 0 + 1
   });
+});
+
+describe('Boundary: confirmation count at the chain tip', function () {
+  let tracker;
+
+  beforeEach(async function () {
+    tracker = await createTestTracker();
+  });
+
+  afterEach(async function () {
+    await closeTracker(tracker);
+  });
 
   it('an output whose height exceeds a stale cached tip reports 0 confirmations, unclamped', async function () {
     // The tracker's cached tip can momentarily trail the indexed height during

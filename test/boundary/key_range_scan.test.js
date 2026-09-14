@@ -94,6 +94,19 @@ describe('Boundary: range-scan with maximal 0xFF key suffix', function () {
     expect(b).to.have.length(1);
     expect(b[0].value).to.equal('222');
   });
+});
+
+describe('Boundary: range-scan with maximal 0xFF key suffix', function () {
+  let db;
+
+  beforeEach(async function () {
+    db = new LevelUpStore('boundary-ffscan-' + Date.now() + '-' + Math.random(), true);
+    await db.createDatabase();
+  });
+
+  afterEach(async function () {
+    try { await db.close(); } catch (e) {}
+  });
 
   it('multiple vouts under one scriptHash all survive when the top vout is 0xFFFFFFFF', async function () {
     const scriptHash = 'cd'.repeat(32);
@@ -149,6 +162,19 @@ describe('Boundary: getValuesFromKeyPattern hex-decode + inclusive bounds', func
 
     const rows = await db.getValuesFromKeyPattern('4f' + scriptHash + 'a');
     expect(rows).to.be.an('array').with.length(1);
+  });
+});
+
+describe('Boundary: getValuesFromKeyPattern hex-decode + inclusive bounds', function () {
+  let db;
+
+  beforeEach(async function () {
+    db = new LevelUpStore('boundary-pattern-' + Date.now() + '-' + Math.random(), true);
+    await db.createDatabase();
+  });
+
+  afterEach(async function () {
+    try { await db.close(); } catch (e) {}
   });
 
   it('returns rows at the exact prefix and is inclusive of the upper bound', async function () {
