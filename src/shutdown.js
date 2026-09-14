@@ -15,7 +15,7 @@
  * XChain UTXO Tracker - Graceful shutdown
  *
  * Bounded, idempotent drain for SIGTERM/SIGINT, the same shape as the
- * indexer's and decoder's src/shutdown.js. The Dockerfile CMD runs node as
+ * indexer's src/api/shutdown.js and decoder's src/shutdown.js. The Dockerfile CMD runs node as
  * PID 1, so `docker stop` delivers SIGTERM here; see the CMD comment there
  * for why `npm run api` hid this (npm was PID 1, node was never told).
  *

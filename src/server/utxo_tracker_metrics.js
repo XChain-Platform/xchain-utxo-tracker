@@ -18,7 +18,7 @@
  * registry. Lives OUTSIDE src/observability/ because that directory is
  * vendored byte-identically from xchain-hub and its parity check fails on any
  * drift, so a per-service metric may only use the shared module's public API
- * from the service's own code (same reason indexerMetrics.js and
+ * from the service's own code (same reason indexer_metrics.js and
  * decoderMetrics.js sit beside their services).
  *
  * Why the tracker needs its own: commit recency, halt state and reorg counters
