@@ -24,8 +24,8 @@
  * WHY IT NEEDS NO DATABASE. `mocha --dry-run` loads every spec file and walks
  * the suite tree without invoking a single hook or test body. Titles are
  * declared at load time, so they are all there; nothing connects, nothing
- * writes. That is what makes this pin cheap enough to re-take at every
- * milestone instead of once.
+ * writes. That is what makes this pin cheap enough to re-take after every
+ * structural change instead of once.
  *
  * EACH SCRIPT RUNS WITH ITS OWN ARGUMENTS, unchanged apart from the reporter
  * and the dry run. That matters more than it looks: the plain `test` script
@@ -48,8 +48,9 @@
  *   node bin/suite-title-map.js --compare <pin>    diff the tree against a pin,
  *                                                  exit 1 on any difference
  *   node bin/suite-title-map.js --compare <pin> --rename-map <file>
- *                                                  the same, with the moving
- *                                                  commit's {old: new} paths
+ *                                                  the same, with the declared
+ *                                                  renames (flat {old: new}
+ *                                                  paths, or {paths, titles})
  *                                                  applied to the pin first
  *
  ********************************************************************/
@@ -214,11 +215,19 @@ function expand(map, scriptName) {
 }
 
 /**
- * Pin against tree, script by script. `renames` is the moving commit's declared
- * {oldPath: newPath}; a pin entry is compared under its new name so a pure move
- * reports no difference while a move that changed a title still does.
+ * Pin against tree, script by script. `renames` is either the moving commit's
+ * flat {oldPath: newPath}, or {paths: {oldPath: newPath}, titles: {newPath:
+ * {oldTitle: newTitle}}} when a commit also renamed what a test is called. A pin
+ * entry is compared under its new name and its declared new titles, so a pure
+ * move or a declared rename reports no difference while an undeclared title
+ * change still does. A title rename is keyed by file because the same words can
+ * name different tests in two suites, and only the one that moved is declared.
  */
 function compare(pin, fresh, renames, only) {
+    const structured = renames && typeof renames.paths === 'object' && renames.paths !== null;
+    const pathRenames = structured ? renames.paths : renames;
+    const titleRenames = (structured && renames.titles) || {};
+    renames = pathRenames;
     const differences = [];
     // A run narrowed to one script compares that script only: every other
     // script in the pin is absent because it was not collected, which is not a
@@ -235,7 +244,11 @@ function compare(pin, fresh, renames, only) {
             continue;
         }
         const mapped = {};
-        for (const rel of Object.keys(before)) mapped[renames[rel] || rel] = before[rel];
+        for (const rel of Object.keys(before)) {
+            const moved = renames[rel] || rel;
+            const retitled = titleRenames[moved] || {};
+            mapped[moved] = before[rel].map((t) => retitled[t] || t);
+        }
         const files = Array.from(new Set(Object.keys(mapped).concat(Object.keys(after)))).sort();
         for (const rel of files) {
             if (!mapped[rel]) { differences.push({ script: name, kind: 'file_added', file: rel }); continue; }
