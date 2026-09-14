@@ -11,7 +11,7 @@
 // contact legal@dankest.llc.
 
 const { expect } = require('chai');
-const util = require('../../src/util');
+const util = require('../../src/common/util');
 
 describe('util', function () {
 

@@ -17,7 +17,7 @@
  ********************************************************************/
 
 // Load required libraries
-const util = require('./util')
+const util = require('./common/util')
 const config = require('./config')
 const coins = require('./coins')
 const { assertBigIntBufferutils } = require('./chain/assert_bigint_bufferutils')

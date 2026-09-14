@@ -22,7 +22,7 @@
 const crypto = require('crypto');
 const { hrtime } = require('node:process');
 const util = require('node:util');
-const { getLogger } = require('./observability');
+const { getLogger } = require('../observability');
 const logger = getLogger();
 
 var debugTime = {}

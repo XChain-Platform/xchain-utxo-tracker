@@ -45,7 +45,7 @@
  ********************************************************************/
 
 // Load required libraries
-const util = require('../util')
+const util = require('../common/util')
 const config = require('../config')
 const memoryBudget = require('./memory_budget')
 

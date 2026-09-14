@@ -12,7 +12,7 @@
   },
   "mutate": [
     "src/chain/crypto_networks.js",
-    "src/util.js"
+    "src/common/util.js"
   ],
   "reporters": ["html", "clear-text", "progress"],
   "htmlReporter": {

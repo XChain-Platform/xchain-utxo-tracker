@@ -19,7 +19,7 @@
     "src/chain/blockchain_connector.js",
     "src/chain/XChainBlockDecoder.js",
     "src/chain/crypto_networks.js",
-    "src/util.js"
+    "src/common/util.js"
   ],
   "reporters": ["html", "clear-text", "progress"],
   "htmlReporter": {
