@@ -93,6 +93,13 @@ run_tier "drift: coin consensus-pin conformance" node -e '
   console.log("consensus pin conformance OK (testnet, regtest)");
 '
 
+# --- identity pin (this gate only; no ci.yml job runs it) ------------------
+# bin/pins/identity.json holds the sha256 of every tracked file under the
+# vendored src/coins/ and src/observability/ trees. Nothing else reads it, so
+# this tier re-hashes the tree against it and fails on any changed, added or
+# removed file instead of letting the pin go stale.
+run_tier "identity pin (vendored coins, observability)" node bin/pin-identity.js --compare bin/pins/identity.json
+
 echo
 if [ -n "$FAILED" ]; then
   echo "ci:full: RED tiers:$FAILED"
