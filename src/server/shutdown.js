@@ -39,7 +39,7 @@
 // diagnosable, one that ends in the daemon's SIGKILL is not. On a container
 // created before the budget existed docker's ten seconds still applies.
 // SHUTDOWN_TIMEOUT_MS overrides for a slow chain.
-const config = require('./config')
+const config = require('../config')
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 100000
 

@@ -755,7 +755,7 @@ class XChainUtxoTracker {
         return this.mempoolReconverged
     }
     
-    // Drain entry for SIGTERM (src/shutdown.js). Unlike stopParsing(), which is
+    // Drain entry for SIGTERM (src/server/shutdown.js). Unlike stopParsing(), which is
     // the RPC-facing pause and RESTORES the loop when it cannot stop within ten
     // seconds, this only asks: the loop takes its else branch at its next
     // keepParsing check (a block boundary), closes the store and breaks, and

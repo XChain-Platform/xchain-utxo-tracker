@@ -52,7 +52,7 @@ const { isWrapperArchive, parseSha256Sidecar,
 const { installObservability } = require('./observability');   // default-off /metrics + structured log shim
 const { installUtxoTrackerMetrics } = require('./server/utxo_tracker_metrics');   // sync-freshness heartbeat gauges
 const { installCrashHandlers, noteCrash } = require('./server/crash_handlers.js')
-const { createShutdown, createTrackerDrain } = require('./shutdown.js')
+const { createShutdown, createTrackerDrain } = require('./server/shutdown.js')
 const jsonRouter = require('express-json-rpc-router')
 const concurrencyGate = require('./server/concurrency_gate.js')
 const { envInt: sharedEnvInt } = require('./config/env_int')
@@ -1051,7 +1051,7 @@ async function startApi(){
     // Graceful shutdown. node is PID 1 in the image, so `docker stop` delivers
     // SIGTERM here; without a handler node's default action killed the block
     // loop wherever it stood and the container exited 1. The drain is bounded
-    // by its own hard-exit timer (src/shutdown.js) because installing a handler
+    // by its own hard-exit timer (src/server/shutdown.js) because installing a handler
     // removes node's default terminate.
     const shutdown = createShutdown({
         drain: createTrackerDrain({

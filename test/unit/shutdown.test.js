@@ -21,7 +21,7 @@ const assert = require('assert')
 const fs = require('fs')
 const path = require('path')
 const sinon = require('sinon')
-const { createShutdown, createTrackerDrain, closeServer, closeStores, resolveTimeoutMs, DEFAULT_SHUTDOWN_TIMEOUT_MS } = require('../../src/shutdown')
+const { createShutdown, createTrackerDrain, closeServer, closeStores, resolveTimeoutMs, DEFAULT_SHUTDOWN_TIMEOUT_MS } = require('../../src/server/shutdown')
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker')
 const pkg = require('../../package.json');
 
