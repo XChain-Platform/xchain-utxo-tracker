@@ -29,16 +29,17 @@ const fs   = require('fs');
 const path = require('path');
 const { envInt } = require('../../src/api');
 const { resolveUndoBlocks } = require('../../src/chain/undo_blocks');
+const { captureLog } = require('../helpers/capture_log');
 
 const API_SRC = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
 
 // Swallow the deliberate warnings so a rejection case does not spray the reporter.
+// envInt warns through the shared logger at error level, so that is what counts.
 function quietly(fn) {
-    const prev  = console.error;
-    const lines = [];
-    console.error = (...a) => lines.push(a.join(' '));
+    const lines   = [];
+    const release = captureLog(['error'], (level, msg) => lines.push(msg));
     try { return { value: fn(), lines }; }
-    finally { console.error = prev; }
+    finally { release(); }
 }
 
 function withEnv(name, value, fn) {

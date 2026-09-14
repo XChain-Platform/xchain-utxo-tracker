@@ -24,6 +24,7 @@
 
 const { expect } = require('chai');
 const { resolveCoinbaseMaturity, DEFAULT_COINBASE_MATURITY } = require('../../src/chain/coinbase_maturity');
+const { captureLog } = require('../helpers/capture_log');
 
 describe('resolveCoinbaseMaturity', function () {
 
@@ -91,12 +92,12 @@ describe('resolveCoinbaseMaturity', function () {
     });
 
     // Swallow the deliberate warnings so a refusal case does not spray the reporter.
+    // The resolver warns through the shared logger at error level, so that is what counts.
     function quietly(fn) {
-      const prev = console.error;
       const lines = [];
-      console.error = (...a) => lines.push(a.join(' '));
+      const release = captureLog(['error'], (level, msg) => lines.push(msg));
       try { return { value: fn(), lines }; }
-      finally { console.error = prev; }
+      finally { release(); }
     }
 
     it('a non-positive or non-integer env override falls back to the per-chain default', function () {

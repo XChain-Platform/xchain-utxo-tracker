@@ -28,6 +28,7 @@ const express     = require('express');
 const http        = require('http');
 const rateLimit   = require('express-rate-limit');
 const { createConcurrencyGate, resolveLimit } = require('../../src/server/concurrency_gate.js');
+const { captureLog } = require('../helpers/capture_log');
 const fs = require('fs');
 const path = require('path');
 
@@ -456,16 +457,16 @@ describe('Security: global in-flight concurrency cap', function () {
             expect(parseInt('0.5', 10)).to.equal(0);
             expect(Number.isFinite(parseInt('0oops', 10))).to.equal(true);
 
-            const quiet = console.error;
+            // resolveLimit warns through the shared logger at error level.
             const warned = [];
-            console.error = (...a) => warned.push(a.join(' '));
+            const release = captureLog(['error'], (level, msg) => warned.push(msg));
             try {
                 for (const bad of ['0oops', '0.5', '16abc', '1e', '2.9']) {
                     expect(resolveLimit(bad, 100), 'resolveLimit should have refused ' + bad).to.equal(100);
                     expect(resolveLimit(bad, 16),  'resolveLimit should have refused ' + bad).to.equal(16);
                 }
             } finally {
-                console.error = quiet;
+                release();
             }
             expect(warned.join('\n')).to.match(/is not an integer/);
         });

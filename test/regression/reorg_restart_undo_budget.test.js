@@ -39,6 +39,7 @@
 
 const { expect } = require('chai');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
+const { captureLog } = require('../helpers/capture_log');
 const {
     SATOSHI,
     createTestTracker,
@@ -190,21 +191,20 @@ describe('Regression: the reorg rollback budget survives a restart', function ()
     describe('boot signal for a window that came back short', function () {
         let warnings;
         let logs;
-        let originalWarn;
-        let originalLog;
+        let release;
 
+        // The boot signal goes through the shared logger: warn for a rollback,
+        // info for a window that is only still refilling.
         beforeEach(function () {
             warnings = [];
             logs = [];
-            originalWarn = console.warn;
-            originalLog = console.log;
-            console.warn = (msg) => { warnings.push(String(msg)); };
-            console.log = (msg) => { logs.push(String(msg)); };
+            release = captureLog(['warn', 'info'], (level, msg) => {
+                (level === 'warn' ? warnings : logs).push(msg);
+            });
         });
 
         afterEach(function () {
-            console.warn = originalWarn;
-            console.log = originalLog;
+            release();
         });
 
         it('names the surviving budget when a rollback was interrupted', function () {
@@ -302,15 +302,13 @@ describe('Regression: the reorg rollback budget survives a restart', function ()
 
             const logs = [];
             const warnings = [];
-            const originalLog = console.log;
-            const originalWarn = console.warn;
-            console.log = (msg) => { logs.push(String(msg)); };
-            console.warn = (msg) => { warnings.push(String(msg)); };
+            const releaseBoot = captureLog(['warn', 'info'], (level, msg) => {
+                (level === 'warn' ? warnings : logs).push(msg);
+            });
             try {
                 tracker.noteInterruptedReorgWindow(11);
             } finally {
-                console.log = originalLog;
-                console.warn = originalWarn;
+                releaseBoot();
             }
             expect(warnings).to.have.length(0);
             expect(logs.join('\n')).to.match(/came back with 6 of 10/);
@@ -324,12 +322,11 @@ describe('Regression: the reorg rollback budget survives a restart', function ()
 
             tracker.lastBlocks = tracker.lastBlocks.slice(1);
             const warned = [];
-            const prevWarn = console.warn;
-            console.warn = (msg) => { warned.push(String(msg)); };
+            const releaseWarn = captureLog(['warn'], (level, msg) => warned.push(msg));
             try {
                 tracker.noteInterruptedReorgWindow(12);
             } finally {
-                console.warn = prevWarn;
+                releaseWarn();
             }
             expect(warned).to.have.length(1);
             expect(warned[0]).to.match(/interrupted mid-reorg after rolling back 1 of the 7/);
