@@ -18,14 +18,14 @@
  * 64-bit reader that throws 'RangeError: value out of range' above 2^53-1,
  * a ceiling Dogecoin mainnet exceeds (>~90.07M DOGE in one output); the
  * first such output wedges block decode permanently. The fix used to live
- * only in the Dockerfile COPY of src/bufferutils.js over node_modules, so
+ * only in the Dockerfile COPY of src/chain/bufferutils.js over node_modules, so
  * any non-Docker run (or a node_modules refresh inside a container)
  * silently reverted to the stock reader. Requiring this module rewrites
  * the loaded bitcoinjs-lib bufferutils module in place with the same
  * behavior as the patched file, making every runtime safe regardless of
  * whether the Dockerfile COPY happened.
  *
- * src/bufferutils.js itself cannot be required here: its require('../types')
+ * src/chain/bufferutils.js itself cannot be required here: its require('../types')
  * only resolves once the file sits inside bitcoinjs-lib/src/. The overrides
  * below mirror that file exactly; change them together.
  *
@@ -50,7 +50,7 @@ function bigIntReaderActive(bu) {
 }
 
 if (!bigIntReaderActive(bufferutils)) {
-    // BigInt-tolerant bounds check, mirroring verifuint in src/bufferutils.js.
+    // BigInt-tolerant bounds check, mirroring verifuint in src/chain/bufferutils.js.
     const verifuint = function (value, max) {
         if (typeof value !== 'number' && typeof value !== 'bigint')
             throw new Error('cannot write a non-number as a number');

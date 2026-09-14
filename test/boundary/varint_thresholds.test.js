@@ -20,12 +20,12 @@
 
 const { expect } = require('chai');
 const varuint = require('varuint-bitcoin');
-// src/bufferutils.js is a Docker-only override of bitcoinjs-lib's version
+// src/chain/bufferutils.js is a Docker-only override of bitcoinjs-lib's version
 // (its require('./types') only resolves inside the lib's src/, so it can't be
 // required directly here). The code that runs locally (XChainBlockDecoder's
 // BufferReader) loads the installed lib copy instead, the real path this
 // file pins; see unit/bufferutils.test.js for the resolver shim.
-// src/bufferutils.js is a Docker-only override of bitcoinjs-lib/src/bufferutils
+// src/chain/bufferutils.js is a Docker-only override of bitcoinjs-lib/src/bufferutils
 // (its require('./types') only resolves inside the lib's src/). The code that
 // runs locally (XChainBlockDecoder's BufferReader) loads the installed lib
 // copy, so that is the real, exercised path we pin here (same API). See
