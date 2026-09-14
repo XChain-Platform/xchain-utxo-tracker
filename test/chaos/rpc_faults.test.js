@@ -20,19 +20,22 @@ const {
   forceVerifyReorg, buildCommittedChain
 } = require('./support/chaos_helpers');
 
+async function createTracker() {
+  const tracker = await createTestTracker();
+  // Override sleep to avoid 3-second delays in verifyReorg retry loops
+  tracker.sleep = async () => {};
+  return tracker;
+}
+
+async function destroyTracker(tracker) {
+  sinon.restore();
+  await closeTracker(tracker);
+}
+
 describe('Chaos: RPC Faults', function () {
   let tracker;
-
-  beforeEach(async function () {
-    tracker = await createTestTracker();
-    // Override sleep to avoid 3-second delays in verifyReorg retry loops
-    tracker.sleep = async () => {};
-  });
-
-  afterEach(async function () {
-    sinon.restore();
-    await closeTracker(tracker);
-  });
+  beforeEach(async function () { tracker = await createTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
 
   // Experiment 4: Complete RPC Connection Loss (RPC-01)
   describe('Exp 4: RPC Connection Loss', function () {
@@ -87,6 +90,12 @@ describe('Chaos: RPC Faults', function () {
       expect(calls).to.be.at.least(11);
     });
   });
+});
+
+describe('Chaos: RPC Faults', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
 
   // Experiment 5: Malformed RPC Response (RPC-03)
   describe('Exp 5a: Null RPC Response', function () {
@@ -121,6 +130,12 @@ describe('Chaos: RPC Faults', function () {
       }
     });
   });
+});
+
+describe('Chaos: RPC Faults', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
 
   describe('Exp 5b: Truncated Hash Response', function () {
 
@@ -151,6 +166,12 @@ describe('Chaos: RPC Faults', function () {
     // that must be re-indexed.
     });
   });
+});
+
+describe('Chaos: RPC Faults', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
 
   describe('Exp 5c: Alternating valid/invalid responses', function () {
 
@@ -181,6 +202,12 @@ describe('Chaos: RPC Faults', function () {
       expect(block.h).to.equal(finalHeight);
     });
   });
+});
+
+describe('Chaos: RPC Faults', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
 
   describe('Exp 5d: RPC response after recovering from errors', function () {
 

@@ -20,17 +20,15 @@ const {
   buildCommittedChain
 } = require('./support/chaos_helpers');
 
+async function destroyTracker(tracker) {
+  sinon.restore();
+  await closeTracker(tracker);
+}
+
 describe('Chaos: Concurrency', function () {
   let tracker;
-
-  beforeEach(async function () {
-    tracker = await createTestTracker();
-  });
-
-  afterEach(async function () {
-    sinon.restore();
-    await closeTracker(tracker);
-  });
+  beforeEach(async function () { tracker = await createTestTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
 
   // Experiment 10: Concurrent Query During Batch Commit (STATE-03)
   describe('Exp 10: Concurrent Queries During Batch Commit', function () {
@@ -71,6 +69,15 @@ describe('Chaos: Concurrency', function () {
         ).to.be.true;
       }
     });
+  });
+});
+
+describe('Chaos: Concurrency', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTestTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
+
+  describe('Exp 10: Concurrent Queries During Batch Commit', function () {
 
     it('post-commit queries reflect the committed state', async function () {
       await buildCommittedChain(tracker, 3, 0);
@@ -89,6 +96,15 @@ describe('Chaos: Concurrency', function () {
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('25.00000000');
     });
+  });
+});
+
+describe('Chaos: Concurrency', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTestTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
+
+  describe('Exp 10: Concurrent Queries During Batch Commit', function () {
 
     it('UTXO queries return valid results during commit', async function () {
       await buildCommittedChain(tracker, 3, 0);
@@ -120,6 +136,12 @@ describe('Chaos: Concurrency', function () {
       }
     });
   });
+});
+
+describe('Chaos: Concurrency', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTestTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
 
   // Experiment 8: Mempool Flood (RPC-06)
   describe('Exp 8: Mempool Flood', function () {
@@ -174,6 +196,15 @@ describe('Chaos: Concurrency', function () {
         expect(info.balances.confirmed).to.equal('100.00000000');
       }
     });
+  });
+});
+
+describe('Chaos: Concurrency', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTestTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
+
+  describe('Exp 8: Mempool Flood', function () {
 
     it('mempool flood does not corrupt confirmed UTXO state', async function () {
       await buildCommittedChain(tracker, 10, 0);
@@ -197,6 +228,15 @@ describe('Chaos: Concurrency', function () {
       // The main DB height is unchanged
       expect(await tracker.db.getLastBlockHeight()).to.equal(9);
     });
+  });
+});
+
+describe('Chaos: Concurrency', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTestTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
+
+  describe('Exp 8: Mempool Flood', function () {
 
     it('new confirmed blocks can be processed after mempool flood', async function () {
       const blocks = await buildCommittedChain(tracker, 3, 0);

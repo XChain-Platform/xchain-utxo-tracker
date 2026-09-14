@@ -21,19 +21,22 @@ const {
   buildCommittedChain
 } = require('./support/chaos_helpers');
 
+async function createTracker() {
+  const tracker = await createTestTracker();
+  // Override sleep to avoid 3-second delays in verifyReorg retry loops
+  tracker.sleep = async () => {};
+  return tracker;
+}
+
+async function destroyTracker(tracker) {
+  sinon.restore();
+  await closeTracker(tracker);
+}
+
 describe('Chaos: State Corruption', function () {
   let tracker;
-
-  beforeEach(async function () {
-    tracker = await createTestTracker();
-    // Override sleep to avoid 3-second delays in verifyReorg retry loops
-    tracker.sleep = async () => {};
-  });
-
-  afterEach(async function () {
-    sinon.restore();
-    await closeTracker(tracker);
-  });
+  beforeEach(async function () { tracker = await createTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
 
   // Experiment 3: State Anchor Corruption (LDB-04)
   describe('Exp 3a: Corrupted Block Height', function () {
@@ -63,6 +66,12 @@ describe('Chaos: State Corruption', function () {
       expect(await tracker.db.getLastBlockHash()).to.equal(blocks[4].hash);
     });
   });
+});
+
+describe('Chaos: State Corruption', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
 
   describe('Exp 3b: Corrupted Block Hash', function () {
 
@@ -89,6 +98,12 @@ describe('Chaos: State Corruption', function () {
       expect(finalHash).to.equal(blocks[4].hash);
     });
   });
+});
+
+describe('Chaos: State Corruption', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
 
   describe('Exp 3c: Missing State Anchors', function () {
 
@@ -116,6 +131,12 @@ describe('Chaos: State Corruption', function () {
       expect(info.balances.confirmed).to.equal('150.00000000');
     });
   });
+});
+
+describe('Chaos: State Corruption', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
 
   // Experiment 6: Reorg During Batch (STATE-01)
   describe('Exp 6: Chain Reorganization During Uncommitted Batch', function () {
@@ -156,6 +177,15 @@ describe('Chaos: State Corruption', function () {
       expect(b3).to.not.be.null;
       expect(b3.h).to.equal(3);
     });
+  });
+});
+
+describe('Chaos: State Corruption', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
+
+  describe('Exp 6: Chain Reorganization During Uncommitted Batch', function () {
 
     it('replacement blocks can be processed after reorg discards batch', async function () {
       const blocks = await buildCommittedChain(tracker, 4, 0);
@@ -190,6 +220,15 @@ describe('Chaos: State Corruption', function () {
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('0.00000000');
     });
+  });
+});
+
+describe('Chaos: State Corruption', function () {
+  let tracker;
+  beforeEach(async function () { tracker = await createTracker(); });
+  afterEach(async function () { await destroyTracker(tracker); });
+
+  describe('Exp 6: Chain Reorganization During Uncommitted Batch', function () {
 
     it('reorg restores spent outputs from K/M archives', async function () {
       // Block 0: coinbase 50 BTC to addr0
