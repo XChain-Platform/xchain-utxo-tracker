@@ -20,9 +20,9 @@ const {
   coinAmount, sumAmounts
 } = require('./support/helpers');
 
-describe('Integration: Mempool', function () {
-  let tracker;
+let tracker;
 
+function useTracker() {
   beforeEach(async function () {
     tracker = await createTestTracker();
   });
@@ -30,22 +30,26 @@ describe('Integration: Mempool', function () {
   afterEach(async function () {
     await closeTracker(tracker);
   });
+}
 
-  // Mimics updateMempool: parses a transaction into the mempool DB.
-  // Helper: parse a transaction into the mempool DB (mimics updateMempool logic)
-  async function addToMempool(tx) {
-    await tracker.mempoolDb.beginTransaction();
-    await tracker.parseTransaction(tracker.mempoolDb, tx, null, -1, true);
-    await tracker.mempoolDb.endTransaction();
-  }
+// Mimics updateMempool: parses a transaction into the mempool DB.
+// Helper: parse a transaction into the mempool DB (mimics updateMempool logic)
+async function addToMempool(tx) {
+  await tracker.mempoolDb.beginTransaction();
+  await tracker.parseTransaction(tracker.mempoolDb, tx, null, -1, true);
+  await tracker.mempoolDb.endTransaction();
+}
 
-  // Simulates a mempool update that clears stale transactions.
-  // Helper: reset the mempool DB to empty (simulates mempool update that clears stale txs)
-  async function resetMempool() {
-    await tracker.mempoolDb.close();
-    tracker.mempoolDb = new LevelUpStore('mempool-reset-' + Date.now() + '-' + Math.random(), true);
-    await tracker.mempoolDb.createDatabase();
-  }
+// Simulates a mempool update that clears stale transactions.
+// Helper: reset the mempool DB to empty (simulates mempool update that clears stale txs)
+async function resetMempool() {
+  await tracker.mempoolDb.close();
+  tracker.mempoolDb = new LevelUpStore('mempool-reset-' + Date.now() + '-' + Math.random(), true);
+  await tracker.mempoolDb.createDatabase();
+}
+
+describe('Integration: Mempool', function () {
+  useTracker();
 
   describe('mempool outputs appear as pending', function () {
     it('shows unconfirmed outputs in pending balance', async function () {
@@ -78,6 +82,10 @@ describe('Integration: Mempool', function () {
       expect(info0.utxos.pending).to.equal(1);
     });
   });
+});
+
+describe('Integration: Mempool', function () {
+  useTracker();
 
   describe('mempool transaction gets confirmed', function () {
     it('moves balance from pending to confirmed', async function () {
@@ -112,6 +120,10 @@ describe('Integration: Mempool', function () {
       expect(info0.balances.pending).to.equal('0.00000000');
     });
   });
+});
+
+describe('Integration: Mempool', function () {
+  useTracker();
 
   describe('mempool transaction dropped', function () {
     it('restores original balance when mempool tx disappears', async function () {
@@ -144,6 +156,10 @@ describe('Integration: Mempool', function () {
       expect(info1.balances.pending).to.equal('0.00000000');
     });
   });
+});
+
+describe('Integration: Mempool', function () {
+  useTracker();
 
   describe('multiple mempool transactions', function () {
     it('tracks pending from multiple unconfirmed txs to different addresses', async function () {
@@ -175,6 +191,10 @@ describe('Integration: Mempool', function () {
       expect(info2.balances.pending).to.equal('8.00000000');
     });
   });
+});
+
+describe('Integration: Mempool', function () {
+  useTracker();
 
   describe('mempool output for new address', function () {
     it('shows pending balance for address with no confirmed history', async function () {
