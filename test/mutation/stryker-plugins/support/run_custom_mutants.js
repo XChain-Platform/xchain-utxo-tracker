@@ -56,6 +56,12 @@ const DEFAULT_TARGETS = [
   'src/XChainUtxoTracker.js',
   'src/chain/bufferutils.js',
   'src/chain/blockchain_connector.js',
+  'src/chain/blockchain_connector/auxpow_codec.js',
+  'src/chain/blockchain_connector/batch_fetch.js',
+  'src/chain/blockchain_connector/block_queries.js',
+  'src/chain/blockchain_connector/constants.js',
+  'src/chain/blockchain_connector/rpc_helpers.js',
+  'src/chain/blockchain_connector/transport_and_mempool.js',
   'src/chain/XChainBlockDecoder.js',
 ];
 
