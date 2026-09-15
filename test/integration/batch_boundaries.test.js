@@ -17,9 +17,9 @@ const {
   createTestTracker, closeTracker
 } = require('./support/helpers');
 
-describe('Integration: Batch Boundaries', function () {
-  let tracker;
+let tracker;
 
+function useTracker() {
   beforeEach(async function () {
     tracker = await createTestTracker();
   });
@@ -27,6 +27,10 @@ describe('Integration: Batch Boundaries', function () {
   afterEach(async function () {
     await closeTracker(tracker);
   });
+}
+
+describe('Integration: Batch Boundaries', function () {
+  useTracker();
 
   describe('mid-batch state isolation', function () {
     it('uncommitted state is not visible via direct DB reads', async function () {
@@ -57,6 +61,10 @@ describe('Integration: Batch Boundaries', function () {
       expect(outputsAfter).to.have.length(1);
     });
   });
+});
+
+describe('Integration: Batch Boundaries', function () {
+  useTracker();
 
   describe('multi-block batch commit', function () {
     it('atomically commits multiple blocks in a single batch', async function () {
@@ -98,6 +106,10 @@ describe('Integration: Batch Boundaries', function () {
       expect(lastHash).to.equal(blocks[9].hash);
     });
   });
+});
+
+describe('Integration: Batch Boundaries', function () {
+  useTracker();
 
   describe('sequential batches', function () {
     it('state persists correctly across multiple batch commits', async function () {
@@ -141,6 +153,10 @@ describe('Integration: Batch Boundaries', function () {
       expect(lastHeight).to.equal(9);
     });
   });
+});
+
+describe('Integration: Batch Boundaries', function () {
+  useTracker();
 
   describe('empty batch', function () {
     it('begin+end with no operations does not corrupt state', async function () {
