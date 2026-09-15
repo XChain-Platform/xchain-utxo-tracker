@@ -18,16 +18,19 @@ const {
 } = require('../support/helpers');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker');
 
+let tracker;
+
+async function prepareTracker() {
+  tracker = await createTestTracker();
+}
+
+async function releaseTracker() {
+  await closeTracker(tracker);
+}
+
 describe('Fuzz: Address Validation (P1)', function () {
-  let tracker;
-
-  beforeEach(async function () {
-    tracker = await createTestTracker();
-  });
-
-  afterEach(async function () {
-    await closeTracker(tracker);
-  });
+  beforeEach(prepareTracker);
+  afterEach(releaseTracker);
 
   describe('getAddressType', function () {
     it('never throws for any string input', async function () {
@@ -51,7 +54,14 @@ describe('Fuzz: Address Validation (P1)', function () {
         expect(result).to.equal('p2pkh');
       }
     });
+  });
+});
 
+describe('Fuzz: Address Validation (P1)', function () {
+  beforeEach(prepareTracker);
+  afterEach(releaseTracker);
+
+  describe('getAddressType', function () {
     it('returns "unknown" for garbage inputs', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -85,6 +95,11 @@ describe('Fuzz: Address Validation (P1)', function () {
       }
     });
   });
+});
+
+describe('Fuzz: Address Validation (P1)', function () {
+  beforeEach(prepareTracker);
+  afterEach(releaseTracker);
 
   describe('getBalanceInfo with fuzzed addresses', function () {
     it('returns valid result for any valid address', async function () {
@@ -106,6 +121,14 @@ describe('Fuzz: Address Validation (P1)', function () {
       );
     });
 
+  });
+});
+
+describe('Fuzz: Address Validation (P1)', function () {
+  beforeEach(prepareTracker);
+  afterEach(releaseTracker);
+
+  describe('getBalanceInfo with fuzzed addresses', function () {
     it('throws for invalid addresses (toOutputScript fails)', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -135,6 +158,11 @@ describe('Fuzz: Address Validation (P1)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: Address Validation (P1)', function () {
+  beforeEach(prepareTracker);
+  afterEach(releaseTracker);
 
   describe('getUtxosAddress with fuzzed addresses', function () {
     it('returns array for valid addresses', async function () {
@@ -161,6 +189,14 @@ describe('Fuzz: Address Validation (P1)', function () {
       );
     });
 
+  });
+});
+
+describe('Fuzz: Address Validation (P1)', function () {
+  beforeEach(prepareTracker);
+  afterEach(releaseTracker);
+
+  describe('getUtxosAddress with fuzzed addresses', function () {
     it('throws for invalid addresses', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -182,6 +218,11 @@ describe('Fuzz: Address Validation (P1)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: Address Validation (P1)', function () {
+  beforeEach(prepareTracker);
+  afterEach(releaseTracker);
 
   describe('getFirstSeen with fuzzed addresses', function () {
     it('returns null or {height} for valid addresses', async function () {
