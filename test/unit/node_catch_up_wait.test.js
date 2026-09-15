@@ -118,18 +118,24 @@ describe('XChainUtxoTracker: a node still catching up is not a rollback', functi
     // the branch needs a live node below our tip to reach.
     const detection = src.indexOf('The last processed block height are greater than the last block of the node');
     const branchTop = src.lastIndexOf('if (lastProcessedBlockIndex > this.blockchainInfoLastBlock)', detection);
+    // One sync loop step's text, from its declaration to its closing brace.
+    const stepBody = (name) => {
+      const from = src.indexOf('async function ' + name + '(');
+      return from === -1 ? '' : src.slice(from, src.indexOf('\n}\n', from));
+    };
 
     it('checks initialblockdownload before the regression is acted on', function () {
       expect(branchTop).to.be.greaterThan(0);
       const between = src.slice(branchTop, detection);
       expect(between).to.match(/nodeStillCatchingUp\(lastBlockchainInfo\)/);
       const at = between.indexOf('nodeStillCatchingUp(lastBlockchainInfo)');
-      // Window sized to hold the whole wait branch (it also publishes the wait
-      // state) while still ending well short of the verifyReorg call below it,
-      // which is what the last assertion here is proving stays out of this path.
-      const branch = between.slice(at, at + 1200);
+      // The check hands the pass to the wait step, which publishes the wait
+      // state and sleeps, and the pass ends there: that step never reaches the
+      // verifyReorg call below it, which is what the last assertion here is
+      // proving stays out of this path.
+      expect(between.slice(at)).to.match(/^nodeStillCatchingUp\(lastBlockchainInfo\)\) return waitOnCatchingUpNode\.call\(this, sync\)/);
+      const branch = stepBody('waitOnCatchingUpNode');
       expect(branch).to.match(/await this\.sleep\(\d+\)/);
-      expect(branch).to.match(/continue/);
       expect(branch).to.not.match(/verifyReorg/);
     });
 
@@ -146,7 +152,7 @@ describe('XChainUtxoTracker: a node still catching up is not a rollback', functi
       const after = src.slice(call, call + 1200);
       expect(after).to.match(/err\.tipBelowCommittedTip/);
       expect(after).to.match(/await this\.sleep\(\d+\)/);
-      expect(after).to.match(/continue/);
+      expect(after).to.match(/\breturn\b/);
       expect(after, 'the handler must not halt in place; the index needs no rebuild').to.not.match(/haltForResync\(/);
     });
   });

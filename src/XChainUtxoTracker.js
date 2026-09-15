@@ -451,8 +451,6 @@ class XChainUtxoTracker {
             + "bootstrap again lands back here if its tip is the drifted one."
     }
 
-    
-    
     async start(){
         this.db = new LevelUpStore(this.dbName)
         this.mempoolDb = new LevelUpStore("mempool"+this.dbName, true)
@@ -466,688 +464,23 @@ class XChainUtxoTracker {
 
         logger.info("Indexing...")
 
-        let lastProcessedBlockIndex = await this.db.getLastBlockHeight()
-        let lastProcessedBlockHash = await this.db.getLastBlockHash()
+        const cursor = await loadSyncCursor.call(this)
+        recoverPendingCleanup.call(this, cursor.pendingCleanup)
+        const sync = newSyncLoopState.call(this, cursor)
 
-        // Load in ascending height order (tip last) so a reorg right after a
-        // restart doesn't trip removeFromLastBlocks. See helper for detail.
-        this.lastBlocks = await this.loadLastBlocksSortedByHeight()
-
-        // Before the diagnostic: it is the watermark that says whether a short
-        // window is a rollback that was interrupted or one that never got deeper.
-        await this.loadUndoWindowWatermark()
-
-        this.noteInterruptedReorgWindow(lastProcessedBlockIndex)
-
-        // Recover any K/M cleanup work that was staged but not completed before a prior crash.
-        // abstract-level .get returns undefined on a missing key (no throw); real
-        // I/O errors still propagate. Clear first: start() re-runs on the SAME tracker
-        // object after restorebootstrap replaces the store, and the read below only
-        // assigns when the P key exists, so without this the restored database inherits
-        // the previous database's pending list and cleanupAgedBlocks prunes K/M/W/Z
-        // records against block hashes that store never held.
-        this.pendingKMCleanup = []
-        const pVal = await this.db.db.get(P_PENDING_CLEANUP_KEY)
-        if (pVal !== undefined) {
-            this.pendingKMCleanup = JSON.parse(pVal.toString())
-            if (this.pendingKMCleanup.length > 0) {
-                logger.info(`Recovering ${this.pendingKMCleanup.length} pending K/M cleanup block(s) from prior crash`)
-            }
-        }
-
-        let lastBlockchainInfo = null
-        let lastBlockchainInfoRefreshAt = 0
-        // Instance-visible twin of lastBlockchainInfoRefreshAt, read by GET /status.
-        // The loop below retries a failing getBlockchainInfo forever, so a coin node
-        // that is down or unsynced stalls block tracking while LevelDB stays perfectly
-        // readable and the DB-only probe kept reporting 'ok'. Seeded here
-        // rather than in the constructor so the window starts when tracking starts.
-        this.lastNodeRpcOkAt = Date.now()
-        this.blockchainInfoLastBlock = -1
-        let blocksQuantity = 0
-        // Transactions confirmed in this batch that need their mempool records
-        // removed. Collected per-block and flushed AFTER db.endTransaction() so
-        // confirmed outputs are always committed before mempool records are deleted,
-        // closing the brief "in neither store" window described in the ordering fix.
-        let pendingMempoolTxCleanup = []
-        
-        let blockTimestamps = [] // Rolling window of {height, time, txCount} for ETA calculation
-        let _t = { fetch: 0, decode: 0, parse: 0, parseOut: 0, parseIn: 0, commit: 0, cleanup: 0, blocks: 0 }
-        let pendingCommit = null
-
-        let blocksToInsert = []
-        let transactionsToInsert = []
-        let inputsToInsert = []
-        let outputsToInsert = []
-        
-        let blocksCount = 0
-        let transactionsCount = 0
-        let inputsCount = 0
-        let outputsCount = 0
-        
         this.keepParsing = true
         this.parsingStopped = false
         // A relaunched loop is running again, so the previous abort no longer
         // describes it; leaving this set would let stopParsing close a live store.
         this.parsingAborted = false
 
-        // Prefetch queue: each entry is { height, promise } where promise resolves to { hash, hex }
-        let prefetchQueue = []
-
-        const fetchBlock = async (height) => {
-            const hash = await this.connector.getBlockHash(height)
-            const hex = this.auxPow
-                ? await this.connector.getBlockWithoutAuxPow(hash)
-                : await this.connector.getBlock(hash)
-            return { hash, hex }
-        }
-
-        const fillPrefetchQueue = (fromHeight, tipHeight) => {
-            let maxQueued = fromHeight - 1
-            if (prefetchQueue.length > 0) {
-                maxQueued = prefetchQueue[prefetchQueue.length - 1].height
-            }
-
-            // Collect all heights that still need to be queued
-            const heights = []
-            while (prefetchQueue.length + heights.length < PREFETCH_SIZE && maxQueued + 1 <= tipHeight) {
-                maxQueued++
-                heights.push(maxQueued)
-            }
-            if (heights.length === 0) return
-
-            if (this.auxPow) {
-                // AuxPoW: one batch HTTP request each for getblockhash + getblockheader + getblock,
-                // stripping the AuxPoW header bytes per block (getBlocksBatchWithoutAuxPow)
-                const batchPromise = this.connector.getBlocksBatchWithoutAuxPow(heights)
-                heights.forEach((h, i) => {
-                    const p = batchPromise.then(results => ({ hash: results[i].hash, hex: results[i].hex }))
-                    p.catch(() => {}) // suppress unhandled rejection if entry is cleared from queue before being awaited
-                    prefetchQueue.push({ height: h, promise: p })
-                })
-            } else {
-                // Non-AuxPoW: one batch HTTP request for all getblockhash + one for all getblock
-                const batchPromise = this.connector.getBlocksBatch(heights)
-                heights.forEach((h, i) => {
-                    const p = batchPromise.then(results => ({ hash: results[i].hash, hex: results[i].hex }))
-                    p.catch(() => {}) // suppress unhandled rejection if entry is cleared from queue before being awaited
-                    prefetchQueue.push({ height: h, promise: p })
-                })
-            }
-        }
-
-        let nodeSyncedProblem = false
-        // Node-tip-below-ours latches, one line per transition each: the node is
-        // still in initial block download (wait, never reconcile), or the gap is
-        // too deep to walk back and verifyReorg refused before deleting (wait,
-        // keep serving, say so once).
-        let nodeCatchingUpProblem = false
-        let tipBelowCommittedTipRefused = false
-
-        // Track consecutive block-fetch failures at the SAME height. A node
-        // pruned past our cursor (or any permanent fetch fault) otherwise retries
-        // every 3s forever with no fail-loud signal. Reset on any successful fetch
-        // or a height change so ordinary transient blips never accumulate toward
-        // the desync threshold.
-        let blockFetchFailures = 0
-        let blockFetchFailureHeight = null
-
-        // A SECOND streak, counting only AuxPoW-strip (content) faults. The one
-        // above answers "can this node serve this block at all" and drives the
-        // fail-loud desync halt; this one answers "are this block's bytes the
-        // problem" and is the only thing allowed to trigger per-tx reassembly.
-        // Merging them aimed the reassembly RPC fan-out at whatever node had just
-        // gone unreachable for five polls.
-        let auxPowParseFailures = 0
-        let auxPowParseFailureHeight = null
-
         while (true){
             if (this.keepParsing){
-                // Refresh node tip when: no info yet, caught up to the previously-seen tip,
-                // OR periodically so blockchainInfoLastBlock stays current during catch-up
-                // (synced flag and confirmations reflect the true tip, not a frozen startup value).
-                //Getting the last block from the blockchain.
-                //Refresh when we have no info yet, when we have caught up to the
-                //previously-seen tip, OR periodically on a wall-clock interval: the
-                //last condition keeps blockchainInfoLastBlock tracking the live chain
-                //during a long catch-up, so the synced flag and reported confirmations
-                //reflect the true chain tip instead of a frozen startup value.
-                if (!lastBlockchainInfo
-                    || (lastProcessedBlockIndex >= this.blockchainInfoLastBlock)
-                    || (Date.now() - lastBlockchainInfoRefreshAt >= BLOCKCHAIN_INFO_REFRESH_MS)){
-                    try {
-                        lastBlockchainInfo = await this.connector.getBlockchainInfo()
-                        this.latestKnownChainTip = lastBlockchainInfo["blocks"]
-
-                        if (lastBlockchainInfo["verificationprogress"] < MIN_VERIFICATION_PROGRESS_TO_PARSE){
-                            if (!nodeSyncedProblem){
-                                logger.info("The node is not synced. Waiting for it to synchronize...")
-                            }
-
-                            lastBlockchainInfo = null
-                            nodeSyncedProblem = true
-                            await this.sleep(3000)
-                            continue
-                        } else {
-                            nodeSyncedProblem = false
-                        }
-
-                        this.blockchainInfoLastBlock = lastBlockchainInfo["blocks"]
-                        lastBlockchainInfoRefreshAt = Date.now()
-                        // Stamped only here, past the verification-progress gate, so
-                        // "node RPC ok" means a USABLE tip: an unsynced node that answers
-                        // and a node that does not answer both age this timestamp out.
-                        // Never stamped in the catch below.
-                        this.lastNodeRpcOkAt = lastBlockchainInfoRefreshAt
-                    } catch (e){
-                        logger.error(nodeUtil.format('Error fetching blockchain info from node: ' + e.message, e))
-                        await this.sleep(3000)
-                        continue
-                    }
-
-                    // The usual way a catch-up wait ends: the node's tip reached ours,
-                    // so the branch below is not entered at all and the published wait
-                    // would otherwise stay on the health surfaces for the rest of the
-                    // process. Only the state is cleared here; the latched log lines are
-                    // left to their own transition below.
-                    if (this.nodeCatchingUp && lastProcessedBlockIndex <= this.blockchainInfoLastBlock){
-                        this.nodeCatchingUp = null
-                    }
-
-                    if (lastProcessedBlockIndex > this.blockchainInfoLastBlock){
-                        // A node still in initial block download has not validated up
-                        // to our height yet; its tip below ours is a node catching up,
-                        // not a rollback. Wait for it to pass the committed tip and let
-                        // the forward hash compare decide. Same hazard the decoder hit
-                        // on an operator's fresh BTC mainnet node 2026-09-07: walking
-                        // back here spends the whole undo window on a reorg that never
-                        // happened and halts for a rebuild.
-                        if (nodeStillCatchingUp(lastBlockchainInfo)){
-                            if (!nodeCatchingUpProblem){
-                                logger.warn("WARNING! The last processed block height ("+lastProcessedBlockIndex+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"), but the node reports initialblockdownload=true: it is still catching up, not rolled back. Waiting for it to pass "+lastProcessedBlockIndex+" instead of rolling back; the hash compare decides then.")
-                            }
-                            nodeCatchingUpProblem = true
-                            // Publish it; past the latched line the wait is invisible.
-                            this.nodeCatchingUp = catchUpWaitState(this.nodeCatchingUp,
-                                this.blockchainInfoLastBlock, lastProcessedBlockIndex)
-                            await this.sleep(5000)
-                            continue
-                        }
-                        if (nodeCatchingUpProblem){
-                            logger.info("The node has left initial block download with its tip ("+this.blockchainInfoLastBlock+") still below the last processed block ("+lastProcessedBlockIndex+"); treating the gap as a rollback from here on.")
-                            nodeCatchingUpProblem = false
-                            this.nodeCatchingUp = null
-                        }
-
-                        // Discard any in-flight batch before recovery runs. A
-                        // periodic refresh can reach here mid-batch; leaving the staged
-                        // batch open would leak phantom UTXOs or break per-block atomicity
-                        // once verifyReorg opens its own transaction. Rationale in full at
-                        // discardInflightBatchForReorg(). Zero the local batch counters
-                        // here since they live in this closure, not on the instance.
-                        if (await this.discardInflightBatchForReorg(blocksQuantity)){
-                            blocksQuantity = 0
-                            blocksCount = 0
-                            transactionsCount = 0
-                            inputsCount = 0
-                            outputsCount = 0
-                            pendingMempoolTxCleanup = []
-                            blockTimestamps = []
-                        }
-
-                        //This shouldn't happen, but let's try to find the real lastBlockIndex
-                        logger.info("The last processed block height are greater than the last block of the node. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
-                        let lastBlockDb = await this.db.getLastBlock()
-
-                        // getLastBlock() returns null when the B-prefix is empty. With
-                        // a committed height above the node tip but no block records,
-                        // the true tip can't be recovered; surface a clear, actionable
-                        // error instead of a bare TypeError on lastBlockDb.height below.
-                        if (!lastBlockDb){
-                            throw new Error("Tracker DB corrupt: committed height " + lastProcessedBlockIndex +
-                                " exceeds the node tip " + this.blockchainInfoLastBlock + " but the block index " +
-                                "(B-prefix) is empty, so the true tip cannot be recovered. Recovery: full resync " +
-                                "from a known-good snapshot.")
-                        }
-
-                        if (lastBlockDb.height > this.blockchainInfoLastBlock){
-                            // True regression: the node's tip is genuinely below our committed
-                            // tip (node reset / reindex / invalidateblock). Roll back onto the
-                            // node's chain instead of warn-and-spin. Without this we fall through,
-                            // try to fetch block N+1 the node doesn't have, loop forever, and keep
-                            // serving the orphaned tip's UTXOs. verifyReorg(nodeTip) deletes the
-                            // blocks above the node tip, then reconciles by hash, honoring the
-                            // undoBlocks depth guard (a regression deeper than the window aborts
-                            // loudly for an operator-driven resync).
-                            // console.warn, not console.log: the line says WARNING but a
-                            // collector keys severity on the console method, so at info level
-                            // this tip regression is filed as routine progress. See the
-                            // reorg-detection-warn-level drift guard.
-                            if (!tipBelowCommittedTipRefused){
-                                logger.warn("WARNING! The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"). The node likely reset or reorged below our tip; rolling back to its chain.")
-                            }
-                            this.lastBlocks = await this.loadLastBlocksSortedByHeight()
-                            try {
-                                await this.verifyReorg(this.blockchainInfoLastBlock)
-                            } catch (err){
-                                // A gap deeper than the undo window, refused BEFORE any
-                                // delete (nothing walked back, index intact). Neither exit
-                                // (a restart lands in the same refusal) nor haltForResync
-                                // (nothing needs rebuilding) fits: stay up, say it once,
-                                // and re-check the tip every poll so a node that is merely
-                                // catching up without reporting IBD resolves it on its own.
-                                if (err && err.tipBelowCommittedTip){
-                                    if (!tipBelowCommittedTipRefused){
-                                        logger.error(err.message)
-                                    }
-                                    tipBelowCommittedTipRefused = true
-                                    await this.sleep(5000)
-                                    continue
-                                }
-                                throw err
-                            }
-                            tipBelowCommittedTipRefused = false
-                            lastProcessedBlockIndex = await this.db.getLastBlockHeight()
-                            lastProcessedBlockHash = await this.db.getLastBlockHash()
-                            continue
-                        } else {
-                            // Same repair as verifyReorg's, and it needs the same own
-                            // batch: bare setters STAGE, and at boot they stage into the
-                            // constructor Map nothing commits, which makes the log line
-                            // below claim a fix that never reaches disk. The
-                            // discardInflightBatchForReorg() call above satisfies the
-                            // precondition. Rationale at commitLastBlockPointerRepair().
-                            await this.commitLastBlockPointerRepair(lastBlockDb.hash, lastBlockDb.height)
-                            lastProcessedBlockIndex = lastBlockDb.height
-                            lastProcessedBlockHash = lastBlockDb.hash
-                            logger.info("Last block index was fixed!")
-                            continue
-                        }
-                    }
-                }
-                
-                //If there is no new block, wait for some seconds to ask again
-                if (lastProcessedBlockIndex == this.blockchainInfoLastBlock){
-                    this.synced = true
-
-                    // Same-height tip reorg detection. While synced we otherwise never
-                    // re-check the committed tip hash, so a node that replaces its tip at
-                    // the same height and then stalls would have us keep serving the
-                    // orphaned block's UTXOs until a new height arrives. Cheaply re-compare
-                    // the committed tip hash against the node each synced poll; on a
-                    // mismatch drive verifyReorg to roll back to the common ancestor.
-                    if (lastProcessedBlockIndex > 0){
-                        let tipHashFromNode = null
-                        try {
-                            tipHashFromNode = await this.connector.getBlockHash(lastProcessedBlockIndex)
-                        } catch (err){
-                            logger.error(nodeUtil.format('Error re-checking the committed tip hash from node: ' + err.message, err))
-                        }
-                        if (tipHashFromNode && tipHashFromNode != lastProcessedBlockHash){
-                            // console.warn: a tip swap at the same height is a reorg, and it
-                            // must leave a warn-level record even if verifyReorg then wedges
-                            // before reorgCount/last_reorg_depth advance.
-                            logger.warn("A same-height tip reorg has been detected. Cleaning blocks...")
-                            prefetchQueue = []
-                            // Discard any in-flight batch before recovery, exactly as the
-                            // prev-hash-mismatch and true-regression reorg paths do. This
-                            // branch is reachable MID-BATCH: the in-memory cursor advances
-                            // per staged block while the tip pointer is only staged at flush,
-                            // so a periodic blockchain-info refresh can lower the node tip to
-                            // exactly the staged cursor height on a competing chain, landing
-                            // here with blocksQuantity > 0. verifyReorg opens its own
-                            // transaction, so leaving the stale batch open would either commit
-                            // orphan-chain records as phantom UTXOs at the next flush, or (once
-                            // verifyReorg nulls transactionArray) route later writes as unbatched
-                            // direct puts while blocksQuantity stays > 0. Rationale in full at
-                            // discardInflightBatchForReorg().
-                            await this.db.endTransaction(false)
-                            // The rolled-back batch dropped the P-key write recording aged-out
-                            // blocks awaiting K/M cleanup; persist it out-of-band so restart
-                            // recovery still runs it (same standalone put the prev-hash path uses).
-                            if (this.pendingKMCleanup.length > 0) {
-                                await this.db.db.put(P_PENDING_CLEANUP_KEY,
-                                    Buffer.from(JSON.stringify(this.pendingKMCleanup)))
-                            }
-                            this.lastBlocks = await this.loadLastBlocksSortedByHeight()
-                            await this.verifyReorg()
-                            lastProcessedBlockIndex = await this.db.getLastBlockHeight()
-                            lastProcessedBlockHash = await this.db.getLastBlockHash()
-                            // Run the deferred K/M/W cleanup now (cleanupAgedBlocks skips any
-                            // hash still in the reloaded live window) and delete the P key
-                            // atomically, then zero the loop-local batch counters that live in
-                            // this closure so the next block opens a fresh batch.
-                            await this.cleanupAgedBlocks()
-                            blocksQuantity = 0
-                            blocksCount = 0
-                            transactionsCount = 0
-                            inputsCount = 0
-                            outputsCount = 0
-                            this.pendingKMCleanup = []
-                            pendingMempoolTxCleanup = []
-                            blockTimestamps = []
-                            continue
-                        }
-                    }
-
-                    if (this.mempoolInterval == null){
-                        logger.info("Mempool updates started!")
-                        this.updateMempool()
-                        this.mempoolInterval = setInterval(this.updateMempool.bind(this), MEMPOOL_INTERVAL)
-                    }
-
-                    await this.sleep(CHECK_BLOCK_DELAY_MS)
-                } else {
-                    //Put the flag synced false if there are too many blocks behind
-                    if ((this.blockchainInfoLastBlock - lastProcessedBlockIndex) > SYNCED_THRESHOLD){
-                        this.synced = false
-                        // Falling out of sync invalidates mempool readiness: the
-                        // mempool poller is torn down here and must reconverge once
-                        // before readiness is asserted again.
-                        this.mempoolReconverged = false
-                        if (this.mempoolInterval != null){
-                            logger.info("Mempool updates stopped!")
-                            clearInterval(this.mempoolInterval)
-                            this.mempoolInterval = null
-                        }
-                    }
-
-                    //Get the next block
-                    let nextBlockHeight = lastProcessedBlockIndex + 1
-
-                    // Kick off pre-fetches for upcoming blocks while we process the current one
-                    fillPrefetchQueue(nextBlockHeight, this.blockchainInfoLastBlock)
-
-                    let nextBlockHash = null
-                    let nextBlockHex = null
-                    try {
-                        let fetched
-                        if (this.shouldReassembleBlock(nextBlockHeight, auxPowParseFailureHeight, auxPowParseFailures)) {
-                            // The AuxPoW STRIP has failed this many times at this height,
-                            // which is evidence about the block's bytes rather than the
-                            // node's health: bypass the prefetch queue (its batch strip
-                            // would just fail the same way) and rebuild the pure block
-                            // per-tx, never reading the AuxPoW bytes.
-                            logger.error('AuxPoW strip at height ' + nextBlockHeight + ' failed ' + auxPowParseFailures +
-                                ' consecutive times; falling back to per-tx block reassembly (malformed-AuxPoW recovery).')
-                            prefetchQueue = []
-                            const hash = await this.connector.getBlockHash(nextBlockHeight)
-                            fetched = { hash, hex: await this.connector.getBlockReassembled(hash) }
-                        } else if (prefetchQueue.length > 0 && prefetchQueue[0].height === nextBlockHeight) {
-                            fetched = await prefetchQueue.shift().promise
-                        } else {
-                            // Queue is out of sync (e.g. after reorg), fetch directly
-                            prefetchQueue = []
-                            fetched = await fetchBlock(nextBlockHeight)
-                        }
-                        nextBlockHash = fetched.hash
-                        nextBlockHex = fetched.hex
-                        // Successful fetch: clear the desync streak so a future
-                        // transient blip starts counting from zero again, and the
-                        // parse streak with it (this block's bytes are readable, by
-                        // the strip or by reassembly).
-                        blockFetchFailures = 0
-                        blockFetchFailureHeight = null
-                        auxPowParseFailures = 0
-                        auxPowParseFailureHeight = null
-                    } catch (e){
-                        prefetchQueue = []
-                        // noteBlockFetchFailure counts consecutive failures at this
-                        // height and THROWS a diagnosable desync error once the bound
-                        // is hit, so a node pruned past our cursor fails loud instead
-                        // of spinning every 3s forever. It counts EVERY failure; the
-                        // parse streak beside it counts only the tagged content faults
-                        // that may escalate to reassembly.
-                        const _p = this.noteAuxPowParseFailure(nextBlockHeight, auxPowParseFailureHeight, auxPowParseFailures, e)
-                        auxPowParseFailureHeight = _p.height
-                        auxPowParseFailures = _p.count
-                        const _s = this.noteBlockFetchFailure(nextBlockHeight, blockFetchFailureHeight, blockFetchFailures, e)
-                        blockFetchFailureHeight = _s.height
-                        blockFetchFailures = _s.count
-                        await this.sleep(BLOCK_FETCH_RETRY_SLEEP_MS)
-                        continue
-                    }
-                    
-                    const _tDecode = Date.now()
-                    var block = this.xchainBlockDecoder.blockFromHex(nextBlockHex)
-                    let previousBlockHash = util.uint8ArrayToHex(Buffer.from(block.prevHash).reverse())
-                    _t.decode += Date.now() - _tDecode
-
-                    //Check if there is a reorg
-                    if (nextBlockHeight > 0){
-                        //previousBlockHash is not the same, it must be a reorg
-                        if (previousBlockHash != lastProcessedBlockHash){
-                            prefetchQueue = []
-                            await this.db.endTransaction(false)
-                            // The rolled-back batch discarded the P-key write that
-                            // records aged-out blocks awaiting K/M cleanup, but those
-                            // blocks are too old to reorg and still need cleaning.
-                            // Persist the list with a standalone put on the underlying
-                            // store, deliberately outside the transaction just rolled
-                            // back, so the startup recovery path runs cleanupAgedBlocks()
-                            // for them on the next restart instead of stranding the
-                            // entries on disk.
-                            if (this.pendingKMCleanup.length > 0) {
-                                await this.db.db.put(P_PENDING_CLEANUP_KEY,
-                                    Buffer.from(JSON.stringify(this.pendingKMCleanup)))
-                            }
-                            // Reload in ascending height order (tip last); the raw
-                            // getLastStoredBlocks() order is lexicographic by hash,
-                            // which makes verifyReorg's removeFromLastBlocks throw.
-                            this.lastBlocks = await this.loadLastBlocksSortedByHeight()
-                            // console.warn: the prev-hash-mismatch path is the ordinary reorg
-                            // trigger, so leaving it at info is what makes a routine reorg
-                            // invisible to a warn+ filter.
-                            logger.warn("A reorg has been detected. Cleaning blocks...")
-                            await this.verifyReorg()
-                            lastProcessedBlockIndex = await this.db.getLastBlockHeight()
-                            lastProcessedBlockHash = await this.db.getLastBlockHash()
-
-                            // The P key was persisted above (standalone put, outside the
-                            // rolled-back batch) so a restart would re-run cleanupAgedBlocks.
-                            // Run it now so aged-out K/M/W records are purged immediately
-                            // and the P key is deleted atomically, not left on disk until
-                            // the next restart or flush.
-                            await this.cleanupAgedBlocks()
-
-                            blocksQuantity = 0
-                            blocksCount = 0
-                            transactionsCount = 0
-                            inputsCount = 0
-                            outputsCount = 0
-                            this.pendingKMCleanup = []
-                            pendingMempoolTxCleanup = []
-                            blockTimestamps = []
-                            logger.info("Blocks were updated")
-                            continue
-                        }
-                    }
-                    //Start a transaction if there are no blocks processed yet
-                    if (blocksQuantity == 0){
-                        await this.db.beginTransaction()
-                    }
-
-                    //Insert the processed block
-                    await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp, previousHash:previousBlockHash})
-                    blocksCount = blocksCount + 1               
-                    
-                    //Parse the transactions (two-pass approach to allow full parallelism):
-                    //  Pass 1: insert all outputs for every tx concurrently
-                    //  Pass 2: process all inputs concurrently (same-block outputs are
-                    //          now in transactionArray so removeOutputWithInput finds them)
-                    var transactions = block.transactions
-
-                    const _tParse = Date.now()
-                    const _tParseOut = Date.now()
-                    // Sequential in tx-index order so that S-record writes across
-                    // txs in the same block land in deterministic (tx-index, vout)
-                    // order, matching bulk-sync.
-                    const blockOutputCounts = new Array(transactions.length)
-                    for (let txIdx = 0; txIdx < transactions.length; txIdx++) {
-                        blockOutputCounts[txIdx] = await this.parseTxOutputs(
-                            this.db, transactions[txIdx], nextBlockHash, nextBlockHeight, false, REMOVE_SPENT
-                        )
-                    }
-                    _t.parseOut += Date.now() - _tParseOut
-                    // Pass 2: collect all inputs across the block, then batch-remove
-                    const _tParseIn = Date.now()
-                    const removeInputs = []
-                    for (const tx of transactions) {
-                        for (const nextInput of tx.ins) {
-                            const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
-                            // A coinbase input spends nothing, so there is no previous output to remove.
-                            if ((nextInput.index === 4294967295) || !standardInput) continue
-                            const prevTxHash8 = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse()).substring(0, 16)
-                            removeInputs.push({ prevTxHash: prevTxHash8, prevOutputIndex: nextInput.index, blockHash: nextBlockHash })
-                        }
-                    }
-                    let blockInputTotal = removeInputs.length
-                    if (removeInputs.length > 0) {
-                        await this.db.removeOutputsWithInputsBatch(removeInputs)
-                    }
-                    _t.parseIn += Date.now() - _tParseIn
-                    _t.parse += Date.now() - _tParse
-
-                    transactionsCount = transactionsCount + transactions.length
-                    outputsCount = outputsCount + blockOutputCounts.reduce((acc, n) => acc + n, 0)
-                    inputsCount  = inputsCount  + blockInputTotal
-
-                    // Collect txids for mempool cleanup. The actual deletions are
-                    // deferred to after db.endTransaction() at flush time so that
-                    // confirmed outputs are always committed before their mempool
-                    // records are removed, closing the window where a just-mined
-                    // UTXO would transiently appear in neither the confirmed nor
-                    // the mempool store. The cleanup is a no-op for txs the
-                    // mempool poll never saw (most in regtest).
-                    for (const tx of transactions) {
-                        pendingMempoolTxCleanup.push("id" in tx ? tx["id"] : tx.getId())
-                    }
-
-                    //Add the block to the last blocks
-                    await this.addToLastBlocks(nextBlockHash)
-
-                    // Flush triggers: batch full, at chain tip, or heap pressure.
-                    //If there are enough processed blocks, then add them to the database.
-                    //Three triggers: batch full, at chain tip, or heap under pressure.
-                    //Heap-pressure flush keeps the block-count constant working as an
-                    //upper bound while preventing V8 OOM on dense chain windows where a
-                    //full 200-block batch would push staged Buffers past the heap cap.
-                    const _earlyFlushHeapMB = process.memoryUsage().heapUsed / 1048576
-                    const _flushReason =
-                        (nextBlockHeight == this.blockchainInfoLastBlock)             ? 'tip' :
-                        (blocksQuantity == DB_TRANSACTION_BLOCKS_QUANTITY-1)          ? 'batch-full' :
-                        (_earlyFlushHeapMB > HEAP_FLUSH_THRESHOLD_MB)                 ? 'heap-pressure' :
-                        null
-                    if (_flushReason){
-                        logger.info("Indexing block "+(nextBlockHeight)+"("+nextBlockHash+")")
-                        await this.db.setLastBlockHeight(nextBlockHeight)
-                        await this.db.setLastBlockHash(nextBlockHash)
-                        logger.info("Inserting data Blocks ("+blocksCount+") Transactions ("+transactionsCount+") Inputs ("+inputsCount+") Outputs("+outputsCount+")")
-
-                        // Atomically record which blocks need K/M cleanup so a crash between
-                        // endTransaction and cleanupAgedBlocks is recoverable on restart.
-                        if (this.pendingKMCleanup.length > 0) {
-                            await this.db.addTransaction("put", P_PENDING_CLEANUP_KEY,
-                                Buffer.from(JSON.stringify(this.pendingKMCleanup)))
-                        }
-
-                        const _tCommit = Date.now()
-                        await this.db.endTransaction()
-                        _t.commit += Date.now() - _tCommit
-
-                        // Stamp the forward-progress heartbeat only after the batch is
-                        // durable, so a crash mid-flush cannot leave /metrics claiming a
-                        // commit the DB never took.
-                        this.lastCommitAt = Date.now()
-                        this.lastCommittedHeight = nextBlockHeight
-
-                        // Flush deferred mempool cleanup AFTER confirmed outputs are committed.
-                        // This closes the ordering gap: mined UTXOs are queryable from the
-                        // confirmed DB before their mempool records are removed, so no query
-                        // window exists where the output appears in neither store.
-                        // deleteOutputsByHint/deleteInputsByHint are per-entry read streams that
-                        // yield to the event loop, so wrap in a transaction for atomicity and
-                        // wait for any in-flight updateMempool() to release the mutex first.
-                        if (pendingMempoolTxCleanup.length > 0) {
-                            while (this.mempoolBusy) {
-                                await this.sleep(50)
-                            }
-                            this.mempoolBusy = true
-                            try {
-                                await this.mempoolDb.beginTransaction()
-                                for (const txid of pendingMempoolTxCleanup) {
-                                    await this.mempoolDb.deleteOutputsByHint(txid)
-                                    await this.mempoolDb.deleteInputsByHint(txid)
-                                    await this.mempoolDb.deleteTransaction(txid)
-                                }
-                                await this.mempoolDb.endTransaction()
-                            } finally {
-                                this.mempoolBusy = false
-                            }
-                            pendingMempoolTxCleanup = []
-                        }
-
-                        // Clean up K/M entries for aged-out blocks now that the batch is committed
-                        const _tCleanup = Date.now()
-                        await this.cleanupAgedBlocks()
-                        _t.cleanup += Date.now() - _tCleanup
-
-                        // ── Print timing summary ──
-                        _t.blocks = blocksQuantity + 1
-                        const _total = _t.decode + _t.parse + _t.commit + _t.cleanup
-                        const _pb = XChainUtxoTracker.parseOutBuckets
-                        const _pi = LevelUpStore.parseInBuckets
-                        const _ks = LevelUpStore.knownScripts
-                        const _ksH = LevelUpStore.knownScriptsHits
-                        const _ksM = LevelUpStore.knownScriptsMisses
-                        const _ksRate = _ksH + _ksM > 0 ? ((_ksH / (_ksH + _ksM)) * 100).toFixed(1) : '0.0'
-                        const _mem = process.memoryUsage()
-                        const _heapMB = (_mem.heapUsed / 1048576).toFixed(0)
-                        const _rssMB = (_mem.rss / 1048576).toFixed(0)
-                        const _ocSize = LevelUpStore.outputCache.size
-                        logger.info(`⏱ TIMING (${_t.blocks} blocks) flush=${_flushReason} total=${_total}ms | decode=${_t.decode}ms | parse=${_t.parse}ms (out=${_t.parseOut}ms [hash=${_pb.hash}ms ins=${_pb.ins}ms sb=${_pb.sb}ms] in=${_t.parseIn}ms [hintRead=${_pi.hintRead}ms outRead=${_pi.outRead}ms stage=${_pi.stage}ms]) | commit=${_t.commit}ms | cleanup=${_t.cleanup}ms | knownScripts=${_ks.size} hit=${_ksH} miss=${_ksM} rate=${_ksRate}% | heap=${_heapMB}MB heapPre=${_earlyFlushHeapMB.toFixed(0)}MB rss=${_rssMB}MB outCache=${_ocSize}`)
-                        XChainUtxoTracker.parseOutBuckets = { hash: 0, ins: 0, sb: 0 }
-                        LevelUpStore.parseInBuckets = { hintRead: 0, outRead: 0, stage: 0 }
-                        LevelUpStore.knownScriptsHits = 0
-                        LevelUpStore.knownScriptsMisses = 0
-
-                        // Rolling ETA based on tx throughput; window is a span of
-                        // ETA_WINDOW_BLOCKS blocks, not a count of samples. Each sample
-                        // covers DB_TRANSACTION_BLOCKS_QUANTITY blocks, so a count-based
-                        // trim would keep ~200× more history than intended.
-                        blockTimestamps.push({height: nextBlockHeight, time: Date.now(), txCount: transactionsCount})
-                        while (blockTimestamps.length >= 2 &&
-                               (nextBlockHeight - blockTimestamps[0].height) > ETA_WINDOW_BLOCKS) {
-                            blockTimestamps.shift()
-                        }
-
-                        _t = { fetch: 0, decode: 0, parse: 0, parseOut: 0, parseIn: 0, commit: 0, cleanup: 0, blocks: 0 }
-                        blocksCount = 0
-                        transactionsCount = 0
-                        inputsCount = 0
-                        outputsCount = 0
-
-                        let blocksLeft = this.blockchainInfoLastBlock - nextBlockHeight
-                        if (blocksLeft > 0 && blockTimestamps.length >= 2) {
-                            let oldest = blockTimestamps[0]
-                            let newest = blockTimestamps[blockTimestamps.length - 1]
-                            let totalTx = 0
-                            for (let k = 1; k < blockTimestamps.length; k++) totalTx += blockTimestamps[k].txCount
-                            let elapsedMs = newest.time - oldest.time
-                            let msPerTx = elapsedMs / totalTx
-                            let avgTxPerBlock = totalTx / (newest.height - oldest.height)
-                            let msLeft = blocksLeft * avgTxPerBlock * msPerTx
-                            logger.info(`⚡ Speed: ${(1000/msPerTx).toFixed(1)} tx/s | avg ${avgTxPerBlock.toFixed(0)} tx/block (last ${newest.height - oldest.height} blocks)`)
-                            logger.info("Estimated time to finish: "+this.millisecondsToTimeString(msLeft))
-                        }
-                        
-                        blocksQuantity = -1
-                    }
-                    
-                    blocksQuantity = blocksQuantity + 1
-                    lastProcessedBlockIndex = nextBlockHeight
-                    lastProcessedBlockHash = nextBlockHash
-                }
+                // A pass whose last node or store call leaves bookkeeping behind
+                // hands it back as `finish`, which runs here before the loop goes
+                // round, so no await separates the two.
+                const finish = await pollSyncLoop.call(this, sync)
+                if (finish) finish()
             } else {
                 logger.info("Stopping the parsing...")
                 if (this.mempoolInterval) {
@@ -1160,9 +493,821 @@ class XChainUtxoTracker {
             }
         }
     }
-    
+}
 
-    
+// The sync loop's steps. Each runs with the tracker as `this` (called through
+// .call) and shares the loop's working state through `sync`, so they stay off
+// the class prototype. The loop yields only where it awaits a node call, a
+// store call or a sleep: an async step returns only right after such an await,
+// a step whose work runs on synchronously hands the pass to the next step by
+// returning that step's call, and the synchronous stretches are plain functions.
+
+// Loads the committed cursor and the in-memory windows the loop starts from:
+// the tip height and hash, the last-blocks window and the undo watermark, and
+// reads any K/M cleanup list a crash left staged.
+async function loadSyncCursor(){
+    let lastProcessedBlockIndex = await this.db.getLastBlockHeight()
+    let lastProcessedBlockHash = await this.db.getLastBlockHash()
+
+    // Load in ascending height order (tip last) so a reorg right after a
+    // restart doesn't trip removeFromLastBlocks. See helper for detail.
+    this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+
+    // Before the diagnostic: it is the watermark that says whether a short
+    // window is a rollback that was interrupted or one that never got deeper.
+    await this.loadUndoWindowWatermark()
+
+    this.noteInterruptedReorgWindow(lastProcessedBlockIndex)
+
+    // Recover any K/M cleanup work that was staged but not completed before a prior crash.
+    // abstract-level .get returns undefined on a missing key (no throw); real
+    // I/O errors still propagate. Clear first: start() re-runs on the SAME tracker
+    // object after restorebootstrap replaces the store, and the read below only
+    // assigns when the P key exists, so without this the restored database inherits
+    // the previous database's pending list and cleanupAgedBlocks prunes K/M/W/Z
+    // records against block hashes that store never held.
+    this.pendingKMCleanup = []
+    const pendingCleanup = await this.db.db.get(P_PENDING_CLEANUP_KEY)
+    return { lastProcessedBlockIndex, lastProcessedBlockHash, pendingCleanup }
+}
+
+// Takes up the staged K/M cleanup list read from the P key, when there is one.
+function recoverPendingCleanup(pVal){
+    if (pVal !== undefined) {
+        this.pendingKMCleanup = JSON.parse(pVal.toString())
+        if (this.pendingKMCleanup.length > 0) {
+            logger.info(`Recovering ${this.pendingKMCleanup.length} pending K/M cleanup block(s) from prior crash`)
+        }
+    }
+}
+
+// The loop's working state: the in-memory cursor, the open batch's counters and
+// timings, the prefetch queue, and the latches and streaks that keep a fault to
+// one log line per transition. Also seeds the node-RPC stamps /status reads.
+function newSyncLoopState({ lastProcessedBlockIndex, lastProcessedBlockHash }){
+    const sync = { lastProcessedBlockIndex, lastProcessedBlockHash, lastBlockchainInfo: null, lastBlockchainInfoRefreshAt: 0 }
+    // Instance-visible twin of lastBlockchainInfoRefreshAt, read by GET /status.
+    // The sync loop retries a failing getBlockchainInfo forever, so a coin node
+    // that is down or unsynced stalls block tracking while LevelDB stays perfectly
+    // readable and the DB-only probe kept reporting 'ok'. Seeded here
+    // rather than in the constructor so the window starts when tracking starts.
+    this.lastNodeRpcOkAt = Date.now()
+    this.blockchainInfoLastBlock = -1
+    return Object.assign(sync, {
+        blocksQuantity: 0,
+        // Transactions confirmed in this batch that need their mempool records
+        // removed. Collected per-block and flushed AFTER db.endTransaction() so
+        // confirmed outputs are always committed before mempool records are deleted,
+        // closing the brief "in neither store" window described in the ordering fix.
+        pendingMempoolTxCleanup: [],
+        blockTimestamps: [], // Rolling window of {height, time, txCount} for ETA calculation
+        _t: { fetch: 0, decode: 0, parse: 0, parseOut: 0, parseIn: 0, commit: 0, cleanup: 0, blocks: 0 },
+        blocksCount: 0,
+        transactionsCount: 0,
+        inputsCount: 0,
+        outputsCount: 0,
+        // Prefetch queue: each entry is { height, promise } where promise resolves to { hash, hex }
+        prefetchQueue: [],
+        nodeSyncedProblem: false,
+        // Node-tip-below-ours latches, one line per transition each: the node is
+        // still in initial block download (wait, never reconcile), or the gap is
+        // too deep to walk back and verifyReorg refused before deleting (wait,
+        // keep serving, say so once).
+        nodeCatchingUpProblem: false,
+        tipBelowCommittedTipRefused: false,
+        // Track consecutive block-fetch failures at the SAME height. A node
+        // pruned past our cursor (or any permanent fetch fault) otherwise retries
+        // every 3s forever with no fail-loud signal. Reset on any successful fetch
+        // or a height change so ordinary transient blips never accumulate toward
+        // the desync threshold.
+        blockFetchFailures: 0,
+        blockFetchFailureHeight: null,
+        // A SECOND streak, counting only AuxPoW-strip (content) faults. The one
+        // above answers "can this node serve this block at all" and drives the
+        // fail-loud desync halt; this one answers "are this block's bytes the
+        // problem" and is the only thing allowed to trigger per-tx reassembly.
+        // Merging them aimed the reassembly RPC fan-out at whatever node had just
+        // gone unreachable for five polls.
+        auxPowParseFailures: 0,
+        auxPowParseFailureHeight: null,
+    })
+}
+
+// One pass of the sync loop while parsing is on: refresh the node's tip when it
+// is due, then either wait at the tip or index the next block. Resolves to the
+// pass's leftover bookkeeping, if any, for start() to run.
+function pollSyncLoop(sync){
+    // Refresh node tip when: no info yet, caught up to the previously-seen tip,
+    // OR periodically so blockchainInfoLastBlock stays current during catch-up
+    // (synced flag and confirmations reflect the true tip, not a frozen startup value).
+    //Getting the last block from the blockchain.
+    //Refresh when we have no info yet, when we have caught up to the
+    //previously-seen tip, OR periodically on a wall-clock interval: the
+    //last condition keeps blockchainInfoLastBlock tracking the live chain
+    //during a long catch-up, so the synced flag and reported confirmations
+    //reflect the true chain tip instead of a frozen startup value.
+    if (!sync.lastBlockchainInfo
+        || (sync.lastProcessedBlockIndex >= this.blockchainInfoLastBlock)
+        || (Date.now() - sync.lastBlockchainInfoRefreshAt >= BLOCKCHAIN_INFO_REFRESH_MS)){
+        return refreshNodeTip.call(this, sync)
+    }
+    return pollAtTipOrIndex.call(this, sync)
+}
+
+// Reads the node's tip. An unsynced node or a failed RPC is waited out and ends
+// the pass; a usable tip is stamped and the pass goes on to reconcile it.
+async function refreshNodeTip(sync){
+    try {
+        sync.lastBlockchainInfo = await this.connector.getBlockchainInfo()
+        this.latestKnownChainTip = sync.lastBlockchainInfo["blocks"]
+
+        if (sync.lastBlockchainInfo["verificationprogress"] < MIN_VERIFICATION_PROGRESS_TO_PARSE){
+            if (!sync.nodeSyncedProblem){
+                logger.info("The node is not synced. Waiting for it to synchronize...")
+            }
+
+            sync.lastBlockchainInfo = null
+            sync.nodeSyncedProblem = true
+            await this.sleep(3000)
+            return
+        } else {
+            sync.nodeSyncedProblem = false
+        }
+
+        this.blockchainInfoLastBlock = sync.lastBlockchainInfo["blocks"]
+        sync.lastBlockchainInfoRefreshAt = Date.now()
+        // Stamped only here, past the verification-progress gate, so
+        // "node RPC ok" means a USABLE tip: an unsynced node that answers
+        // and a node that does not answer both age this timestamp out.
+        // Never stamped in the catch below.
+        this.lastNodeRpcOkAt = sync.lastBlockchainInfoRefreshAt
+    } catch (e){
+        logger.error(nodeUtil.format('Error fetching blockchain info from node: ' + e.message, e))
+        await this.sleep(3000)
+        return
+    }
+    return reconcileRefreshedTip.call(this, sync)
+}
+
+// After a tip refresh: end a catch-up wait the node's tip has closed, then
+// recover from a node tip below ours, or go on to the tip or the next block.
+function reconcileRefreshedTip(sync){
+    const { lastProcessedBlockIndex } = sync
+    // The usual way a catch-up wait ends: the node's tip reached ours,
+    // so the branch below is not entered at all and the published wait
+    // would otherwise stay on the health surfaces for the rest of the
+    // process. Only the state is cleared here; the latched log lines are
+    // left to their own transition below.
+    if (this.nodeCatchingUp && lastProcessedBlockIndex <= this.blockchainInfoLastBlock){
+        this.nodeCatchingUp = null
+    }
+
+    if (lastProcessedBlockIndex > this.blockchainInfoLastBlock){
+        return recoverFromTipBelowOurs.call(this, sync)
+    }
+    return pollAtTipOrIndex.call(this, sync)
+}
+
+// At the node's tip, wait there; behind it, index the next block.
+function pollAtTipOrIndex(sync){
+    //If there is no new block, wait for some seconds to ask again
+    if (sync.lastProcessedBlockIndex == this.blockchainInfoLastBlock){
+        return pollAtChainTip.call(this, sync)
+    }
+    return indexNextBlock.call(this, sync)
+}
+
+// A node still in initial block download has not validated up
+// to our height yet; its tip below ours is a node catching up,
+// not a rollback. Wait for it to pass the committed tip and let
+// the forward hash compare decide. Same hazard the decoder hit
+// on an operator's fresh BTC mainnet node 2026-09-07: walking
+// back here spends the whole undo window on a reorg that never
+// happened and halts for a rebuild. Publishes the wait and sleeps.
+async function waitOnCatchingUpNode(sync){
+    const { lastProcessedBlockIndex } = sync
+    if (!sync.nodeCatchingUpProblem){
+        logger.warn("WARNING! The last processed block height ("+lastProcessedBlockIndex+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"), but the node reports initialblockdownload=true: it is still catching up, not rolled back. Waiting for it to pass "+lastProcessedBlockIndex+" instead of rolling back; the hash compare decides then.")
+    }
+    sync.nodeCatchingUpProblem = true
+    // Publish it; past the latched line the wait is invisible.
+    this.nodeCatchingUp = catchUpWaitState(this.nodeCatchingUp,
+        this.blockchainInfoLastBlock, lastProcessedBlockIndex)
+    await this.sleep(5000)
+}
+
+// Our committed tip is above the node's: wait while the node is still catching
+// up; otherwise discard any open batch, read the committed block, and either
+// roll back onto the node's chain or repair the stored tip pointer.
+async function recoverFromTipBelowOurs(sync){
+    const { lastBlockchainInfo, lastProcessedBlockIndex } = sync
+    if (nodeStillCatchingUp(lastBlockchainInfo)) return waitOnCatchingUpNode.call(this, sync)
+    if (sync.nodeCatchingUpProblem){
+        logger.info("The node has left initial block download with its tip ("+this.blockchainInfoLastBlock+") still below the last processed block ("+lastProcessedBlockIndex+"); treating the gap as a rollback from here on.")
+        sync.nodeCatchingUpProblem = false
+        this.nodeCatchingUp = null
+    }
+
+    // Discard any in-flight batch before recovery runs. A
+    // periodic refresh can reach here mid-batch; leaving the staged
+    // batch open would leak phantom UTXOs or break per-block atomicity
+    // once verifyReorg opens its own transaction. Rationale in full at
+    // discardInflightBatchForReorg(). Zero the batch counters here
+    // since they live in the loop's state, not on the instance.
+    if (await this.discardInflightBatchForReorg(sync.blocksQuantity)){
+        sync.blocksQuantity = 0
+        sync.blocksCount = 0
+        sync.transactionsCount = 0
+        sync.inputsCount = 0
+        sync.outputsCount = 0
+        sync.pendingMempoolTxCleanup = []
+        sync.blockTimestamps = []
+    }
+
+    //This shouldn't happen, but let's try to find the real lastBlockIndex
+    logger.info("The last processed block height are greater than the last block of the node. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
+    let lastBlockDb = await this.db.getLastBlock()
+
+    // getLastBlock() returns null when the B-prefix is empty. With
+    // a committed height above the node tip but no block records,
+    // the true tip can't be recovered; surface a clear, actionable
+    // error instead of a bare TypeError on lastBlockDb.height below.
+    if (!lastBlockDb){
+        throw new Error("Tracker DB corrupt: committed height " + lastProcessedBlockIndex +
+            " exceeds the node tip " + this.blockchainInfoLastBlock + " but the block index " +
+            "(B-prefix) is empty, so the true tip cannot be recovered. Recovery: full resync " +
+            "from a known-good snapshot.")
+    }
+
+    if (lastBlockDb.height > this.blockchainInfoLastBlock){
+        return rollBackToNodeTip.call(this, sync, lastBlockDb)
+    }
+    return repairLastBlockPointer.call(this, sync, lastBlockDb)
+}
+
+// True regression: the node's tip is genuinely below our committed
+// tip (node reset / reindex / invalidateblock). Roll back onto the
+// node's chain instead of warn-and-spin. Without this we fall through,
+// try to fetch block N+1 the node doesn't have, loop forever, and keep
+// serving the orphaned tip's UTXOs. verifyReorg(nodeTip) deletes the
+// blocks above the node tip, then reconciles by hash, honoring the
+// undoBlocks depth guard (a regression deeper than the window aborts
+// loudly for an operator-driven resync).
+async function rollBackToNodeTip(sync, lastBlockDb){
+    // console.warn, not console.log: the line says WARNING but a
+    // collector keys severity on the console method, so at info level
+    // this tip regression is filed as routine progress. See the
+    // reorg-detection-warn-level drift guard.
+    if (!sync.tipBelowCommittedTipRefused){
+        logger.warn("WARNING! The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"). The node likely reset or reorged below our tip; rolling back to its chain.")
+    }
+    this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+    try {
+        await this.verifyReorg(this.blockchainInfoLastBlock)
+    } catch (err){
+        // A gap deeper than the undo window, refused BEFORE any
+        // delete (nothing walked back, index intact). Neither exit
+        // (a restart lands in the same refusal) nor haltForResync
+        // (nothing needs rebuilding) fits: stay up, say it once,
+        // and re-check the tip every poll so a node that is merely
+        // catching up without reporting IBD resolves it on its own.
+        if (err && err.tipBelowCommittedTip){
+            if (!sync.tipBelowCommittedTipRefused){
+                logger.error(err.message)
+            }
+            sync.tipBelowCommittedTipRefused = true
+            await this.sleep(5000)
+            return
+        }
+        throw err
+    }
+    sync.tipBelowCommittedTipRefused = false
+    sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
+    sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
+}
+
+// The node's tip is below our in-memory cursor but not below the committed
+// block: point the stored tip back at that block. Hands back the cursor move.
+async function repairLastBlockPointer(sync, lastBlockDb){
+    // Same repair as verifyReorg's, and it needs the same own
+    // batch: bare setters STAGE, and at boot they stage into the
+    // constructor Map nothing commits, which makes the log line
+    // below claim a fix that never reaches disk. The
+    // discardInflightBatchForReorg() call above satisfies the
+    // precondition. Rationale at commitLastBlockPointerRepair().
+    await this.commitLastBlockPointerRepair(lastBlockDb.hash, lastBlockDb.height)
+    return () => {
+        sync.lastProcessedBlockIndex = lastBlockDb.height
+        sync.lastProcessedBlockHash = lastBlockDb.hash
+        logger.info("Last block index was fixed!")
+    }
+}
+
+// Synced at the node's tip: re-check the committed tip for a same-height reorg,
+// start the mempool poller once, and wait before asking again.
+async function pollAtChainTip(sync){
+    this.synced = true
+
+    // Same-height tip reorg detection. While synced we otherwise never
+    // re-check the committed tip hash, so a node that replaces its tip at
+    // the same height and then stalls would have us keep serving the
+    // orphaned block's UTXOs until a new height arrives. Cheaply re-compare
+    // the committed tip hash against the node each synced poll; on a
+    // mismatch drive verifyReorg to roll back to the common ancestor.
+    if (sync.lastProcessedBlockIndex > 0){
+        let tipHashFromNode = null
+        try {
+            tipHashFromNode = await this.connector.getBlockHash(sync.lastProcessedBlockIndex)
+        } catch (err){
+            logger.error(nodeUtil.format('Error re-checking the committed tip hash from node: ' + err.message, err))
+        }
+        if (tipHashFromNode && tipHashFromNode != sync.lastProcessedBlockHash){
+            return rollBackSameHeightTipSwap.call(this, sync)
+        }
+    }
+
+    if (this.mempoolInterval == null){
+        logger.info("Mempool updates started!")
+        this.updateMempool()
+        this.mempoolInterval = setInterval(this.updateMempool.bind(this), MEMPOOL_INTERVAL)
+    }
+
+    await this.sleep(CHECK_BLOCK_DELAY_MS)
+}
+
+// The node swapped our committed tip at the same height: discard the open
+// batch and roll back to the common ancestor. Hands back the batch reset.
+async function rollBackSameHeightTipSwap(sync){
+    // console.warn: a tip swap at the same height is a reorg, and it
+    // must leave a warn-level record even if verifyReorg then wedges
+    // before reorgCount/last_reorg_depth advance.
+    logger.warn("A same-height tip reorg has been detected. Cleaning blocks...")
+    sync.prefetchQueue = []
+    // Discard any in-flight batch before recovery, exactly as the
+    // prev-hash-mismatch and true-regression reorg paths do. This
+    // branch is reachable MID-BATCH: the in-memory cursor advances
+    // per staged block while the tip pointer is only staged at flush,
+    // so a periodic blockchain-info refresh can lower the node tip to
+    // exactly the staged cursor height on a competing chain, landing
+    // here with blocksQuantity > 0. verifyReorg opens its own
+    // transaction, so leaving the stale batch open would either commit
+    // orphan-chain records as phantom UTXOs at the next flush, or (once
+    // verifyReorg nulls transactionArray) route later writes as unbatched
+    // direct puts while blocksQuantity stays > 0. Rationale in full at
+    // discardInflightBatchForReorg().
+    await this.db.endTransaction(false)
+    // The rolled-back batch dropped the P-key write recording aged-out
+    // blocks awaiting K/M cleanup; persist it out-of-band so restart
+    // recovery still runs it (same standalone put the prev-hash path uses).
+    if (this.pendingKMCleanup.length > 0) {
+        await this.db.db.put(P_PENDING_CLEANUP_KEY,
+            Buffer.from(JSON.stringify(this.pendingKMCleanup)))
+    }
+    this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+    await this.verifyReorg()
+    sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
+    sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
+    // Run the deferred K/M/W cleanup now (cleanupAgedBlocks skips any
+    // hash still in the reloaded live window) and delete the P key
+    // atomically, then zero the batch counters so the next block opens
+    // a fresh batch.
+    await this.cleanupAgedBlocks()
+    return () => resetBatchAfterReorg.call(this, sync)
+}
+
+// Behind the node's tip: fetch, check and stage the next block, flush the batch
+// when a trigger fires, then advance the in-memory cursor.
+async function indexNextBlock(sync){
+    //Put the flag synced false if there are too many blocks behind
+    if ((this.blockchainInfoLastBlock - sync.lastProcessedBlockIndex) > SYNCED_THRESHOLD){
+        this.synced = false
+        // Falling out of sync invalidates mempool readiness: the
+        // mempool poller is torn down here and must reconverge once
+        // before readiness is asserted again.
+        this.mempoolReconverged = false
+        if (this.mempoolInterval != null){
+            logger.info("Mempool updates stopped!")
+            clearInterval(this.mempoolInterval)
+            this.mempoolInterval = null
+        }
+    }
+
+    //Get the next block
+    let nextBlockHeight = sync.lastProcessedBlockIndex + 1
+
+    // Kick off pre-fetches for upcoming blocks while we process the current one
+    fillPrefetchQueue.call(this, sync, nextBlockHeight, this.blockchainInfoLastBlock)
+
+    const fetched = await fetchNextBlock.call(this, sync, nextBlockHeight)
+    if (!fetched) return
+    const nextBlockHash = fetched.hash
+
+    const _tDecode = Date.now()
+    var block = this.xchainBlockDecoder.blockFromHex(fetched.hex)
+    let previousBlockHash = util.uint8ArrayToHex(Buffer.from(block.prevHash).reverse())
+    sync._t.decode += Date.now() - _tDecode
+
+    //Check if there is a reorg
+    if (nextBlockHeight > 0){
+        //previousBlockHash is not the same, it must be a reorg
+        if (previousBlockHash != sync.lastProcessedBlockHash){
+            return rollBackOnPrevHashMismatch.call(this, sync)
+        }
+    }
+    await stageBlock.call(this, sync, block, nextBlockHash, nextBlockHeight, previousBlockHash)
+    const flush = flushTrigger.call(this, sync, nextBlockHeight)
+    if (flush) return flushBatch.call(this, sync, flush, nextBlockHash, nextBlockHeight)
+    advanceCursor(sync, nextBlockHash, nextBlockHeight)
+}
+
+// Queues batched fetches for the heights after the queue's last entry, up to
+// PREFETCH_SIZE entries and never past the node's tip.
+function fillPrefetchQueue(sync, fromHeight, tipHeight){
+    let maxQueued = fromHeight - 1
+    if (sync.prefetchQueue.length > 0) {
+        maxQueued = sync.prefetchQueue[sync.prefetchQueue.length - 1].height
+    }
+
+    // Collect all heights that still need to be queued
+    const heights = []
+    while (sync.prefetchQueue.length + heights.length < PREFETCH_SIZE && maxQueued + 1 <= tipHeight) {
+        maxQueued++
+        heights.push(maxQueued)
+    }
+    if (heights.length === 0) return
+
+    if (this.auxPow) {
+        // AuxPoW: one batch HTTP request each for getblockhash + getblockheader + getblock,
+        // stripping the AuxPoW header bytes per block (getBlocksBatchWithoutAuxPow)
+        const batchPromise = this.connector.getBlocksBatchWithoutAuxPow(heights)
+        heights.forEach((h, i) => {
+            const p = batchPromise.then(results => ({ hash: results[i].hash, hex: results[i].hex }))
+            p.catch(() => {}) // suppress unhandled rejection if entry is cleared from queue before being awaited
+            sync.prefetchQueue.push({ height: h, promise: p })
+        })
+    } else {
+        // Non-AuxPoW: one batch HTTP request for all getblockhash + one for all getblock
+        const batchPromise = this.connector.getBlocksBatch(heights)
+        heights.forEach((h, i) => {
+            const p = batchPromise.then(results => ({ hash: results[i].hash, hex: results[i].hex }))
+            p.catch(() => {}) // suppress unhandled rejection if entry is cleared from queue before being awaited
+            sync.prefetchQueue.push({ height: h, promise: p })
+        })
+    }
+}
+
+// One block by height, outside the prefetch queue.
+async function fetchBlock(height){
+    const hash = await this.connector.getBlockHash(height)
+    const hex = this.auxPow
+        ? await this.connector.getBlockWithoutAuxPow(hash)
+        : await this.connector.getBlock(hash)
+    return { hash, hex }
+}
+
+// The next block's hash and bytes: rebuilt per-tx once the AuxPoW strip keeps
+// failing at this height, else from the prefetch queue, else fetched directly.
+// On a failure it counts both streaks, waits, and returns null (the pass ends);
+// the fetch streak throws once the node plainly cannot serve the block.
+async function fetchNextBlock(sync, nextBlockHeight){
+    let nextBlockHash = null
+    let nextBlockHex = null
+    try {
+        let fetched
+        if (this.shouldReassembleBlock(nextBlockHeight, sync.auxPowParseFailureHeight, sync.auxPowParseFailures)) {
+            // The AuxPoW STRIP has failed this many times at this height,
+            // which is evidence about the block's bytes rather than the
+            // node's health: bypass the prefetch queue (its batch strip
+            // would just fail the same way) and rebuild the pure block
+            // per-tx, never reading the AuxPoW bytes.
+            logger.error('AuxPoW strip at height ' + nextBlockHeight + ' failed ' + sync.auxPowParseFailures +
+                ' consecutive times; falling back to per-tx block reassembly (malformed-AuxPoW recovery).')
+            sync.prefetchQueue = []
+            const hash = await this.connector.getBlockHash(nextBlockHeight)
+            fetched = { hash, hex: await this.connector.getBlockReassembled(hash) }
+        } else if (sync.prefetchQueue.length > 0 && sync.prefetchQueue[0].height === nextBlockHeight) {
+            fetched = await sync.prefetchQueue.shift().promise
+        } else {
+            // Queue is out of sync (e.g. after reorg), fetch directly
+            sync.prefetchQueue = []
+            fetched = await fetchBlock.call(this, nextBlockHeight)
+        }
+        nextBlockHash = fetched.hash
+        nextBlockHex = fetched.hex
+        // Successful fetch: clear the desync streak so a future
+        // transient blip starts counting from zero again, and the
+        // parse streak with it (this block's bytes are readable, by
+        // the strip or by reassembly).
+        sync.blockFetchFailures = 0
+        sync.blockFetchFailureHeight = null
+        sync.auxPowParseFailures = 0
+        sync.auxPowParseFailureHeight = null
+    } catch (e){
+        sync.prefetchQueue = []
+        // noteBlockFetchFailure counts consecutive failures at this
+        // height and THROWS a diagnosable desync error once the bound
+        // is hit, so a node pruned past our cursor fails loud instead
+        // of spinning every 3s forever. It counts EVERY failure; the
+        // parse streak beside it counts only the tagged content faults
+        // that may escalate to reassembly.
+        const _p = this.noteAuxPowParseFailure(nextBlockHeight, sync.auxPowParseFailureHeight, sync.auxPowParseFailures, e)
+        sync.auxPowParseFailureHeight = _p.height
+        sync.auxPowParseFailures = _p.count
+        const _s = this.noteBlockFetchFailure(nextBlockHeight, sync.blockFetchFailureHeight, sync.blockFetchFailures, e)
+        sync.blockFetchFailureHeight = _s.height
+        sync.blockFetchFailures = _s.count
+        await this.sleep(BLOCK_FETCH_RETRY_SLEEP_MS)
+        return null
+    }
+    return { hash: nextBlockHash, hex: nextBlockHex }
+}
+
+// The next block's parent is not our tip, so the node reorganized under us:
+// discard the open batch and roll back to the common ancestor. Hands back the
+// batch reset.
+async function rollBackOnPrevHashMismatch(sync){
+    sync.prefetchQueue = []
+    await this.db.endTransaction(false)
+    // The rolled-back batch discarded the P-key write that
+    // records aged-out blocks awaiting K/M cleanup, but those
+    // blocks are too old to reorg and still need cleaning.
+    // Persist the list with a standalone put on the underlying
+    // store, deliberately outside the transaction just rolled
+    // back, so the startup recovery path runs cleanupAgedBlocks()
+    // for them on the next restart instead of stranding the
+    // entries on disk.
+    if (this.pendingKMCleanup.length > 0) {
+        await this.db.db.put(P_PENDING_CLEANUP_KEY,
+            Buffer.from(JSON.stringify(this.pendingKMCleanup)))
+    }
+    // Reload in ascending height order (tip last); the raw
+    // getLastStoredBlocks() order is lexicographic by hash,
+    // which makes verifyReorg's removeFromLastBlocks throw.
+    this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+    // console.warn: the prev-hash-mismatch path is the ordinary reorg
+    // trigger, so leaving it at info is what makes a routine reorg
+    // invisible to a warn+ filter.
+    logger.warn("A reorg has been detected. Cleaning blocks...")
+    await this.verifyReorg()
+    sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
+    sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
+
+    // The P key was persisted above (standalone put, outside the
+    // rolled-back batch) so a restart would re-run cleanupAgedBlocks.
+    // Run it now so aged-out K/M/W records are purged immediately
+    // and the P key is deleted atomically, not left on disk until
+    // the next restart or flush.
+    await this.cleanupAgedBlocks()
+
+    return () => {
+        resetBatchAfterReorg.call(this, sync)
+        logger.info("Blocks were updated")
+    }
+}
+
+// Stages one block into the batch, opening the batch on its first block: the
+// block record, its outputs and spent inputs, the counters, the txids whose
+// mempool records go at the next flush, and the last-blocks window entry.
+async function stageBlock(sync, block, nextBlockHash, nextBlockHeight, previousBlockHash){
+    //Start a transaction if there are no blocks processed yet
+    if (sync.blocksQuantity == 0){
+        await this.db.beginTransaction()
+    }
+
+    //Insert the processed block
+    await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp, previousHash:previousBlockHash})
+    sync.blocksCount = sync.blocksCount + 1
+
+    //Parse the transactions (two-pass approach to allow full parallelism):
+    //  Pass 1: insert all outputs for every tx concurrently
+    //  Pass 2: process all inputs concurrently (same-block outputs are
+    //          now in transactionArray so removeOutputWithInput finds them)
+    var transactions = block.transactions
+    const { blockOutputCounts, blockInputTotal } = await parseBlockTransactions.call(this, sync, transactions, nextBlockHash, nextBlockHeight)
+
+    sync.transactionsCount = sync.transactionsCount + transactions.length
+    sync.outputsCount = sync.outputsCount + blockOutputCounts.reduce((acc, n) => acc + n, 0)
+    sync.inputsCount  = sync.inputsCount  + blockInputTotal
+
+    // Collect txids for mempool cleanup. The actual deletions are
+    // deferred to after db.endTransaction() at flush time so that
+    // confirmed outputs are always committed before their mempool
+    // records are removed, closing the window where a just-mined
+    // UTXO would transiently appear in neither the confirmed nor
+    // the mempool store. The cleanup is a no-op for txs the
+    // mempool poll never saw (most in regtest).
+    for (const tx of transactions) {
+        sync.pendingMempoolTxCleanup.push("id" in tx ? tx["id"] : tx.getId())
+    }
+
+    //Add the block to the last blocks
+    await this.addToLastBlocks(nextBlockHash)
+}
+
+// The block's two parse passes, timed into the batch's buckets: every tx's
+// outputs in tx-index order, then every spent input removed in one batch.
+async function parseBlockTransactions(sync, transactions, nextBlockHash, nextBlockHeight){
+    const _tParse = Date.now()
+    const _tParseOut = Date.now()
+    // Sequential in tx-index order so that S-record writes across
+    // txs in the same block land in deterministic (tx-index, vout)
+    // order, matching bulk-sync.
+    const blockOutputCounts = new Array(transactions.length)
+    for (let txIdx = 0; txIdx < transactions.length; txIdx++) {
+        blockOutputCounts[txIdx] = await this.parseTxOutputs(
+            this.db, transactions[txIdx], nextBlockHash, nextBlockHeight, false, REMOVE_SPENT
+        )
+    }
+    sync._t.parseOut += Date.now() - _tParseOut
+    // Pass 2: collect all inputs across the block, then batch-remove
+    const _tParseIn = Date.now()
+    const removeInputs = []
+    for (const tx of transactions) {
+        for (const nextInput of tx.ins) {
+            const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
+            // A coinbase input spends nothing, so there is no previous output to remove.
+            if ((nextInput.index === 4294967295) || !standardInput) continue
+            const prevTxHash8 = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse()).substring(0, 16)
+            removeInputs.push({ prevTxHash: prevTxHash8, prevOutputIndex: nextInput.index, blockHash: nextBlockHash })
+        }
+    }
+    let blockInputTotal = removeInputs.length
+    if (removeInputs.length > 0) {
+        await this.db.removeOutputsWithInputsBatch(removeInputs)
+    }
+    sync._t.parseIn += Date.now() - _tParseIn
+    sync._t.parse += Date.now() - _tParse
+    return { blockOutputCounts, blockInputTotal }
+}
+
+// Why the batch flushes after this block, or null: the node's tip reached, the
+// batch full, or the heap under pressure (sampled here for the timing line).
+function flushTrigger(sync, nextBlockHeight){
+    // Flush triggers: batch full, at chain tip, or heap pressure.
+    //If there are enough processed blocks, then add them to the database.
+    //Three triggers: batch full, at chain tip, or heap under pressure.
+    //Heap-pressure flush keeps the block-count constant working as an
+    //upper bound while preventing V8 OOM on dense chain windows where a
+    //full 200-block batch would push staged Buffers past the heap cap.
+    const _earlyFlushHeapMB = process.memoryUsage().heapUsed / 1048576
+    const _flushReason =
+        (nextBlockHeight == this.blockchainInfoLastBlock)             ? 'tip' :
+        (sync.blocksQuantity == DB_TRANSACTION_BLOCKS_QUANTITY-1)     ? 'batch-full' :
+        (_earlyFlushHeapMB > HEAP_FLUSH_THRESHOLD_MB)                 ? 'heap-pressure' :
+        null
+    return _flushReason ? { reason: _flushReason, heapMB: _earlyFlushHeapMB } : null
+}
+
+// Commits the batch with the tip pointer and the aged-block list, stamps the
+// forward-progress heartbeat, then runs the deferred mempool and K/M cleanups.
+// Hands back the flush's bookkeeping.
+async function flushBatch(sync, flush, nextBlockHash, nextBlockHeight){
+    logger.info("Indexing block "+(nextBlockHeight)+"("+nextBlockHash+")")
+    await this.db.setLastBlockHeight(nextBlockHeight)
+    await this.db.setLastBlockHash(nextBlockHash)
+    logger.info("Inserting data Blocks ("+sync.blocksCount+") Transactions ("+sync.transactionsCount+") Inputs ("+sync.inputsCount+") Outputs("+sync.outputsCount+")")
+
+    // Atomically record which blocks need K/M cleanup so a crash between
+    // endTransaction and cleanupAgedBlocks is recoverable on restart.
+    if (this.pendingKMCleanup.length > 0) {
+        await this.db.addTransaction("put", P_PENDING_CLEANUP_KEY,
+            Buffer.from(JSON.stringify(this.pendingKMCleanup)))
+    }
+
+    const _tCommit = Date.now()
+    await this.db.endTransaction()
+    sync._t.commit += Date.now() - _tCommit
+
+    // Stamp the forward-progress heartbeat only after the batch is
+    // durable, so a crash mid-flush cannot leave /metrics claiming a
+    // commit the DB never took.
+    this.lastCommitAt = Date.now()
+    this.lastCommittedHeight = nextBlockHeight
+
+    // Flush deferred mempool cleanup AFTER confirmed outputs are committed.
+    // This closes the ordering gap: mined UTXOs are queryable from the
+    // confirmed DB before their mempool records are removed, so no query
+    // window exists where the output appears in neither store.
+    // deleteOutputsByHint/deleteInputsByHint are per-entry read streams that
+    // yield to the event loop, so wrap in a transaction for atomicity and
+    // wait for any in-flight updateMempool() to release the mutex first.
+    if (sync.pendingMempoolTxCleanup.length > 0) {
+        while (this.mempoolBusy) {
+            await this.sleep(50)
+        }
+        this.mempoolBusy = true
+        try {
+            await this.mempoolDb.beginTransaction()
+            for (const txid of sync.pendingMempoolTxCleanup) {
+                await this.mempoolDb.deleteOutputsByHint(txid)
+                await this.mempoolDb.deleteInputsByHint(txid)
+                await this.mempoolDb.deleteTransaction(txid)
+            }
+            await this.mempoolDb.endTransaction()
+        } finally {
+            this.mempoolBusy = false
+        }
+        sync.pendingMempoolTxCleanup = []
+    }
+
+    // Clean up K/M entries for aged-out blocks now that the batch is committed
+    const _tCleanup = Date.now()
+    await this.cleanupAgedBlocks()
+    sync._t.cleanup += Date.now() - _tCleanup
+    return () => finishFlushedBlock.call(this, sync, flush, nextBlockHash, nextBlockHeight)
+}
+
+// The flush's bookkeeping once the batch and its cleanups are done: the timing
+// and progress lines and a fresh batch, then the cursor moves onto the block.
+function finishFlushedBlock(sync, flush, nextBlockHash, nextBlockHeight){
+    logBatchTiming.call(this, sync, flush.reason, flush.heapMB)
+    recordSyncProgress(sync, nextBlockHeight)
+    logSyncEta.call(this, sync, nextBlockHeight)
+    sync.blocksQuantity = -1
+    advanceCursor(sync, nextBlockHash, nextBlockHeight)
+}
+
+// The flush's timing line (per-phase milliseconds, the parse and known-script
+// buckets, memory), after which every bucket starts again from zero.
+function logBatchTiming(sync, _flushReason, _earlyFlushHeapMB){
+    const _t = sync._t
+    // ── Print timing summary ──
+    _t.blocks = sync.blocksQuantity + 1
+    const _total = _t.decode + _t.parse + _t.commit + _t.cleanup
+    const _pb = XChainUtxoTracker.parseOutBuckets
+    const _pi = LevelUpStore.parseInBuckets
+    const _ks = LevelUpStore.knownScripts
+    const _ksH = LevelUpStore.knownScriptsHits
+    const _ksM = LevelUpStore.knownScriptsMisses
+    const _ksRate = _ksH + _ksM > 0 ? ((_ksH / (_ksH + _ksM)) * 100).toFixed(1) : '0.0'
+    const _mem = process.memoryUsage()
+    const _heapMB = (_mem.heapUsed / 1048576).toFixed(0)
+    const _rssMB = (_mem.rss / 1048576).toFixed(0)
+    const _ocSize = LevelUpStore.outputCache.size
+    logger.info(`⏱ TIMING (${_t.blocks} blocks) flush=${_flushReason} total=${_total}ms | decode=${_t.decode}ms | parse=${_t.parse}ms (out=${_t.parseOut}ms [hash=${_pb.hash}ms ins=${_pb.ins}ms sb=${_pb.sb}ms] in=${_t.parseIn}ms [hintRead=${_pi.hintRead}ms outRead=${_pi.outRead}ms stage=${_pi.stage}ms]) | commit=${_t.commit}ms | cleanup=${_t.cleanup}ms | knownScripts=${_ks.size} hit=${_ksH} miss=${_ksM} rate=${_ksRate}% | heap=${_heapMB}MB heapPre=${_earlyFlushHeapMB.toFixed(0)}MB rss=${_rssMB}MB outCache=${_ocSize}`)
+    XChainUtxoTracker.parseOutBuckets = { hash: 0, ins: 0, sb: 0 }
+    LevelUpStore.parseInBuckets = { hintRead: 0, outRead: 0, stage: 0 }
+    LevelUpStore.knownScriptsHits = 0
+    LevelUpStore.knownScriptsMisses = 0
+}
+
+// Adds this flush to the rolling ETA window, then zeroes the batch's timings and
+// counters.
+function recordSyncProgress(sync, nextBlockHeight){
+    // Rolling ETA based on tx throughput; window is a span of
+    // ETA_WINDOW_BLOCKS blocks, not a count of samples. Each sample
+    // covers DB_TRANSACTION_BLOCKS_QUANTITY blocks, so a count-based
+    // trim would keep ~200× more history than intended.
+    sync.blockTimestamps.push({height: nextBlockHeight, time: Date.now(), txCount: sync.transactionsCount})
+    while (sync.blockTimestamps.length >= 2 &&
+           (nextBlockHeight - sync.blockTimestamps[0].height) > ETA_WINDOW_BLOCKS) {
+        sync.blockTimestamps.shift()
+    }
+
+    sync._t = { fetch: 0, decode: 0, parse: 0, parseOut: 0, parseIn: 0, commit: 0, cleanup: 0, blocks: 0 }
+    sync.blocksCount = 0
+    sync.transactionsCount = 0
+    sync.inputsCount = 0
+    sync.outputsCount = 0
+}
+
+// Throughput and the estimated time to the node's tip, once the ETA window
+// holds two flushes.
+function logSyncEta(sync, nextBlockHeight){
+    const blockTimestamps = sync.blockTimestamps
+    let blocksLeft = this.blockchainInfoLastBlock - nextBlockHeight
+    if (blocksLeft > 0 && blockTimestamps.length >= 2) {
+        let oldest = blockTimestamps[0]
+        let newest = blockTimestamps[blockTimestamps.length - 1]
+        let totalTx = 0
+        for (let k = 1; k < blockTimestamps.length; k++) totalTx += blockTimestamps[k].txCount
+        let elapsedMs = newest.time - oldest.time
+        let msPerTx = elapsedMs / totalTx
+        let avgTxPerBlock = totalTx / (newest.height - oldest.height)
+        let msLeft = blocksLeft * avgTxPerBlock * msPerTx
+        logger.info(`⚡ Speed: ${(1000/msPerTx).toFixed(1)} tx/s | avg ${avgTxPerBlock.toFixed(0)} tx/block (last ${newest.height - oldest.height} blocks)`)
+        logger.info("Estimated time to finish: "+this.millisecondsToTimeString(msLeft))
+    }
+}
+
+// Counts the staged block into the batch and moves the in-memory cursor onto it.
+function advanceCursor(sync, nextBlockHash, nextBlockHeight){
+    sync.blocksQuantity = sync.blocksQuantity + 1
+    sync.lastProcessedBlockIndex = nextBlockHeight
+    sync.lastProcessedBlockHash = nextBlockHash
+}
+
+// After a reorg rolled the open batch back: zero the batch counters and drop the
+// aged-block list, the pending mempool deletions and the ETA window.
+function resetBatchAfterReorg(sync){
+    sync.blocksQuantity = 0
+    sync.blocksCount = 0
+    sync.transactionsCount = 0
+    sync.inputsCount = 0
+    sync.outputsCount = 0
+    this.pendingKMCleanup = []
+    sync.pendingMempoolTxCleanup = []
+    sync.blockTimestamps = []
 }
 
 module.exports = XChainUtxoTracker

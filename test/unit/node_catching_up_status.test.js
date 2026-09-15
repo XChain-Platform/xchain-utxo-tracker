@@ -98,7 +98,8 @@ describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces
       expect(branchTop).to.be.greaterThan(0);
       const at = branch.indexOf('nodeStillCatchingUp(lastBlockchainInfo)');
       expect(at).to.be.greaterThan(0);
-      const waitBranch = branch.slice(at, branch.indexOf('continue', at));
+      const wait = trackerSrc.indexOf('async function waitOnCatchingUpNode(');
+      const waitBranch = trackerSrc.slice(wait, trackerSrc.indexOf('\n}\n', wait));
       expect(waitBranch).to.match(
         /this\.nodeCatchingUp = catchUpWaitState\(this\.nodeCatchingUp,\s*this\.blockchainInfoLastBlock,\s*lastProcessedBlockIndex\)/);
     });
