@@ -77,6 +77,9 @@ describe('LAST_BLOCK_* pointer repair reaches disk', function () {
         expect(await db.getLastBlockHash()).to.equal(HASH);
         await db.close();
     });
+});
+
+describe('LAST_BLOCK_* pointer repair reaches disk', function () {
 
     it('leaves no batch open for the caller to strand', async function () {
         const db = await bootStore();
