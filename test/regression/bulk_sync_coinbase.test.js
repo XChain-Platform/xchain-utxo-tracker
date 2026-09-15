@@ -173,6 +173,14 @@ describe('coinbase maturity survives the bulk-sync pipeline', function () {
             await mempoolDb.close();
         }
     });
+});
+
+describe('coinbase maturity survives the bulk-sync pipeline', function () {
+    this.timeout(20000);
+
+    let tmp;
+    beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bulk-cb-')); });
+    afterEach(function () { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {} });
 
     it('serves a mature coinbase whose flag round-tripped as coinbase=true', async function () {
         const { address, scriptHash } = fixtureAddress();
@@ -203,6 +211,14 @@ describe('coinbase maturity survives the bulk-sync pipeline', function () {
             await mempoolDb.close();
         }
     });
+});
+
+describe('coinbase maturity survives the bulk-sync pipeline', function () {
+    this.timeout(20000);
+
+    let tmp;
+    beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bulk-cb-')); });
+    afterEach(function () { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {} });
 
     it('a legacy 120-byte dump (no flag byte) still merges and serves as non-coinbase', async function () {
         const { address, scriptHash } = fixtureAddress();
