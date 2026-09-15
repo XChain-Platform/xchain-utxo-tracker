@@ -22,17 +22,17 @@ const { catchUpWaitState } = XChainUtxoTracker;
 // health surface still reads "ok, lag N". An operator watching `xchain-node ps` sees
 // a tracker that looks stalled. So the wait is published as `node_catching_up` on the
 // instance and on both health payloads, and reads null the rest of the time.
+const trackerSrc = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker.js'), 'utf8');
+const apiSrc = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+
+function newTracker() {
+  return new XChainUtxoTracker(
+    'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
+  );
+}
+
 describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces', function () {
   this.timeout(0);
-
-  const trackerSrc = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker.js'), 'utf8');
-  const apiSrc = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
-
-  function newTracker() {
-    return new XChainUtxoTracker(
-      'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
-    );
-  }
 
   describe('the field on the instance', function () {
     it('is null on a fresh tracker, so "not waiting" is the default', function () {
@@ -43,6 +43,10 @@ describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces
       expect(Object.prototype.hasOwnProperty.call(newTracker(), 'nodeCatchingUp')).to.equal(true);
     });
   });
+});
+
+describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces', function () {
+  this.timeout(0);
 
   describe('catchUpWaitState() (the value the wait branch publishes each poll)', function () {
     it('carries exactly the three keys, with an ISO timestamp', function () {
@@ -78,9 +82,13 @@ describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces
       }
     });
   });
+});
 
-  // The sync loop needs a live node below our tip to reach, so the wiring is guarded
-  // at source level, the shape nodeCatchUpWait.test.js already uses for this branch.
+// The sync loop needs a live node below our tip to reach, so the wiring is guarded
+// at source level, the shape nodeCatchUpWait.test.js already uses for this branch.
+describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces', function () {
+  this.timeout(0);
+
   describe('the sync loop publishes and clears the wait', function () {
     const detection = trackerSrc.indexOf('The last processed block height are greater than the last block of the node');
     const branchTop = trackerSrc.lastIndexOf('if (lastProcessedBlockIndex > this.blockchainInfoLastBlock)', detection);
@@ -109,9 +117,13 @@ describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces
         /if \(this\.nodeCatchingUp && lastProcessedBlockIndex <= this\.blockchainInfoLastBlock\)\{\s*this\.nodeCatchingUp = null/);
     });
   });
+});
 
-  // api.js builds its payloads inside startApi() against a live tracker, so the two
-  // sites are guarded at source level too.
+// api.js builds its payloads inside startApi() against a live tracker, so the two
+// sites are guarded at source level too.
+describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces', function () {
+  this.timeout(0);
+
   describe('the api payloads carry node_catching_up', function () {
     it('rides the per-query freshness meta, which both GET /status branches spread', function () {
       const at = apiSrc.indexOf('async function getFreshnessMeta(');
