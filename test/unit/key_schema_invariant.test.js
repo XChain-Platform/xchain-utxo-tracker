@@ -81,6 +81,9 @@ describe('LevelUpDb key-schema invariants', function () {
             expect(key().length).to.equal(len);
         });
     });
+});
+
+describe('LevelUpDb key-schema invariants', function () {
 
     it('prefix bytes are unique across all key families', function () {
         const prefixes = new Map();
@@ -105,6 +108,9 @@ describe('LevelUpDb key-schema invariants', function () {
                 .to.be.at.most(0);
         }
     });
+});
+
+describe('LevelUpDb key-schema invariants', function () {
 
     it('rangeEnd covers short getValuesFromKeyPattern prefixes over the longest (77-byte) key', function () {
         const maxLen = Math.max(...REGISTRY.map((r) => r.key().length));
