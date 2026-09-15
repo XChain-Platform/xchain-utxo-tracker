@@ -68,6 +68,10 @@ describe('utxo-tracker boot BigInt-safe bufferutils verification', function () {
     it('constructs a dogecoin tracker normally while the patch holds', function () {
         expect(() => makeTracker('dogecoin-mainnet')).to.not.throw();
     });
+});
+
+describe('utxo-tracker boot BigInt-safe bufferutils verification', function () {
+    afterEach(() => sinon.restore());
 
     it('leaves non-dogecoin coins alone even with the reader broken', function () {
         breakReader();
