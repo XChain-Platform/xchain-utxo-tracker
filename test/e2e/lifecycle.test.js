@@ -21,10 +21,10 @@ const {
   createE2ETracker, patchLevelUpStoreInMemory
 } = require('./support/helpers');
 
-describe('E2E: Lifecycle - start() Loop', function () {
-  let tracker;
-  let restoreLevelUp;
+let tracker;
+let restoreLevelUp;
 
+function registerLifecycleHooks() {
   beforeEach(function () {
     restoreLevelUp = patchLevelUpStoreInMemory();
     tracker = createE2ETracker();
@@ -35,7 +35,10 @@ describe('E2E: Lifecycle - start() Loop', function () {
     await tracker.stopParsing();
     restoreLevelUp();
   });
+}
 
+describe('E2E: Lifecycle - start() Loop', function () {
+  registerLifecycleHooks();
   describe('A1: genesis to synced state', function () {
     it('syncs 5 blocks and reports correct height and balances', async function () {
       const blocks = buildCoinbaseChain(5, 0);
@@ -56,7 +59,10 @@ describe('E2E: Lifecycle - start() Loop', function () {
       expect(utxos).to.have.length(5);
     });
   });
+});
 
+describe('E2E: Lifecycle - start() Loop', function () {
+  registerLifecycleHooks();
   describe('A2: incremental block processing', function () {
     it('picks up new blocks after reaching synced state', async function () {
       const blocks = buildCoinbaseChain(3, 0);
@@ -84,7 +90,10 @@ describe('E2E: Lifecycle - start() Loop', function () {
       expect(info1.utxos.confirmed).to.equal(3);
     });
   });
+});
 
+describe('E2E: Lifecycle - start() Loop', function () {
+  registerLifecycleHooks();
   describe('A3: multi-address distribution', function () {
     it('indexes multi-output transaction with correct per-address balances', async function () {
       const cb = makeCoinbaseTx(0, 50 * SATOSHI);
@@ -124,7 +133,10 @@ describe('E2E: Lifecycle - start() Loop', function () {
       expect(info0.balances.confirmed).to.equal('0.00000000');
     });
   });
+});
 
+describe('E2E: Lifecycle - start() Loop', function () {
+  registerLifecycleHooks();
   describe('A4: large batch forcing multiple DB_TRANSACTION_BLOCKS_QUANTITY commits', function () {
     it('indexes 150 blocks across batch boundaries without data loss', async function () {
       const blocks = buildCoinbaseChain(150, 0, 0, 1 * SATOSHI);
@@ -151,7 +163,10 @@ describe('E2E: Lifecycle - start() Loop', function () {
       expect(block100.h).to.equal(100);
     });
   });
+});
 
+describe('E2E: Lifecycle - start() Loop', function () {
+  registerLifecycleHooks();
   describe('B1: simple spend through the loop', function () {
     it('processes spend and updates balances correctly', async function () {
       const cb = makeCoinbaseTx(0, 50 * SATOSHI);
@@ -179,7 +194,10 @@ describe('E2E: Lifecycle - start() Loop', function () {
       expect(info1.utxos.confirmed).to.equal(1);
     });
   });
+});
 
+describe('E2E: Lifecycle - start() Loop', function () {
+  registerLifecycleHooks();
   describe('B2: drain address (spend all UTXOs)', function () {
     it('leaves sender with zero balance after spending all UTXOs', async function () {
       // 3 coinbases to addr 0
@@ -213,7 +231,10 @@ describe('E2E: Lifecycle - start() Loop', function () {
       expect(info1.balances.confirmed).to.equal('59.00000000');
     });
   });
+});
 
+describe('E2E: Lifecycle - start() Loop', function () {
+  registerLifecycleHooks();
   describe('B3: same-block spend through the loop', function () {
     it('handles output created and spent in the same block', async function () {
       const cb = makeCoinbaseTx(0, 50 * SATOSHI);
@@ -244,7 +265,10 @@ describe('E2E: Lifecycle - start() Loop', function () {
       expect(info2.balances.confirmed).to.equal('24.00000000');
     });
   });
+});
 
+describe('E2E: Lifecycle - start() Loop', function () {
+  registerLifecycleHooks();
   describe('A5: confirmation count calculation', function () {
     it('returns correct confirmations based on tip height', async function () {
       const blocks = buildCoinbaseChain(10, 0, 0, 5 * SATOSHI);
@@ -265,7 +289,10 @@ describe('E2E: Lifecycle - start() Loop', function () {
       expect(block9Utxo.confirmations).to.equal(1);
     });
   });
+});
 
+describe('E2E: Lifecycle - start() Loop', function () {
+  registerLifecycleHooks();
   describe('A6: empty address queries', function () {
     it('returns zero balances for addresses with no history', async function () {
       const blocks = buildCoinbaseChain(3, 0);
@@ -283,7 +310,10 @@ describe('E2E: Lifecycle - start() Loop', function () {
       expect(utxos).to.have.length(0);
     });
   });
+});
 
+describe('E2E: Lifecycle - start() Loop', function () {
+  registerLifecycleHooks();
   describe('A7: first-seen tracking', function () {
     it('returns the first block height for an address', async function () {
       const blocks = buildCoinbaseChain(5, 0);
