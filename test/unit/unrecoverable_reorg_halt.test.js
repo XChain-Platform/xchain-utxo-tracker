@@ -26,14 +26,29 @@ const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 // Fix: tag this fault class (unrecoverableReorg) so the top-level guard can HALT
 // in place (haltForResync) instead of exiting, while transient faults still exit
 // for a supervised restart. These tests pin the tagging + halt behavior.
+function newTracker() {
+  return new XChainUtxoTracker(
+    'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
+  );
+}
+
+function haltedTracker() {
+  const tracker = newTracker();
+  tracker.db = { closes: 0, close: async function () { this.closes++; } };
+  tracker.haltForResync('deep reorg');
+  return tracker;
+}
+
+// Fail fast rather than hang the suite (this file runs with timeout 0).
+function within(ms, promise) {
+  return Promise.race([
+    promise,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('stopParsing never settled')), ms))
+  ]);
+}
+
 describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
   this.timeout(0);
-
-  function newTracker() {
-    return new XChainUtxoTracker(
-      'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
-    );
-  }
 
   describe('markUnrecoverableReorg / isUnrecoverableReorg', function () {
     it('tags and detects only the flagged error class', function () {
@@ -49,6 +64,10 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
       expect(XChainUtxoTracker.isUnrecoverableReorg(undefined)).to.equal(false);
     });
   });
+});
+
+describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
+  this.timeout(0);
 
   describe('removeFromLastBlocks empty window', function () {
     it('throws an error tagged unrecoverableReorg when the tracked window is empty', async function () {
@@ -65,6 +84,10 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
       expect(XChainUtxoTracker.isUnrecoverableReorg(err)).to.equal(true);
     });
   });
+});
+
+describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
+  this.timeout(0);
 
   describe('verifyReorg depth guard', function () {
     // Orphan chain 105..102 disagrees with the node; 101 matches. undoBlocks=2, so
@@ -112,6 +135,10 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
       expect(deleted).to.deep.equal([105, 104]);
     });
   });
+});
+
+describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
+  this.timeout(0);
 
   describe('verifyReorg empty-window during rollback', function () {
     // The reported crash: a block disagrees and must be rolled back, but the
@@ -158,6 +185,10 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
       expect(deleteCalls).to.equal(1);
     });
   });
+});
+
+describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
+  this.timeout(0);
 
   describe('haltForResync', function () {
     it('sets the halted state, records the reason, and clears the mempool interval', function () {
@@ -187,30 +218,18 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
       expect(tracker.haltReason).to.match(/unrecoverable reorg/i);
     });
   });
+});
 
-  // The halt is only half a feature without a way out of it. The loop exits by
-  // throwing, so it never runs the normal-stop branch that closes the store and
-  // sets parsingStopped; stopParsing() could then only time out and reject, and
-  // both recovery RPCs open with that call, so restorebootstrap could never reach
-  // the wipe. And nothing cleared halted afterwards, so even a completed resync
-  // kept publishing halted=true to xchain-node's bootstrap gate forever.
+// The halt is only half a feature without a way out of it. The loop exits by
+// throwing, so it never runs the normal-stop branch that closes the store and
+// sets parsingStopped; stopParsing() could then only time out and reject, and
+// both recovery RPCs open with that call, so restorebootstrap could never reach
+// the wipe. And nothing cleared halted afterwards, so even a completed resync
+// kept publishing halted=true to xchain-node's bootstrap gate forever.
+describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
+  this.timeout(0);
+
   describe('halted recovery path', function () {
-
-    function haltedTracker() {
-      const tracker = newTracker();
-      tracker.db = { closes: 0, close: async function () { this.closes++; } };
-      tracker.haltForResync('deep reorg');
-      return tracker;
-    }
-
-    // Fail fast rather than hang the suite (this file runs with timeout 0).
-    function within(ms, promise) {
-      return Promise.race([
-        promise,
-        new Promise((_, rej) => setTimeout(() => rej(new Error('stopParsing never settled')), ms))
-      ]);
-    }
-
     it('records the aborted loop so the stop path can tell it from a live one', function () {
       const tracker = newTracker();
       expect(tracker.parsingAborted).to.equal(false);
@@ -238,7 +257,13 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
       expect(again).to.equal(true);
       expect(tracker.db.closes).to.equal(1);
     });
+  });
+});
 
+describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
+  this.timeout(0);
+
+  describe('halted recovery path', function () {
     it('stopParsing rejects (never hangs) when the store fails to close', async function () {
       const tracker = newTracker();
       tracker.db = { close: async () => { throw new Error('leveldb busy'); } };
@@ -276,7 +301,13 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
       expect(tracker.db.closes).to.equal(0);
       if (tracker.mempoolInterval) { clearInterval(tracker.mempoolInterval); tracker.mempoolInterval = null; }
     });
+  });
+});
 
+describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
+  this.timeout(0);
+
+  describe('halted recovery path', function () {
     it('clearHalt drops the marker and the reason', function () {
       const tracker = newTracker();
       tracker.haltForResync('deep reorg');
