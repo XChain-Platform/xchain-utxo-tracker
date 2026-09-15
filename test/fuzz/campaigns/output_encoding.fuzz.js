@@ -18,139 +18,158 @@ const {
 } = require('../support/helpers');
 const LevelUpStore = require('../../../src/store/level_up_db');
 
+let db;
+
+async function createDb() {
+  db = new LevelUpStore('fuzz-enc-' + Date.now() + '-' + Math.random(), true);
+  await db.createDatabase();
+}
+
+async function closeDb() {
+  try { await db.close(); } catch (e) {}
+}
+
+function validOutputTests() {
+  it('any value in valid range round-trips through insertOutput/getOutputsScriptPubKey', async function () {
+    await fc.assert(
+      fc.asyncProperty(
+        arbSatoshiValue(),
+        arbConfirmedHeight(),
+        arbTxId(),
+        fc.integer({ min: 0, max: 9 }),
+        fc.integer({ min: 0, max: 100 }),
+        async (value, height, fullTxHash, addrIdx, outputIndex) => {
+          const scriptHash = TEST_KEYS[addrIdx].scriptHash;
+          const txHash8 = fullTxHash.substring(0, 16);
+
+          await db.beginTransaction();
+          await db.insertOutput({
+            scriptPubKey: scriptHash,
+            txHash: txHash8,
+            outputIndex,
+            value,
+            height,
+            fullTxHash
+          });
+          await db.endTransaction(true);
+
+          const outputs = await db.getOutputsScriptPubKey(scriptHash);
+          expect(outputs.length).to.be.greaterThanOrEqual(1);
+
+          const match = outputs.find(o => o.txid === txHash8 && o.vout === outputIndex);
+          expect(match).to.exist;
+          expect(match.value).to.equal(value.toString());
+          expect(match.height).to.equal(height);
+          expect(match.fullTxid).to.equal(fullTxHash);
+        }
+      ),
+      { numRuns: FUZZ_RUNS }
+    );
+  });
+}
+
+function mempoolHeightTests() {
+  it('mempool height (-1) round-trips correctly', async function () {
+    await fc.assert(
+      fc.asyncProperty(
+        arbSatoshiValue(),
+        arbTxId(),
+        fc.integer({ min: 0, max: 9 }),
+        async (value, fullTxHash, addrIdx) => {
+          const scriptHash = TEST_KEYS[addrIdx].scriptHash;
+          const txHash8 = fullTxHash.substring(0, 16);
+
+          await db.beginTransaction();
+          await db.insertOutput({
+            scriptPubKey: scriptHash,
+            txHash: txHash8,
+            outputIndex: 0,
+            value,
+            height: -1,
+            fullTxHash
+          });
+          await db.endTransaction(true);
+
+          const outputs = await db.getOutputsScriptPubKey(scriptHash);
+          const match = outputs.find(o => o.txid === txHash8);
+          expect(match).to.exist;
+          expect(match.height).to.equal(-1);
+        }
+      ),
+      { numRuns: FUZZ_RUNS }
+    );
+  });
+}
+
+function extremeValueTests() {
+  it('extreme satoshi values (uint64 boundary) round-trip correctly', async function () {
+    await fc.assert(
+      fc.asyncProperty(
+        arbSatoshiValueExtreme(),
+        arbTxId(),
+        async (value, fullTxHash) => {
+          const scriptHash = TEST_KEYS[0].scriptHash;
+          const txHash8 = fullTxHash.substring(0, 16);
+
+          await db.beginTransaction();
+          await db.insertOutput({
+            scriptPubKey: scriptHash,
+            txHash: txHash8,
+            outputIndex: 0,
+            value,
+            height: 100,
+            fullTxHash
+          });
+          await db.endTransaction(true);
+
+          const outputs = await db.getOutputsScriptPubKey(scriptHash);
+          const match = outputs.find(o => o.txid === txHash8);
+          expect(match).to.exist;
+          expect(match.value).to.equal(value.toString());
+        }
+      ),
+      { numRuns: FUZZ_RUNS }
+    );
+  });
+}
+
+function zeroValueTests() {
+  it('zero-value output round-trips correctly', async function () {
+    const scriptHash = TEST_KEYS[0].scriptHash;
+    const txHash8 = randHash8();
+    const fullTxHash = txHash8 + randHash().substring(16);
+
+    await db.beginTransaction();
+    await db.insertOutput({
+      scriptPubKey: scriptHash,
+      txHash: txHash8,
+      outputIndex: 0,
+      value: 0n,
+      height: 50,
+      fullTxHash
+    });
+    await db.endTransaction(true);
+
+    const outputs = await db.getOutputsScriptPubKey(scriptHash);
+    const match = outputs.find(o => o.txid === txHash8);
+    expect(match).to.exist;
+    expect(match.value).to.equal('0');
+  });
+}
+
 describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
-  let db;
+  beforeEach(createDb);
+  afterEach(closeDb);
 
-  beforeEach(async function () {
-    db = new LevelUpStore('fuzz-enc-' + Date.now() + '-' + Math.random(), true);
-    await db.createDatabase();
-  });
+  describe('output round-trip', validOutputTests);
+  describe('output round-trip', mempoolHeightTests);
+  describe('output round-trip', extremeValueTests);
+  describe('output round-trip', zeroValueTests);
+});
 
-  afterEach(async function () {
-    try { await db.close(); } catch (e) {}
-  });
-
-  describe('output round-trip', function () {
-    it('any value in valid range round-trips through insertOutput/getOutputsScriptPubKey', async function () {
-      await fc.assert(
-        fc.asyncProperty(
-          arbSatoshiValue(),
-          arbConfirmedHeight(),
-          arbTxId(),
-          fc.integer({ min: 0, max: 9 }),
-          fc.integer({ min: 0, max: 100 }),
-          async (value, height, fullTxHash, addrIdx, outputIndex) => {
-            const scriptHash = TEST_KEYS[addrIdx].scriptHash;
-            const txHash8 = fullTxHash.substring(0, 16);
-
-            await db.beginTransaction();
-            await db.insertOutput({
-              scriptPubKey: scriptHash,
-              txHash: txHash8,
-              outputIndex,
-              value,
-              height,
-              fullTxHash
-            });
-            await db.endTransaction(true);
-
-            const outputs = await db.getOutputsScriptPubKey(scriptHash);
-            expect(outputs.length).to.be.greaterThanOrEqual(1);
-
-            const match = outputs.find(o => o.txid === txHash8 && o.vout === outputIndex);
-            expect(match).to.exist;
-            expect(match.value).to.equal(value.toString());
-            expect(match.height).to.equal(height);
-            expect(match.fullTxid).to.equal(fullTxHash);
-          }
-        ),
-        { numRuns: FUZZ_RUNS }
-      );
-    });
-
-    it('mempool height (-1) round-trips correctly', async function () {
-      await fc.assert(
-        fc.asyncProperty(
-          arbSatoshiValue(),
-          arbTxId(),
-          fc.integer({ min: 0, max: 9 }),
-          async (value, fullTxHash, addrIdx) => {
-            const scriptHash = TEST_KEYS[addrIdx].scriptHash;
-            const txHash8 = fullTxHash.substring(0, 16);
-
-            await db.beginTransaction();
-            await db.insertOutput({
-              scriptPubKey: scriptHash,
-              txHash: txHash8,
-              outputIndex: 0,
-              value,
-              height: -1,
-              fullTxHash
-            });
-            await db.endTransaction(true);
-
-            const outputs = await db.getOutputsScriptPubKey(scriptHash);
-            const match = outputs.find(o => o.txid === txHash8);
-            expect(match).to.exist;
-            expect(match.height).to.equal(-1);
-          }
-        ),
-        { numRuns: FUZZ_RUNS }
-      );
-    });
-
-    it('extreme satoshi values (uint64 boundary) round-trip correctly', async function () {
-      await fc.assert(
-        fc.asyncProperty(
-          arbSatoshiValueExtreme(),
-          arbTxId(),
-          async (value, fullTxHash) => {
-            const scriptHash = TEST_KEYS[0].scriptHash;
-            const txHash8 = fullTxHash.substring(0, 16);
-
-            await db.beginTransaction();
-            await db.insertOutput({
-              scriptPubKey: scriptHash,
-              txHash: txHash8,
-              outputIndex: 0,
-              value,
-              height: 100,
-              fullTxHash
-            });
-            await db.endTransaction(true);
-
-            const outputs = await db.getOutputsScriptPubKey(scriptHash);
-            const match = outputs.find(o => o.txid === txHash8);
-            expect(match).to.exist;
-            expect(match.value).to.equal(value.toString());
-          }
-        ),
-        { numRuns: FUZZ_RUNS }
-      );
-    });
-
-    it('zero-value output round-trips correctly', async function () {
-      const scriptHash = TEST_KEYS[0].scriptHash;
-      const txHash8 = randHash8();
-      const fullTxHash = txHash8 + randHash().substring(16);
-
-      await db.beginTransaction();
-      await db.insertOutput({
-        scriptPubKey: scriptHash,
-        txHash: txHash8,
-        outputIndex: 0,
-        value: 0n,
-        height: 50,
-        fullTxHash
-      });
-      await db.endTransaction(true);
-
-      const outputs = await db.getOutputsScriptPubKey(scriptHash);
-      const match = outputs.find(o => o.txid === txHash8);
-      expect(match).to.exist;
-      expect(match.value).to.equal('0');
-    });
-  });
+describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
+  beforeEach(createDb);
+  afterEach(closeDb);
 
   describe('block round-trip', function () {
     it('block data round-trips for any valid height/timestamp/hash', async function () {
@@ -176,6 +195,11 @@ describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
+  beforeEach(createDb);
+  afterEach(closeDb);
 
   describe('multiple outputs per script', function () {
     it('multiple outputs for same scriptHash are all retrievable', async function () {
@@ -225,6 +249,11 @@ describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
+  beforeEach(createDb);
+  afterEach(closeDb);
 
   describe('block height and hash storage', function () {
     it('block height round-trips for any non-negative integer', async function () {
@@ -259,6 +288,11 @@ describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
+  beforeEach(createDb);
+  afterEach(closeDb);
 
   describe('input round-trip', function () {
     it('input data round-trips through insertInput/getInput', async function () {
