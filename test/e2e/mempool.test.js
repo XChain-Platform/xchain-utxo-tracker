@@ -21,10 +21,10 @@ const {
   createE2ETracker, patchLevelUpStoreInMemory
 } = require('./support/helpers');
 
-describe('E2E: Mempool Lifecycle', function () {
-  let tracker;
-  let restoreLevelUp;
+let tracker;
+let restoreLevelUp;
 
+function registerMempoolHooks() {
   beforeEach(function () {
     restoreLevelUp = patchLevelUpStoreInMemory();
     tracker = createE2ETracker();
@@ -35,7 +35,10 @@ describe('E2E: Mempool Lifecycle', function () {
     await tracker.stopParsing();
     restoreLevelUp();
   });
+}
 
+describe('E2E: Mempool Lifecycle', function () {
+  registerMempoolHooks();
   describe('C1: mempool detection', function () {
     it('shows pending balance after updateMempool() processes a new tx', async function () {
       const cb = makeCoinbaseTx(0, 50 * SATOSHI);
@@ -70,7 +73,10 @@ describe('E2E: Mempool Lifecycle', function () {
       expect(parseFloat(info0.balances.pending)).to.be.greaterThan(0);
     });
   });
+});
 
+describe('E2E: Mempool Lifecycle', function () {
+  registerMempoolHooks();
   describe('C2: mempool to confirmed transition', function () {
     it('moves balance from pending to confirmed when tx is mined', async function () {
       const cb = makeCoinbaseTx(0, 50 * SATOSHI);
@@ -116,7 +122,10 @@ describe('E2E: Mempool Lifecycle', function () {
       expect(info0.balances.pending).to.equal('0.00000000');
     });
   });
+});
 
+describe('E2E: Mempool Lifecycle', function () {
+  registerMempoolHooks();
   describe('C3: mempool transaction eviction', function () {
     it('restores original balance when mempool tx disappears', async function () {
       const cb = makeCoinbaseTx(0, 50 * SATOSHI);
@@ -153,7 +162,10 @@ describe('E2E: Mempool Lifecycle', function () {
       expect(info1.balances.confirmed).to.equal('0.00000000');
     });
   });
+});
 
+describe('E2E: Mempool Lifecycle', function () {
+  registerMempoolHooks();
   describe('C4: multiple mempool transactions', function () {
     it('tracks pending from multiple unconfirmed txs to different addresses', async function () {
       // Two confirmed UTXOs to addr 0
@@ -187,7 +199,10 @@ describe('E2E: Mempool Lifecycle', function () {
       expect(info2.balances.pending).to.equal('8.00000000');
     });
   });
+});
 
+describe('E2E: Mempool Lifecycle', function () {
+  registerMempoolHooks();
   describe('C5: mempool output for new address', function () {
     it('shows pending balance for address with no confirmed history', async function () {
       const cb = makeCoinbaseTx(0, 50 * SATOSHI);
