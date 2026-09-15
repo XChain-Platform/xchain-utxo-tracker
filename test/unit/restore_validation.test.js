@@ -59,6 +59,9 @@ describe('restore-validation', function () {
             expect(parseSha256Sidecar(null)).to.equal(null);
         });
     });
+});
+
+describe('restore-validation', function () {
 
     describe('hasRequiredLevelDbMembers', function () {
         it('accepts a real classic-level member set', function () {
@@ -104,6 +107,9 @@ describe('restore-validation', function () {
             expect(hasRequiredLevelDbMembers(['./CURRENT', 'MANIFEST-000007'])).to.equal(true);
         });
     });
+});
+
+describe('restore-validation', function () {
 
     describe('parseDetachedSignature', function () {
         const B64 = Buffer.alloc(64, 7).toString('base64');
