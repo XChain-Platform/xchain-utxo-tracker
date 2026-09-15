@@ -80,10 +80,11 @@ describe('coinbase maturity', function () {
       expect(outputs[0].value).to.equal('77');
     });
   });
+});
 
+describe('coinbase maturity', function () {
   describe('getUtxosAddress withholds immature coinbase', function () {
     let tracker, db, mempoolDb, address, scriptHash;
-
     beforeEach(async function () {
       tracker = new XChainUtxoTracker('bitcoin-regtest', '127.0.0.1', '18443', 'u', 'p', 'cb-mat-db', false);
       db = new LevelUpStore('cb-conf-' + Date.now() + '-' + Math.random(), true);
@@ -101,7 +102,6 @@ describe('coinbase maturity', function () {
       const script = bitcoin.address.toOutputScript(address, tracker.network);
       scriptHash = crypto.createHash('sha256').update(script).digest('hex');
     });
-
     afterEach(async function () {
       try { await db.close(); } catch (e) {}
       try { await mempoolDb.close(); } catch (e) {}
@@ -141,12 +141,14 @@ describe('coinbase maturity', function () {
       expect(utxos.map(u => u.txid)).to.include(FULL_TXID_A);
     });
   });
+});
 
-  // The per-chain half of the same rule. This block deliberately never assigns
-  // tracker.coinbaseMaturity: the depth under test is the one the CONSTRUCTOR
-  // resolved, so a reversion to any flat constant turns the 150-confirmation case
-  // red. Against the old flat 100 the first case failed outright, serving a DOGE
-  // coinbase Dogecoin rejects as immature.
+// The per-chain half of the same rule. This block deliberately never assigns
+// tracker.coinbaseMaturity: the depth under test is the one the CONSTRUCTOR
+// resolved, so a reversion to any flat constant turns the 150-confirmation case
+// red. Against the old flat 100 the first case failed outright, serving a DOGE
+// coinbase Dogecoin rejects as immature.
+describe('coinbase maturity', function () {
   describe('Dogecoin maturity is 240 at the tip, not Bitcoin\'s 100', function () {
     let tracker, db, mempoolDb, address, scriptHash;
 
@@ -199,17 +201,21 @@ describe('coinbase maturity', function () {
       expect(utxos.map(u => u.txid)).to.include(FULL_TXID_B);
     });
   });
+});
 
-  // Dogecoin regtest is 60, LOWER than the old flat 100, so the flat value was
-  // withholding coinbase a regtest node would have accepted. Pinned because a
-  // harness that mines exactly to depth depends on the real number.
+// Dogecoin regtest is 60, LOWER than the old flat 100, so the flat value was
+// withholding coinbase a regtest node would have accepted. Pinned because a
+// harness that mines exactly to depth depends on the real number.
+describe('coinbase maturity', function () {
   describe('Dogecoin regtest maturity is 60', function () {
     it('resolves 60 at construction', function () {
       const t = new XChainUtxoTracker('dogecoin-regtest', '127.0.0.1', '18332', 'u', 'p', 'cb-mat-doge-rt-db', false);
       expect(t.coinbaseMaturity).to.equal(60);
     });
   });
+});
 
+describe('coinbase maturity', function () {
   describe('isCoinbaseTransaction', function () {
     it('flags a single 0xFFFFFFFF-index input as coinbase', function () {
       expect(XChainUtxoTracker.isCoinbaseTransaction({ ins: [{ index: 4294967295 }] })).to.equal(true);
