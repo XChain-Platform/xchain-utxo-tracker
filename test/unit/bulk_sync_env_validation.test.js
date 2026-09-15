@@ -106,6 +106,11 @@ describe('bulk-sync env validation @regression', function () {
         expect(parseInt('1O0', 10)).to.equal(1);
         expect(quietly(() => withEnv(KNOB, '1O0', () => envInt(KNOB, 10, 0))).value).to.equal(10);
     });
+});
+
+describe('bulk-sync env validation @regression', function () {
+
+    const KNOB = 'BULK_SYNC_TIP_SAFETY__TEST';
 
     it('routes every BULK_SYNC_* numeric knob through the validator', function () {
         for (const knob of ['BULK_SYNC_WORKERS', 'BULK_SYNC_CHUNK_SIZE', 'BULK_SYNC_RAM_BUDGET',
