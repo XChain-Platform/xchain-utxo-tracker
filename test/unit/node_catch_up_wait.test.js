@@ -113,7 +113,7 @@ describe('XChainUtxoTracker: a node still catching up is not a rollback', functi
   this.timeout(0);
 
   describe('the sync loop waits on initial block download', function () {
-    const src = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker/sync_loop_node_tip.js'), 'utf8');
     // Source-level drift guard, the shape of reorg-detection-warn-level.test.js:
     // the branch needs a live node below our tip to reach.
     const detection = src.indexOf('The last processed block height are greater than the last block of the node');

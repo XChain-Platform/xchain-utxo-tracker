@@ -100,19 +100,21 @@ describe('LAST_BLOCK_* pointer repair reaches disk', function () {
             path.join(__dirname, '../../src/XChainUtxoTracker/last_blocks_window.js'), 'utf8');
         const reorgVerificationSrc = fs.readFileSync(
             path.join(__dirname, '../../src/XChainUtxoTracker/reorg_verification.js'), 'utf8');
+        const syncLoopNodeTipSrc = fs.readFileSync(
+            path.join(__dirname, '../../src/XChainUtxoTracker/sync_loop_node_tip.js'), 'utf8');
         expect(lastBlocksWindowSrc, 'commitLastBlockPointerRepair not found')
             .to.match(/async commitLastBlockPointerRepair\(hash, height\)\{/);
         // A repair site is recognisable by writing lastBlockDb's hash straight
         // through the setter; both sites must call the helper instead. (The reorg
         // walk's own setLastBlockHash(lastBlock["ph"]) is a different write, inside
         // a batch it already commits, and is deliberately not matched here.)
-        const src = entrySrc + lastBlocksWindowSrc + reorgVerificationSrc;
+        const src = entrySrc + lastBlocksWindowSrc + reorgVerificationSrc + syncLoopNodeTipSrc;
         const bare = src.split('\n')
             .map((line, i) => ({ line: line.trim(), n: i + 1 }))
             .filter(l => /^await this\.db\.setLastBlock(Hash|Height)\(lastBlockDb\./.test(l.line));
         expect(bare.map(l => l.n), 'a pointer-repair site is back to bare setters')
             .to.deep.equal([]);
-        expect((entrySrc.match(/await this\.commitLastBlockPointerRepair\(/g) || []).length
+        expect((syncLoopNodeTipSrc.match(/await this\.commitLastBlockPointerRepair\(/g) || []).length
             + (reorgVerificationSrc.match(/await this\.commitLastBlockPointerRepair\(/g) || []).length,
             'expected both repair call sites to route through the helper').to.equal(2);
     });

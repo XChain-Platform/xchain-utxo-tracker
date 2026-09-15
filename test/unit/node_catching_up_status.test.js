@@ -22,7 +22,7 @@ const { catchUpWaitState } = XChainUtxoTracker;
 // health surface still reads "ok, lag N". An operator watching `xchain-node ps` sees
 // a tracker that looks stalled. So the wait is published as `node_catching_up` on the
 // instance and on both health payloads, and reads null the rest of the time.
-const trackerSrc = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker.js'), 'utf8');
+const nodeTipSrc = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker/sync_loop_node_tip.js'), 'utf8');
 const apiSrc = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
 
 function newTracker() {
@@ -90,16 +90,16 @@ describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces
   this.timeout(0);
 
   describe('the sync loop publishes and clears the wait', function () {
-    const detection = trackerSrc.indexOf('The last processed block height are greater than the last block of the node');
-    const branchTop = trackerSrc.lastIndexOf('if (lastProcessedBlockIndex > this.blockchainInfoLastBlock)', detection);
-    const branch = trackerSrc.slice(branchTop, detection);
+    const detection = nodeTipSrc.indexOf('The last processed block height are greater than the last block of the node');
+    const branchTop = nodeTipSrc.lastIndexOf('if (lastProcessedBlockIndex > this.blockchainInfoLastBlock)', detection);
+    const branch = nodeTipSrc.slice(branchTop, detection);
 
     it('populates the field inside the wait branch, threading the previous value', function () {
       expect(branchTop).to.be.greaterThan(0);
       const at = branch.indexOf('nodeStillCatchingUp(lastBlockchainInfo)');
       expect(at).to.be.greaterThan(0);
-      const wait = trackerSrc.indexOf('async function waitOnCatchingUpNode(');
-      const waitBranch = trackerSrc.slice(wait, trackerSrc.indexOf('\n}\n', wait));
+      const wait = nodeTipSrc.indexOf('async function waitOnCatchingUpNode(');
+      const waitBranch = nodeTipSrc.slice(wait, nodeTipSrc.indexOf('\n}\n', wait));
       expect(waitBranch).to.match(
         /this\.nodeCatchingUp = catchUpWaitState\(this\.nodeCatchingUp,\s*this\.blockchainInfoLastBlock,\s*lastProcessedBlockIndex\)/);
     });
@@ -113,7 +113,7 @@ describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces
     it('clears the field on the other exit, the node tip reaching ours', function () {
       // That exit never enters the branch above, so a wait cleared only there would
       // stay on the health surfaces for the life of the process.
-      const before = trackerSrc.slice(Math.max(0, branchTop - 800), branchTop);
+      const before = nodeTipSrc.slice(Math.max(0, branchTop - 800), branchTop);
       expect(before).to.match(
         /if \(this\.nodeCatchingUp && lastProcessedBlockIndex <= this\.blockchainInfoLastBlock\)\{\s*this\.nodeCatchingUp = null/);
     });

@@ -329,7 +329,7 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
     // honest across a relaunch is guarded at the source. Without it a relaunched
     // loop would still read as aborted and the next stop would close a live store.
     it('start() clears the aborted marker alongside the other per-start resets', function () {
-      const src = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker.js'), 'utf8');
+      const src = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker/sync_loop.js'), 'utf8');
       const prologue = src.slice(src.indexOf('async start()'), src.indexOf('async start()') + 4000);
       expect(prologue).to.match(/this\.parsingStopped = false/);
       expect(prologue).to.match(/this\.parsingAborted = false/);

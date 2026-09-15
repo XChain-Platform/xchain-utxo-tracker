@@ -54,6 +54,10 @@ for (let i = 0; i < args.length; i++) {
 const DEFAULT_TARGETS = [
   'src/store/level_up_db.js',
   'src/XChainUtxoTracker.js',
+  'src/XChainUtxoTracker/sync_loop.js',
+  'src/XChainUtxoTracker/sync_loop_node_tip.js',
+  'src/XChainUtxoTracker/sync_loop_block_fetch.js',
+  'src/XChainUtxoTracker/sync_loop_block_apply.js',
   'src/chain/bufferutils.js',
   'src/chain/blockchain_connector.js',
   'src/chain/blockchain_connector/auxpow_codec.js',

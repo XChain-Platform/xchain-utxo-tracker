@@ -28,7 +28,9 @@ const fs = require('fs');
 const path = require('path');
 
 describe('reorg detection log severity @regression', function () {
-    const src = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker.js'), 'utf8');
+    const src = ['sync_loop_node_tip.js', 'sync_loop_block_apply.js']
+        .map((f) => fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker', f), 'utf8'))
+        .join('\n');
 
     // Message prefixes, each unique in the file. Matched against the call that
     // emits them rather than by line number, which drifts on every edit.
@@ -53,7 +55,7 @@ describe('reorg detection log severity @regression', function () {
         it('warns rather than logs: "' + message.slice(0, 40) + '..."', function () {
             const method = methodFor(message);
             assert.ok(method !== null,
-                'detection message no longer present in src/XChainUtxoTracker.js: ' + message);
+                'detection message no longer present in the sync loop parts: ' + message);
             assert.strictEqual(method, 'warn',
                 'tip-divergence detections must use logger.warn so a reorg leaves a ' +
                 'warn-level record even if verifyReorg wedges before the metrics advance; ' +

@@ -22,13 +22,13 @@ const { expect } = require('chai');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker');
 const LevelUpStore = require('../../../src/store/level_up_db');
 
-const trackerSrc = fs.readFileSync(path.join(__dirname, '../../../src/XChainUtxoTracker.js'), 'utf8');
+const syncLoopSrc = fs.readFileSync(path.join(__dirname, '../../../src/XChainUtxoTracker/sync_loop.js'), 'utf8');
 const constantsSrc = fs.readFileSync(path.join(__dirname, '../../../src/XChainUtxoTracker/constants.js'), 'utf8');
 const apiSrc = fs.readFileSync(path.join(__dirname, '../../../src/api.js'), 'utf8');
 
 describe('halt marker: boot and launch wiring', function () {
     it('start() reads the marker before the sync loop and returns into the halted state', function () {
-        const start = trackerSrc.slice(trackerSrc.indexOf('    async start(){'));
+        const start = syncLoopSrc.slice(syncLoopSrc.indexOf('    async start(){'));
         const resumeAt = start.indexOf('if (await this.resumeHaltFromMarker()) return');
         const loopAt = start.indexOf('while (true){');
         expect(resumeAt, 'the boot check is wired').to.be.greaterThan(-1);
