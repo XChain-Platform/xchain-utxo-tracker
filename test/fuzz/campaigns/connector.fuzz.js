@@ -71,6 +71,20 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
+  let connector;
+  let clientStub;
+
+  beforeEach(function () {
+    connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
+    clientStub = sinon.stub(connector.client, 'post');
+  });
+
+  afterEach(function () {
+    sinon.restore();
+  });
 
   describe('getBlockHash', function () {
     it('handles non-string results without crashing', async function () {
@@ -114,6 +128,20 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
+  let connector;
+  let clientStub;
+
+  beforeEach(function () {
+    connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
+    clientStub = sinon.stub(connector.client, 'post');
+  });
+
+  afterEach(function () {
+    sinon.restore();
+  });
 
   describe('getBlock', function () {
     it('handles any result type without crashing', async function () {
@@ -132,6 +160,20 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
         { numRuns: FUZZ_RUNS }
       );
     });
+  });
+});
+
+describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
+  let connector;
+  let clientStub;
+
+  beforeEach(function () {
+    connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
+    clientStub = sinon.stub(connector.client, 'post');
+  });
+
+  afterEach(function () {
+    sinon.restore();
   });
 
   describe('getRawMempool', function () {
@@ -169,6 +211,20 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
+  let connector;
+  let clientStub;
+
+  beforeEach(function () {
+    connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
+    clientStub = sinon.stub(connector.client, 'post');
+  });
+
+  afterEach(function () {
+    sinon.restore();
+  });
 
   describe('getRawTransactions', function () {
     it('handles batch responses with mixed results/errors', async function () {
@@ -197,6 +253,20 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
         { numRuns: FUZZ_RUNS }
       );
     });
+  });
+});
+
+describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
+  let connector;
+  let clientStub;
+
+  beforeEach(function () {
+    connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
+    clientStub = sinon.stub(connector.client, 'post');
+  });
+
+  afterEach(function () {
+    sinon.restore();
   });
 
   describe('getBlocksBatch', function () {
@@ -236,6 +306,20 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
         { numRuns: Math.min(FUZZ_RUNS, 200) }
       );
     });
+  });
+});
+
+describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
+  let connector;
+  let clientStub;
+
+  beforeEach(function () {
+    connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
+    clientStub = sinon.stub(connector.client, 'post');
+  });
+
+  afterEach(function () {
+    sinon.restore();
   });
 
   describe('malformed responses', function () {
