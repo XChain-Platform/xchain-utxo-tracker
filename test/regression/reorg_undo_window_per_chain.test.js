@@ -72,7 +72,9 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
     expect(require('../../src/chain/undo_blocks')).to.not.have.property('FALLBACK_UNDO_BLOCKS');
     expect(DEFAULT_UNDO_BLOCKS).to.not.have.property('XXX');
   });
+});
 
+describe('Regression (0e8c043): per-chain reorg recovery window', function () {
   describe('env override XCHAIN_UNDO_BLOCKS_<COIN>', function () {
     const saved = {};
     beforeEach(function () { saved.DOGE = process.env.XCHAIN_UNDO_BLOCKS_DOGE; });
@@ -105,12 +107,14 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
       });
     }
   });
+});
 
-  // The live worker and the bulk seeder must agree on the per-chain window, or the
-  // bulk-seeded N-prefix can undershoot the live reorg depth guard for one chain (the gap
-  // commit 51aab3b closed). Both now import the single table in src/chain/undo_blocks.js, so this asserts
-  // the bulk seeder resolves the same per-chain values as the live tracker (no hand-copied
-  // second table to drift).
+// The live worker and the bulk seeder must agree on the per-chain window, or the
+// bulk-seeded N-prefix can undershoot the live reorg depth guard for one chain (the gap
+// commit 51aab3b closed). Both now import the single table in src/chain/undo_blocks.js, so this asserts
+// the bulk seeder resolves the same per-chain values as the live tracker (no hand-copied
+// second table to drift).
+describe('Regression (0e8c043): per-chain reorg recovery window', function () {
   describe('bulk seeder shares the live per-chain window (single-source)', function () {
     const { resolveUndoBlocks: seederResolve } = require('../../src/bulk-sync/merger/derive_keys.js');
     for (const [network, expected] of [['bitcoin-mainnet', 12], ['litecoin-mainnet', 120], ['dogecoin-mainnet', 120]]) {
