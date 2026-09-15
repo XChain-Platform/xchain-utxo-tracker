@@ -10,5 +10,95 @@
       "test/unit/big_suite/writes.test.js"
     ]
   },
-  "splits": {}
+  "splits": {
+    "test/unit/boundary.test.js": [
+      "test/unit/boundary.test.js",
+      "test/unit/boundary.test/01_prefix_scan_isolation.test.js",
+      "test/unit/boundary.test/02_block_height_hash_storage.test.js",
+      "test/unit/boundary.test/03_output_hint_and_removal.test.js",
+      "test/unit/boundary.test/04_stored_blocks_tracking.test.js"
+    ],
+    "test/unit/bufferutils.test.js": [
+      "test/unit/bufferutils.test.js",
+      "test/unit/bufferutils.test/01_bufferutils_local_patched_copy.test.js"
+    ],
+    "test/unit/level_up_db_more.test.js": [
+      "test/unit/level_up_db_more.test.js",
+      "test/unit/level_up_db_more.test/01_remove_output_scripts_block_index_only.test.js",
+      "test/unit/level_up_db_more.test/02_remove_outputs_with_inputs_batch.test.js",
+      "test/unit/level_up_db_more.test/03_insert_output_script_block_tier_cache_paths.test.js",
+      "test/unit/level_up_db_more.test/04_process_deleted_outputs_in_memory_branch.test.js",
+      "test/unit/level_up_db_more.test/05_remove_last_stored_block_error_branch.test.js",
+      "test/unit/level_up_db_more.test/06_get_values_from_key_pattern_error_re_throw.test.js",
+      "test/unit/level_up_db_more.test/07_exported_error_classes.test.js",
+      "test/unit/level_up_db_more.test/08_pagination_cursor_edge_cases.test.js",
+      "test/unit/level_up_db_more.test/09_delete_inputs_by_hints.test.js",
+      "test/unit/level_up_db_more.test/10_delete_outputs_by_hints.test.js",
+      "test/unit/level_up_db_more.test/11_remove_transaction_if_exists.test.js",
+      "test/unit/level_up_db_more.test/12_get_last_block_comparison_branches.test.js",
+      "test/unit/level_up_db_more.test/13_encode_output_decode_output_with_height_minus_1.test.js",
+      "test/unit/level_up_db_more.test/14_get_last_stored_blocks_with_empty_db.test.js",
+      "test/unit/level_up_db_more.test/15_get_values_from_key_pattern_with_buffer_pattern.test.js",
+      "test/unit/level_up_db_more.test/16_process_deleted_outputs_item_value_update_branch_line_976.test.js",
+      "test/unit/level_up_db_more.test/17_end_transaction_batch_error_catch_path.test.js",
+      "test/unit/level_up_db_more.test/18_insert_output_output_cache_eviction.test.js",
+      "test/unit/level_up_db_more.test/19_buffer_based_key_builder_length_guards.test.js",
+      "test/unit/level_up_db_more.test/20_hex_string_key_builder_length_guards_uuid_d59a4d11.test.js"
+    ],
+    "test/unit/level_up_db.test.js": [
+      "test/unit/level_up_db.test.js",
+      "test/unit/level_up_db.test/01_output_operations_o_prefix.test.js",
+      "test/unit/level_up_db.test/02_output_hint_operations_h_prefix.test.js",
+      "test/unit/level_up_db.test/03_input_operations_i_prefix.test.js",
+      "test/unit/level_up_db.test/04_input_hint_operations_j_prefix.test.js",
+      "test/unit/level_up_db.test/05_remove_output_with_input.test.js",
+      "test/unit/level_up_db.test/06_process_deleted_outputs.test.js",
+      "test/unit/level_up_db.test/07_script_block_tracking_s_z_prefix.test.js",
+      "test/unit/level_up_db.test/08_stored_block_list_n_prefix.test.js",
+      "test/unit/level_up_db.test/09_batch_operations.test.js",
+      "test/unit/level_up_db.test/10_get_values_from_key_pattern.test.js",
+      "test/unit/level_up_db.test/11_delete_and_compare_txs_not_in_list.test.js"
+    ],
+    "test/unit/xchain_utxo_tracker_more.test.js": [
+      "test/unit/xchain_utxo_tracker_more.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/01_undo_blocks_per_network_resolution.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/02_get_address_type.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/03_milliseconds_to_time_string.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/04_add_to_last_blocks_deleted_transaction_array_cleanup.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/05_cleanup_aged_blocks.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/06_load_last_blocks_sorted_by_height.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/07_parse_transaction.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/08_parse_tx_outputs_additional.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/09_parse_tx_inputs_additional.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/10_get_balance_info_mempool_spent_mempool_output.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/11_get_utxos_address_pagination.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/12_update_mempool.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/13_verify_reorg_height_mismatch_db_recovery_branch.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/14_stop_parsing_mempool_interval_cleanup.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/15_is_synced.test.js",
+      "test/unit/xchain_utxo_tracker_more.test/16_constructor_defaults.test.js"
+    ],
+    "test/unit/xchain_utxo_tracker.test.js": [
+      "test/unit/xchain_utxo_tracker.test.js",
+      "test/unit/xchain_utxo_tracker.test/01_get_balance_info.test.js",
+      "test/unit/xchain_utxo_tracker.test/02_get_utxos_address.test.js",
+      "test/unit/xchain_utxo_tracker.test/03_get_first_seen.test.js",
+      "test/unit/xchain_utxo_tracker.test/04_last_blocks_management.test.js",
+      "test/unit/xchain_utxo_tracker.test/05_stop_parsing.test.js"
+    ],
+    "test/integration/boundary.test.js": [
+      "test/integration/boundary.test.js",
+      "test/integration/boundary.test/01_reorg_at_undo_blocks_limit.test.js",
+      "test/integration/boundary.test/02_coinbase_input_skip.test.js",
+      "test/integration/boundary.test/03_confirmation_calculations.test.js",
+      "test/integration/boundary.test/04_empty_and_minimal_blocks.test.js",
+      "test/integration/boundary.test/05_address_with_no_history.test.js",
+      "test/integration/boundary.test/06_partial_spend_of_multi_output_tx.test.js"
+    ],
+    "test/security/concurrency_gate.test.js": [
+      "test/security/concurrency_gate.test.js",
+      "test/security/concurrency_gate.test/01_resolve_limit.test.js",
+      "test/security/concurrency_gate.test/02_api_js_wiring.test.js"
+    ]
+  }
 }
