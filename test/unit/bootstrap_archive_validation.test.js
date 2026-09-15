@@ -102,24 +102,29 @@ function writeDetachedSig(archive, privateKey) {
     return archive + '.sig';
 }
 
+let tmp;
+
+function prepareArchiveTest() {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bootstrap-test-'));
+    delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED;
+    delete process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY;
+    // The integrity and layout suites below predate the provenance gate and
+    // exercise the checksum layer on unsigned fixtures, so they take the same
+    // unsigned opt-out an operator restoring a local getbootstrap snapshot uses.
+    // The provenance suite clears it and asserts the fail-closed default itself.
+    process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED = '1';
+}
+
+function cleanArchiveTest() {
+    delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED;
+    delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED;
+    delete process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY;
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
+}
+
 describe('validateBootstrapArchiveOrThrow', function () {
-    let tmp;
-    beforeEach(function () {
-        tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bootstrap-test-'));
-        delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED;
-        delete process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY;
-        // The integrity and layout suites below predate the provenance gate and
-        // exercise the checksum layer on unsigned fixtures, so they take the same
-        // unsigned opt-out an operator restoring a local getbootstrap snapshot uses.
-        // The provenance suite clears it and asserts the fail-closed default itself.
-        process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED = '1';
-    });
-    afterEach(function () {
-        delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED;
-        delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED;
-        delete process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY;
-        try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
-    });
+    beforeEach(prepareArchiveTest);
+    afterEach(cleanArchiveTest);
 
     // Missing sidecar fails closed unless the operator opts out.
     describe('single-layer sidecar gating', function () {
@@ -156,6 +161,11 @@ describe('validateBootstrapArchiveOrThrow', function () {
             expect(threw).to.equal(true);
         });
     });
+});
+
+describe('validateBootstrapArchiveOrThrow', function () {
+    beforeEach(prepareArchiveTest);
+    afterEach(cleanArchiveTest);
 
     // A wrapper archive is unwrapped + checksum-verified, not refused.
     describe('wrapper unwrap', function () {
@@ -177,6 +187,11 @@ describe('validateBootstrapArchiveOrThrow', function () {
             expect(threw, 'expected a throw on corrupt inner checksum').to.equal(true);
         });
     });
+});
+
+describe('validateBootstrapArchiveOrThrow', function () {
+    beforeEach(prepareArchiveTest);
+    afterEach(cleanArchiveTest);
 
     // The archive's own checksums travel with it, so provenance comes
     // from the detached signature checked against the repo-pinned key, fail-closed.
@@ -220,6 +235,15 @@ describe('validateBootstrapArchiveOrThrow', function () {
             catch (e) { threw = true; expect(e.message).to.match(/does not verify against the pinned/); }
             expect(threw, 'expected a refusal on a foreign signing key').to.equal(true);
         });
+    });
+});
+
+describe('validateBootstrapArchiveOrThrow', function () {
+    beforeEach(prepareArchiveTest);
+    afterEach(cleanArchiveTest);
+
+    describe('detached signature provenance gating', function () {
+        beforeEach(function () { delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED; });
 
         it('a tampered archive whose .sig covers the ORIGINAL bytes is refused', async function () {
             const archive = buildWrapperArchive(tmp);
@@ -259,6 +283,11 @@ describe('validateBootstrapArchiveOrThrow', function () {
             expect(res.effectiveSource).to.equal(archive);
         });
     });
+});
+
+describe('validateBootstrapArchiveOrThrow', function () {
+    beforeEach(prepareArchiveTest);
+    afterEach(cleanArchiveTest);
 
     // A checksum says "this is the published archive", never "this is a
     // LevelDB store". Without a content gate the wipe still fires and the tracker
@@ -290,6 +319,11 @@ describe('validateBootstrapArchiveOrThrow', function () {
             expect(res.effectiveSource).to.equal(archive);
         });
     });
+});
+
+describe('validateBootstrapArchiveOrThrow', function () {
+    beforeEach(prepareArchiveTest);
+    afterEach(cleanArchiveTest);
 
     // The pre-wipe member gate predicts the layout from the tar listing; only the disk
     // knows where the members actually landed. `tar -x -C <dbroot>` preserves the
