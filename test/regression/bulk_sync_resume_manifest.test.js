@@ -51,6 +51,17 @@ function buildConcatOutputs(tmp, { chain = 'bitcoin', net = 'regtest', from = 10
     return outPath;
 }
 
+function setupSortedArtifact(tmp) {
+    const srcPath = buildConcatOutputs(tmp, { from: 100, to: 102 });
+    const header  = parseDatHeader(srcPath);
+    const sortedPath = path.join(tmp, 'outputs-sorted.dat');
+    // The "sorted" body: source minus header (content irrelevant here;
+    // the gate binds identity + size, ordering is externalSort's job).
+    const body = fs.readFileSync(srcPath).subarray(HEADER_SIZE);
+    fs.writeFileSync(sortedPath, body);
+    return { srcPath, header, sortedPath };
+}
+
 describe('Regression (bulk-sync): resume artifact validation', function () {
     this.timeout(20000);
 
@@ -68,6 +79,14 @@ describe('Regression (bulk-sync): resume artifact validation', function () {
             expect(() => networkToCodes('bitcoin-stagenet')).to.throw(/Unknown net/);
         });
     });
+});
+
+describe('Regression (bulk-sync): resume artifact validation', function () {
+    this.timeout(20000);
+
+    let tmp;
+    beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bulk-manifest-')); });
+    afterEach(function () { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {} });
 
     describe('validateConcatArtifact (self-describing header gate)', function () {
         it('accepts an artifact whose header matches the run identity', function () {
@@ -114,35 +133,32 @@ describe('Regression (bulk-sync): resume artifact validation', function () {
             expect(res.reason).to.include('magic');
         });
     });
+});
+
+describe('Regression (bulk-sync): resume artifact validation', function () {
+    this.timeout(20000);
+
+    let tmp;
+    beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bulk-manifest-')); });
+    afterEach(function () { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {} });
 
     describe('sorted-artifact sidecar manifest', function () {
-        function setup() {
-            const srcPath = buildConcatOutputs(tmp, { from: 100, to: 102 });
-            const header  = parseDatHeader(srcPath);
-            const sortedPath = path.join(tmp, 'outputs-sorted.dat');
-            // The "sorted" body: source minus header (content irrelevant here;
-            // the gate binds identity + size, ordering is externalSort's job).
-            const body = fs.readFileSync(srcPath).subarray(HEADER_SIZE);
-            fs.writeFileSync(sortedPath, body);
-            return { srcPath, header, sortedPath };
-        }
-
         it('round-trips: a manifest written after a sort validates against the same source', function () {
-            const { header, sortedPath } = setup();
+            const { header, sortedPath } = setupSortedArtifact(tmp);
             writeSortedManifest(sortedPath, header);
             const res = checkSortedManifest(sortedPath, header);
             expect(res.ok, res.reason).to.equal(true);
         });
 
         it('refuses reuse when no manifest exists (pre-manifest or foreign artifact)', function () {
-            const { header, sortedPath } = setup();
+            const { header, sortedPath } = setupSortedArtifact(tmp);
             const res = checkSortedManifest(sortedPath, header);
             expect(res.ok).to.equal(false);
             expect(res.reason).to.include('no resume manifest');
         });
 
         it('refuses reuse when the source header changed (same-size stale artifact)', function () {
-            const { header, sortedPath } = setup();
+            const { header, sortedPath } = setupSortedArtifact(tmp);
             writeSortedManifest(sortedPath, header);
             // A different run over an equally-sized input: same byte count,
             // different range. Size-only gating reused this; the manifest must not.
@@ -155,7 +171,7 @@ describe('Regression (bulk-sync): resume artifact validation', function () {
         });
 
         it('refuses reuse when the sorted artifact size drifted from the manifest', function () {
-            const { header, sortedPath } = setup();
+            const { header, sortedPath } = setupSortedArtifact(tmp);
             writeSortedManifest(sortedPath, header);
             fs.appendFileSync(sortedPath, Buffer.alloc(1));
             const res = checkSortedManifest(sortedPath, header);
@@ -164,7 +180,7 @@ describe('Regression (bulk-sync): resume artifact validation', function () {
         });
 
         it('refuses reuse on an unreadable manifest instead of throwing', function () {
-            const { header, sortedPath } = setup();
+            const { header, sortedPath } = setupSortedArtifact(tmp);
             fs.writeFileSync(manifestPath(sortedPath), '{not json');
             const res = checkSortedManifest(sortedPath, header);
             expect(res.ok).to.equal(false);
@@ -172,7 +188,7 @@ describe('Regression (bulk-sync): resume artifact validation', function () {
         });
 
         it('writes the manifest atomically (no .tmp left behind)', function () {
-            const { header, sortedPath } = setup();
+            const { header, sortedPath } = setupSortedArtifact(tmp);
             writeSortedManifest(sortedPath, header);
             expect(fs.existsSync(manifestPath(sortedPath) + '.tmp')).to.equal(false);
             expect(fs.existsSync(manifestPath(sortedPath))).to.equal(true);
