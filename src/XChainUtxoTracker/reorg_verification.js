@@ -228,5 +228,53 @@ module.exports = {
         }
 
         return true
+    },
+
+    // The depth guard's message. Names the remedy rather than the category,
+    // because the operator most likely to read this line arrived by restoring a
+    // published bootstrap whose tip had drifted: "resync from a known-good
+    // snapshot" sends them back to the snapshot that put them here, and doing it
+    // again halts again at the same block.
+    //
+    // States the fork's TOTAL depth: this pass's rollbacks plus everything a
+    // previous process already walked back (the shortfall of the window at entry
+    // against the deepest this store held), which is the number an operator
+    // sizing a rebuild needs. An empty window at entry says so in its own words:
+    // the nominal undoBlocks was never available to this pass, the previous
+    // process spent all of what the store held, and the true depth is at least
+    // that plus one.
+    reorgExceedsWindowMessage({ windowAtEntry, watermarkAtEntry, heldBefore, spentBeforeEntry, lastBlockIndex, deletedThisPass }){
+        let rolledBack
+        if (windowAtEntry === 0 && watermarkAtEntry > 0){
+            rolledBack = "The persisted undo window is EMPTY at entry: a previous process already "
+                + "rolled back all " + heldBefore + " blocks this store held (of a nominal UNDO_BLOCKS="
+                + this.undoBlocks + " window) before this restart, and the chain still diverges at "
+                + "height " + lastBlockIndex + ", so the fork is at least " + (heldBefore + 1)
+                + " blocks deep; "
+        } else if (windowAtEntry === 0){
+            rolledBack = "The persisted undo window is EMPTY at entry: a previous process already "
+                + "rolled back every block this store held (up to the nominal UNDO_BLOCKS="
+                + this.undoBlocks + "; this store predates the undo-window watermark, so the exact "
+                + "count is unknown) before this restart, and the chain still diverges at height "
+                + lastBlockIndex + ", so the fork is deeper than the window; "
+        } else if (spentBeforeEntry > 0){
+            rolledBack = "Already rolled back " + deletedThisPass + " blocks in this pass, "
+                + "on top of " + spentBeforeEntry + " a previous process spent before this restart "
+                + "(" + (spentBeforeEntry + deletedThisPass) + " of a "
+                + this.undoBlocks + "-block window, now exhausted); "
+        } else {
+            rolledBack = "Already rolled back " + deletedThisPass + " blocks; "
+        }
+        return "verifyReorg: reorg depth exceeds the recovery window "
+            + "(UNDO_BLOCKS=" + this.undoBlocks + "). " + rolledBack
+            + "spent-output recovery records "
+            + "for block height " + lastBlockIndex + " and below have already "
+            + "been purged, so continuing would silently leave the UTXO index "
+            + "under-counted. Aborting. Recovery: this index cannot be walked "
+            + "back onto the node's chain and has to be rebuilt. Under xchain-node "
+            + "run `xchain-node reset xchain-utxo-tracker <coin> <network>`, which "
+            + "drops the volume and takes the bulk-sync path; standalone, stop the "
+            + "tracker, empty its data directory and restart it. Restoring the same "
+            + "bootstrap again lands back here if its tip is the drifted one."
     }
 }

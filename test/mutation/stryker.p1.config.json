@@ -18,6 +18,7 @@
     "src/XChainUtxoTracker/sync_loop_node_tip.js",
     "src/XChainUtxoTracker/sync_loop_block_fetch.js",
     "src/XChainUtxoTracker/sync_loop_block_apply.js",
+    "src/XChainUtxoTracker/halt_marker.js",
     "src/chain/bufferutils.js"
   ],
   "reporters": ["html", "clear-text", "progress"],

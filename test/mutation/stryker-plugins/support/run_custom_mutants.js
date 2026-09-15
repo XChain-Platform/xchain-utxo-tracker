@@ -58,6 +58,7 @@ const DEFAULT_TARGETS = [
   'src/XChainUtxoTracker/sync_loop_node_tip.js',
   'src/XChainUtxoTracker/sync_loop_block_fetch.js',
   'src/XChainUtxoTracker/sync_loop_block_apply.js',
+  'src/XChainUtxoTracker/halt_marker.js',
   'src/chain/bufferutils.js',
   'src/chain/blockchain_connector.js',
   'src/chain/blockchain_connector/auxpow_codec.js',
