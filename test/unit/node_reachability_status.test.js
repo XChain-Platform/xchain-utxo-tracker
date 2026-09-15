@@ -37,7 +37,16 @@ const FAIL = Date.parse('2026-09-09T12:20:00.000Z');
 const NOW  = Date.parse('2026-09-09T13:00:00.000Z');
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-const connectorSrc = fs.readFileSync(path.join(__dirname, '../../src/chain/blockchain_connector.js'), 'utf8');
+
+// The connector is one module spread over an entry and the parts beside it, so the
+// source-level guard below reads all of them: a POST added to any part escapes a
+// guard that reads only the entry.
+const connectorDir = path.join(__dirname, '../../src/chain/blockchain_connector');
+const connectorSrc = [path.join(__dirname, '../../src/chain/blockchain_connector.js')]
+  .concat(fs.readdirSync(connectorDir).filter(f => f.endsWith('.js')).sort()
+    .map(f => path.join(connectorDir, f)))
+  .map(p => fs.readFileSync(p, 'utf8'))
+  .join('\n');
 const apiSrc = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
 
 function newConnector() {
