@@ -15,6 +15,54 @@
 const { orderBatchResults } = require('./rpc_helpers');
 const { stripAuxPowFromBlockHex } = require('./auxpow_codec');
 
+async function getBatchHashes(heights) {
+    // Batch 1: all getblockhash calls
+    const hashBatch = heights.map((h, i) => ({
+        jsonrpc: '2.0',
+        method: 'getblockhash',
+        params: [h],
+        id: i
+    }))
+    const hashResponse = await this.postWithRetry(hashBatch)
+    const hashes = orderBatchResults(hashResponse.data, heights.length, 'getblockhash').map(r => {
+        if (!r.result) throw new Error('Error getting block hash in batch for id ' + r.id)
+        return r.result
+    })
+    return hashes
+}
+
+async function getBatchHeaders(hashes) {
+    // Batch 2: all getblockheader calls (hex format), needed to compute AuxPoW size
+    const headerBatch = hashes.map((hash, i) => ({
+        jsonrpc: '2.0',
+        method: 'getblockheader',
+        params: [hash, false],  // false = hex format (Dogecoin 1.14 getblockheader expects a boolean verbose, not an integer verbosity)
+        id: i
+    }))
+    const headerResponse = await this.postWithRetry(headerBatch)
+    const headers = orderBatchResults(headerResponse.data, hashes.length, 'getblockheader').map(r => {
+        if (!r.result) throw new Error('Error getting block header in batch for id ' + r.id)
+        return r.result
+    })
+    return headers
+}
+
+async function getBatchBlocks(hashes) {
+    // Batch 3: all getblock calls (hex format)
+    const blockBatch = hashes.map((hash, i) => ({
+        jsonrpc: '2.0',
+        method: 'getblock',
+        params: [hash, false],  // false = hex format; Dogecoin 1.14 getblock expects a boolean verbose, not integer verbosity
+        id: i
+    }))
+    const blockResponse = await this.postWithRetry(blockBatch)
+    const blocks = orderBatchResults(blockResponse.data, hashes.length, 'getblock').map(r => {
+        if (!r.result) throw new Error('Error getting block in batch for id ' + r.id)
+        return r.result
+    })
+    return blocks
+}
+
 module.exports = {
     // Fetch multiple blocks in two batched JSON-RPC requests instead of 2×N individual ones:
     //   Request 1: batch getblockhash for all heights  → N hashes
@@ -67,44 +115,9 @@ module.exports = {
     async getBlocksBatchWithoutAuxPow(heights) {
         if (heights.length === 0) return []
 
-        // Batch 1: all getblockhash calls
-        const hashBatch = heights.map((h, i) => ({
-            jsonrpc: '2.0',
-            method: 'getblockhash',
-            params: [h],
-            id: i
-        }))
-        const hashResponse = await this.postWithRetry(hashBatch)
-        const hashes = orderBatchResults(hashResponse.data, heights.length, 'getblockhash').map(r => {
-            if (!r.result) throw new Error('Error getting block hash in batch for id ' + r.id)
-            return r.result
-        })
-
-        // Batch 2: all getblockheader calls (hex format), needed to compute AuxPoW size
-        const headerBatch = hashes.map((hash, i) => ({
-            jsonrpc: '2.0',
-            method: 'getblockheader',
-            params: [hash, false],  // false = hex format (Dogecoin 1.14 getblockheader expects a boolean verbose, not an integer verbosity)
-            id: i
-        }))
-        const headerResponse = await this.postWithRetry(headerBatch)
-        const headers = orderBatchResults(headerResponse.data, hashes.length, 'getblockheader').map(r => {
-            if (!r.result) throw new Error('Error getting block header in batch for id ' + r.id)
-            return r.result
-        })
-
-        // Batch 3: all getblock calls (hex format)
-        const blockBatch = hashes.map((hash, i) => ({
-            jsonrpc: '2.0',
-            method: 'getblock',
-            params: [hash, false],  // false = hex format; Dogecoin 1.14 getblock expects a boolean verbose, not integer verbosity
-            id: i
-        }))
-        const blockResponse = await this.postWithRetry(blockBatch)
-        const blocks = orderBatchResults(blockResponse.data, hashes.length, 'getblock').map(r => {
-            if (!r.result) throw new Error('Error getting block in batch for id ' + r.id)
-            return r.result
-        })
+        const hashes = await getBatchHashes.call(this, heights)
+        const headers = await getBatchHeaders.call(this, hashes)
+        const blocks = await getBatchBlocks.call(this, hashes)
 
         // Only the strip is wrapped, for the reason given on getBlockWithoutAuxPow: the
         // three postWithRetry batches and their !r.result guards above are transport and

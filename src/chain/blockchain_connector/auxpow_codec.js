@@ -48,16 +48,7 @@ function readVarint(buf, offset) {
     return { value: hi * 0x100000000 + lo, bytes: 9 }
 }
 
-// Parse the AuxPoW section from a raw block Buffer starting at byte offset `start`
-// (immediately after the 80-byte standard header). Returns the byte offset of the
-// first byte after the AuxPoW section (i.e. where the tx-count varint begins).
-// AuxPoW layout: coinbase tx | parent block hash (32 B) |
-//                coinbase merkle branch (varint count + count*32 B + 4 B index) |
-//                chain merge-mining branch (same layout) |
-//                parent block header (80 B)
-// Throws if the buffer is too short or structurally invalid.
-// Keep in sync with xchain-decoder/src/chain/blockchain_connector.js skipAuxPow.
-function skipAuxPow(buf, start) {
+function skipCoinbaseInputs(buf, start) {
     let offset = start
 
     // Skip the coinbase transaction (a full serialized Bitcoin tx).
@@ -81,6 +72,11 @@ function skipAuxPow(buf, start) {
         if (offset + 4 > buf.length) throw new Error('AuxPoW parse: buffer too short for coinbase input sequence')
         offset += 4  // sequence
     }
+    return { offset, hasSegwit, nIns }
+}
+
+function skipCoinbaseOutputs(buf, start, hasSegwit, nIns) {
+    let offset = start
 
     // Outputs
     const outsVI = readVarint(buf, offset)
@@ -108,6 +104,21 @@ function skipAuxPow(buf, start) {
 
     if (offset + 4 > buf.length) throw new Error('AuxPoW parse: buffer too short for coinbase locktime')
     offset += 4  // locktime
+    return offset
+}
+
+// Parse the AuxPoW section from a raw block Buffer starting at byte offset `start`
+// (immediately after the 80-byte standard header). Returns the byte offset of the
+// first byte after the AuxPoW section (i.e. where the tx-count varint begins).
+// AuxPoW layout: coinbase tx | parent block hash (32 B) |
+//                coinbase merkle branch (varint count + count*32 B + 4 B index) |
+//                chain merge-mining branch (same layout) |
+//                parent block header (80 B)
+// Throws if the buffer is too short or structurally invalid.
+// Keep in sync with xchain-decoder/src/chain/blockchain_connector.js skipAuxPow.
+function skipAuxPow(buf, start) {
+    const coinbase = skipCoinbaseInputs(buf, start)
+    let offset = skipCoinbaseOutputs(buf, coinbase.offset, coinbase.hasSegwit, coinbase.nIns)
 
     // Parent block hash (32 bytes)
     if (offset + 32 > buf.length) throw new Error('AuxPoW parse: buffer too short for parent block hash')
