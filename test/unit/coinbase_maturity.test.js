@@ -26,12 +26,33 @@ const { expect } = require('chai');
 const { resolveCoinbaseMaturity, DEFAULT_COINBASE_MATURITY } = require('../../src/chain/coinbase_maturity');
 const { captureLog } = require('../helpers/capture_log');
 
+const savedEnv = process.env.XCHAIN_COINBASE_MATURITY;
+
+function resetCoinbaseMaturity() {
+  if (savedEnv === undefined) delete process.env.XCHAIN_COINBASE_MATURITY;
+  else process.env.XCHAIN_COINBASE_MATURITY = savedEnv;
+}
+
+// Swallow the deliberate warnings so a refusal case does not spray the reporter.
+// The resolver warns through the shared logger at error level, so that is what counts.
+function quietly(fn) {
+  const lines = [];
+  const release = captureLog(['error'], (level, msg) => lines.push(msg));
+  try { return { value: fn(), lines }; }
+  finally { release(); }
+}
+
 describe('resolveCoinbaseMaturity', function () {
 
-  const savedEnv = process.env.XCHAIN_COINBASE_MATURITY;
-  afterEach(function () {
-    if (savedEnv === undefined) delete process.env.XCHAIN_COINBASE_MATURITY;
-    else process.env.XCHAIN_COINBASE_MATURITY = savedEnv;
+  afterEach(resetCoinbaseMaturity);
+
+  it('the exported table declares every net of every listed coin', function () {
+    for (const coin of Object.keys(DEFAULT_COINBASE_MATURITY)) {
+      for (const net of ['mainnet', 'testnet', 'regtest']) {
+        expect(Number.isInteger(DEFAULT_COINBASE_MATURITY[coin][net]),
+          coin + '.' + net + ' must declare an integer maturity').to.equal(true);
+      }
+    }
   });
 
   describe('per-coin/network defaults', function () {
@@ -75,6 +96,11 @@ describe('resolveCoinbaseMaturity', function () {
       expect(() => resolveCoinbaseMaturity('nosuchcoin-mainnet')).to.throw();
     });
   });
+});
+
+describe('resolveCoinbaseMaturity', function () {
+
+  afterEach(resetCoinbaseMaturity);
 
   describe('override resolution order', function () {
     it('an explicit positive integer opts value wins over the default', function () {
@@ -90,16 +116,14 @@ describe('resolveCoinbaseMaturity', function () {
       process.env.XCHAIN_COINBASE_MATURITY = '3';
       expect(resolveCoinbaseMaturity('dogecoin-mainnet', 9)).to.equal(9);
     });
+  });
+});
 
-    // Swallow the deliberate warnings so a refusal case does not spray the reporter.
-    // The resolver warns through the shared logger at error level, so that is what counts.
-    function quietly(fn) {
-      const lines = [];
-      const release = captureLog(['error'], (level, msg) => lines.push(msg));
-      try { return { value: fn(), lines }; }
-      finally { release(); }
-    }
+describe('resolveCoinbaseMaturity', function () {
 
+  afterEach(resetCoinbaseMaturity);
+
+  describe('override resolution order', function () {
     it('a non-positive or non-integer env override falls back to the per-chain default', function () {
       for (const bad of ['0', '-5', 'abc', '']) {
         process.env.XCHAIN_COINBASE_MATURITY = bad;
@@ -139,14 +163,5 @@ describe('resolveCoinbaseMaturity', function () {
         expect(resolveCoinbaseMaturity('bitcoin-mainnet', bad)).to.equal(100);
       }
     });
-  });
-
-  it('the exported table declares every net of every listed coin', function () {
-    for (const coin of Object.keys(DEFAULT_COINBASE_MATURITY)) {
-      for (const net of ['mainnet', 'testnet', 'regtest']) {
-        expect(Number.isInteger(DEFAULT_COINBASE_MATURITY[coin][net]),
-          coin + '.' + net + ' must declare an integer maturity').to.equal(true);
-      }
-    }
   });
 });
