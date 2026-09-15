@@ -36,30 +36,38 @@ function randTxid() { return crypto.randomBytes(32).toString('hex'); }
 // (beginTransaction sets a fresh Map, endTransaction nulls it).
 function hasOpenTransaction(db) { return db.transactionArray != null; }
 
+let tracker;
+let db;
+let mempoolDb;
+
+async function setUpMempoolFixture(prefix, ready) {
+  tracker = new XChainUtxoTracker(
+    'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
+  );
+  db = new LevelUpStore('tracker-' + prefix + '-' + Date.now(), true);
+  mempoolDb = new LevelUpStore('mempool-' + prefix + '-' + Date.now(), true);
+  await db.createDatabase();
+  await mempoolDb.createDatabase();
+  tracker.db = db;
+  tracker.mempoolDb = mempoolDb;
+  tracker.blockchainInfoLastBlock = 1000;
+  // Start from a previously-good pass: leaving that stale true asserted is the bug.
+  if (ready) tracker.mempoolReconverged = true;
+}
+
+async function closeMempoolFixture() {
+  sinon.restore();
+  try { await db.close(); } catch (e) {}
+  try { await mempoolDb.close(); } catch (e) {}
+}
+
 describe('updateMempool transaction scope (write transaction must not span the fetch/sleep loop)', function () {
-  let tracker;
-  let db;
-  let mempoolDb;
 
   beforeEach(async function () {
-    tracker = new XChainUtxoTracker(
-      'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
-    );
-
-    db = new LevelUpStore('tracker-scope-' + Date.now(), true);
-    mempoolDb = new LevelUpStore('mempool-scope-' + Date.now(), true);
-    await db.createDatabase();
-    await mempoolDb.createDatabase();
-    tracker.db = db;
-    tracker.mempoolDb = mempoolDb;
-    tracker.blockchainInfoLastBlock = 1000;
+    await setUpMempoolFixture('scope', false);
   });
 
-  afterEach(async function () {
-    sinon.restore();
-    try { await db.close(); } catch (e) {}
-    try { await mempoolDb.close(); } catch (e) {}
-  });
+  afterEach(closeMempoolFixture);
 
   it('never holds an open mempool transaction during RPC fetch or inter-batch sleep', async function () {
     const txids = [];
@@ -105,6 +113,15 @@ describe('updateMempool transaction scope (write transaction must not span the f
     expect(tracker.mempoolReconverged).to.equal(true);
     expect(tracker.mempoolBusy).to.equal(false);
   });
+});
+
+describe('updateMempool transaction scope (write transaction must not span the fetch/sleep loop)', function () {
+
+  beforeEach(async function () {
+    await setUpMempoolFixture('scope', false);
+  });
+
+  afterEach(closeMempoolFixture);
 
   it('leaves no open transaction and clears the busy flag when a batch fetch fails permanently', async function () {
     const txids = [];
@@ -132,30 +149,12 @@ describe('updateMempool transaction scope (write transaction must not span the f
 // partial snapshot published as ready and getUtxosAddress served the confirmed inputs
 // of spends the mempool index could not see.
 describe('updateMempool readiness after an incomplete pass', function () {
-  let tracker;
-  let db;
-  let mempoolDb;
 
   beforeEach(async function () {
-    tracker = new XChainUtxoTracker(
-      'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
-    );
-    db = new LevelUpStore('tracker-ready-' + Date.now(), true);
-    mempoolDb = new LevelUpStore('mempool-ready-' + Date.now(), true);
-    await db.createDatabase();
-    await mempoolDb.createDatabase();
-    tracker.db = db;
-    tracker.mempoolDb = mempoolDb;
-    tracker.blockchainInfoLastBlock = 1000;
-    // Start from a previously-good pass: leaving that stale true asserted is the bug.
-    tracker.mempoolReconverged = true;
+    await setUpMempoolFixture('ready', true);
   });
 
-  afterEach(async function () {
-    sinon.restore();
-    try { await db.close(); } catch (e) {}
-    try { await mempoolDb.close(); } catch (e) {}
-  });
+  afterEach(closeMempoolFixture);
 
   it('withdraws readiness when the tx fetch is abandoned after the retry budget', async function () {
     const txids = [];
@@ -188,6 +187,15 @@ describe('updateMempool readiness after an incomplete pass', function () {
     expect(tracker.mempoolReconverged, 'a mid-pass parse fault leaves the same partial snapshot').to.equal(false);
     expect(tracker.mempoolBusy).to.equal(false);
   });
+});
+
+describe('updateMempool readiness after an incomplete pass', function () {
+
+  beforeEach(async function () {
+    await setUpMempoolFixture('ready', true);
+  });
+
+  afterEach(closeMempoolFixture);
 
   it('still asserts readiness when every advertised tx was fetched and committed', async function () {
     const txids = [];
