@@ -103,7 +103,12 @@ describe('graceful shutdown', function(){
             assert.ok(await waitUntil(() => codes.length > 0), 'timed out waiting for the hard-exit timer to fire')
             assert.deepStrictEqual(codes, [1])
         })
+    })
+})
 
+describe('graceful shutdown', function(){
+
+    describe('createShutdown', function(){
         it('exits non-zero when the drain throws, and only once', async function(){
             const codes = []
             // The budget timer is the second exit path, so the claim is that nothing
@@ -133,6 +138,9 @@ describe('graceful shutdown', function(){
             } finally { clock.restore() }
         })
     })
+})
+
+describe('graceful shutdown', function(){
 
     describe('resolveTimeoutMs', function(){
         it('prefers an explicit budget, then the env var, then the default', function(){
@@ -161,6 +169,9 @@ describe('graceful shutdown', function(){
             await closeServer({})
         })
     })
+})
+
+describe('graceful shutdown', function(){
 
     describe('closeStores', function(){
         it('closes each handle once and survives one that refuses', async function(){
@@ -171,6 +182,9 @@ describe('graceful shutdown', function(){
             assert.strictEqual(closes, 1)
         })
     })
+})
+
+describe('graceful shutdown', function(){
 
     describe('createTrackerDrain', function(){
 
@@ -208,7 +222,12 @@ describe('graceful shutdown', function(){
             await running
             assert.strictEqual(tracker.db.closed, true)
         })
+    })
+})
 
+describe('graceful shutdown', function(){
+
+    describe('createTrackerDrain', function(){
         it('survives a rejected loop promise', async function(){
             const order   = []
             const tracker = makeTracker(order)
@@ -223,10 +242,13 @@ describe('graceful shutdown', function(){
             await drain()
         })
     })
+})
 
-    // The real stop(): it must only ASK. stopParsing() restores keepParsing when
-    // the loop does not stop in ten seconds, which for a drain would mean the
-    // process outlives its signal with the loop running again.
+// The real stop(): it must only ASK. stopParsing() restores keepParsing when
+// the loop does not stop in ten seconds, which for a drain would mean the
+// process outlives its signal with the loop running again.
+describe('graceful shutdown', function(){
+
     describe('XChainUtxoTracker.stop()', function(){
         it('drops keepParsing and clears the mempool poller without waiting', function(){
             const tracker = Object.create(XChainUtxoTracker.prototype)
