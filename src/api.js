@@ -180,11 +180,14 @@ var bootstrapBusy = false
 // regress to a bare unhandledRejection that skips the rollback.
 // Returns the settled promise so the SIGTERM drain can wait for the loop to
 // break at a block boundary; a halt resolves it too (the process stays up).
+// The halt writes its marker to the store before this settles, so a SIGTERM
+// that follows the halt cannot cut the write short. A store already carrying
+// the marker never reaches this guard: start() resolves into the halted state.
 function launchTracker(tracker){
-    return tracker.start().catch((err) => {
+    return tracker.start().catch(async (err) => {
         try { if (tracker.db && tracker.db.endTransaction) tracker.db.endTransaction(false) } catch (_) {}
         if (XChainUtxoTracker.isUnrecoverableReorg(err)) {
-            tracker.haltForResync(err && err.message)
+            await tracker.haltForResync(err && err.message)
             return
         }
         noteCrash('pollingLoopTerminated', err)
@@ -357,7 +360,9 @@ async function startApi(){
         const freshness = XChainUtxoTracker.computeFreshness(committedHeight, rawTip, tracker.isSynced(), {
             mempoolReconverged: tracker.isMempoolReconverged(),
             halted:             !!tracker.halted,
-            haltReason:         tracker.haltReason
+            haltReason:         tracker.haltReason,
+            haltedAt:           tracker.haltedAt,
+            haltedHeight:       tracker.haltedHeight
         });
         // Non-null ({node_height, stored_height, since}) while the sync loop is waiting
         // out a node in initial block download whose tip is below our committed tip:
@@ -726,10 +731,14 @@ async function startApi(){
             if (tracker.blockFetchDesync) result.block_fetch_desync = tracker.blockFetchDesync;
             // Halted (unrecoverable reorg): persists, since the tracker no longer
             // exits on this fault but halts in place, so a monitor can alert and an
-            // operator can resync. /status also returns 503 while halted.
+            // operator can resync. /status also returns 503 while halted. halted_at
+            // and halted_height come from the store's marker, so after a restart
+            // they still name the FIRST halt, not this process's boot.
             if (tracker.halted) {
-                result.halted = true;
-                result.halt_reason = tracker.haltReason;
+                result.halted        = true;
+                result.halt_reason   = tracker.haltReason;
+                result.halted_at     = tracker.haltedAt;
+                result.halted_height = tracker.haltedHeight;
             }
             return result;
         },
@@ -942,7 +951,11 @@ async function startApi(){
                     // tracker instance this process ever builds keeps reporting halted=true
                     // and 503 after a successful resync, and xchain-node's bootstrap gate
                     // refuses it forever. Only the restore path clears it: getbootstrap
-                    // leaves the data untouched, so a halt there is still true.
+                    // leaves the data untouched, so a halt there is still true. The
+                    // persisted marker went with the wiped store; the restored store
+                    // answers for itself when start() reads it, and there is no RPC to
+                    // clear a marker in place because the only recovery that changes
+                    // the data is this restore or `xchain-node reset`.
                     tracker.clearHalt()
                     launchTracker(tracker)
                 }).catch(error => {
@@ -1007,7 +1020,9 @@ async function startApi(){
         const freshness = await getFreshnessMeta(committedHeight)
         if (tracker.halted) {
             res.status(503)
-            return res.json({ status: 'halted', halt_reason: tracker.haltReason, db: dbOk, committed_height: committedHeight, ...freshness })
+            return res.json({ status: 'halted', halt_reason: tracker.haltReason,
+                halted_at: tracker.haltedAt, halted_height: tracker.haltedHeight,
+                db: dbOk, committed_height: committedHeight, ...freshness })
         }
         // A readable store is not forward progress. The tracking loop retries a
         // failing getBlockchainInfo forever, so a coin node that is down or unsynced

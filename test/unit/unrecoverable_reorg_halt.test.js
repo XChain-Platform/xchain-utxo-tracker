@@ -98,6 +98,9 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
       tracker.undoBlocks = 2;
       tracker.sleep = async () => {};
       tracker.removeFromLastBlocks = async () => {}; // isolate the depth guard
+      // A full persisted window: the budget is derived from it, and an EMPTY
+      // window at entry is refused at the first divergence before any delete.
+      tracker.lastBlocks = ['w0', 'w1'];
 
       let top = 105;
       const nodeTip = 101;
@@ -142,14 +145,14 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
 
   describe('verifyReorg empty-window during rollback', function () {
     // The reported crash: a block disagrees and must be rolled back, but the
-    // in-memory last-blocks window is empty, so removeFromLastBlocks throws the
-    // tagged error. The retry-catch must fail out IMMEDIATELY (tagged), not burn
-    // 10 pointless retries against a window that stays empty.
-    it('propagates the tagged error immediately without 10 retries', async function () {
+    // persisted last-blocks window is empty (drained by an earlier process). The
+    // depth guard refuses at the first divergence, tagged, BEFORE any delete and
+    // without burning 10 retries against a window that stays empty.
+    it('refuses the first divergence, tagged, with nothing deleted', async function () {
       const tracker = newTracker();
       tracker.sleep = async () => {};
       tracker.loadLastBlocksSortedByHeight = async () => []; // window stays empty
-      tracker.lastBlocks = []; // real removeFromLastBlocks throws tagged on first call
+      tracker.lastBlocks = []; // the window at entry is what the guard reads
 
       let top = 141600;
       let deleteCalls = 0;
@@ -181,8 +184,12 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
       }
       expect(err, 'verifyReorg should throw on an empty recovery window').to.be.an('error');
       expect(XChainUtxoTracker.isUnrecoverableReorg(err)).to.equal(true);
-      // The fix fails out on the first empty-window throw rather than retrying 10x.
-      expect(deleteCalls).to.equal(1);
+      // The guard fires before the first delete, so nothing is touched and there
+      // is no retry to burn: the pre-fix path deleted once and then threw from
+      // removeFromLastBlocks' generic empty-list guard.
+      expect(deleteCalls).to.equal(0);
+      expect(err.message).to.match(/reorg depth exceeds the recovery window/);
+      expect(err.message).to.match(/undo window is EMPTY at entry/);
     });
   });
 });

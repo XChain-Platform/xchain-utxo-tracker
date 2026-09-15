@@ -32,6 +32,11 @@
  *   M: [0x4D][blockHash(32)][txHash8(8)][outputIndex(4)]             = 45 B
  *   N: [0x4E][blockHash(32)]                                          = 33 B
  *   W: [0x57][blockHash(32)][txHash8(8)][outputIndex(4)]             = 45 B
+ *   R: [0x52]                                                         =  1 B
+ *
+ * Single-byte diagnostic records (no suffix; at most one of each per store):
+ *   P: [0x50] pending K/M cleanup list, Q: [0x51] undo-window watermark
+ *      (both owned by XChainUtxoTracker.js), R: [0x52] the halt marker below.
  *
  * Value layouts:
  *   B: [height(4)][timestamp(4)][previousHash(32)]                   = 40 B
@@ -41,6 +46,7 @@
  *   H: [scriptPubKey(32)]                                             = 32 B
  *   S: [height(4)]                                                    =  4 B
  *   W: [scriptPubKey(32)]                                             = 32 B
+ *   R: UTF-8 JSON {"reason","height","at"}                            = variable
  *
  ********************************************************************/
 
@@ -81,6 +87,11 @@ const P_OUT_DEL    = 0x4B  // 'K'
 const P_HINT_DEL   = 0x4D  // 'M'
 const P_STORED_BLK = 0x4E  // 'N'
 const P_OUT_BLK    = 0x57  // 'W' - creation-block reverse index for outputs
+
+// Whole key of the halt marker: the one record that says this store was declared
+// unrecoverable (rolled back past its undo window) and why. 0x52 ('R') is unused
+// by every k* builder above and by the P/Q diagnostics XChainUtxoTracker.js owns.
+const HALT_MARKER_KEY = Buffer.from([0x52])
 
 // Binary helpers
 
@@ -764,6 +775,49 @@ class LevelUpStore {
     async setLastBlockHash(hash){
         // valueEncoding is 'buffer': store the hash string as its UTF-8 bytes.
         return await this.addTransaction("put", PREFIX_LAST_BLOCK_HASH, Buffer.from(hash))
+    }
+
+    // Halt marker (R key)
+    //
+    // Written the moment the tracker halts for a resync and read back before the
+    // sync loop starts, so a restart knows the store is the one already declared
+    // unrecoverable instead of rediscovering it by rolling back into a drained
+    // window. Direct puts and dels, never staged: the halt fires after the open
+    // batch was discarded, and a marker that waits for a batch no restart will
+    // commit is the same as no marker.
+
+    // Returns {reason, height, at} or null when the store carries no marker. A
+    // marker that cannot be parsed reads as null too: a corrupt diagnostic must
+    // not stop the tracker from booting, and the sync loop re-detects the fault.
+    async getHaltMarker(){
+        const raw = await this.db.get(HALT_MARKER_KEY)
+        if (raw === undefined) return null
+        try {
+            const parsed = JSON.parse(raw.toString())
+            if (!parsed || typeof parsed !== 'object' || typeof parsed.reason !== 'string') return null
+            return {
+                reason: parsed.reason,
+                height: Number.isInteger(parsed.height) ? parsed.height : null,
+                at:     typeof parsed.at === 'string' ? parsed.at : null
+            }
+        } catch (_) {
+            return null
+        }
+    }
+
+    async setHaltMarker({ reason, height = null, at = null }){
+        const record = {
+            reason: String(reason),
+            height: Number.isInteger(height) ? height : null,
+            at:     at || new Date().toISOString()
+        }
+        await this.db.put(HALT_MARKER_KEY, Buffer.from(JSON.stringify(record)))
+        return record
+    }
+
+    async deleteHaltMarker(){
+        await this.db.del(HALT_MARKER_KEY)
+        return true
     }
 
     // Stored block list (N prefix)
@@ -1762,4 +1816,7 @@ Object.assign(module.exports, {
     kHintDel,
     kStoredBlk,
     rangeEnd,
+    // Exported so the halt-marker tests can assert the record sits under the one
+    // reserved byte and collides with no k* builder.
+    HALT_MARKER_KEY,
 })

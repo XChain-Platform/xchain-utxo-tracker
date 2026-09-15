@@ -35,9 +35,12 @@ function newTracker() {
 }
 
 // Committed tip at `top`; the node agrees with every hash at or below its tip.
+// Seeds a full persisted window (newTracker's stub never shrinks it): the rollback
+// budget is derived from the window at entry, and an empty one is refused.
 function wire(tracker, top) {
   const deleted = [];
   const heightOf = (hash) => parseInt(hash.replace('db', ''), 10);
+  tracker.lastBlocks = Array.from({ length: tracker.undoBlocks }, (_, i) => 'w' + i);
   tracker.connector = { getBlockHash: async (h) => 'db' + h };
   tracker.db = {
     getLastBlockHeight: async () => top,

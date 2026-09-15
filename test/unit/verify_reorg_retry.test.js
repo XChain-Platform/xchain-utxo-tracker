@@ -72,6 +72,9 @@ describe('XChainUtxoTracker.verifyReorg retry budget', function () {
     tracker.undoBlocks = 1000;       // keep the reorg-depth guard out of the way
     tracker.sleep = async () => {};
     tracker.removeFromLastBlocks = async () => {};
+    // A full persisted window (the stub above never shrinks it): the rollback
+    // budget is derived from the window at entry, and an empty one is refused.
+    tracker.lastBlocks = Array.from({ length: tracker.undoBlocks }, (_, i) => "w" + i);
 
     const { connector, db, deleted } = createRetryState(failuresPerBlock);
     tracker.connector = connector;
@@ -150,6 +153,8 @@ describe('XChainUtxoTracker.verifyReorg node-tip-below-committed', function () {
     tracker.undoBlocks = 1000;
     tracker.sleep = async () => {};
     tracker.removeFromLastBlocks = async () => {};
+    // Same full persisted window as buildTracker, for the same reason.
+    tracker.lastBlocks = Array.from({ length: tracker.undoBlocks }, (_, i) => "w" + i);
 
     let top = 105;                 // committed tip
     const nodeTip = 102;           // node regressed below us

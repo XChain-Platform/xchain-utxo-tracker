@@ -329,6 +329,12 @@ class XChainUtxoTracker {
       // against a stable process instead of racing a restart loop.
       this.halted = false
       this.haltReason = null
+      // When and at which committed height the halt was declared. Read back from
+      // the store's R marker on a restart, so /status carries the ORIGINAL time
+      // rather than this process's boot, which is what tells a monitor that the
+      // fault is old and a restart did not clear it.
+      this.haltedAt = null
+      this.haltedHeight = null
 
       // Set while the sync loop is waiting out a node in initial block download
       // whose tip sits below our committed tip. The wait itself is silent past
@@ -619,22 +625,77 @@ class XChainUtxoTracker {
     // against a process that is not restarting under them. The tracker does NOT
     // auto-wipe: rebuilding the UTXO set needs a resync from a known-good snapshot,
     // an operator decision. Called from api.js's top-level start() guard.
+    // Returns the promise of the marker write so a caller that wants the halt
+    // durable before it continues (the start() guard) can await it; the in-memory
+    // state is set synchronously and does not depend on the write landing.
     haltForResync(reason){
-        this.halted = true
-        this.haltReason = reason || 'unrecoverable reorg (rolled back past the recovery window)'
-        // We are only ever called from the start() rejection guard, so the loop is
-        // provably gone and skipped the normal-stop branch that sets parsingStopped.
-        // Record that: without it stopParsing() can only time out, and both recovery
-        // RPCs open with that wait, so the resync this halt exists to enable is
-        // unreachable on the one state that needs it.
-        this.parsingAborted = true
-        if (this.mempoolInterval){ clearInterval(this.mempoolInterval); this.mempoolInterval = null }
+        this.enterHaltedState({
+            reason: reason || 'unrecoverable reorg (rolled back past the recovery window)',
+            at: new Date().toISOString(),
+            height: null
+        })
         logger.error('[halted] xchain-utxo-tracker stopped polling: ' + this.haltReason
             + ' - process kept alive for an operator resync (restorebootstrap); NOT auto-wiping. '
             + '/status now returns 503 and get_sync_status.halted=true.')
+        return this.persistHaltMarker()
     }
 
-    // Clear the halt marker once a restore has REPLACED the on-disk store the halt was
+    // The halted state itself, shared by the live halt and the boot-time resume
+    // from a persisted marker so the two cannot drift apart.
+    enterHaltedState({ reason, at, height }){
+        this.halted = true
+        this.haltReason = reason
+        this.haltedAt = at
+        this.haltedHeight = height
+        // The loop is gone (it threw, or was never started) and skipped the
+        // normal-stop branch that sets parsingStopped. Record that: without it
+        // stopParsing() can only time out, and both recovery RPCs open with that
+        // wait, so the resync this halt exists to enable is unreachable on the one
+        // state that needs it.
+        this.parsingAborted = true
+        this.parsingStopped = false
+        if (this.mempoolInterval){ clearInterval(this.mempoolInterval); this.mempoolInterval = null }
+    }
+
+    // Write the R marker so the NEXT process boots straight into the halted state
+    // (resumeHaltFromMarker) instead of rediscovering the fault by rolling back
+    // into a window that is already drained. Stamps the committed height the halt
+    // was declared at. Fail-soft: a store that cannot take the write (closed, or a
+    // test stub) leaves the in-memory halt in force and says so once.
+    async persistHaltMarker(){
+        const store = this.db
+        if (!store || typeof store.setHaltMarker !== 'function') return null
+        try {
+            if (this.haltedHeight === null) this.haltedHeight = await store.getLastBlockHeight()
+            return await store.setHaltMarker({ reason: this.haltReason, height: this.haltedHeight, at: this.haltedAt })
+        } catch (err) {
+            logger.warn('[halted] could not persist the halt marker (' + (err && err.message)
+                + '); the halt holds for this process, but a restart will rediscover it by rolling back')
+            return null
+        }
+    }
+
+    // Boot-time half of the marker: read it before the sync loop starts and, when
+    // present, take the halted state without a rollback attempt or a throw. The
+    // stored tip is the one already declared unrecoverable, so any attempt would
+    // meet the same drained window, and a boot that halts silently only after that
+    // reads as a fresh fault to a monitor watching the log. Returns true when the
+    // caller (start) must stop here.
+    async resumeHaltFromMarker(){
+        let marker = null
+        try {
+            marker = await this.db.getHaltMarker()
+        } catch (_) {
+            // A store that cannot answer for the one diagnostic key boots as usual.
+        }
+        if (!marker) return false
+        this.enterHaltedState({ reason: marker.reason, at: marker.at, height: marker.height })
+        logger.error('[halted] marker from ' + (marker.at || 'unknown time') + ' at height '
+            + (marker.height === null ? 'unknown' : marker.height) + ': ' + marker.reason)
+        return true
+    }
+
+    // Clear the halt once a restore has REPLACED the on-disk store the halt was
     // declared against, so /status and get_sync_status stop reporting a fault that no
     // longer describes the data and xchain-node's BootstrapHealthGate can accept this
     // source again. Deliberately not called from start() or from the snapshot-only
@@ -642,9 +703,28 @@ class XChainUtxoTracker {
     // healthy over the same bad tip until the loop re-detects the reorg, and the gate's
     // lag budget cannot catch that window because a deep reorg leaves lag near zero.
     // A restored snapshot that is itself bad simply re-halts when the loop re-detects.
+    // Returns the promise of the marker delete; the state clears synchronously.
     clearHalt(){
         this.halted = false
         this.haltReason = null
+        this.haltedAt = null
+        this.haltedHeight = null
+        return this.deleteHaltMarker()
+    }
+
+    // Drop the R marker from whichever store is open. Fail-soft for the same
+    // reason the write is: on the restore path the old store is already closed
+    // and wiped, so there is nothing to delete and the replacement store carries
+    // its own answer when start() reads it.
+    async deleteHaltMarker(){
+        const store = this.db
+        if (!store || typeof store.deleteHaltMarker !== 'function') return false
+        try {
+            await store.deleteHaltMarker()
+            return true
+        } catch (_) {
+            return false
+        }
     }
 
     // Report, at boot, that the undo window came back SHORT of the nominal
@@ -1208,9 +1288,12 @@ class XChainUtxoTracker {
     //     cannot be filtered out and reaches input selection.
     //   halted / halt_reason - the tracker stopped polling on an unrecoverable reorg.
     //     Emitted only when halted, matching get_sync_status, so the field's presence
-    //     is itself the signal.
+    //     is itself the signal. halted_at / halted_height ride with them: the time and
+    //     committed height the halt was FIRST declared, restored from the store's
+    //     marker across restarts, so a monitor can tell an old fault from a new one.
     static computeFreshness(committedHeight, nodeTip, synced, state = {}){
-        const { mempoolReconverged = false, halted = false, haltReason = null } = state
+        const { mempoolReconverged = false, halted = false, haltReason = null,
+                haltedAt = null, haltedHeight = null } = state
         const tracker_height = (typeof committedHeight === 'number') ? committedHeight : -1
         const node_height    = (typeof nodeTip === 'number') ? nodeTip : -1
         const lag = (node_height >= 0 && tracker_height >= 0) ? (node_height - tracker_height) : null
@@ -1230,8 +1313,10 @@ class XChainUtxoTracker {
             mempool_ready: (isSynced && mempoolReconverged === true)
         }
         if (halted === true){
-            freshness.halted      = true
-            freshness.halt_reason = haltReason
+            freshness.halted        = true
+            freshness.halt_reason   = haltReason
+            freshness.halted_at     = haltedAt
+            freshness.halted_height = haltedHeight
         }
         return freshness
     }
@@ -1362,6 +1447,54 @@ class XChainUtxoTracker {
         await this.db.endTransaction()
     }
 
+    // The depth guard's message. Names the remedy rather than the category,
+    // because the operator most likely to read this line arrived by restoring a
+    // published bootstrap whose tip had drifted: "resync from a known-good
+    // snapshot" sends them back to the snapshot that put them here, and doing it
+    // again halts again at the same block.
+    //
+    // States the fork's TOTAL depth: this pass's rollbacks plus everything a
+    // previous process already walked back (the shortfall of the window at entry
+    // against the deepest this store held), which is the number an operator
+    // sizing a rebuild needs. An empty window at entry says so in its own words:
+    // the nominal undoBlocks was never available to this pass, the previous
+    // process spent all of what the store held, and the true depth is at least
+    // that plus one.
+    reorgExceedsWindowMessage({ windowAtEntry, watermarkAtEntry, heldBefore, spentBeforeEntry, lastBlockIndex, deletedThisPass }){
+        let rolledBack
+        if (windowAtEntry === 0 && watermarkAtEntry > 0){
+            rolledBack = "The persisted undo window is EMPTY at entry: a previous process already "
+                + "rolled back all " + heldBefore + " blocks this store held (of a nominal UNDO_BLOCKS="
+                + this.undoBlocks + " window) before this restart, and the chain still diverges at "
+                + "height " + lastBlockIndex + ", so the fork is at least " + (heldBefore + 1)
+                + " blocks deep; "
+        } else if (windowAtEntry === 0){
+            rolledBack = "The persisted undo window is EMPTY at entry: a previous process already "
+                + "rolled back every block this store held (up to the nominal UNDO_BLOCKS="
+                + this.undoBlocks + "; this store predates the undo-window watermark, so the exact "
+                + "count is unknown) before this restart, and the chain still diverges at height "
+                + lastBlockIndex + ", so the fork is deeper than the window; "
+        } else if (spentBeforeEntry > 0){
+            rolledBack = "Already rolled back " + deletedThisPass + " blocks in this pass, "
+                + "on top of " + spentBeforeEntry + " a previous process spent before this restart "
+                + "(" + (spentBeforeEntry + deletedThisPass) + " of a "
+                + this.undoBlocks + "-block window, now exhausted); "
+        } else {
+            rolledBack = "Already rolled back " + deletedThisPass + " blocks; "
+        }
+        return "verifyReorg: reorg depth exceeds the recovery window "
+            + "(UNDO_BLOCKS=" + this.undoBlocks + "). " + rolledBack
+            + "spent-output recovery records "
+            + "for block height " + lastBlockIndex + " and below have already "
+            + "been purged, so continuing would silently leave the UTXO index "
+            + "under-counted. Aborting. Recovery: this index cannot be walked "
+            + "back onto the node's chain and has to be rebuilt. Under xchain-node "
+            + "run `xchain-node reset xchain-utxo-tracker <coin> <network>`, which "
+            + "drops the volume and takes the bulk-sync path; standalone, stop the "
+            + "tracker, empty its data directory and restart it. Restoring the same "
+            + "bootstrap again lands back here if its tip is the drifted one."
+    }
+
     async verifyReorg(nodeTipHeight = null){
         let thereAreDifferences = true
         let blocksDeleted = []
@@ -1379,8 +1512,10 @@ class XChainUtxoTracker {
         // window IS the durable record of what was already spent. undoBlocks stays
         // as the upper cap so lowering the XCHAIN_UNDO_BLOCKS_<COIN> override still
         // tightens the walk rather than being ignored. An empty window at entry
-        // carries no budget to derive; removeFromLastBlocks is the guard there, and
-        // several call sites drive verifyReorg without maintaining a window at all.
+        // carries no budget to derive: the first DIVERGENCE the walk meets refuses
+        // with the depth guard's message (below), before any delete, while a walk
+        // that finds no divergence still returns normally for the call sites that
+        // drive verifyReorg without maintaining a window at all.
         const windowAtEntry = this.lastBlocks.length
         const budget = windowAtEntry > 0 ? Math.min(windowAtEntry, this.undoBlocks) : this.undoBlocks
         // What a previous process already spent out of this chain's window. Only
@@ -1492,36 +1627,16 @@ class XChainUtxoTracker {
                     // index permanently under-counted for any address with outputs spent
                     // in those blocks. A loud abort is strictly safer than a silently
                     // corrupt index: stop here and require an operator-driven resync.
-                    if (blocksDeleted.length >= budget){
-                        // Naming the remedy rather than the category, because the
-                        // operator most likely to read this line arrived by
-                        // restoring a published bootstrap whose tip had drifted:
-                        // "resync from a known-good snapshot" sends them back to
-                        // the snapshot that put them here, and doing it again
-                        // halts again at the same block.
-                        //
-                        // State the fork's TOTAL depth when a previous process
-                        // spent part of the window: reporting only this pass's
-                        // rollbacks understates the fork by everything the killed
-                        // process had already walked back, which is exactly the
-                        // number an operator sizing a rebuild needs.
-                        const rolledBack = spentBeforeEntry > 0
-                            ? "Already rolled back " + blocksDeleted.length + " blocks in this pass, "
-                              + "on top of " + spentBeforeEntry + " a previous process spent before this restart "
-                              + "(" + (spentBeforeEntry + blocksDeleted.length) + " of a "
-                              + this.undoBlocks + "-block window, now exhausted); "
-                            : "Already rolled back " + blocksDeleted.length + " blocks; "
-                        const msg = "verifyReorg: reorg depth exceeds the recovery window "
-                            + "(UNDO_BLOCKS=" + this.undoBlocks + "). " + rolledBack
-                            + "spent-output recovery records "
-                            + "for block height " + lastBlockIndex + " and below have already "
-                            + "been purged, so continuing would silently leave the UTXO index "
-                            + "under-counted. Aborting. Recovery: this index cannot be walked "
-                            + "back onto the node's chain and has to be rebuilt. Under xchain-node "
-                            + "run `xchain-node reset xchain-utxo-tracker <coin> <network>`, which "
-                            + "drops the volume and takes the bulk-sync path; standalone, stop the "
-                            + "tracker, empty its data directory and restart it. Restoring the same "
-                            + "bootstrap again lands back here if its tip is the drifted one."
+                    // An EMPTY window at entry is the same fault at depth zero: the
+                    // previous process spent every slot, so the very first divergence
+                    // is already past the window. Refuse here with the same message
+                    // rather than falling through to removeFromLastBlocks' generic
+                    // empty-list guard, which cannot state how deep the fork was.
+                    if (windowAtEntry === 0 || blocksDeleted.length >= budget){
+                        const msg = this.reorgExceedsWindowMessage({
+                            windowAtEntry, watermarkAtEntry, heldBefore, spentBeforeEntry, lastBlockIndex,
+                            deletedThisPass: blocksDeleted.length
+                        })
                         logger.error(msg)
                         throw XChainUtxoTracker.markUnrecoverableReorg(new Error(msg))
                     }
@@ -1595,9 +1710,14 @@ class XChainUtxoTracker {
         this.mempoolDb = new LevelUpStore("mempool"+this.dbName, true)
         await this.db.createDatabase()
         await this.mempoolDb.createDatabase()
-        
+
+        // A store already declared unrecoverable boots halted, with the original
+        // time and height on /status, and never re-enters the loop: the window it
+        // would roll back through is the drained one the marker was written over.
+        if (await this.resumeHaltFromMarker()) return
+
         logger.info("Indexing...")
-        
+
         let lastProcessedBlockIndex = await this.db.getLastBlockHeight()
         let lastProcessedBlockHash = await this.db.getLastBlockHash()
 
