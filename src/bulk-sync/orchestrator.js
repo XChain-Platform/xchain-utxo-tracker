@@ -32,7 +32,7 @@ const path           = require('path')
 const { fork }       = require('child_process')
 const { resolveUndoBlocks } = require('./merger/derive_keys.js')
 const { validateChainFiles } = require('./validate_chain.js')
-const { isMainnetNetwork, resolveVerifyDefaults, effectiveTipSafety } = require('./orchestrator/cli_options.js')
+const { defaultArgs, isMainnetNetwork, resolveVerifyDefaults, effectiveTipSafety } = require('./orchestrator/cli_options.js')
 const { fmtDuration, concatFilesWithHeader, readOutputsRecordSize, findFiles } = require('./orchestrator/file_ops.js')
 const { phaseDump, phaseParse, phaseMerge, phaseLoad } = require('./orchestrator/phases.js')
 
@@ -92,38 +92,7 @@ class CleanupManager {
 // arg parsing
 
 function parseArgs(argv) {
-    const args = {
-        network:    null,
-        from:       0,
-        to:         null,      // null = use tip - tipSafety
-        tipSafety:  10,
-        // Named opt-in for the one unsafe shape effectiveTipSafety cannot clamp: an
-        // explicit --to inside the live undo window. Threaded to dump.js, which is
-        // where the real tip is known and where the guard actually runs.
-        allowUndoWindow: false,
-        chunkSize:  10000,
-        out:        null,      // working directory for all artifacts
-        db:         null,      // final DB path (classic-level / LevelDB)
-        workers:    null,      // null = auto (number of dump chunks)
-        ramBudget:  1024,      // MB for external sort
-        batchSize:  10000,     // loader batch size
-        // Free consumed merge/ files when free disk drops below this many MB.
-        // 0 disables cleanup (preserves all resume points). Default 100 GB:
-        // generous enough that runs with comfortable disk keep their resume
-        // files, but trips before the next sort can ENOSPC on a tight disk.
-        cleanupThresholdMb: 100 * 1024,
-        skipDump:    false,
-        // null = unset; resolveVerifyDefaults() turns null into ON for
-        // mainnet networks (safety over read-pass cost) and OFF everywhere
-        // else. Explicit --[no-]verify-* flags always win.
-        verifyChain: null,
-        verifyMerkle: null,    // implies verifyChain; adds tx-body merkle rebuild
-        skipParse:   false,
-        // Default matches XChainUtxoTracker.REMOVE_SPENT = true. Skipping
-        // I/J cuts ~130 GB of disk and ~30-60 min on mainnet because the
-        // live tracker never persists those records anyway.
-        removeSpent: true,
-    }
+    const args = defaultArgs()
     for (let i = 2; i < argv.length; i++) {
         const arg = argv[i]
         switch (arg) {
@@ -235,19 +204,7 @@ function runChild(scriptPath, args, env) {
 
 async function main() {
     const args = parseArgs(process.argv)
-
-    // Setup directory structure
-    const dirs = {
-        dumps:     path.join(args.out, 'dumps'),
-        parsed:    path.join(args.out, 'parsed'),
-        merge:     path.join(args.out, 'merge'),
-        sortTmp:   path.join(args.out, 'merge', 'sort-tmp'),
-        deriveTmp: path.join(args.out, 'merge', 'derive-tmp'),
-        keys:      path.join(args.out, 'keys'),
-    }
-    for (const d of Object.values(dirs)) {
-        fs.mkdirSync(d, { recursive: true })
-    }
+    const dirs = createWorkDirs(args)
 
     const t0 = Date.now()
 
@@ -255,17 +212,7 @@ async function main() {
     log('ORCHESTRATOR', `out=${args.out} db=${args.db}`)
     log('ORCHESTRATOR', `cleanup-threshold=${args.cleanupThresholdMb}MB ${args.cleanupThresholdMb > 0 ? '(enabled)' : '(disabled)'}`)
 
-    // Enforce the reorg-recovery invariant before the dump phase reads tip-safety
-    // (see effectiveTipSafety): clamp tip-safety up to undoBlocks so no bulk-seeded
-    // block lands inside the active reorg window with no K/M indices.
-    const undoBlocks = resolveUndoBlocks(args.network)
-    const clampedTipSafety = effectiveTipSafety(args.tipSafety, args.to, args.network)
-    if (args.to !== null) {
-        log('ORCHESTRATOR', `explicit --to ${args.to} set: dump.js rejects it if it exceeds tip-${undoBlocks}${args.allowUndoWindow ? ', but --allow-undo-window overrides that guard' : ''}, since a reorg into the bulk range finds no K/M reorg-recovery indices`)
-    } else if (clampedTipSafety !== args.tipSafety) {
-        log('ORCHESTRATOR', `tip-safety ${args.tipSafety} < undo-blocks ${undoBlocks} for ${args.network}; raising tip-safety to ${clampedTipSafety} so the reorg window stays inside the live-built W/K/M range`)
-        args.tipSafety = clampedTipSafety
-    }
+    clampTipSafety(args)
 
     const cleanup = new CleanupManager(args.out, args.cleanupThresholdMb)
     const io = { log, runChild }
@@ -279,18 +226,7 @@ async function main() {
         xdmpFiles = await phaseDump(args, dirs, io)
     }
 
-    // Phase 1.5: optional chain-continuity gate. Off by default (adds a full
-    // read pass over the dump); when on, recompute every block hash and confirm
-    // prevHash linkage before committing CPU to parse/merge, so a Byzantine node
-    // or a corrupted .xdmp fails the bootstrap loudly instead of poisoning the DB.
-    if (args.verifyChain) {
-        log('VERIFY', `checking chain continuity across ${xdmpFiles.length} .xdmp files${args.verifyMerkle ? ' (headers + merkle roots)' : ''}`)
-        const res = validateChainFiles(xdmpFiles, { merkle: args.verifyMerkle })
-        if (!res.ok) {
-            throw new Error(`chain-continuity check failed after ${res.blocksChecked} blocks: ${res.error}`)
-        }
-        log('VERIFY', `OK: ${res.blocksChecked} blocks, heights ${res.firstHeight}..${res.lastHeight}`)
-    }
+    verifyDumpChain(args, xdmpFiles)
 
     // Phase 2: Parse
     if (args.skipParse) {
@@ -308,6 +244,51 @@ async function main() {
     const elapsed = Date.now() - t0
     log('ORCHESTRATOR', `pipeline complete in ${fmtDuration(elapsed)}`)
     log('ORCHESTRATOR', `DB at ${args.db}: ready for validate-db`)
+}
+
+function createWorkDirs(args) {
+    // Setup directory structure
+    const dirs = {
+        dumps:     path.join(args.out, 'dumps'),
+        parsed:    path.join(args.out, 'parsed'),
+        merge:     path.join(args.out, 'merge'),
+        sortTmp:   path.join(args.out, 'merge', 'sort-tmp'),
+        deriveTmp: path.join(args.out, 'merge', 'derive-tmp'),
+        keys:      path.join(args.out, 'keys'),
+    }
+    for (const d of Object.values(dirs)) {
+        fs.mkdirSync(d, { recursive: true })
+    }
+    return dirs
+}
+
+function clampTipSafety(args) {
+    // Enforce the reorg-recovery invariant before the dump phase reads tip-safety
+    // (see effectiveTipSafety): clamp tip-safety up to undoBlocks so no bulk-seeded
+    // block lands inside the active reorg window with no K/M indices.
+    const undoBlocks = resolveUndoBlocks(args.network)
+    const clampedTipSafety = effectiveTipSafety(args.tipSafety, args.to, args.network)
+    if (args.to !== null) {
+        log('ORCHESTRATOR', `explicit --to ${args.to} set: dump.js rejects it if it exceeds tip-${undoBlocks}${args.allowUndoWindow ? ', but --allow-undo-window overrides that guard' : ''}, since a reorg into the bulk range finds no K/M reorg-recovery indices`)
+    } else if (clampedTipSafety !== args.tipSafety) {
+        log('ORCHESTRATOR', `tip-safety ${args.tipSafety} < undo-blocks ${undoBlocks} for ${args.network}; raising tip-safety to ${clampedTipSafety} so the reorg window stays inside the live-built W/K/M range`)
+        args.tipSafety = clampedTipSafety
+    }
+}
+
+function verifyDumpChain(args, xdmpFiles) {
+    // Phase 1.5: optional chain-continuity gate. Off by default (adds a full
+    // read pass over the dump); when on, recompute every block hash and confirm
+    // prevHash linkage before committing CPU to parse/merge, so a Byzantine node
+    // or a corrupted .xdmp fails the bootstrap loudly instead of poisoning the DB.
+    if (args.verifyChain) {
+        log('VERIFY', `checking chain continuity across ${xdmpFiles.length} .xdmp files${args.verifyMerkle ? ' (headers + merkle roots)' : ''}`)
+        const res = validateChainFiles(xdmpFiles, { merkle: args.verifyMerkle })
+        if (!res.ok) {
+            throw new Error(`chain-continuity check failed after ${res.blocksChecked} blocks: ${res.error}`)
+        }
+        log('VERIFY', `OK: ${res.blocksChecked} blocks, heights ${res.firstHeight}..${res.lastHeight}`)
+    }
 }
 
 // Export pure helpers for unit testing; only auto-run the pipeline when invoked

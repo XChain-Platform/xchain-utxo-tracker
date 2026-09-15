@@ -16,6 +16,42 @@
 
 const { resolveUndoBlocks } = require('../merger/derive_keys.js')
 
+// Every option's value before the command line is read.
+function defaultArgs() {
+    return {
+        network:    null,
+        from:       0,
+        to:         null,      // null = use tip - tipSafety
+        tipSafety:  10,
+        // Named opt-in for the one unsafe shape effectiveTipSafety cannot clamp: an
+        // explicit --to inside the live undo window. Threaded to dump.js, which is
+        // where the real tip is known and where the guard actually runs.
+        allowUndoWindow: false,
+        chunkSize:  10000,
+        out:        null,      // working directory for all artifacts
+        db:         null,      // final DB path (classic-level / LevelDB)
+        workers:    null,      // null = auto (number of dump chunks)
+        ramBudget:  1024,      // MB for external sort
+        batchSize:  10000,     // loader batch size
+        // Free consumed merge/ files when free disk drops below this many MB.
+        // 0 disables cleanup (preserves all resume points). Default 100 GB:
+        // generous enough that runs with comfortable disk keep their resume
+        // files, but trips before the next sort can ENOSPC on a tight disk.
+        cleanupThresholdMb: 100 * 1024,
+        skipDump:    false,
+        // null = unset; resolveVerifyDefaults() turns null into ON for
+        // mainnet networks (safety over read-pass cost) and OFF everywhere
+        // else. Explicit --[no-]verify-* flags always win.
+        verifyChain: null,
+        verifyMerkle: null,    // implies verifyChain; adds tx-body merkle rebuild
+        skipParse:   false,
+        // Default matches XChainUtxoTracker.REMOVE_SPENT = true. Skipping
+        // I/J cuts ~130 GB of disk and ~30-60 min on mainnet because the
+        // live tracker never persists those records anyway.
+        removeSpent: true,
+    }
+}
+
 // A mainnet bootstrap seeds the production UTXO set, so a silently corrupt
 // dump (truncated .xdmp, disk bitrot, node fed a bad block) is a
 // consensus-facing hazard: verification defaults ON there. Non-mainnet
@@ -57,4 +93,4 @@ function effectiveTipSafety(tipSafety, to, network) {
     return Math.max(tipSafety, resolveUndoBlocks(network))
 }
 
-module.exports = { isMainnetNetwork, resolveVerifyDefaults, effectiveTipSafety }
+module.exports = { defaultArgs, isMainnetNetwork, resolveVerifyDefaults, effectiveTipSafety }

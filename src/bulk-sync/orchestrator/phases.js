@@ -81,6 +81,38 @@ async function phaseMerge(args, dirs, cleanup, { log }) {
     const allSpendsPath  = path.join(dirs.merge, 'all-spends.dat')
     const allMetaPath    = path.join(dirs.merge, 'all-meta.dat')
 
+    concatOrReuse(args, dirs, allOutputsPath, allSpendsPath, allMetaPath, log)
+
+    const ramBudgetBytes = args.ramBudget * 1024 * 1024
+
+    // The dump header's record_size field (offset 28, u32 LE) is the explicit
+    // format discriminator: new dumps report 121 (trailing coinbase flag),
+    // legacy dumps report 120. Threading it through the sort, anti-join and
+    // deriveKeys lets both widths merge; a legacy dump carries no flag and its
+    // outputs are treated as non-coinbase. Fall back to the compiled constant if
+    // the field is absent (0), so a pre-record_size dump still parses.
+    const outputsRecordSize = readOutputsRecordSize(allOutputsPath)
+    log('MERGE', `outputs record size = ${outputsRecordSize}B (${outputsRecordSize === OUTPUTS_RECORD_SIZE ? 'coinbase-flagged' : 'legacy'})`)
+
+    const sortedOutputsPath = await sortOutputs(dirs, allOutputsPath, outputsRecordSize, ramBudgetBytes, log)
+    const sortedSpendsPath = await sortSpends(dirs, allSpendsPath, ramBudgetBytes, log)
+
+    // all-spends.dat is no longer read after spends-sorted.dat is built.
+    cleanup.enqueue(allSpendsPath, 'merge/all-spends.dat')
+    cleanup.maybeFree('after sort-spends')
+
+    const liveUtxosPath = await antiJoinLiveUtxos(args, dirs, sortedOutputsPath, sortedSpendsPath, outputsRecordSize, log)
+
+    // outputs-sorted.dat is only read by the anti-join above.
+    cleanup.enqueue(sortedOutputsPath, 'merge/outputs-sorted.dat')
+    cleanup.maybeFree('after anti-join')
+
+    return deriveLevelDbKeys(args, dirs, cleanup, { allMetaPath, allOutputsPath, liveUtxosPath, sortedSpendsPath },
+        outputsRecordSize, ramBudgetBytes, log)
+}
+
+// Whether the three concatenated merge inputs on disk belong to this run.
+function concatReusableForRun(args, allOutputsPath, allSpendsPath, allMetaPath, log) {
     // Skip concat if prior crash (or prior run) already produced the three
     // concatenated files AND their self-describing headers prove they belong
     // to THIS run. Bare existence left a stale-artifact window: a merge dir
@@ -109,6 +141,13 @@ async function phaseMerge(args, dirs, cleanup, { log }) {
             }
         }
     }
+    return concatReusable
+}
+
+// Build the three merge inputs from the per-worker parsed files, unless the
+// ones already on disk belong to this run.
+function concatOrReuse(args, dirs, allOutputsPath, allSpendsPath, allMetaPath, log) {
+    const concatReusable = concatReusableForRun(args, allOutputsPath, allSpendsPath, allMetaPath, log)
     if (concatReusable) {
         const outMB = (fs.statSync(allOutputsPath).size / 1024 / 1024).toFixed(1)
         const spdMB = (fs.statSync(allSpendsPath).size / 1024 / 1024).toFixed(1)
@@ -128,40 +167,31 @@ async function phaseMerge(args, dirs, cleanup, { log }) {
 
         concatFilesWithHeader(metaFiles, allMetaPath, HEADER_SIZE)
     }
+}
 
-    const ramBudgetBytes = args.ramBudget * 1024 * 1024
+// Expected sorted file size = input size minus its header (externalSort
+// strips the header from its output). Size alone left a same-size
+// stale-artifact window (a sorted file from an earlier run over an
+// equally-sized input), so reuse additionally requires the sidecar
+// manifest written after a completed sort to match the CURRENT source
+// header (see merger/resume-manifest.js). Pre-manifest artifacts are
+// simply re-sorted.
+function expectedSortedSize(inputPath) {
+    return fs.statSync(inputPath).size - HEADER_SIZE
+}
+function sortedReusable(sortedPath, expSize, sourceHeader, log) {
+    if (!(fs.existsSync(sortedPath) && fs.statSync(sortedPath).size === expSize)) return false
+    const check = checkSortedManifest(sortedPath, sourceHeader)
+    if (!check.ok) log('MERGE', `stale sorted artifact, re-sorting: ${check.reason}`)
+    return check.ok
+}
 
-    // The dump header's record_size field (offset 28, u32 LE) is the explicit
-    // format discriminator: new dumps report 121 (trailing coinbase flag),
-    // legacy dumps report 120. Threading it through the sort, anti-join and
-    // deriveKeys lets both widths merge; a legacy dump carries no flag and its
-    // outputs are treated as non-coinbase. Fall back to the compiled constant if
-    // the field is absent (0), so a pre-record_size dump still parses.
-    const outputsRecordSize = readOutputsRecordSize(allOutputsPath)
-    log('MERGE', `outputs record size = ${outputsRecordSize}B (${outputsRecordSize === OUTPUTS_RECORD_SIZE ? 'coinbase-flagged' : 'legacy'})`)
-
-    // Expected sorted file size = input size minus its header (externalSort
-    // strips the header from its output). Size alone left a same-size
-    // stale-artifact window (a sorted file from an earlier run over an
-    // equally-sized input), so reuse additionally requires the sidecar
-    // manifest written after a completed sort to match the CURRENT source
-    // header (see merger/resume-manifest.js). Pre-manifest artifacts are
-    // simply re-sorted.
-    function expectedSortedSize(inputPath) {
-        return fs.statSync(inputPath).size - HEADER_SIZE
-    }
-    function sortedReusable(sortedPath, expSize, sourceHeader) {
-        if (!(fs.existsSync(sortedPath) && fs.statSync(sortedPath).size === expSize)) return false
-        const check = checkSortedManifest(sortedPath, sourceHeader)
-        if (!check.ok) log('MERGE', `stale sorted artifact, re-sorting: ${check.reason}`)
-        return check.ok
-    }
-
-    // Sort outputs by (txHash8 + vout)
+// Sort outputs by (txHash8 + vout); returns the sorted file's path.
+async function sortOutputs(dirs, allOutputsPath, outputsRecordSize, ramBudgetBytes, log) {
     const sortedOutputsPath = path.join(dirs.merge, 'outputs-sorted.dat')
     const allOutputsHeader = parseDatHeader(allOutputsPath)
     const expOutSize = expectedSortedSize(allOutputsPath)
-    if (sortedReusable(sortedOutputsPath, expOutSize, allOutputsHeader)) {
+    if (sortedReusable(sortedOutputsPath, expOutSize, allOutputsHeader, log)) {
         log('MERGE', `sort-outputs skipped (reusing ${(expOutSize / 1024 / 1024).toFixed(1)}MB)`)
     } else {
         log('MERGE', 'sorting outputs by txHash8+vout')
@@ -182,12 +212,15 @@ async function phaseMerge(args, dirs, cleanup, { log }) {
         log('MERGE', `outputs sorted: ${outSortResult.recordsSorted} records`)
         writeSortedManifest(sortedOutputsPath, allOutputsHeader)
     }
+    return sortedOutputsPath
+}
 
-    // Sort spends by (prevTxHash8 + prevVout)
+// Sort spends by (prevTxHash8 + prevVout); returns the sorted file's path.
+async function sortSpends(dirs, allSpendsPath, ramBudgetBytes, log) {
     const sortedSpendsPath = path.join(dirs.merge, 'spends-sorted.dat')
     const allSpendsHeader = parseDatHeader(allSpendsPath)
     const expSpdSize = expectedSortedSize(allSpendsPath)
-    if (sortedReusable(sortedSpendsPath, expSpdSize, allSpendsHeader)) {
+    if (sortedReusable(sortedSpendsPath, expSpdSize, allSpendsHeader, log)) {
         log('MERGE', `sort-spends skipped (reusing ${(expSpdSize / 1024 / 1024).toFixed(1)}MB)`)
     } else {
         log('MERGE', 'sorting spends by prevTxHash8+prevVout')
@@ -208,12 +241,11 @@ async function phaseMerge(args, dirs, cleanup, { log }) {
         log('MERGE', `spends sorted: ${spdSortResult.recordsSorted} records`)
         writeSortedManifest(sortedSpendsPath, allSpendsHeader)
     }
+    return sortedSpendsPath
+}
 
-    // all-spends.dat is no longer read after spends-sorted.dat is built.
-    cleanup.enqueue(allSpendsPath, 'merge/all-spends.dat')
-    cleanup.maybeFree('after sort-spends')
-
-    // Anti-join: outputs - spends = live UTXOs
+// Anti-join: outputs - spends = live UTXOs; returns the live UTXO file's path.
+async function antiJoinLiveUtxos(args, dirs, sortedOutputsPath, sortedSpendsPath, outputsRecordSize, log) {
     log('MERGE', 'anti-join: outputs - spends = live UTXOs')
     const liveUtxosPath = path.join(dirs.merge, 'live-utxos.dat')
     const joinResult = await leftAntiJoin({
@@ -238,12 +270,12 @@ async function phaseMerge(args, dirs, cleanup, { log }) {
     if (joinResult.orphanSpends > 0 && args.from === 0) {
         throw new Error(`anti-join found ${joinResult.orphanSpends} orphan spends on a from-genesis run: outputs stream is incomplete, aborting before load`)
     }
+    return liveUtxosPath
+}
 
-    // outputs-sorted.dat is only read by the anti-join above.
-    cleanup.enqueue(sortedOutputsPath, 'merge/outputs-sorted.dat')
-    cleanup.maybeFree('after anti-join')
-
-    // Derive LevelDB keys
+// Derive LevelDB keys, freeing each merge input once the derive step that reads it is done.
+async function deriveLevelDbKeys(args, dirs, cleanup, { allMetaPath, allOutputsPath, liveUtxosPath, sortedSpendsPath },
+    outputsRecordSize, ramBudgetBytes, log) {
     log('MERGE', 'deriving LevelDB keys')
     const keysResult = await deriveKeys({
         metaPath:         allMetaPath,

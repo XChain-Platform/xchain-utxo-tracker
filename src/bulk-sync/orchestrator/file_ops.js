@@ -64,79 +64,22 @@ function concatFilesWithHeader(inputPaths, outputPath, headerSize) {
             const fdIn = fs.openSync(inputPaths[i], 'r')
             try {
                 // Read this input's header to aggregate record_count + lastHeight.
-                if (stat.size < headerSize) {
-                    throw new Error(`${inputPaths[i]} is smaller than headerSize ${headerSize}`)
-                }
-                let hRead = 0
-                while (hRead < headerSize) {
-                    const n = fs.readSync(fdIn, hdrBuf, hRead, headerSize - hRead, hRead)
-                    if (n === 0) throw new Error(`short header read in ${inputPaths[i]}`)
-                    hRead += n
-                }
+                readInputHeader(fdIn, hdrBuf, headerSize, inputPaths[i], stat.size)
+                const hdr = checkInputHeader(hdrBuf, inputPaths[i], stat.size, headerSize, firstHdr, prevLastHeight)
+                if (firstHdr === null) firstHdr = hdr.thisHdr
+                prevLastHeight = hdr.lastH
 
-                // Every input must agree on magic, chain, net and record_size.
-                // Mixed record widths (legacy 120B vs coinbase-flagged 121B
-                // outputs surviving a resume across a code upgrade) would
-                // misframe every record after the first width transition, and
-                // the sort's divisibility check cannot always catch it.
-                const thisHdr = {
-                    magic:      hdrBuf.toString('ascii', 0, 8),
-                    chain:      hdrBuf.readUInt8(8),
-                    net:        hdrBuf.readUInt8(9),
-                    recordSize: hdrBuf.readUInt32LE(28),
-                }
-                const recordCount = hdrBuf.readBigUInt64LE(20)
-                const firstH      = hdrBuf.readUInt32LE(12)
-                const lastH       = hdrBuf.readUInt32LE(16)
-                if (recordCount === 0n && stat.size !== headerSize) {
-                    // SPEC: count 0 marks a crashed/partial worker file (data
-                    // present, backfill never ran). A header-only file with
-                    // count 0 is a legitimately empty stream (e.g. a spends
-                    // range with no non-coinbase inputs).
-                    throw new Error(`${inputPaths[i]} has record_count 0 but ${stat.size} bytes (crashed/partial worker output); re-run the parse for this range`)
-                }
-                if (firstHdr === null) {
-                    firstHdr = thisHdr
-                } else {
-                    for (const f of ['magic', 'chain', 'net', 'recordSize']) {
-                        if (thisHdr[f] !== firstHdr[f]) {
-                            throw new Error(`${inputPaths[i]} header ${f}=${thisHdr[f]} differs from first input's ${firstHdr[f]}; refusing to concatenate mixed files`)
-                        }
-                    }
-                    if (prevLastHeight !== null && firstH !== prevLastHeight + 1) {
-                        throw new Error(`${inputPaths[i]} starts at height ${firstH}, expected ${prevLastHeight + 1} (gap or overlap in parsed ranges)`)
-                    }
-                }
-                prevLastHeight = lastH
-
-                totalRecordCount += recordCount
-                if (lastH > maxLastHeight) maxLastHeight = lastH
+                totalRecordCount += hdr.recordCount
+                if (hdr.lastH > maxLastHeight) maxLastHeight = hdr.lastH
 
                 // First file: copy entirely. Others: skip header.
-                let pos = (i === 0) ? 0 : headerSize
-                while (pos < stat.size) {
-                    const toRead = Math.min(BUF_SIZE, stat.size - pos)
-                    const n = fs.readSync(fdIn, buf, 0, toRead, pos)
-                    if (n === 0) throw new Error(`short read in ${inputPaths[i]} at offset ${pos} (file shrank mid-copy?)`)
-                    fs.writeSync(fd, buf, 0, n)
-                    totalBytes += n
-                    pos += n
-                }
-                if (pos !== stat.size) {
-                    throw new Error(`${inputPaths[i]}: copied ${pos} of ${stat.size} bytes`)
-                }
+                totalBytes += copyInputBody(fdIn, fd, buf, inputPaths[i], stat.size, (i === 0) ? 0 : headerSize)
             } finally {
                 fs.closeSync(fdIn)
             }
         }
 
-        // Patch aggregated record_count (offset 20, u64 LE) and lastHeight
-        // (offset 16, u32 LE) into the output header.
-        const patch = Buffer.alloc(8)
-        patch.writeUInt32LE(maxLastHeight, 0)
-        fs.writeSync(fd, patch, 0, 4, 16)
-        patch.writeBigUInt64LE(totalRecordCount, 0)
-        fs.writeSync(fd, patch, 0, 8, 20)
+        patchOutputHeader(fd, maxLastHeight, totalRecordCount)
         fs.fsyncSync(fd)
     } catch (err) {
         try { fs.closeSync(fd) } catch (_) {}
@@ -146,6 +89,86 @@ function concatFilesWithHeader(inputPaths, outputPath, headerSize) {
     fs.closeSync(fd)
     fs.renameSync(tmpPath, outputPath)
     return totalBytes
+}
+
+// Read one input's header into hdrBuf, refusing a file too short to hold one.
+function readInputHeader(fdIn, hdrBuf, headerSize, inputPath, size) {
+    if (size < headerSize) {
+        throw new Error(`${inputPath} is smaller than headerSize ${headerSize}`)
+    }
+    let hRead = 0
+    while (hRead < headerSize) {
+        const n = fs.readSync(fdIn, hdrBuf, hRead, headerSize - hRead, hRead)
+        if (n === 0) throw new Error(`short header read in ${inputPath}`)
+        hRead += n
+    }
+}
+
+// Decode one input's header and check it against the first input and the
+// previous input's last height. Returns its identity fields, record count and
+// last height.
+function checkInputHeader(hdrBuf, inputPath, size, headerSize, firstHdr, prevLastHeight) {
+    // Every input must agree on magic, chain, net and record_size.
+    // Mixed record widths (legacy 120B vs coinbase-flagged 121B
+    // outputs surviving a resume across a code upgrade) would
+    // misframe every record after the first width transition, and
+    // the sort's divisibility check cannot always catch it.
+    const thisHdr = {
+        magic:      hdrBuf.toString('ascii', 0, 8),
+        chain:      hdrBuf.readUInt8(8),
+        net:        hdrBuf.readUInt8(9),
+        recordSize: hdrBuf.readUInt32LE(28),
+    }
+    const recordCount = hdrBuf.readBigUInt64LE(20)
+    const firstH      = hdrBuf.readUInt32LE(12)
+    const lastH       = hdrBuf.readUInt32LE(16)
+    if (recordCount === 0n && size !== headerSize) {
+        // SPEC: count 0 marks a crashed/partial worker file (data
+        // present, backfill never ran). A header-only file with
+        // count 0 is a legitimately empty stream (e.g. a spends
+        // range with no non-coinbase inputs).
+        throw new Error(`${inputPath} has record_count 0 but ${size} bytes (crashed/partial worker output); re-run the parse for this range`)
+    }
+    if (firstHdr !== null) {
+        for (const f of ['magic', 'chain', 'net', 'recordSize']) {
+            if (thisHdr[f] !== firstHdr[f]) {
+                throw new Error(`${inputPath} header ${f}=${thisHdr[f]} differs from first input's ${firstHdr[f]}; refusing to concatenate mixed files`)
+            }
+        }
+        if (prevLastHeight !== null && firstH !== prevLastHeight + 1) {
+            throw new Error(`${inputPath} starts at height ${firstH}, expected ${prevLastHeight + 1} (gap or overlap in parsed ranges)`)
+        }
+    }
+    return { thisHdr, recordCount, lastH }
+}
+
+// Append one input to the output from startPos (0 for the first input, past the
+// header for the rest). Returns the bytes written.
+function copyInputBody(fdIn, fd, buf, inputPath, size, startPos) {
+    let written = 0
+    let pos = startPos
+    while (pos < size) {
+        const toRead = Math.min(buf.length, size - pos)
+        const n = fs.readSync(fdIn, buf, 0, toRead, pos)
+        if (n === 0) throw new Error(`short read in ${inputPath} at offset ${pos} (file shrank mid-copy?)`)
+        fs.writeSync(fd, buf, 0, n)
+        written += n
+        pos += n
+    }
+    if (pos !== size) {
+        throw new Error(`${inputPath}: copied ${pos} of ${size} bytes`)
+    }
+    return written
+}
+
+// Patch aggregated record_count (offset 20, u64 LE) and lastHeight
+// (offset 16, u32 LE) into the output header.
+function patchOutputHeader(fd, maxLastHeight, totalRecordCount) {
+    const patch = Buffer.alloc(8)
+    patch.writeUInt32LE(maxLastHeight, 0)
+    fs.writeSync(fd, patch, 0, 4, 16)
+    patch.writeBigUInt64LE(totalRecordCount, 0)
+    fs.writeSync(fd, patch, 0, 8, 20)
 }
 
 /**
