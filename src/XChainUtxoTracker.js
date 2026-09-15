@@ -121,127 +121,10 @@ class XChainUtxoTracker {
       // decoder construction that requires the patch module.
       assertBigIntBufferutils(this.xchainBlockDecoder.coin, 'utxo-tracker')
 
-      this.debugTime = {}
-      
-      this.synced = false
-      // True only after the first successful mempool reconverge following a
-      // synced=true transition. synced flips true at block-sync before the first
-      // (unawaited) updateMempool() populates the in-memory mempool DB, so on a
-      // restart the mempool is briefly empty while synced already reads true.
-      // Readiness must gate on both so callers never see a synced-but-empty mempool.
-      this.mempoolReconverged = false
-      
-      this.blockchainInfoLastBlock = -1
-      this.latestKnownChainTip = null
-      this.mempoolInterval = null
-      this.mempoolBusy = false
-      
-      // AuxPoW stripping is keyed on coin identity ALONE, never on the caller's
-      // env-driven flag, in BOTH directions: a Dogecoin deployment started without
-      // AUX_POW=true would otherwise parse every DOGE block as a plain Bitcoin
-      // block, and a BTC/LTC deployment started WITH it would strip a section those
-      // chains never carry, truncating any block whose version signals bit 0x100.
-      // The answer comes from the coin's declared wireFormat in the canonical
-      // registry (src/coins), matching the decoder and the bulk seeder
-      // (bulk-sync/dump.js). coinFromNetwork resolves the tick through that same
-      // registry (item 5803): it was a hardcoded coin-name list until then, so a
-      // chain onboarded by registry edit alone resolved to null here and read as
-      // NOT merge-mined. The remaining per-chain value that is not in src/coins is
-      // the reorg window on the next line, and resolveUndoBlocks now refuses a
-      // registered coin that has none rather than defaulting it. LTC's MWEB
-      // handling is unaffected: that is the
-      // 'mweb' wireFormat branch inside XChainBlockDecoder, not this fetch path. The
-      // `auxPow` parameter is retained for call-site stability and is deliberately no
-      // longer consulted.
-      this.auxPow = WIRE_FORMAT[coinFromNetwork(network)] === 'auxpow'
-      this.undoBlocks = resolveUndoBlocks(network)
-      this.lastBlocks = []
-
-      // Deepest undo window this store has held, clamped to the live undoBlocks
-      // (see Q_UNDO_WATERMARK_KEY). 0 means "not known yet": a store written
-      // before this key existed, or one that has never committed a block. It is
-      // loaded in start() and maintained by addToLastBlocks; a value on disk that
-      // exceeds the live undoBlocks (the operator LOWERED the window) is clamped
-      // on load, so lowering then raising the override does not read as a
-      // rollback of the difference. `Persisted` tracks what disk holds so the
-      // clamp is written back on the next block rather than only in memory.
-      this.undoWindowWatermark = 0
-      this.undoWindowWatermarkPersisted = null
-      
-      this.keepParsing = true
-      this.pendingKMCleanup = []
-
-      // Lifetime counters for mempool RPC failures. Surfaced in get_sync_status
-      // so operators can detect a node degraded on mempool fetches without
-      // needing to watch the console for the "Giving up" warning.
-      this.mempoolRpcFailures = 0
-      this.lastMempoolErrorAt = null
-
-      // Lifetime reorg counters. Surfaced in get_sync_status so operators can
-      // detect chains that reorg frequently and know how deep the last one was.
-      this.reorgCount = 0
-      this.lastReorgDepth = 0
-
-      // Forward-progress heartbeat, stamped when a block batch is committed.
-      // Kept in memory because the /metrics collector runs synchronously and so
-      // cannot await the durable pointer (db.getLastBlockHeight()); see
-      // src/utxoTrackerMetrics.js. Null until the first commit, which is what
-      // keeps a still-starting tracker out of the stall alert. A rollback moves
-      // the durable pointer without stamping these, so the height is corrected
-      // at the next forward commit; reorgCount/lastReorgDepth are the signals
-      // for that window.
-      this.lastCommitAt = null
-      this.lastCommittedHeight = null
-
-      // Unrecoverable block-fetch desync signal. Set just before the
-      // polling loop fails loud on a node that can no longer serve the next
-      // block (pruned past our cursor, or a permanent missing-block fault), so
-      // get_sync_status / an operator can name the fault instead of watching a
-      // silent 3s retry spin. Null until such a fault is detected.
-      this.blockFetchDesync = null
-
-      // Halted state: set when an unrecoverable reorg (rolled back past the
-      // UNDO_BLOCKS recovery window, or an empty in-memory last-blocks window)
-      // is hit. Unlike blockFetchDesync this is NOT a "fail loud then exit for a
-      // supervised restart" signal: a restart re-hits the same on-disk stale tip
-      // and loops forever under Docker's unless-stopped policy. When set, the
-      // process stays up but stops polling; /status returns 503 and
-      // get_sync_status reports it, so an operator can resync (restorebootstrap)
-      // against a stable process instead of racing a restart loop.
-      this.halted = false
-      this.haltReason = null
-      // When and at which committed height the halt was declared. Read back from
-      // the store's R marker on a restart, so /status carries the ORIGINAL time
-      // rather than this process's boot, which is what tells a monitor that the
-      // fault is old and a restart did not clear it.
-      this.haltedAt = null
-      this.haltedHeight = null
-
-      // Set while the sync loop is waiting out a node in initial block download
-      // whose tip sits below our committed tip. The wait itself is silent past
-      // the one latched log line, so without this an operator watching
-      // `xchain-node ps` sees a tracker that has simply stopped advancing.
-      // Shape: {node_height, stored_height, since} while waiting, null otherwise;
-      // `since` is stamped once per wait so its age is the length of THIS wait.
-      this.nodeCatchingUp = null
-
-      // Set when the polling loop leaves by THROWING (the halt path) rather than
-      // through its normal-stop branch, which is the only branch that closes the
-      // store and sets parsingStopped. Tracked separately from `halted` because
-      // `halted` is an operator-facing status that deliberately outlives a
-      // relaunch, while this records the loop-lifecycle fact stopParsing acts on.
-      this.parsingAborted = false
-
-      // Coinbase maturity depth used by getUtxosAddress to withhold immature
-      // coinbase outputs, resolved per coin/network (src/chain/coinbase_maturity.js).
-      // Instance-scoped (not a bare const) so test harnesses that mine short
-      // chains can relax it; production keeps the consensus default. Setting it
-      // to 0 disables the gate. The resolver refuses an unresolvable chain
-      // rather than defaulting, but it cannot newly reject a network that
-      // constructs today: getBitcoinJsNetwork above already rejected anything
-      // outside the registry's '<fullname>-<net>' keys, and every one of those
-      // keys has a declared maturity.
-      this.coinbaseMaturity = resolveCoinbaseMaturity(network)
+      initSyncState.call(this, network)
+      initStatusCounters.call(this)
+      initHaltState.call(this)
+      initCoinbaseMaturity.call(this, network)
     }
     
 
@@ -314,6 +197,140 @@ class XChainUtxoTracker {
         return Array.isArray(transaction.ins) && transaction.ins.length === 1
             && transaction.ins[0] && transaction.ins[0].index === 4294967295
     }
+}
+
+// Sync-loop state: readiness flags, the node tip as last seen, the mempool
+// timer, the per-coin fetch format and reorg window, and the loop latches.
+function initSyncState(network){
+    this.debugTime = {}
+
+    this.synced = false
+    // True only after the first successful mempool reconverge following a
+    // synced=true transition. synced flips true at block-sync before the first
+    // (unawaited) updateMempool() populates the in-memory mempool DB, so on a
+    // restart the mempool is briefly empty while synced already reads true.
+    // Readiness must gate on both so callers never see a synced-but-empty mempool.
+    this.mempoolReconverged = false
+
+    this.blockchainInfoLastBlock = -1
+    this.latestKnownChainTip = null
+    this.mempoolInterval = null
+    this.mempoolBusy = false
+
+    // AuxPoW stripping is keyed on coin identity ALONE, never on the caller's
+    // env-driven flag, in BOTH directions: a Dogecoin deployment started without
+    // AUX_POW=true would otherwise parse every DOGE block as a plain Bitcoin
+    // block, and a BTC/LTC deployment started WITH it would strip a section those
+    // chains never carry, truncating any block whose version signals bit 0x100.
+    // The answer comes from the coin's declared wireFormat in the canonical
+    // registry (src/coins), matching the decoder and the bulk seeder
+    // (bulk-sync/dump.js). coinFromNetwork resolves the tick through that same
+    // registry (item 5803): it was a hardcoded coin-name list until then, so a
+    // chain onboarded by registry edit alone resolved to null here and read as
+    // NOT merge-mined. The remaining per-chain value that is not in src/coins is
+    // the reorg window on the next line, and resolveUndoBlocks now refuses a
+    // registered coin that has none rather than defaulting it. LTC's MWEB
+    // handling is unaffected: that is the
+    // 'mweb' wireFormat branch inside XChainBlockDecoder, not this fetch path. The
+    // `auxPow` parameter is retained for call-site stability and is deliberately no
+    // longer consulted.
+    this.auxPow = WIRE_FORMAT[coinFromNetwork(network)] === 'auxpow'
+    this.undoBlocks = resolveUndoBlocks(network)
+    this.lastBlocks = []
+
+    // Deepest undo window this store has held, clamped to the live undoBlocks
+    // (see Q_UNDO_WATERMARK_KEY). 0 means "not known yet": a store written
+    // before this key existed, or one that has never committed a block. It is
+    // loaded in start() and maintained by addToLastBlocks; a value on disk that
+    // exceeds the live undoBlocks (the operator LOWERED the window) is clamped
+    // on load, so lowering then raising the override does not read as a
+    // rollback of the difference. `Persisted` tracks what disk holds so the
+    // clamp is written back on the next block rather than only in memory.
+    this.undoWindowWatermark = 0
+    this.undoWindowWatermarkPersisted = null
+
+    this.keepParsing = true
+    this.pendingKMCleanup = []
+}
+
+// Lifetime counters and fault signals surfaced in get_sync_status and /metrics.
+function initStatusCounters(){
+    // Lifetime counters for mempool RPC failures. Surfaced in get_sync_status
+    // so operators can detect a node degraded on mempool fetches without
+    // needing to watch the console for the "Giving up" warning.
+    this.mempoolRpcFailures = 0
+    this.lastMempoolErrorAt = null
+
+    // Lifetime reorg counters. Surfaced in get_sync_status so operators can
+    // detect chains that reorg frequently and know how deep the last one was.
+    this.reorgCount = 0
+    this.lastReorgDepth = 0
+
+    // Forward-progress heartbeat, stamped when a block batch is committed.
+    // Kept in memory because the /metrics collector runs synchronously and so
+    // cannot await the durable pointer (db.getLastBlockHeight()); see
+    // src/utxoTrackerMetrics.js. Null until the first commit, which is what
+    // keeps a still-starting tracker out of the stall alert. A rollback moves
+    // the durable pointer without stamping these, so the height is corrected
+    // at the next forward commit; reorgCount/lastReorgDepth are the signals
+    // for that window.
+    this.lastCommitAt = null
+    this.lastCommittedHeight = null
+
+    // Unrecoverable block-fetch desync signal. Set just before the
+    // polling loop fails loud on a node that can no longer serve the next
+    // block (pruned past our cursor, or a permanent missing-block fault), so
+    // get_sync_status / an operator can name the fault instead of watching a
+    // silent 3s retry spin. Null until such a fault is detected.
+    this.blockFetchDesync = null
+}
+
+// Halt and catch-up wait state, read back by /status and by stopParsing().
+function initHaltState(){
+    // Halted state: set when an unrecoverable reorg (rolled back past the
+    // UNDO_BLOCKS recovery window, or an empty in-memory last-blocks window)
+    // is hit. Unlike blockFetchDesync this is NOT a "fail loud then exit for a
+    // supervised restart" signal: a restart re-hits the same on-disk stale tip
+    // and loops forever under Docker's unless-stopped policy. When set, the
+    // process stays up but stops polling; /status returns 503 and
+    // get_sync_status reports it, so an operator can resync (restorebootstrap)
+    // against a stable process instead of racing a restart loop.
+    this.halted = false
+    this.haltReason = null
+    // When and at which committed height the halt was declared. Read back from
+    // the store's R marker on a restart, so /status carries the ORIGINAL time
+    // rather than this process's boot, which is what tells a monitor that the
+    // fault is old and a restart did not clear it.
+    this.haltedAt = null
+    this.haltedHeight = null
+
+    // Set while the sync loop is waiting out a node in initial block download
+    // whose tip sits below our committed tip. The wait itself is silent past
+    // the one latched log line, so without this an operator watching
+    // `xchain-node ps` sees a tracker that has simply stopped advancing.
+    // Shape: {node_height, stored_height, since} while waiting, null otherwise;
+    // `since` is stamped once per wait so its age is the length of THIS wait.
+    this.nodeCatchingUp = null
+
+    // Set when the polling loop leaves by THROWING (the halt path) rather than
+    // through its normal-stop branch, which is the only branch that closes the
+    // store and sets parsingStopped. Tracked separately from `halted` because
+    // `halted` is an operator-facing status that deliberately outlives a
+    // relaunch, while this records the loop-lifecycle fact stopParsing acts on.
+    this.parsingAborted = false
+}
+
+function initCoinbaseMaturity(network){
+    // Coinbase maturity depth used by getUtxosAddress to withhold immature
+    // coinbase outputs, resolved per coin/network (src/chain/coinbase_maturity.js).
+    // Instance-scoped (not a bare const) so test harnesses that mine short
+    // chains can relax it; production keeps the consensus default. Setting it
+    // to 0 disables the gate. The resolver refuses an unresolvable chain
+    // rather than defaulting, but it cannot newly reject a network that
+    // constructs today: getBitcoinJsNetwork above already rejected anything
+    // outside the registry's '<fullname>-<net>' keys, and every one of those
+    // keys has a declared maturity.
+    this.coinbaseMaturity = resolveCoinbaseMaturity(network)
 }
 
 module.exports = XChainUtxoTracker
