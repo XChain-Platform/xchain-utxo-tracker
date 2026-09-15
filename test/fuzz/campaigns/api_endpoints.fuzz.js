@@ -22,10 +22,7 @@ const {
 } = require('../support/helpers');
 
 // Minimal API app mirroring the real api.js structure
-function createTestApiApp(tracker) {
-  const app = express();
-  app.use(express.json());
-
+function addRestRoutes(app, tracker) {
   app.get('/utxos/:address', async (req, res) => {
     try {
       const utxos = await tracker.getUtxosAddress(req.params.address);
@@ -61,8 +58,10 @@ function createTestApiApp(tracker) {
       res.status(500).json({ error: err.message });
     }
   });
+}
 
-  const jsonRpcController = {
+function createJsonRpcController(tracker) {
+  return {
     async ping() { return { status: 'success' }; },
     async get_utxos({ address }) {
       try {
@@ -101,28 +100,37 @@ function createTestApiApp(tracker) {
       }
     }
   };
+}
 
+function createTestApiApp(tracker) {
+  const app = express();
+  app.use(express.json());
+  addRestRoutes(app, tracker);
+  const jsonRpcController = createJsonRpcController(tracker);
   app.use(jsonRouter({ methods: jsonRpcController }));
   return app;
 }
 
+let tracker;
+let app;
+let request;
+
+async function prepareApiTest() {
+  tracker = await createTestTracker();
+  // Add some data so queries have something to work with
+  const block = makeBlock(0, '0'.repeat(64), [makeCoinbaseTx(0)]);
+  await processAndCommit(tracker, block);
+  app = createTestApiApp(tracker);
+  request = supertest(app);
+}
+
+async function releaseApiTest() {
+  await closeTracker(tracker);
+}
+
 describe('Fuzz: API Endpoints (P3)', function () {
-  let tracker;
-  let app;
-  let request;
-
-  beforeEach(async function () {
-    tracker = await createTestTracker();
-    // Add some data so queries have something to work with
-    const block = makeBlock(0, '0'.repeat(64), [makeCoinbaseTx(0)]);
-    await processAndCommit(tracker, block);
-    app = createTestApiApp(tracker);
-    request = supertest(app);
-  });
-
-  afterEach(async function () {
-    await closeTracker(tracker);
-  });
+  beforeEach(prepareApiTest);
+  afterEach(releaseApiTest);
 
   describe('REST endpoints', function () {
     it('GET /utxos/:address always returns valid HTTP response', async function () {
@@ -156,7 +164,14 @@ describe('Fuzz: API Endpoints (P3)', function () {
         { numRuns: Math.min(FUZZ_RUNS, 200) }
       );
     });
+  });
+});
 
+describe('Fuzz: API Endpoints (P3)', function () {
+  beforeEach(prepareApiTest);
+  afterEach(releaseApiTest);
+
+  describe('REST endpoints', function () {
     it('GET /info/:address always returns valid HTTP response', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -186,7 +201,14 @@ describe('Fuzz: API Endpoints (P3)', function () {
         { numRuns: Math.min(FUZZ_RUNS, 200) }
       );
     });
+  });
+});
 
+describe('Fuzz: API Endpoints (P3)', function () {
+  beforeEach(prepareApiTest);
+  afterEach(releaseApiTest);
+
+  describe('REST endpoints', function () {
     it('error responses never contain stack traces or file paths', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -206,6 +228,11 @@ describe('Fuzz: API Endpoints (P3)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: API Endpoints (P3)', function () {
+  beforeEach(prepareApiTest);
+  afterEach(releaseApiTest);
 
   describe('JSON-RPC endpoints', function () {
     it('ping always succeeds', async function () {
@@ -233,7 +260,14 @@ describe('Fuzz: API Endpoints (P3)', function () {
         { numRuns: Math.min(FUZZ_RUNS, 200) }
       );
     });
+  });
+});
 
+describe('Fuzz: API Endpoints (P3)', function () {
+  beforeEach(prepareApiTest);
+  afterEach(releaseApiTest);
+
+  describe('JSON-RPC endpoints', function () {
     it('JSON-RPC handles fuzzed method names without crashing', async function () {
       await fc.assert(
         fc.asyncProperty(
