@@ -15,11 +15,20 @@ const { fc, FUZZ_RUNS, arbBufferRange, arbHexString } = require('../support/help
 const XChainBlockDecoder = require('../../../src/chain/XChainBlockDecoder');
 const bitcoinjs = require('bitcoinjs-lib');
 
+let cachedDecoder;
+
+function getDecoder() {
+  if (!cachedDecoder) {
+    cachedDecoder = new XChainBlockDecoder('bitcoin-regtest');
+  }
+  return cachedDecoder;
+}
+
 describe('Fuzz: Block Decoder (P0)', function () {
   let decoder;
 
   before(function () {
-    decoder = new XChainBlockDecoder('bitcoin-regtest');
+    decoder = getDecoder();
   });
 
   describe('blockFromBuffer', function () {
@@ -60,7 +69,17 @@ describe('Fuzz: Block Decoder (P0)', function () {
         { numRuns: FUZZ_RUNS }
       );
     });
+  });
+});
 
+describe('Fuzz: Block Decoder (P0)', function () {
+  let decoder;
+
+  before(function () {
+    decoder = getDecoder();
+  });
+
+  describe('blockFromBuffer', function () {
     it('handles exactly 80-byte buffers (header only, no transactions)', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -96,6 +115,14 @@ describe('Fuzz: Block Decoder (P0)', function () {
         { numRuns: FUZZ_RUNS }
       );
     });
+  });
+});
+
+describe('Fuzz: Block Decoder (P0)', function () {
+  let decoder;
+
+  before(function () {
+    decoder = getDecoder();
   });
 
   describe('blockFromHex', function () {
@@ -134,6 +161,14 @@ describe('Fuzz: Block Decoder (P0)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: Block Decoder (P0)', function () {
+  let decoder;
+
+  before(function () {
+    decoder = getDecoder();
+  });
 
   describe('txFromHex', function () {
     it('never hangs on arbitrary hex', async function () {
@@ -159,6 +194,14 @@ describe('Fuzz: Block Decoder (P0)', function () {
         expect(e).to.be.an('error');
       }
     });
+  });
+});
+
+describe('Fuzz: Block Decoder (P0)', function () {
+  let decoder;
+
+  before(function () {
+    decoder = getDecoder();
   });
 
   describe('litecoin block decoder', function () {
@@ -207,6 +250,14 @@ describe('Fuzz: Block Decoder (P0)', function () {
         { numRuns: FUZZ_RUNS }
       );
     });
+  });
+});
+
+describe('Fuzz: Block Decoder (P0)', function () {
+  let decoder;
+
+  before(function () {
+    decoder = getDecoder();
   });
 
   describe('doubleSha256AndReverse', function () {
