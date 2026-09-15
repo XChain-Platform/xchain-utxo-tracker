@@ -102,6 +102,58 @@ async function keyExists(db, key) {
     }
 }
 
+// Two blocks. block1 creates A (unspent) and S (spent in block2). block2
+// creates B (unspent) and spends S. Shared script for simplicity.
+const script    = Buffer.alloc(32, 0xab);
+const block1    = Buffer.alloc(32, 0x11);
+const block2    = Buffer.alloc(32, 0x22);
+const A = fullTxid('a'), B = fullTxid('b'), S = fullTxid('50');
+const outs = [
+    { txid: A, blockHash: block1, height: 10 },
+    { txid: S, blockHash: block1, height: 10 },
+    { txid: B, blockHash: block2, height: 11 },
+];
+
+function writeInputs(tmp) {
+    const outputsPath = path.join(tmp, 'outputs.dat');
+    const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', 10, 11);
+    for (const o of outs) {
+        w.append(o.txid.subarray(0, 8), 0, 5000000000n, o.height, o.txid, script, o.blockHash, false);
+    }
+    w.close();
+
+    const spendsPath = path.join(tmp, 'spends.dat');
+    const sp = new SpendsWriter(spendsPath, 'bitcoin', 'regtest', 10, 11);
+    sp.append(S.subarray(0, 8), 0, B.subarray(0, 8)); // block2 spends S:0
+    sp.close();
+
+    const metaPath = path.join(tmp, 'meta.dat');
+    const meta = new MetaWriter(metaPath, 'bitcoin', 'regtest', 10, 11);
+    meta.writeBlock(10, 1700000000, block1, Buffer.alloc(32), [A.subarray(0, 8), S.subarray(0, 8)]);
+    meta.writeBlock(11, 1700000600, block2, block1, [B.subarray(0, 8)]);
+    meta.close();
+
+    return { outputsPath, spendsPath, metaPath };
+}
+
+// Build the same W keyspace through the LIVE insertOutputBlock path (one
+// record per created output, including the spent-in-range S:0).
+async function buildLiveW() {
+    const store = new LevelUpStore('bulk-w-live-' + Date.now() + '-' + Math.random(), true);
+    await store.createDatabase();
+    await store.beginTransaction();
+    for (const o of outs) {
+        await store.insertOutputBlock({
+            scriptPubKey: script,
+            txHash:       o.txid.subarray(0, 8).toString('hex'),
+            outputIndex:  0,
+            blockHash:    o.blockHash.toString('hex'),
+        });
+    }
+    await store.endTransaction();
+    return store;
+}
+
 describe('Regression (bulk-sync): W creation-block index parity and reorg unwind', function () {
     this.timeout(20000);
 
@@ -109,60 +161,8 @@ describe('Regression (bulk-sync): W creation-block index parity and reorg unwind
     beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bulk-w-')); });
     afterEach(function () { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {} });
 
-    // Two blocks. block1 creates A (unspent) and S (spent in block2). block2
-    // creates B (unspent) and spends S. Shared script for simplicity.
-    const script    = Buffer.alloc(32, 0xab);
-    const block1    = Buffer.alloc(32, 0x11);
-    const block2    = Buffer.alloc(32, 0x22);
-    const A = fullTxid('a'), B = fullTxid('b'), S = fullTxid('50');
-    const outs = [
-        { txid: A, blockHash: block1, height: 10 },
-        { txid: S, blockHash: block1, height: 10 },
-        { txid: B, blockHash: block2, height: 11 },
-    ];
-
-    function writeInputs() {
-        const outputsPath = path.join(tmp, 'outputs.dat');
-        const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', 10, 11);
-        for (const o of outs) {
-            w.append(o.txid.subarray(0, 8), 0, 5000000000n, o.height, o.txid, script, o.blockHash, false);
-        }
-        w.close();
-
-        const spendsPath = path.join(tmp, 'spends.dat');
-        const sp = new SpendsWriter(spendsPath, 'bitcoin', 'regtest', 10, 11);
-        sp.append(S.subarray(0, 8), 0, B.subarray(0, 8)); // block2 spends S:0
-        sp.close();
-
-        const metaPath = path.join(tmp, 'meta.dat');
-        const meta = new MetaWriter(metaPath, 'bitcoin', 'regtest', 10, 11);
-        meta.writeBlock(10, 1700000000, block1, Buffer.alloc(32), [A.subarray(0, 8), S.subarray(0, 8)]);
-        meta.writeBlock(11, 1700000600, block2, block1, [B.subarray(0, 8)]);
-        meta.close();
-
-        return { outputsPath, spendsPath, metaPath };
-    }
-
-    // Build the same W keyspace through the LIVE insertOutputBlock path (one
-    // record per created output, including the spent-in-range S:0).
-    async function buildLiveW() {
-        const store = new LevelUpStore('bulk-w-live-' + Date.now() + '-' + Math.random(), true);
-        await store.createDatabase();
-        await store.beginTransaction();
-        for (const o of outs) {
-            await store.insertOutputBlock({
-                scriptPubKey: script,
-                txHash:       o.txid.subarray(0, 8).toString('hex'),
-                outputIndex:  0,
-                blockHash:    o.blockHash.toString('hex'),
-            });
-        }
-        await store.endTransaction();
-        return store;
-    }
-
     it('seeded W keyspace is byte-identical to the live insertOutputBlock path', async function () {
-        const { outputsPath, spendsPath, metaPath } = writeInputs();
+        const { outputsPath, spendsPath, metaPath } = writeInputs(tmp);
         const dbPath = path.join(tmp, 'db');
         await runMerge(tmp, outputsPath, spendsPath, metaPath, dbPath);
 
@@ -181,9 +181,17 @@ describe('Regression (bulk-sync): W creation-block index parity and reorg unwind
             await liveStore.db.close();
         }
     });
+});
+
+describe('Regression (bulk-sync): W creation-block index parity and reorg unwind', function () {
+    this.timeout(20000);
+
+    let tmp;
+    beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bulk-w-')); });
+    afterEach(function () { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {} });
 
     it('removeCreatedOutputsInBlock finds seeded W keys and purges rolled-back O/H', async function () {
-        const { outputsPath, spendsPath, metaPath } = writeInputs();
+        const { outputsPath, spendsPath, metaPath } = writeInputs(tmp);
         const dbPath = path.join(tmp, 'db');
         await runMerge(tmp, outputsPath, spendsPath, metaPath, dbPath);
 
@@ -214,6 +222,42 @@ describe('Regression (bulk-sync): W creation-block index parity and reorg unwind
     });
 });
 
+function writeWindowInputs(tmp) {
+    const script = Buffer.alloc(32, 0xcd);
+    const nBlocks = 5, startH = 100, endH = startH + nBlocks - 1;
+    const undoBlocks = 2;
+
+    const blocks = [];
+    for (let i = 0; i < nBlocks; i++) {
+        blocks.push({
+            height:    startH + i,
+            blockHash: Buffer.alloc(32, 0x30 + i),
+            txid:      fullTxid((0xa0 + i).toString(16)),
+        });
+    }
+
+    const outputsPath = path.join(tmp, 'outputs.dat');
+    const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', startH, endH);
+    for (const b of blocks) {
+        w.append(b.txid.subarray(0, 8), 0, 5000000000n, b.height, b.txid, script, b.blockHash, false);
+    }
+    w.close();
+
+    const spendsPath = path.join(tmp, 'spends.dat');
+    new SpendsWriter(spendsPath, 'bitcoin', 'regtest', startH, endH).close();
+
+    const metaPath = path.join(tmp, 'meta.dat');
+    const meta = new MetaWriter(metaPath, 'bitcoin', 'regtest', startH, endH);
+    let prev = Buffer.alloc(32);
+    for (const b of blocks) {
+        meta.writeBlock(b.height, 1700000000 + b.height, b.blockHash, prev, [b.txid.subarray(0, 8)]);
+        prev = b.blockHash;
+    }
+    meta.close();
+
+    return { nBlocks, undoBlocks, blocks, outputsPath, spendsPath, metaPath };
+}
+
 describe('Regression (bulk-sync): W index is windowed to undoBlocks', function () {
     this.timeout(20000);
 
@@ -228,37 +272,7 @@ describe('Regression (bulk-sync): W index is windowed to undoBlocks', function (
     // GB on a from-genesis BTC mainnet run). derive-keys must emit W only for
     // outputs created in the last undoBlocks seeded blocks.
     it('emits W only for outputs created in the last undoBlocks seeded blocks', async function () {
-        const script = Buffer.alloc(32, 0xcd);
-        const nBlocks = 5, startH = 100, endH = startH + nBlocks - 1;
-        const undoBlocks = 2;
-
-        const blocks = [];
-        for (let i = 0; i < nBlocks; i++) {
-            blocks.push({
-                height:    startH + i,
-                blockHash: Buffer.alloc(32, 0x30 + i),
-                txid:      fullTxid((0xa0 + i).toString(16)),
-            });
-        }
-
-        const outputsPath = path.join(tmp, 'outputs.dat');
-        const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', startH, endH);
-        for (const b of blocks) {
-            w.append(b.txid.subarray(0, 8), 0, 5000000000n, b.height, b.txid, script, b.blockHash, false);
-        }
-        w.close();
-
-        const spendsPath = path.join(tmp, 'spends.dat');
-        new SpendsWriter(spendsPath, 'bitcoin', 'regtest', startH, endH).close();
-
-        const metaPath = path.join(tmp, 'meta.dat');
-        const meta = new MetaWriter(metaPath, 'bitcoin', 'regtest', startH, endH);
-        let prev = Buffer.alloc(32);
-        for (const b of blocks) {
-            meta.writeBlock(b.height, 1700000000 + b.height, b.blockHash, prev, [b.txid.subarray(0, 8)]);
-            prev = b.blockHash;
-        }
-        meta.close();
+        const { nBlocks, undoBlocks, blocks, outputsPath, spendsPath, metaPath } = writeWindowInputs(tmp);
 
         const rs = readOutputsRecordSize(outputsPath);
         const outputsSorted = path.join(tmp, 'outputs-sorted.dat');
