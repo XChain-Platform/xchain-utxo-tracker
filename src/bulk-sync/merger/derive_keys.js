@@ -202,6 +202,26 @@ async function sortByKey(inputPath, outputPath, recordSize, keySize, tmpDir, ram
  * @param {Function} opts.onProgress       callback({phase, ...})
  */
 async function deriveKeys(opts) {
+    const ctx = resolveDeriveOptions(opts)
+    const { onProgress } = ctx
+
+    const stats = {}
+
+    const { lastHeight, lastBlockHash } = await deriveBlockKeys(ctx, stats)
+    await deriveOutputKeys(ctx, stats)
+    const { candSortedPath, wMinHeight } = await writeScriptCandidates(ctx, stats, lastHeight)
+    await deriveScriptKeys(ctx, stats, candSortedPath, wMinHeight)
+    await deriveSpendKeys(ctx, stats)
+    writeLastBlockMarkers(ctx.outDir, stats, lastHeight, lastBlockHash)
+
+    onProgress({ phase: 'done', stats })
+    return { stats, layout: LAYOUT }
+}
+
+// Reads every option deriveKeys takes and applies its defaults. The undo window
+// resolves (and throws for a chain the registry does not name) before the
+// record-width and required-path checks; both directories exist on return.
+function resolveDeriveOptions(opts) {
     const {
         metaPath, outputsPath, liveUtxosPath, spendsByPrevPath,
         outDir, tmpDir,
@@ -215,7 +235,6 @@ async function deriveKeys(opts) {
         throw new Error(`deriveKeys: unsupported outputsRecordSize ${outputsRecordSize} (expected 120 or 121)`)
     }
     // Coinbase flag lives at byte 120, present only in 121-byte records.
-    // Coinbase flag lives at byte 120, present only in 121-byte (L-4) records.
     const hasCoinbaseByte = outputsRecordSize === OUTPUTS_RECORD_SIZE_CB
 
     if (!metaPath || !outputsPath || !liveUtxosPath || !spendsByPrevPath) {
@@ -227,7 +246,18 @@ async function deriveKeys(opts) {
     ensureDir(outDir)
     ensureDir(tmpDir)
 
-    const stats = {}
+    return {
+        metaPath, outputsPath, liveUtxosPath, spendsByPrevPath, outDir, tmpDir,
+        ramBudgetBytes, undoBlocks, removeSpent, onProgress,
+        outputsRecordSize, hasCoinbaseByte,
+    }
+}
+
+// Phases 1 and 2: the meta stream becomes B.dat, T.dat and N.dat, each sorted
+// by key. Returns the last block's height and hash, which the W/Z window and
+// the L markers read.
+async function deriveBlockKeys(ctx, stats) {
+    const { metaPath, outDir, tmpDir, ramBudgetBytes, onProgress } = ctx
 
     // Phase 1: meta → B-raw, T-raw, N-raw, capture last block
     onProgress({ phase: 'meta-start' })
@@ -236,6 +266,45 @@ async function deriveKeys(opts) {
     const bRawPath = path.join(tmpDir, 'B-raw.dat')
     const tRawPath = path.join(tmpDir, 'T-raw.dat')
     const nRawPath = path.join(tmpDir, 'N-raw.dat')
+
+    const { bRaw, tRaw, nWindow, lastHeight, lastBlockHash } = scanMetaBlocks(ctx, meta, bRawPath, tRawPath)
+
+    // Write N raw (at most `undoBlocks` entries).
+    {
+        const nRaw = new FlatWriter(nRawPath, LAYOUT.N.recordSize)
+        for (const h of nWindow) {
+            nRaw.write((buf, off) => {
+                buf[off] = P_STORED_BLK
+                h.copy(buf, off + 1, 0, 32)
+            })
+        }
+        nRaw.close()
+    }
+
+    stats.blocks = bRaw.count
+    stats.T      = tRaw ? tRaw.count : 0
+    stats.N      = nWindow.length
+    stats.B      = bRaw.count
+    onProgress({ phase: 'meta-done', ...stats })
+
+    // Phase 2: sort B, T, N by key
+    await sortByKey(bRawPath, path.join(outDir, 'B.dat'), LAYOUT.B.recordSize, LAYOUT.B.keySize, path.join(tmpDir, 'sort-B'), ramBudgetBytes)
+    if (tRaw) {
+        await sortByKey(tRawPath, path.join(outDir, 'T.dat'), LAYOUT.T.recordSize, LAYOUT.T.keySize, path.join(tmpDir, 'sort-T'), ramBudgetBytes)
+    }
+    await sortByKey(nRawPath, path.join(outDir, 'N.dat'), LAYOUT.N.recordSize, LAYOUT.N.keySize, path.join(tmpDir, 'sort-N'), ramBudgetBytes)
+    try { fs.unlinkSync(bRawPath) } catch (_) {}
+    try { fs.unlinkSync(tRawPath) } catch (_) {}
+    try { fs.unlinkSync(nRawPath) } catch (_) {}
+    onProgress({ phase: 'sort-BTN-done' })
+    return { lastHeight, lastBlockHash }
+}
+
+// Streams every meta block into B-raw and, unless removeSpent is set, T-raw,
+// and keeps the last undoBlocks block hashes for N. Closes the reader and both
+// writers.
+function scanMetaBlocks(ctx, meta, bRawPath, tRawPath) {
+    const { removeSpent, undoBlocks } = ctx
 
     const bRaw = new FlatWriter(bRawPath, LAYOUT.B.recordSize)
     const tRaw = removeSpent ? null : new FlatWriter(tRawPath, LAYOUT.T.recordSize)
@@ -280,35 +349,13 @@ async function deriveKeys(opts) {
         bRaw.close()
         if (tRaw) tRaw.close()
     }
+    return { bRaw, tRaw, nWindow, lastHeight, lastBlockHash }
+}
 
-    // Write N raw (at most `undoBlocks` entries).
-    {
-        const nRaw = new FlatWriter(nRawPath, LAYOUT.N.recordSize)
-        for (const h of nWindow) {
-            nRaw.write((buf, off) => {
-                buf[off] = P_STORED_BLK
-                h.copy(buf, off + 1, 0, 32)
-            })
-        }
-        nRaw.close()
-    }
-
-    stats.blocks = bRaw.count
-    stats.T      = tRaw ? tRaw.count : 0
-    stats.N      = nWindow.length
-    stats.B      = bRaw.count
-    onProgress({ phase: 'meta-done', ...stats })
-
-    // Phase 2: sort B, T, N by key
-    await sortByKey(bRawPath, path.join(outDir, 'B.dat'), LAYOUT.B.recordSize, LAYOUT.B.keySize, path.join(tmpDir, 'sort-B'), ramBudgetBytes)
-    if (tRaw) {
-        await sortByKey(tRawPath, path.join(outDir, 'T.dat'), LAYOUT.T.recordSize, LAYOUT.T.keySize, path.join(tmpDir, 'sort-T'), ramBudgetBytes)
-    }
-    await sortByKey(nRawPath, path.join(outDir, 'N.dat'), LAYOUT.N.recordSize, LAYOUT.N.keySize, path.join(tmpDir, 'sort-N'), ramBudgetBytes)
-    try { fs.unlinkSync(bRawPath) } catch (_) {}
-    try { fs.unlinkSync(tRawPath) } catch (_) {}
-    try { fs.unlinkSync(nRawPath) } catch (_) {}
-    onProgress({ phase: 'sort-BTN-done' })
+// Phases 3 and 4: live-utxos becomes H.dat (already in key order) and O.dat
+// (sorted by key).
+async function deriveOutputKeys(ctx, stats) {
+    const { liveUtxosPath, outDir, tmpDir, ramBudgetBytes, onProgress, outputsRecordSize, hasCoinbaseByte } = ctx
 
     // Phase 3: live-utxos → H.dat (sorted), O-raw (unsorted)
     // live-utxos.dat has no header (produced by streaming-join). Records are
@@ -318,6 +365,21 @@ async function deriveKeys(opts) {
     const hOut       = new RecordWriter(path.join(outDir, 'H.dat'), LAYOUT.H.recordSize)
     const oRawPath   = path.join(tmpDir, 'O-raw.dat')
     const oRaw       = new FlatWriter(oRawPath, LAYOUT.O.recordSize)
+    const liveCount  = writeLiveOutputRecords(liveReader, hOut, oRaw, hasCoinbaseByte)
+
+    stats.H = liveCount
+    stats.O = liveCount
+    onProgress({ phase: 'live-done', liveCount })
+
+    // Phase 4: sort O by key
+    await sortByKey(oRawPath, path.join(outDir, 'O.dat'), LAYOUT.O.recordSize, LAYOUT.O.keySize, path.join(tmpDir, 'sort-O'), ramBudgetBytes)
+    try { fs.unlinkSync(oRawPath) } catch (_) {}
+    onProgress({ phase: 'sort-O-done' })
+}
+
+// Writes one H record and one O record per live UTXO, then closes the reader
+// and both writers. Returns the live UTXO count.
+function writeLiveOutputRecords(liveReader, hOut, oRaw, hasCoinbaseByte) {
     let liveCount = 0
 
     try {
@@ -374,15 +436,18 @@ async function deriveKeys(opts) {
         hOut.close()
         oRaw.close()
     }
+    return liveCount
+}
 
-    stats.H = liveCount
-    stats.O = liveCount
-    onProgress({ phase: 'live-done', liveCount })
+// Script-candidate record width and its sort-key width (scriptHash + rowIdBE);
+// the record layout is spelled out in writeScriptCandidates.
+const CAND_REC_SIZE = 72
+const CAND_KEY_SIZE = 36
 
-    // Phase 4: sort O by key
-    await sortByKey(oRawPath, path.join(outDir, 'O.dat'), LAYOUT.O.recordSize, LAYOUT.O.keySize, path.join(tmpDir, 'sort-O'), ramBudgetBytes)
-    try { fs.unlinkSync(oRawPath) } catch (_) {}
-    onProgress({ phase: 'sort-O-done' })
+// Phase 5 plus the candidate and W sorts. Returns the sorted candidate path and
+// the lowest block height inside the W/Z window.
+async function writeScriptCandidates(ctx, stats, lastHeight) {
+    const { outputsPath, outDir, tmpDir, ramBudgetBytes, undoBlocks, onProgress, outputsRecordSize } = ctx
 
     // Phase 5: outputs (pre-cancellation) → script candidates
     // Emit one record per output: scriptHash(32) | rowIdBE(4) | blockHash(32)
@@ -402,8 +467,6 @@ async function deriveKeys(opts) {
     // the only index the reorg unwind uses to purge outputs created in a
     // rolled-back seeded block. Emitting it here (rather than off the live-utxos
     // stream) is what keeps spent-within-range outputs covered.
-    const CAND_REC_SIZE = 72
-    const CAND_KEY_SIZE = 36
     const candRawPath   = path.join(tmpDir, 'script-cand-raw.dat')
     const wRawPath      = path.join(tmpDir, 'W-raw.dat')
     // W is windowed like the live index: the reorg unwind can never reach past
@@ -417,6 +480,29 @@ async function deriveKeys(opts) {
     const outputsReader = new RecordReader(outputsPath, OUTPUTS_HEADER_SIZE, outputsRecordSize)
     const candRaw       = new FlatWriter(candRawPath, CAND_REC_SIZE)
     const wRaw          = new FlatWriter(wRawPath, LAYOUT.W.recordSize)
+    writeCandidateAndWRecords(outputsReader, candRaw, wRaw, wMinHeight)
+    stats.outputsSeen = candRaw.count
+    stats.W           = wRaw.count
+    onProgress({ phase: 'script-cand-raw-done', outputs: stats.outputsSeen })
+
+    const candSortedPath = path.join(tmpDir, 'script-cand-sorted.dat')
+    await sortByKey(candRawPath, candSortedPath, CAND_REC_SIZE, CAND_KEY_SIZE, path.join(tmpDir, 'sort-cand'), ramBudgetBytes)
+    try { fs.unlinkSync(candRawPath) } catch (_) {}
+    onProgress({ phase: 'sort-cand-done' })
+
+    // Sort W by its 45-byte key so the loader streams it in key order (matching
+    // every other prefix file) and removeCreatedOutputsInBlock's prefix scan
+    // sees a contiguous per-block run.
+    await sortByKey(wRawPath, path.join(outDir, 'W.dat'), LAYOUT.W.recordSize, LAYOUT.W.keySize, path.join(tmpDir, 'sort-W'), ramBudgetBytes)
+    try { fs.unlinkSync(wRawPath) } catch (_) {}
+    onProgress({ phase: 'sort-W-done', W: stats.W })
+    return { candSortedPath, wMinHeight }
+}
+
+// Writes one script candidate per output, rowId counting in file order, and a W
+// record for each output created inside the window, then closes the reader and
+// both writers.
+function writeCandidateAndWRecords(outputsReader, candRaw, wRaw, wMinHeight) {
     let rowId = 0
 
     try {
@@ -456,21 +542,12 @@ async function deriveKeys(opts) {
         candRaw.close()
         wRaw.close()
     }
-    stats.outputsSeen = candRaw.count
-    stats.W           = wRaw.count
-    onProgress({ phase: 'script-cand-raw-done', outputs: stats.outputsSeen })
+}
 
-    const candSortedPath = path.join(tmpDir, 'script-cand-sorted.dat')
-    await sortByKey(candRawPath, candSortedPath, CAND_REC_SIZE, CAND_KEY_SIZE, path.join(tmpDir, 'sort-cand'), ramBudgetBytes)
-    try { fs.unlinkSync(candRawPath) } catch (_) {}
-    onProgress({ phase: 'sort-cand-done' })
-
-    // Sort W by its 45-byte key so the loader streams it in key order (matching
-    // every other prefix file) and removeCreatedOutputsInBlock's prefix scan
-    // sees a contiguous per-block run.
-    await sortByKey(wRawPath, path.join(outDir, 'W.dat'), LAYOUT.W.recordSize, LAYOUT.W.keySize, path.join(tmpDir, 'sort-W'), ramBudgetBytes)
-    try { fs.unlinkSync(wRawPath) } catch (_) {}
-    onProgress({ phase: 'sort-W-done', W: stats.W })
+// Phases 6 and 7: the sorted candidates become S.dat (the first sighting of each
+// script) and Z.dat (windowed, sorted by key).
+async function deriveScriptKeys(ctx, stats, candSortedPath, wMinHeight) {
+    const { outDir, tmpDir, ramBudgetBytes, onProgress } = ctx
 
     // Phase 6: dedup by scriptHash → S.dat (sorted), Z-raw (unsorted)
     // Because we sorted by (scriptHash, rowId), the first record per
@@ -480,7 +557,23 @@ async function deriveKeys(opts) {
     const sOut       = new RecordWriter(path.join(outDir, 'S.dat'), LAYOUT.S.recordSize)
     const zRawPath   = path.join(tmpDir, 'Z-raw.dat')
     const zRaw       = new FlatWriter(zRawPath, LAYOUT.Z.recordSize)
+    const uniqueScripts = writeFirstSeenScriptRecords(candReader, sOut, zRaw, wMinHeight)
+    try { fs.unlinkSync(candSortedPath) } catch (_) {}
 
+    stats.S = uniqueScripts
+    stats.Z = zRaw.count // may be < S: Z is windowed to undoBlocks, S is not
+    onProgress({ phase: 'SZ-dedup-done', uniqueScripts })
+
+    // Phase 7: sort Z by key
+    await sortByKey(zRawPath, path.join(outDir, 'Z.dat'), LAYOUT.Z.recordSize, LAYOUT.Z.keySize, path.join(tmpDir, 'sort-Z'), ramBudgetBytes)
+    try { fs.unlinkSync(zRawPath) } catch (_) {}
+    onProgress({ phase: 'sort-Z-done' })
+}
+
+// Writes the S record, and inside the window the Z record, for the first
+// candidate of each script, then closes the reader and both writers. Returns the
+// unique script count.
+function writeFirstSeenScriptRecords(candReader, sOut, zRaw, wMinHeight) {
     let lastScript = null
     let uniqueScripts = 0
     try {
@@ -521,16 +614,13 @@ async function deriveKeys(opts) {
         sOut.close()
         zRaw.close()
     }
-    try { fs.unlinkSync(candSortedPath) } catch (_) {}
+    return uniqueScripts
+}
 
-    stats.S = uniqueScripts
-    stats.Z = zRaw.count // may be < S: Z is windowed to undoBlocks, S is not
-    onProgress({ phase: 'SZ-dedup-done', uniqueScripts })
-
-    // Phase 7: sort Z by key
-    await sortByKey(zRawPath, path.join(outDir, 'Z.dat'), LAYOUT.Z.recordSize, LAYOUT.Z.keySize, path.join(tmpDir, 'sort-Z'), ramBudgetBytes)
-    try { fs.unlinkSync(zRawPath) } catch (_) {}
-    onProgress({ phase: 'sort-Z-done' })
+// Phases 8 and 9: spends-by-prevtx becomes I.dat (already in key order) and
+// J.dat (sorted by key), or nothing at all when removeSpent is set.
+async function deriveSpendKeys(ctx, stats) {
+    const { spendsByPrevPath, outDir, tmpDir, ramBudgetBytes, removeSpent, onProgress } = ctx
 
     // Phase 8: spends-by-prevtx → I.dat (sorted), J-raw (unsorted)
     // spends-by-prevtx.dat has no header, records = 20B, sorted by
@@ -549,37 +639,7 @@ async function deriveKeys(opts) {
         const iOut         = new RecordWriter(path.join(outDir, 'I.dat'), LAYOUT.I.recordSize)
         const jRawPath     = path.join(tmpDir, 'J-raw.dat')
         const jRaw         = new FlatWriter(jRawPath, LAYOUT.J.recordSize)
-        let spendCount = 0
-        try {
-            while (true) {
-                const rec = spendsReader.next()
-                if (!rec) break
-                spendCount++
-                const prevTxHash8    = rec.subarray(0, 8)
-                const prevVoutBE     = rec.subarray(8, 12)
-                const spenderTxHash8 = rec.subarray(12, 20)
-
-                // I record: 'I' + prevTxHash8(8) + prevVoutBE(4) | spenderTxHash8(8)
-                const iBuf = Buffer.allocUnsafe(LAYOUT.I.recordSize)
-                iBuf[0] = P_INPUT
-                prevTxHash8   .copy(iBuf, 1, 0, 8)
-                prevVoutBE    .copy(iBuf, 9, 0, 4)
-                spenderTxHash8.copy(iBuf, 13, 0, 8)
-                iOut.writeRecord(iBuf)
-
-                // J record: 'J' + spenderTxHash8(8) + prevTxHash8(8) + prevVoutBE(4) | (empty)
-                jRaw.write((buf, off) => {
-                    buf[off] = P_IN_HINT
-                    spenderTxHash8.copy(buf, off + 1,  0, 8)
-                    prevTxHash8   .copy(buf, off + 9,  0, 8)
-                    prevVoutBE    .copy(buf, off + 17, 0, 4)
-                })
-            }
-        } finally {
-            spendsReader.close()
-            iOut.close()
-            jRaw.close()
-        }
+        const spendCount   = writeSpendRecords(spendsReader, iOut, jRaw)
         stats.I = spendCount
         stats.J = spendCount
         onProgress({ phase: 'spends-done', spendCount })
@@ -589,8 +649,47 @@ async function deriveKeys(opts) {
         try { fs.unlinkSync(jRawPath) } catch (_) {}
         onProgress({ phase: 'sort-J-done' })
     }
+}
 
-    // Phase 10: L markers (JSON)
+// Writes one I record and one J record per spend, then closes the reader and
+// both writers. Returns the spend count.
+function writeSpendRecords(spendsReader, iOut, jRaw) {
+    let spendCount = 0
+    try {
+        while (true) {
+            const rec = spendsReader.next()
+            if (!rec) break
+            spendCount++
+            const prevTxHash8    = rec.subarray(0, 8)
+            const prevVoutBE     = rec.subarray(8, 12)
+            const spenderTxHash8 = rec.subarray(12, 20)
+
+            // I record: 'I' + prevTxHash8(8) + prevVoutBE(4) | spenderTxHash8(8)
+            const iBuf = Buffer.allocUnsafe(LAYOUT.I.recordSize)
+            iBuf[0] = P_INPUT
+            prevTxHash8   .copy(iBuf, 1, 0, 8)
+            prevVoutBE    .copy(iBuf, 9, 0, 4)
+            spenderTxHash8.copy(iBuf, 13, 0, 8)
+            iOut.writeRecord(iBuf)
+
+            // J record: 'J' + spenderTxHash8(8) + prevTxHash8(8) + prevVoutBE(4) | (empty)
+            jRaw.write((buf, off) => {
+                buf[off] = P_IN_HINT
+                spenderTxHash8.copy(buf, off + 1,  0, 8)
+                prevTxHash8   .copy(buf, off + 9,  0, 8)
+                prevVoutBE    .copy(buf, off + 17, 0, 4)
+            })
+        }
+    } finally {
+        spendsReader.close()
+        iOut.close()
+        jRaw.close()
+    }
+    return spendCount
+}
+
+// Phase 10: L markers (JSON)
+function writeLastBlockMarkers(outDir, stats, lastHeight, lastBlockHash) {
     if (lastBlockHash == null) {
         throw new Error('deriveKeys: meta file had no blocks; cannot emit LAST_* markers')
     }
@@ -601,9 +700,6 @@ async function deriveKeys(opts) {
     fs.writeFileSync(path.join(outDir, 'L.json'), JSON.stringify(lJson, null, 2))
     stats.L = 2
     stats.lastHeight = lastHeight
-
-    onProgress({ phase: 'done', stats })
-    return { stats, layout: LAYOUT }
 }
 
 module.exports = { deriveKeys, LAYOUT, resolveUndoBlocks }
