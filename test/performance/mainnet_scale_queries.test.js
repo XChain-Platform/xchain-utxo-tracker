@@ -151,185 +151,197 @@ function selectCoins(utxos, targetSats) {
     return { selected, total };
 }
 
+let built;
+let plan;
+const tier = resolveTier();
+
+async function setupScaleStore() {
+    const t0 = Date.now();
+    built = await generateStore({
+        tier,
+        onProgress: ({ written, total }) => {
+            // Silent for the default tier; a mainnet build takes long enough
+            // that no output reads as a hang.
+            if (total > 1000000 && written % 1000000 === 0) {
+                process.stdout.write(`      [scale-db] ${written}/${total} UTXOs written\n`);
+            }
+        }
+    });
+    plan = built.plan;
+    process.stdout.write(
+        `      [scale-db] tier=${tier.name} utxos=${built.stats.utxosWritten}` +
+        ` scripts=${tier.fillerScripts + 4}` +
+        ` disk=${(built.stats.bytesOnDisk / 1024 / 1024).toFixed(1)}MB` +
+        ` build=${((Date.now() - t0) / 1000).toFixed(1)}s\n`
+    );
+}
+
+async function closeScaleStore() {
+    await closeStore(built, { keep: process.env.UTXO_PERF_KEEP_DB === '1' });
+}
+
+function verifyGeneratedStoreScale() {
+    assert.strictEqual(built.stats.utxosWritten, plan.totalUtxoCount,
+        'generator wrote a different number of UTXOs than it planned');
+    assert.ok(built.stats.bytesOnDisk > 0, 'store should exist on disk, not in memory');
+}
+
+async function scanDustAddress() {
+    const probe = plan.probes.dust;
+    const { medianMs, maxMs } = await measure(
+        () => built.tracker.getUtxosAddress(probe.address),
+        (utxos) => assertUtxosMatchPlan(utxos, probe.utxos, plan.tipHeight, probe.scriptHex, 'dust')
+    );
+    process.stdout.write(`      [dust scan] median=${medianMs.toFixed(2)}ms max=${maxMs.toFixed(2)}ms\n`);
+    assert.ok(medianMs < POINT_SCAN_BUDGET_MS,
+        `single-UTXO address scan median ${medianMs.toFixed(2)}ms exceeded ${POINT_SCAN_BUDGET_MS}ms ` +
+        `at tier ${tier.name} (${plan.totalUtxoCount} UTXOs): the scan is no longer O(rows returned)`);
+}
+
+async function scanOrdinaryWallet() {
+    const probe = plan.probes.small;
+    const { medianMs, maxMs } = await measure(
+        () => built.tracker.getUtxosAddress(probe.address),
+        (utxos) => assertUtxosMatchPlan(utxos, probe.utxos, plan.tipHeight, probe.scriptHex, 'small')
+    );
+    process.stdout.write(`      [small scan] median=${medianMs.toFixed(2)}ms max=${maxMs.toFixed(2)}ms\n`);
+    assert.ok(medianMs < SMALL_SCAN_BUDGET_MS,
+        `8-UTXO address scan median ${medianMs.toFixed(2)}ms exceeded ${SMALL_SCAN_BUDGET_MS}ms at tier ${tier.name}`);
+}
+
+async function scanAbsentAddress() {
+    const probe = plan.probes.empty;
+    const { medianMs, maxMs } = await measure(
+        () => built.tracker.getUtxosAddress(probe.address),
+        (utxos) => assert.strictEqual(utxos.length, 0, 'unfunded address must return no UTXOs')
+    );
+    process.stdout.write(`      [absent scan] median=${medianMs.toFixed(2)}ms max=${maxMs.toFixed(2)}ms\n`);
+    // The sharpest probe in the file: a missing prefix costs one seek if the
+    // range bounds are right and a full store walk if they are not.
+    assert.ok(medianMs < ABSENT_SCAN_BUDGET_MS,
+        `absent-address scan median ${medianMs.toFixed(2)}ms exceeded ${ABSENT_SCAN_BUDGET_MS}ms at tier ${tier.name}: ` +
+        `an unfunded address is walking rows it should never touch`);
+}
+
+async function reportOrdinaryWalletBalance() {
+    const probe = plan.probes.small;
+    const expectedSats = probe.utxos.reduce((acc, u) => acc + BigInt(u.value), 0n);
+    const expected = (expectedSats / 100000000n).toString() + '.' +
+        (expectedSats % 100000000n).toString().padStart(8, '0');
+
+    const { medianMs, maxMs } = await measure(
+        () => built.tracker.getBalanceInfo(probe.address),
+        (info) => {
+            assert.strictEqual(info.balances.confirmed, expected, 'confirmed balance');
+            assert.strictEqual(info.balances.pending, '0.00000000', 'pending balance');
+            assert.strictEqual(info.utxos.confirmed, probe.utxos.length, 'confirmed UTXO count');
+            assert.strictEqual(info.utxos.pending, 0, 'pending UTXO count');
+        }
+    );
+    process.stdout.write(`      [balance] median=${medianMs.toFixed(2)}ms max=${maxMs.toFixed(2)}ms\n`);
+    assert.ok(medianMs < BALANCE_BUDGET_MS,
+        `get_info median ${medianMs.toFixed(2)}ms exceeded ${BALANCE_BUDGET_MS}ms at tier ${tier.name}`);
+}
+
+async function drainWhaleAddress() {
+    const probe = plan.probes.whale;
+    const expectedPages = Math.floor(probe.utxos.length / ENCODER_PAGE_LIMIT) + 1;
+    const budgetMs = Math.max(DRAIN_FLOOR_MS, (probe.utxos.length / DRAIN_MIN_UTXOS_PER_SEC) * 1000);
+
+    const t = process.hrtime.bigint();
+    const { utxos, pages } = await drainPaged(built.tracker, probe.address, ENCODER_PAGE_LIMIT);
+    const elapsedMs = Number(process.hrtime.bigint() - t) / 1e6;
+
+    process.stdout.write(
+        `      [whale drain] ${utxos.length} UTXOs in ${pages} pages, ${elapsedMs.toFixed(0)}ms ` +
+        `(${(utxos.length / (elapsedMs / 1000)).toFixed(0)}/s)\n`
+    );
+
+    assertUtxosMatchPlan(utxos, probe.utxos, plan.tipHeight, probe.scriptHex, 'whale');
+
+    // Every outpoint distinct: a cursor that repeats a row hands the encoder
+    // a duplicate input and the built PSBT is rejected by the node.
+    const seen = new Set(utxos.map(u => u.txid + ':' + u.vout));
+    assert.strictEqual(seen.size, utxos.length, 'paged drain returned a duplicate outpoint');
+
+    assert.strictEqual(pages, expectedPages,
+        `expected ${expectedPages} pages at limit ${ENCODER_PAGE_LIMIT}, got ${pages}`);
+    assert.ok(elapsedMs < budgetMs,
+        `whale drain took ${elapsedMs.toFixed(0)}ms, over the ${budgetMs.toFixed(0)}ms budget ` +
+        `for ${probe.utxos.length} UTXOs at tier ${tier.name}`);
+}
+
+async function comparePagedAndUnpagedScans() {
+    const probe = plan.probes.whale;
+    const unpaged = await built.tracker.getUtxosAddress(probe.address);
+    const { utxos: paged } = await drainPaged(built.tracker, probe.address, ENCODER_PAGE_LIMIT);
+
+    assert.strictEqual(paged.length, unpaged.length, 'paged and unpaged counts differ');
+    for (let i = 0; i < unpaged.length; i++) {
+        assert.strictEqual(paged[i].txid + ':' + paged[i].vout, unpaged[i].txid + ':' + unpaged[i].vout,
+            `paged and unpaged disagree at index ${i}`);
+    }
+}
+
+async function selectExactCoins() {
+    const probe = plan.probes.whale;
+
+    // Expected answer computed from the PLAN, not from the query result:
+    // top five values by amount, and a target that provably needs all five
+    // (one satoshi above the top four) and no more.
+    const byValueDesc = [...probe.utxos].sort((a, b) => b.value - a.value);
+    const topFive = byValueDesc.slice(0, 5);
+    const topFour = topFive.slice(0, 4).reduce((acc, u) => acc + BigInt(u.value), 0n);
+    const target = topFour + 1n;
+    const expectedTotal = topFive.reduce((acc, u) => acc + BigInt(u.value), 0n);
+
+    const budgetMs = Math.max(DRAIN_FLOOR_MS, (probe.utxos.length / DRAIN_MIN_UTXOS_PER_SEC) * 1000) + 2000;
+
+    const t = process.hrtime.bigint();
+    const { utxos } = await drainPaged(built.tracker, probe.address, ENCODER_PAGE_LIMIT);
+    const { selected, total } = selectCoins(utxos, target);
+    const elapsedMs = Number(process.hrtime.bigint() - t) / 1e6;
+
+    process.stdout.write(`      [coin selection] ${selected.length} inputs from ${utxos.length} UTXOs in ${elapsedMs.toFixed(0)}ms\n`);
+
+    assert.strictEqual(selected.length, 5,
+        `expected exactly 5 inputs for a target of ${target}, got ${selected.length}`);
+    assert.strictEqual(total, expectedTotal, 'selected total does not match the top five by value');
+    for (let i = 0; i < 5; i++) {
+        assert.strictEqual(selected[i].txid, topFive[i].fullTxid, `selected input ${i} is not the expected outpoint`);
+        assert.strictEqual(selected[i].vout, topFive[i].vout, `selected input ${i} vout`);
+    }
+    assert.ok(elapsedMs < budgetMs,
+        `drain + coin selection took ${elapsedMs.toFixed(0)}ms, over the ${budgetMs.toFixed(0)}ms budget at tier ${tier.name}`);
+}
+
+async function resumeFromMidSetCursor() {
+    const probe = plan.probes.whale;
+    const half = Math.floor(probe.utxos.length / 2);
+
+    const firstPage = await built.tracker.getUtxosAddress(probe.address, { limit: half });
+    assert.strictEqual(firstPage.length, half, 'first page should be exactly the requested size');
+    assert.ok(firstPage.nextCursor, 'a full page must hand back a continuation cursor');
+
+    const rest = await built.tracker.getUtxosAddress(probe.address,
+        { limit: probe.utxos.length, after: firstPage.nextCursor });
+
+    const combined = [...firstPage, ...rest];
+    assertUtxosMatchPlan(combined, probe.utxos, plan.tipHeight, probe.scriptHex, 'cursor-resume');
+}
+
 describe('Performance: production-scale LevelDB address scan + coin selection', function () {
     this.timeout(0);
+    before(setupScaleStore);
+    after(closeScaleStore);
 
-    let built;
-    let plan;
-    const tier = resolveTier();
-
-    before(async function () {
-        const t0 = Date.now();
-        built = await generateStore({
-            tier,
-            onProgress: ({ written, total }) => {
-                // Silent for the default tier; a mainnet build takes long enough
-                // that no output reads as a hang.
-                if (total > 1000000 && written % 1000000 === 0) {
-                    process.stdout.write(`      [scale-db] ${written}/${total} UTXOs written\n`);
-                }
-            }
-        });
-        plan = built.plan;
-        process.stdout.write(
-            `      [scale-db] tier=${tier.name} utxos=${built.stats.utxosWritten}` +
-            ` scripts=${tier.fillerScripts + 4}` +
-            ` disk=${(built.stats.bytesOnDisk / 1024 / 1024).toFixed(1)}MB` +
-            ` build=${((Date.now() - t0) / 1000).toFixed(1)}s\n`
-        );
-    });
-
-    after(async function () {
-        await closeStore(built, { keep: process.env.UTXO_PERF_KEEP_DB === '1' });
-    });
-
-    it('the generated store really is at the requested scale', function () {
-        assert.strictEqual(built.stats.utxosWritten, plan.totalUtxoCount,
-            'generator wrote a different number of UTXOs than it planned');
-        assert.ok(built.stats.bytesOnDisk > 0, 'store should exist on disk, not in memory');
-    });
-
-    it('scans an address holding one UTXO in flat time, with the exact UTXO', async function () {
-        const probe = plan.probes.dust;
-        const { medianMs, maxMs } = await measure(
-            () => built.tracker.getUtxosAddress(probe.address),
-            (utxos) => assertUtxosMatchPlan(utxos, probe.utxos, plan.tipHeight, probe.scriptHex, 'dust')
-        );
-        process.stdout.write(`      [dust scan] median=${medianMs.toFixed(2)}ms max=${maxMs.toFixed(2)}ms\n`);
-        assert.ok(medianMs < POINT_SCAN_BUDGET_MS,
-            `single-UTXO address scan median ${medianMs.toFixed(2)}ms exceeded ${POINT_SCAN_BUDGET_MS}ms ` +
-            `at tier ${tier.name} (${plan.totalUtxoCount} UTXOs): the scan is no longer O(rows returned)`);
-    });
-
-    it('scans an ordinary wallet in flat time, with the exact UTXO set in key order', async function () {
-        const probe = plan.probes.small;
-        const { medianMs, maxMs } = await measure(
-            () => built.tracker.getUtxosAddress(probe.address),
-            (utxos) => assertUtxosMatchPlan(utxos, probe.utxos, plan.tipHeight, probe.scriptHex, 'small')
-        );
-        process.stdout.write(`      [small scan] median=${medianMs.toFixed(2)}ms max=${maxMs.toFixed(2)}ms\n`);
-        assert.ok(medianMs < SMALL_SCAN_BUDGET_MS,
-            `8-UTXO address scan median ${medianMs.toFixed(2)}ms exceeded ${SMALL_SCAN_BUDGET_MS}ms at tier ${tier.name}`);
-    });
-
-    it('returns an empty result for an address with no rows, without walking the store', async function () {
-        const probe = plan.probes.empty;
-        const { medianMs, maxMs } = await measure(
-            () => built.tracker.getUtxosAddress(probe.address),
-            (utxos) => assert.strictEqual(utxos.length, 0, 'unfunded address must return no UTXOs')
-        );
-        process.stdout.write(`      [absent scan] median=${medianMs.toFixed(2)}ms max=${maxMs.toFixed(2)}ms\n`);
-        // The sharpest probe in the file: a missing prefix costs one seek if the
-        // range bounds are right and a full store walk if they are not.
-        assert.ok(medianMs < ABSENT_SCAN_BUDGET_MS,
-            `absent-address scan median ${medianMs.toFixed(2)}ms exceeded ${ABSENT_SCAN_BUDGET_MS}ms at tier ${tier.name}: ` +
-            `an unfunded address is walking rows it should never touch`);
-    });
-
-    it('reports the exact balance for an ordinary wallet inside budget', async function () {
-        const probe = plan.probes.small;
-        const expectedSats = probe.utxos.reduce((acc, u) => acc + BigInt(u.value), 0n);
-        const expected = (expectedSats / 100000000n).toString() + '.' +
-            (expectedSats % 100000000n).toString().padStart(8, '0');
-
-        const { medianMs, maxMs } = await measure(
-            () => built.tracker.getBalanceInfo(probe.address),
-            (info) => {
-                assert.strictEqual(info.balances.confirmed, expected, 'confirmed balance');
-                assert.strictEqual(info.balances.pending, '0.00000000', 'pending balance');
-                assert.strictEqual(info.utxos.confirmed, probe.utxos.length, 'confirmed UTXO count');
-                assert.strictEqual(info.utxos.pending, 0, 'pending UTXO count');
-            }
-        );
-        process.stdout.write(`      [balance] median=${medianMs.toFixed(2)}ms max=${maxMs.toFixed(2)}ms\n`);
-        assert.ok(medianMs < BALANCE_BUDGET_MS,
-            `get_info median ${medianMs.toFixed(2)}ms exceeded ${BALANCE_BUDGET_MS}ms at tier ${tier.name}`);
-    });
-
-    it('drains a whale address page by page with no gaps, no repeats, inside a throughput floor', async function () {
-        const probe = plan.probes.whale;
-        const expectedPages = Math.floor(probe.utxos.length / ENCODER_PAGE_LIMIT) + 1;
-        const budgetMs = Math.max(DRAIN_FLOOR_MS, (probe.utxos.length / DRAIN_MIN_UTXOS_PER_SEC) * 1000);
-
-        const t = process.hrtime.bigint();
-        const { utxos, pages } = await drainPaged(built.tracker, probe.address, ENCODER_PAGE_LIMIT);
-        const elapsedMs = Number(process.hrtime.bigint() - t) / 1e6;
-
-        process.stdout.write(
-            `      [whale drain] ${utxos.length} UTXOs in ${pages} pages, ${elapsedMs.toFixed(0)}ms ` +
-            `(${(utxos.length / (elapsedMs / 1000)).toFixed(0)}/s)\n`
-        );
-
-        assertUtxosMatchPlan(utxos, probe.utxos, plan.tipHeight, probe.scriptHex, 'whale');
-
-        // Every outpoint distinct: a cursor that repeats a row hands the encoder
-        // a duplicate input and the built PSBT is rejected by the node.
-        const seen = new Set(utxos.map(u => u.txid + ':' + u.vout));
-        assert.strictEqual(seen.size, utxos.length, 'paged drain returned a duplicate outpoint');
-
-        assert.strictEqual(pages, expectedPages,
-            `expected ${expectedPages} pages at limit ${ENCODER_PAGE_LIMIT}, got ${pages}`);
-        assert.ok(elapsedMs < budgetMs,
-            `whale drain took ${elapsedMs.toFixed(0)}ms, over the ${budgetMs.toFixed(0)}ms budget ` +
-            `for ${probe.utxos.length} UTXOs at tier ${tier.name}`);
-    });
-
-    it('a paged drain returns exactly what one unpaged scan returns', async function () {
-        const probe = plan.probes.whale;
-        const unpaged = await built.tracker.getUtxosAddress(probe.address);
-        const { utxos: paged } = await drainPaged(built.tracker, probe.address, ENCODER_PAGE_LIMIT);
-
-        assert.strictEqual(paged.length, unpaged.length, 'paged and unpaged counts differ');
-        for (let i = 0; i < unpaged.length; i++) {
-            assert.strictEqual(paged[i].txid + ':' + paged[i].vout, unpaged[i].txid + ':' + unpaged[i].vout,
-                `paged and unpaged disagree at index ${i}`);
-        }
-    });
-
-    it('selects the exact coins the encoder would, inside budget', async function () {
-        const probe = plan.probes.whale;
-
-        // Expected answer computed from the PLAN, not from the query result:
-        // top five values by amount, and a target that provably needs all five
-        // (one satoshi above the top four) and no more.
-        const byValueDesc = [...probe.utxos].sort((a, b) => b.value - a.value);
-        const topFive = byValueDesc.slice(0, 5);
-        const topFour = topFive.slice(0, 4).reduce((acc, u) => acc + BigInt(u.value), 0n);
-        const target = topFour + 1n;
-        const expectedTotal = topFive.reduce((acc, u) => acc + BigInt(u.value), 0n);
-
-        const budgetMs = Math.max(DRAIN_FLOOR_MS, (probe.utxos.length / DRAIN_MIN_UTXOS_PER_SEC) * 1000) + 2000;
-
-        const t = process.hrtime.bigint();
-        const { utxos } = await drainPaged(built.tracker, probe.address, ENCODER_PAGE_LIMIT);
-        const { selected, total } = selectCoins(utxos, target);
-        const elapsedMs = Number(process.hrtime.bigint() - t) / 1e6;
-
-        process.stdout.write(`      [coin selection] ${selected.length} inputs from ${utxos.length} UTXOs in ${elapsedMs.toFixed(0)}ms\n`);
-
-        assert.strictEqual(selected.length, 5,
-            `expected exactly 5 inputs for a target of ${target}, got ${selected.length}`);
-        assert.strictEqual(total, expectedTotal, 'selected total does not match the top five by value');
-        for (let i = 0; i < 5; i++) {
-            assert.strictEqual(selected[i].txid, topFive[i].fullTxid, `selected input ${i} is not the expected outpoint`);
-            assert.strictEqual(selected[i].vout, topFive[i].vout, `selected input ${i} vout`);
-        }
-        assert.ok(elapsedMs < budgetMs,
-            `drain + coin selection took ${elapsedMs.toFixed(0)}ms, over the ${budgetMs.toFixed(0)}ms budget at tier ${tier.name}`);
-    });
-
-    it('resumes from a mid-set cursor without gaps or repeats', async function () {
-        const probe = plan.probes.whale;
-        const half = Math.floor(probe.utxos.length / 2);
-
-        const firstPage = await built.tracker.getUtxosAddress(probe.address, { limit: half });
-        assert.strictEqual(firstPage.length, half, 'first page should be exactly the requested size');
-        assert.ok(firstPage.nextCursor, 'a full page must hand back a continuation cursor');
-
-        const rest = await built.tracker.getUtxosAddress(probe.address,
-            { limit: probe.utxos.length, after: firstPage.nextCursor });
-
-        const combined = [...firstPage, ...rest];
-        assertUtxosMatchPlan(combined, probe.utxos, plan.tipHeight, probe.scriptHex, 'cursor-resume');
-    });
+    it('the generated store really is at the requested scale', verifyGeneratedStoreScale);
+    it('scans an address holding one UTXO in flat time, with the exact UTXO', scanDustAddress);
+    it('scans an ordinary wallet in flat time, with the exact UTXO set in key order', scanOrdinaryWallet);
+    it('returns an empty result for an address with no rows, without walking the store', scanAbsentAddress);
+    it('reports the exact balance for an ordinary wallet inside budget', reportOrdinaryWalletBalance);
+    it('drains a whale address page by page with no gaps, no repeats, inside a throughput floor', drainWhaleAddress);
+    it('a paged drain returns exactly what one unpaged scan returns', comparePagedAndUnpagedScans);
+    it('selects the exact coins the encoder would, inside budget', selectExactCoins);
+    it('resumes from a mid-set cursor without gaps or repeats', resumeFromMidSetCursor);
 });
