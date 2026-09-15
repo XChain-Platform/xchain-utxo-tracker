@@ -158,7 +158,7 @@ describe('computeFreshness', function () {
   // and their copies outlived the fix: both kept building it from raw isSynced(),
   // so they would have stayed green through the very regression guarded above.
   it('lets no route harness rebuild the header from the raw sync flag', function () {
-    const harnesses = ['../../security/rest_route_surface.test.js', '../../unit/api.test.js'];
+    const harnesses = ['../../security/rest_route_surface.test.js', '../../unit/api.test/support/test_app.js'];
     for (const rel of harnesses) {
       const src = fs.readFileSync(path.join(__dirname, rel), 'utf8');
       const sites = src.match(/res\.set\('X-Mempool-Ready'[^\n]*\)/g) || [];
