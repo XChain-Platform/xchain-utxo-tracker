@@ -28,50 +28,78 @@ const {
   createE2ETracker
 } = require('./support/helpers');
 
-describe('E2E: Persistence - Disk-Backed LevelDB', function () {
-  let tmpDir;
-  let origCreateDatabase;
+let tmpDir;
+let origCreateDatabase;
 
-  before(function () {
-    // Save original createDatabase
-    origCreateDatabase = LevelUpStore.prototype.createDatabase;
-  });
+function rememberCreateDatabase() {
+  // Save original createDatabase
+  origCreateDatabase = LevelUpStore.prototype.createDatabase;
+}
 
-  beforeEach(function () {
-    // Create a unique temp directory for each test
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utxo-e2e-'));
-  });
+function createTempDirectory() {
+  // Create a unique temp directory for each test
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utxo-e2e-'));
+}
 
-  afterEach(function () {
-    sinon.restore();
-    // Restore original createDatabase
-    LevelUpStore.prototype.createDatabase = origCreateDatabase;
-    // Clean up temp directory
+function restoreDiskStore() {
+  sinon.restore();
+  // Restore original createDatabase
+  LevelUpStore.prototype.createDatabase = origCreateDatabase;
+  // Clean up temp directory
+  try {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } catch (e) { /* ignore cleanup errors */ }
+}
+
+/**
+ * Patch createDatabase to use disk-backed LevelDB in our temp directory.
+ * The main DB goes to disk; the mempool DB stays in-memory.
+ */
+function patchLevelUpStoreDisk() {
+  LevelUpStore.prototype.createDatabase = async function () {
     try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch (e) { /* ignore cleanup errors */ }
-  });
-
-  /**
-   * Patch createDatabase to use disk-backed LevelDB in our temp directory.
-   * The main DB goes to disk; the mempool DB stays in-memory.
-   */
-  function patchLevelUpStoreDisk() {
-    LevelUpStore.prototype.createDatabase = async function () {
-      try {
-        if (this.inMemory) {
-          this.db = new MemoryLevel({ keyEncoding: 'buffer', valueEncoding: 'buffer' });
-        } else {
-          const dbPath = path.join(tmpDir, this.dbName);
-          this.db = new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' });
-        }
-        await this.db.open();
-        return this.db;
-      } catch (err) {
-        throw new Error("Couldn't open/create LevelDB database");
+      if (this.inMemory) {
+        this.db = new MemoryLevel({ keyEncoding: 'buffer', valueEncoding: 'buffer' });
+      } else {
+        const dbPath = path.join(tmpDir, this.dbName);
+        this.db = new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' });
       }
-    };
-  }
+      await this.db.open();
+      return this.db;
+    } catch (err) {
+      throw new Error("Couldn't open/create LevelDB database");
+    }
+  };
+}
+
+async function createPendingRestartFixture() {
+  // First run: one coinbase block funding addr0 with 50 BTC (confirmed).
+  const cb = makeCoinbaseTx(0, 50 * SATOSHI);
+  const block0 = makeBlock(0, '0'.repeat(64), [cb]);
+  const tracker1 = createE2ETracker();
+  const state1 = stubBlockchain(tracker1, [block0]);
+
+  tracker1.start();
+  await waitForSynced(tracker1);
+
+  // Unconfirmed tx: addr0 → addr1 (10 BTC), addr0 keeps the rest as change.
+  const mempoolTx = makeTx({
+    ins: [makeSpendInput(cb._txid, 0)],
+    outs: [
+      makeOutput(1, 10 * SATOSHI),
+      makeOutput(0, 39 * SATOSHI)
+    ]
+  });
+  addMempoolTx(state1, mempoolTx);
+  await tracker1.updateMempool();
+
+  return { block0, mempoolTx, tracker1 };
+}
+
+describe('E2E: Persistence - Disk-Backed LevelDB', function () {
+  before(rememberCreateDatabase);
+  beforeEach(createTempDirectory);
+  afterEach(restoreDiskStore);
 
   describe('G2: restart with persisted state', function () {
     it('survives a full stop/restart cycle with data intact', async function () {
@@ -122,6 +150,15 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
       await tracker2.stopParsing();
     });
 
+  });
+});
+
+describe('E2E: Persistence - Disk-Backed LevelDB', function () {
+  before(rememberCreateDatabase);
+  beforeEach(createTempDirectory);
+  afterEach(restoreDiskStore);
+
+  describe('G2: restart with persisted state', function () {
     it('resumes indexing from where it left off', async function () {
       patchLevelUpStoreDisk();
 
@@ -167,6 +204,12 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
       await tracker2.stopParsing();
     });
   });
+});
+
+describe('E2E: Persistence - Disk-Backed LevelDB', function () {
+  before(rememberCreateDatabase);
+  beforeEach(createTempDirectory);
+  afterEach(restoreDiskStore);
 
   describe('G4: dust output (546 satoshis)', function () {
     it('indexes dust values without rounding errors', async function () {
@@ -205,6 +248,12 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
       await tracker2.stopParsing();
     });
   });
+});
+
+describe('E2E: Persistence - Disk-Backed LevelDB', function () {
+  before(rememberCreateDatabase);
+  beforeEach(createTempDirectory);
+  afterEach(restoreDiskStore);
 
   describe('G5: large value output (BigUInt64BE boundary)', function () {
     it('handles maximum practical value without overflow', async function () {
@@ -244,6 +293,12 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
       await tracker2.stopParsing();
     });
   });
+});
+
+describe('E2E: Persistence - Disk-Backed LevelDB', function () {
+  before(rememberCreateDatabase);
+  beforeEach(createTempDirectory);
+  afterEach(restoreDiskStore);
 
   describe('G7: rapid block production', function () {
     it('indexes all blocks when many arrive quickly', async function () {
@@ -266,30 +321,16 @@ describe('E2E: Persistence - Disk-Backed LevelDB', function () {
       await tracker1.stopParsing();
     });
   });
+});
 
+describe('E2E: Persistence - Disk-Backed LevelDB', function () {
+  before(rememberCreateDatabase);
+  beforeEach(createTempDirectory);
+  afterEach(restoreDiskStore);
   describe('G8: mempool pending balance reconverges after restart', function () {
     it('rebuilds pending balances from the mempool after a stop/restart cycle', async function () {
       patchLevelUpStoreDisk();
-
-      // First run: one coinbase block funding addr0 with 50 BTC (confirmed).
-      const cb = makeCoinbaseTx(0, 50 * SATOSHI);
-      const block0 = makeBlock(0, '0'.repeat(64), [cb]);
-      const tracker1 = createE2ETracker();
-      const state1 = stubBlockchain(tracker1, [block0]);
-
-      tracker1.start();
-      await waitForSynced(tracker1);
-
-      // Unconfirmed tx: addr0 → addr1 (10 BTC), addr0 keeps the rest as change.
-      const mempoolTx = makeTx({
-        ins: [makeSpendInput(cb._txid, 0)],
-        outs: [
-          makeOutput(1, 10 * SATOSHI),
-          makeOutput(0, 39 * SATOSHI)
-        ]
-      });
-      addMempoolTx(state1, mempoolTx);
-      await tracker1.updateMempool();
+      const { block0, mempoolTx, tracker1 } = await createPendingRestartFixture();
 
       // Pending is reflected before the restart.
       const pendingBefore = await tracker1.getBalanceInfo(TEST_KEYS[1].address);
