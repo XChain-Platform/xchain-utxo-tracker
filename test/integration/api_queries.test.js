@@ -23,78 +23,84 @@ const {
 } = require('./support/helpers');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 
-describe('Integration: API Queries', function () {
-  let tracker;
-  let app;
-  let request;
+let tracker;
+let request;
 
+function useTracker() {
   beforeEach(async function () {
     tracker = await createTestTracker();
     tracker.blockchainInfoLastBlock = 100;
-
-    // Build a minimal Express app wired to the real tracker
-    app = express();
-    app.use(bodyParser.json());
-
-    app.get('/utxos/:address', async (req, res) => {
-      const utxos = await tracker.getUtxosAddress(req.params.address);
-      res.json(utxos);
-    });
-
-    // Mirrors src/api.js getBalance(): sum the BigInt satoshi values, format once.
-    // Summing the reported `amount` strings with + concatenates them.
-    app.get('/balance/:address', async (req, res) => {
-      const utxos = await tracker.getUtxosAddress(req.params.address);
-      let balance = 0n;
-      for (const u of utxos) { balance += BigInt(u.value); }
-      res.json(XChainUtxoTracker.satoshiToDecimalString(balance));
-    });
-
-    app.get('/firstseen/:address', async (req, res) => {
-      const firstSeen = await tracker.getFirstSeen(req.params.address);
-      res.json(firstSeen);
-    });
-
-    app.get('/info/:address', async (req, res) => {
-      const info = await tracker.getBalanceInfo(req.params.address);
-      res.json(info);
-    });
-
-    const jsonRpcController = {
-      async ping() { return { status: 'success' }; },
-      async get_utxos({ address }) {
-        return { utxos: await tracker.getUtxosAddress(address) };
-      },
-      // Mirrors src/api.js get_balance (see the REST route above).
-      async get_balance({ address }) {
-        const utxos = await tracker.getUtxosAddress(address);
-        let balance = 0n;
-        for (const u of utxos) { balance += BigInt(u.value); }
-        return { balance: XChainUtxoTracker.satoshiToDecimalString(balance) };
-      },
-      async get_first_seen({ address }) {
-        return await tracker.getFirstSeen(address);
-      },
-      async get_info({ address }) {
-        return await tracker.getBalanceInfo(address);
-      }
-    };
-
-    app.use(jsonRouter({ methods: jsonRpcController }));
-    request = supertest(app);
+    request = supertest(buildApp());
   });
 
   afterEach(async function () {
     await closeTracker(tracker);
   });
+}
 
-  // Seed some data: 3 blocks, addr0 gets coinbase each time
-  async function seedData() {
-    const block0 = makeBlock(0, '0'.repeat(64), [makeCoinbaseTx(0, 10 * SATOSHI)]);
-    const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(0, 20 * SATOSHI)]);
-    const block2 = makeBlock(2, block1.hash, [makeCoinbaseTx(0, 30 * SATOSHI)]);
-    await processBlocksAndCommit(tracker, [block0, block1, block2]);
-  }
+function buildApp() {
+  // Build a minimal Express app wired to the real tracker
+  const app = express();
+  app.use(bodyParser.json());
+
+  app.get('/utxos/:address', async (req, res) => {
+    const utxos = await tracker.getUtxosAddress(req.params.address);
+    res.json(utxos);
+  });
+
+  // Mirrors src/api.js getBalance(): sum the BigInt satoshi values, format once.
+  // Summing the reported `amount` strings with + concatenates them.
+  app.get('/balance/:address', async (req, res) => {
+    const utxos = await tracker.getUtxosAddress(req.params.address);
+    let balance = 0n;
+    for (const u of utxos) { balance += BigInt(u.value); }
+    res.json(XChainUtxoTracker.satoshiToDecimalString(balance));
+  });
+
+  app.get('/firstseen/:address', async (req, res) => {
+    const firstSeen = await tracker.getFirstSeen(req.params.address);
+    res.json(firstSeen);
+  });
+
+  app.get('/info/:address', async (req, res) => {
+    const info = await tracker.getBalanceInfo(req.params.address);
+    res.json(info);
+  });
+
+  const jsonRpcController = {
+    async ping() { return { status: 'success' }; },
+    async get_utxos({ address }) {
+      return { utxos: await tracker.getUtxosAddress(address) };
+    },
+    // Mirrors src/api.js get_balance (see the REST route above).
+    async get_balance({ address }) {
+      const utxos = await tracker.getUtxosAddress(address);
+      let balance = 0n;
+      for (const u of utxos) { balance += BigInt(u.value); }
+      return { balance: XChainUtxoTracker.satoshiToDecimalString(balance) };
+    },
+    async get_first_seen({ address }) {
+      return await tracker.getFirstSeen(address);
+    },
+    async get_info({ address }) {
+      return await tracker.getBalanceInfo(address);
+    }
+  };
+
+  app.use(jsonRouter({ methods: jsonRpcController }));
+  return app;
+}
+
+// Seed some data: 3 blocks, addr0 gets coinbase each time
+async function seedData() {
+  const block0 = makeBlock(0, '0'.repeat(64), [makeCoinbaseTx(0, 10 * SATOSHI)]);
+  const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(0, 20 * SATOSHI)]);
+  const block2 = makeBlock(2, block1.hash, [makeCoinbaseTx(0, 30 * SATOSHI)]);
+  await processBlocksAndCommit(tracker, [block0, block1, block2]);
+}
+
+describe('Integration: API Queries', function () {
+  useTracker();
 
   describe('REST endpoints', function () {
     it('GET /utxos/:address returns correct UTXO list', async function () {
@@ -127,6 +133,10 @@ describe('Integration: API Queries', function () {
       expect(res.body.type).to.equal('p2pkh');
     });
   });
+});
+
+describe('Integration: API Queries', function () {
+  useTracker();
 
   describe('JSON-RPC methods', function () {
     function rpcCall(method, params = {}) {
@@ -164,6 +174,10 @@ describe('Integration: API Queries', function () {
       expect(res.body.result.balances.confirmed).to.equal('60.00000000');
     });
   });
+});
+
+describe('Integration: API Queries', function () {
+  useTracker();
 
   describe('non-existent address queries', function () {
     it('REST /utxos returns empty array', async function () {
@@ -194,6 +208,10 @@ describe('Integration: API Queries', function () {
       expect(res.body.result.utxos).to.be.an('array').with.length(0);
     });
   });
+});
+
+describe('Integration: API Queries', function () {
+  useTracker();
 
   describe('API reflects state changes', function () {
     it('balance updates after processing new blocks', async function () {
