@@ -75,12 +75,14 @@ function loadWith({ hostGiB, cgroupBytes = null, cgroupRaw = null, version = 'v2
     return snapshot
 }
 
+function clearOverrides () {
+    delete process.env.LEVELDB_CACHE_BYTES
+    delete process.env.HEAP_FLUSH_THRESHOLD_MB
+}
+
 describe('utxo-tracker memory budget', function () {
 
-    afterEach(function () {
-        delete process.env.LEVELDB_CACHE_BYTES
-        delete process.env.HEAP_FLUSH_THRESHOLD_MB
-    })
+    afterEach(clearOverrides)
 
     describe('a capped container sizes against the cap, not the host', function () {
 
@@ -119,6 +121,11 @@ describe('utxo-tracker memory budget', function () {
             expect(budgetBytes).to.equal(8 * GIB)
         })
     })
+})
+
+describe('utxo-tracker memory budget', function () {
+
+    afterEach(clearOverrides)
 
     describe('a large server keeps the sizes it already runs', function () {
 
@@ -154,6 +161,11 @@ describe('utxo-tracker memory budget', function () {
             expect(heapFlushMB).to.equal(256)
         })
     })
+})
+
+describe('utxo-tracker memory budget', function () {
+
+    afterEach(clearOverrides)
 
     describe('an explicit operator value always wins', function () {
 
@@ -175,12 +187,17 @@ describe('utxo-tracker memory budget', function () {
             expect(cacheBytes).to.equal(2048 * MIB)
         })
     })
+})
 
-    // The budget stopped at the process boundary: bulk-sync runs in a spawned
-    // orchestrator whose external sort was handed a flat 4096 MB no matter what
-    // the cgroup said, so a 2 GB tracker asked its own child to sort against
-    // twice the whole limit and the kernel killed it at the merge, twice, on the
-    // one path an operator only reaches after something has already gone wrong.
+// The budget stopped at the process boundary: bulk-sync runs in a spawned
+// orchestrator whose external sort was handed a flat 4096 MB no matter what
+// the cgroup said, so a 2 GB tracker asked its own child to sort against
+// twice the whole limit and the kernel killed it at the merge, twice, on the
+// one path an operator only reaches after something has already gone wrong.
+describe('utxo-tracker memory budget', function () {
+
+    afterEach(clearOverrides)
+
     describe('the bulk-sync child is sized by the same budget as its parent', function () {
 
         it('gives a 2 GB container a sort budget that fits inside it', function () {
@@ -223,6 +240,11 @@ describe('utxo-tracker memory budget', function () {
             expect(description).to.contain('bulk-sync RAM budget 1024MB')
         })
     })
+})
+
+describe('utxo-tracker memory budget', function () {
+
+    afterEach(clearOverrides)
 
     describe('the startup line names what bound the budget', function () {
 
