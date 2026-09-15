@@ -45,6 +45,12 @@ describe('CryptoNetworks', function () {
       expect(net.scriptHash).to.equal(0x16);
       expect(net.messagePrefix).to.include('Dogecoin');
     });
+  });
+});
+
+describe('CryptoNetworks', function () {
+
+  describe('getBitcoinJsNetwork', function () {
 
     it('returns Dogecoin testnet params', function () {
       const net = CryptoNetworks.getBitcoinJsNetwork('dogecoin-testnet');
@@ -81,6 +87,12 @@ describe('CryptoNetworks', function () {
       expect(net).to.exist;
       expect(net.bech32).to.equal('rltc');
     });
+  });
+});
+
+describe('CryptoNetworks', function () {
+
+  describe('getBitcoinJsNetwork', function () {
 
     // Item 5879: these two pinned an `undefined` return, which bitcoinjs-lib
     // reads as BTC mainnet. The tracker now throws like the decoder and encoder
