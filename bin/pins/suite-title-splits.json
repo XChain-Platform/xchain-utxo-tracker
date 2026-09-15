@@ -99,6 +99,26 @@
       "test/security/concurrency_gate.test.js",
       "test/security/concurrency_gate.test/01_resolve_limit.test.js",
       "test/security/concurrency_gate.test/02_api_js_wiring.test.js"
+    ],
+    "test/unit/api.test.js": [
+      "test/unit/api.test.js",
+      "test/unit/api.test/01_post_json_rpc.test.js",
+      "test/unit/api.test/02_admin_method_auth.test.js",
+      "test/unit/api.test/03_json_rpc_batch_cap.test.js",
+      "test/unit/api.test/04_middleware.test.js"
+    ],
+    "test/unit/blockchain_connector.test.js": [
+      "test/unit/blockchain_connector.test.js",
+      "test/unit/blockchain_connector.test/01_get_block_without_aux_pow.test.js",
+      "test/unit/blockchain_connector.test/02_get_raw_mempool.test.js",
+      "test/unit/blockchain_connector.test/03_get_raw_transaction.test.js",
+      "test/unit/blockchain_connector.test/04_get_raw_transactions.test.js",
+      "test/unit/blockchain_connector.test/05_get_blocks_batch.test.js",
+      "test/unit/blockchain_connector.test/06_get_raw_transaction_tx_no_longer_present.test.js",
+      "test/unit/blockchain_connector.test/07_get_block_error_branch.test.js",
+      "test/unit/blockchain_connector.test/08_post_with_retry.test.js",
+      "test/unit/blockchain_connector.test/09_get_blocks_batch_without_aux_pow.test.js",
+      "test/unit/blockchain_connector.test/10_rpc_credential_log_sanitization.test.js"
     ]
   }
 }
