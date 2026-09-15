@@ -36,15 +36,15 @@ describe('resolveUndoBlocks opts validation', function () {
   });
 
   it('falls back to the per-chain default when optsUndoBlocks is negative', function () {
-    expect(resolveUndoBlocks('dogecoin-mainnet', -5)).to.equal(DEFAULT_UNDO_BLOCKS.DOGE);
+    expect(resolveUndoBlocks('dogecoin-mainnet', -5)).to.equal(DEFAULT_UNDO_BLOCKS.DOGE_MAINNET);
   });
 
   it('falls back to the per-chain default when optsUndoBlocks is zero', function () {
-    expect(resolveUndoBlocks('dogecoin-mainnet', 0)).to.equal(DEFAULT_UNDO_BLOCKS.DOGE);
+    expect(resolveUndoBlocks('dogecoin-mainnet', 0)).to.equal(DEFAULT_UNDO_BLOCKS.DOGE_MAINNET);
   });
 
   it('falls back to the per-chain default when optsUndoBlocks is non-integer', function () {
-    expect(resolveUndoBlocks('bitcoin-mainnet', 4.5)).to.equal(DEFAULT_UNDO_BLOCKS.BTC);
+    expect(resolveUndoBlocks('bitcoin-mainnet', 4.5)).to.equal(DEFAULT_UNDO_BLOCKS.BTC_MAINNET);
   });
 
   it('honors a valid positive integer optsUndoBlocks', function () {
@@ -120,9 +120,97 @@ describe('undo-blocks resolves the coin through the canonical registry (#5803)',
   });
 
   it('still resolves the three shipped chains to their pinned windows', function () {
-    expect(resolveUndoBlocks('bitcoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.BTC);
-    expect(resolveUndoBlocks('litecoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.LTC);
-    expect(resolveUndoBlocks('dogecoin-regtest')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE);
+    expect(resolveUndoBlocks('bitcoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.BTC_MAINNET);
+    expect(resolveUndoBlocks('litecoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.LTC_MAINNET);
+    expect(resolveUndoBlocks('dogecoin-regtest')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE_REGTEST);
+  });
+});
+
+// The table was keyed by COIN, so a testnet read its coin's mainnet
+// window. Its own comment recorded the 2026-09-01 litecoin-testnet fork that
+// raised LTC to 120 and said a testnet's minimum-difficulty rule forks deeper
+// than block time predicts, yet bitcoin testnet was left on mainnet's 12 and a
+// validator's tracker drained that window to zero at 150774 on 2026-09-15. The
+// window is per (coin, net) now; these pin the numbers each net resolves to.
+describe('undo-blocks resolves the window per network, not per coin', function () {
+  const { netFromNetwork, undoBlocksKey } = require('../../src/chain/undo_blocks');
+  const coins = require('../../src/coins');
+  let errorStub;
+  beforeEach(function () { errorStub = sinon.stub(console, 'error'); });
+  afterEach(function () { errorStub.restore(); });
+
+  it('bitcoin testnet resolves 120 while bitcoin mainnet keeps 12', function () {
+    expect(resolveUndoBlocks('bitcoin-testnet')).to.equal(120);
+    expect(resolveUndoBlocks('bitcoin-mainnet')).to.equal(12);
+    // The pre-fix reading: the number that drained to zero on the reporter's box.
+    expect(resolveUndoBlocks('bitcoin-testnet')).to.not.equal(12);
+  });
+
+  it('every coin sits at 120 on testnet', function () {
+    for (const tick of coins.ALLOWED_COINS) {
+      expect(resolveUndoBlocks(coins.COIN_FULL_NAME[tick] + '-testnet'), tick + ' testnet').to.equal(120);
+    }
+  });
+
+  it('LTC and DOGE keep 120 on mainnet; regtest keeps the mainnet numbers', function () {
+    expect(resolveUndoBlocks('litecoin-mainnet')).to.equal(120);
+    expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(120);
+    for (const tick of coins.ALLOWED_COINS) {
+      const full = coins.COIN_FULL_NAME[tick];
+      expect(resolveUndoBlocks(full + '-regtest'), tick + ' regtest').to.equal(resolveUndoBlocks(full + '-mainnet'));
+    }
+  });
+
+  it('carries a window for every registered (coin, net) pair and nothing else', function () {
+    const expected = [];
+    for (const tick of coins.ALLOWED_COINS) {
+      for (const net of coins.NETWORKS) expected.push(undoBlocksKey(tick, net));
+    }
+    expect(Object.keys(DEFAULT_UNDO_BLOCKS).sort()).to.deep.equal(expected.sort());
+    // Flat numeric values: the decoder's dispenser_safe_depth conformance takes
+    // Math.max over Object.values of this export, and a nested shape reads NaN.
+    for (const v of Object.values(DEFAULT_UNDO_BLOCKS)) expect(Number.isInteger(v)).to.equal(true);
+  });
+
+  it('no default exceeds the decoder lockstep ceiling', function () {
+    expect(Math.max(...Object.values(DEFAULT_UNDO_BLOCKS))).to.be.at.most(MAX_SAFE_UNDO_BLOCKS);
+  });
+
+  it('refuses a network with no net suffix rather than guessing a net', function () {
+    expect(netFromNetwork('bitcoin')).to.equal('');
+    expect(() => resolveUndoBlocks('bitcoin')).to.throw(/no reorg-recovery window for net ""/);
+  });
+});
+
+// Same finding, the override side: the coin-only env key still governs both
+// nets of its coin, and the decoder lockstep warning still fires on a testnet
+// window pushed past the ceiling.
+describe('undo-blocks per-network window: the coin override and the lockstep warning', function () {
+  const KEY = 'XCHAIN_UNDO_BLOCKS_BTC';
+  let errorStub;
+  let had;
+  let prev;
+  beforeEach(function () {
+    errorStub = sinon.stub(console, 'error');
+    had = Object.prototype.hasOwnProperty.call(process.env, KEY);
+    prev = process.env[KEY];
+  });
+  afterEach(function () {
+    errorStub.restore();
+    if (had) process.env[KEY] = prev; else delete process.env[KEY];
+  });
+
+  it('XCHAIN_UNDO_BLOCKS_<COIN> still wins on testnet', function () {
+    process.env[KEY] = '60';
+    expect(resolveUndoBlocks('bitcoin-testnet')).to.equal(60);
+    expect(resolveUndoBlocks('bitcoin-mainnet')).to.equal(60);
+  });
+
+  it('the lockstep guard still fires on a testnet window pushed past the ceiling', function () {
+    process.env[KEY] = String(MAX_SAFE_UNDO_BLOCKS + 1);
+    expect(resolveUndoBlocks('bitcoin-testnet')).to.equal(MAX_SAFE_UNDO_BLOCKS + 1);
+    expect(errorStub.args.join('\n')).to.match(/exceeds the decoder dispenser-expiry safe depth/);
+    expect(errorStub.args.join('\n')).to.match(/bitcoin-testnet/);
   });
 });
 
@@ -160,7 +248,7 @@ describe('resolveUndoBlocks env-override validation (item 7714)', function () {
   for (const bad of ['1.5', '12garbage', '0.9', ' 7.5 ', 'ten']) {
     it('refuses ' + JSON.stringify(bad) + ' and keeps the per-chain default', function () {
       process.env[KEY] = bad;
-      expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE);
+      expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE_MAINNET);
       expect(consoleErrorStub.args.join('\n')).to.match(/is not an integer/);
     });
   }
@@ -196,9 +284,9 @@ describe('resolveUndoBlocks env-override validation (item 7714)', function () {
 
   it('an unset or blank override takes the default without warning', function () {
     delete process.env[KEY];
-    expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE);
+    expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE_MAINNET);
     process.env[KEY] = '   ';
-    expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE);
+    expect(resolveUndoBlocks('dogecoin-mainnet')).to.equal(DEFAULT_UNDO_BLOCKS.DOGE_MAINNET);
     expect(consoleErrorStub.called).to.equal(false);
   });
 
