@@ -19,9 +19,9 @@ const {
   createTestTracker, closeTracker, randHash
 } = require('./support/helpers');
 
-describe('Integration: Chain Reorganization', function () {
-  let tracker;
+let tracker;
 
+function useTracker() {
   beforeEach(async function () {
     tracker = await createTestTracker();
   });
@@ -30,30 +30,39 @@ describe('Integration: Chain Reorganization', function () {
     sinon.restore();
     await closeTracker(tracker);
   });
+}
 
-  // verifyReorg() runs with transactionArray=null in production (direct writes).
-  // This helper matches that flow.
-  async function runVerifyReorg() {
-    if (tracker.db.transactionArray) {
-      await tracker.db.endTransaction(false);
-    }
-    tracker.db.transactionArray = null;
-    tracker.db.deletedTransactionArray = null;
-    await tracker.verifyReorg();
+// verifyReorg() runs with transactionArray=null in production (direct writes).
+// This helper matches that flow.
+async function runVerifyReorg() {
+  if (tracker.db.transactionArray) {
+    await tracker.db.endTransaction(false);
   }
+  tracker.db.transactionArray = null;
+  tracker.db.deletedTransactionArray = null;
+  await tracker.verifyReorg();
+}
+
+async function createChain(length) {
+  const blocks = [];
+  let prevHash = '0'.repeat(64);
+
+  for (let i = 0; i < length; i++) {
+    const block = makeBlock(i, prevHash, [makeCoinbaseTx(0, 10 * SATOSHI)]);
+    blocks.push(block);
+    prevHash = block.hash;
+  }
+
+  await processBlocksAndCommit(tracker, blocks);
+  return blocks;
+}
+
+describe('Integration: Chain Reorganization', function () {
+  useTracker();
 
   describe('single-block reorg', function () {
     it('rolls back block height and hash to the fork point', async function () {
-      const blocks = [];
-      let prevHash = '0'.repeat(64);
-
-      for (let i = 0; i < 5; i++) {
-        const block = makeBlock(i, prevHash, [makeCoinbaseTx(0, 10 * SATOSHI)]);
-        blocks.push(block);
-        prevHash = block.hash;
-      }
-
-      await processBlocksAndCommit(tracker, blocks);
+      const blocks = await createChain(5);
 
       // Confirm pre-reorg state
       expect(await tracker.db.getLastBlockHeight()).to.equal(4);
@@ -78,18 +87,15 @@ describe('Integration: Chain Reorganization', function () {
       expect(block3).to.not.be.null;
       expect(block3.h).to.equal(3);
     });
+  });
+});
 
+describe('Integration: Chain Reorganization', function () {
+  useTracker();
+
+  describe('single-block reorg', function () {
     it('can process new blocks after reorg', async function () {
-      const blocks = [];
-      let prevHash = '0'.repeat(64);
-
-      for (let i = 0; i < 3; i++) {
-        const block = makeBlock(i, prevHash, [makeCoinbaseTx(0, 10 * SATOSHI)]);
-        blocks.push(block);
-        prevHash = block.hash;
-      }
-
-      await processBlocksAndCommit(tracker, blocks);
+      const blocks = await createChain(3);
 
       // Reorg removes block 2
       sinon.stub(tracker.connector, 'getBlockHash')
@@ -112,6 +118,10 @@ describe('Integration: Chain Reorganization', function () {
       expect(info1.balances.confirmed).to.equal('25.00000000');
     });
   });
+});
+
+describe('Integration: Chain Reorganization', function () {
+  useTracker();
 
   describe('multi-block reorg', function () {
     it('rolls back multiple blocks to the fork point', async function () {
@@ -152,6 +162,10 @@ describe('Integration: Chain Reorganization', function () {
       }
     });
   });
+});
+
+describe('Integration: Chain Reorganization', function () {
+  useTracker();
 
   describe('reorg restores spent output', function () {
     it('unspends outputs when the spending block is rolled back', async function () {
@@ -206,6 +220,10 @@ describe('Integration: Chain Reorganization', function () {
       expect(infoAfter1.utxos.confirmed).to.equal(0);
     });
   });
+});
+
+describe('Integration: Chain Reorganization', function () {
+  useTracker();
 
   describe('S record cleanup on reorg', function () {
     it('removes script-block records for rolled-back blocks', async function () {
@@ -239,12 +257,16 @@ describe('Integration: Chain Reorganization', function () {
       expect(s0).to.not.be.null;
     });
   });
+});
 
-  // Regression guard for a silent-UTXO-loss bug: when create(N) and spend(N+k)
-  // land in one uncommitted batch, the spend resolves the output from the
-  // in-memory staging map rather than the DB. Before the fix, that path wrote
-  // no durable K/M restore records, so a later reorg could not unspend the
-  // output and its balance vanished permanently.
+// Regression guard for a silent-UTXO-loss bug: when create(N) and spend(N+k)
+// land in one uncommitted batch, the spend resolves the output from the
+// in-memory staging map rather than the DB. Before the fix, that path wrote
+// no durable K/M restore records, so a later reorg could not unspend the
+// output and its balance vanished permanently.
+describe('Integration: Chain Reorganization', function () {
+  useTracker();
+
   describe('cross-block in-batch spend reorg recovery', function () {
     it('restores a UTXO created and spent across blocks of one committed batch', async function () {
       // Block 0/1/2 are all processed in one batch (single begin/endTransaction),
@@ -297,11 +319,15 @@ describe('Integration: Chain Reorganization', function () {
       expect(after1.utxos.confirmed).to.equal(0);
     });
   });
+});
 
-  // K/M recovery records are retained only for the most recent undoBlocks
-  // blocks. Once a reorg has already rolled back undoBlocks blocks, the next
-  // block's recovery records are gone, so verifyReorg must abort loudly
-  // rather than silently leave the UTXO index under-counted.
+// K/M recovery records are retained only for the most recent undoBlocks
+// blocks. Once a reorg has already rolled back undoBlocks blocks, the next
+// block's recovery records are gone, so verifyReorg must abort loudly
+// rather than silently leave the UTXO index under-counted.
+describe('Integration: Chain Reorganization', function () {
+  useTracker();
+
   describe('reorg depth guard', function () {
     it('throws once blocksDeleted reaches the undo-depth window', async function () {
       // Small window so the test stays fast.
@@ -338,6 +364,10 @@ describe('Integration: Chain Reorganization', function () {
       expect(threw, 'verifyReorg should throw past the undo-depth window').to.equal(true);
     });
   });
+});
+
+describe('Integration: Chain Reorganization', function () {
+  useTracker();
 
   describe('reorg then re-index', function () {
     it('new S record is created when replacement block arrives', async function () {
