@@ -54,6 +54,36 @@ function rec(size, fill) {
     return Buffer.alloc(size, fill);
 }
 
+const DUMP_MAGIC = Buffer.from('XCHNDMP1', 'ascii');
+
+function writeXdmp(filePath, blocks) {
+    const hdr = Buffer.alloc(64);
+    DUMP_MAGIC.copy(hdr, 0);
+    hdr.writeUInt8(1, 8);
+    hdr.writeUInt8(3, 9);
+    hdr.writeUInt16LE(1, 10);
+    hdr.writeUInt32LE(blocks[0].height, 12);
+    hdr.writeUInt32LE(blocks[blocks.length - 1].height, 16);
+    hdr.writeUInt32LE(blocks.length, 20);
+    const parts = [hdr];
+    for (const b of blocks) {
+        const prefix = Buffer.alloc(40);
+        prefix.writeUInt32LE(b.bytes.length, 0);
+        prefix.writeUInt32LE(b.height, 4);
+        b.hash.copy(prefix, 8);
+        parts.push(prefix, b.bytes);
+    }
+    fs.writeFileSync(filePath, Buffer.concat(parts));
+}
+
+function mkBlocks(n) {
+    const blocks = [];
+    for (let h = 0; h < n; h++) {
+        blocks.push({ height: h, hash: crypto.randomBytes(32), bytes: Buffer.alloc(90, h) });
+    }
+    return blocks;
+}
+
 describe('Regression: bulk-sync pipeline hardening', function () {
     let dir;
 
@@ -111,6 +141,18 @@ describe('Regression: bulk-sync pipeline hardening', function () {
             expect(buf.readBigUInt64LE(20)).to.equal(1n);
         });
     });
+});
+
+describe('Regression: bulk-sync pipeline hardening', function () {
+    let dir;
+
+    beforeEach(function () {
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bulk-hardening-'));
+    });
+
+    afterEach(function () {
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
 
     describe('externalSort duplicate-key determinism', function () {
         it('emits equal keys in input order across multiple runs', async function () {
@@ -145,6 +187,18 @@ describe('Regression: bulk-sync pipeline hardening', function () {
             expect(dupStamps).to.deep.equal([0, 2, 4]); // input order preserved
         });
     });
+});
+
+describe('Regression: bulk-sync pipeline hardening', function () {
+    let dir;
+
+    beforeEach(function () {
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bulk-hardening-'));
+    });
+
+    afterEach(function () {
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
 
     describe('RecordReader alignment guard', function () {
         it('throws on a file whose data is not a multiple of recordSize', function () {
@@ -160,6 +214,18 @@ describe('Regression: bulk-sync pipeline hardening', function () {
             expect(r.next()).to.have.length(10);
             r.close();
         });
+    });
+});
+
+describe('Regression: bulk-sync pipeline hardening', function () {
+    let dir;
+
+    beforeEach(function () {
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bulk-hardening-'));
+    });
+
+    afterEach(function () {
+        fs.rmSync(dir, { recursive: true, force: true });
     });
 
     describe('parse-worker skip gate (existingDatLooksComplete)', function () {
@@ -203,38 +269,20 @@ describe('Regression: bulk-sync pipeline hardening', function () {
             expect(existingDatLooksComplete(path.join(dir, 'nope.dat'))).to.equal(false);
         });
     });
+});
+
+describe('Regression: bulk-sync pipeline hardening', function () {
+    let dir;
+
+    beforeEach(function () {
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bulk-hardening-'));
+    });
+
+    afterEach(function () {
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
 
     describe('dump chunk reuse (existingChunkMatchesChain)', function () {
-        const MAGIC = Buffer.from('XCHNDMP1', 'ascii');
-
-        function writeXdmp(filePath, blocks) {
-            const hdr = Buffer.alloc(64);
-            MAGIC.copy(hdr, 0);
-            hdr.writeUInt8(1, 8);
-            hdr.writeUInt8(3, 9);
-            hdr.writeUInt16LE(1, 10);
-            hdr.writeUInt32LE(blocks[0].height, 12);
-            hdr.writeUInt32LE(blocks[blocks.length - 1].height, 16);
-            hdr.writeUInt32LE(blocks.length, 20);
-            const parts = [hdr];
-            for (const b of blocks) {
-                const prefix = Buffer.alloc(40);
-                prefix.writeUInt32LE(b.bytes.length, 0);
-                prefix.writeUInt32LE(b.height, 4);
-                b.hash.copy(prefix, 8);
-                parts.push(prefix, b.bytes);
-            }
-            fs.writeFileSync(filePath, Buffer.concat(parts));
-        }
-
-        function mkBlocks(n) {
-            const blocks = [];
-            for (let h = 0; h < n; h++) {
-                blocks.push({ height: h, hash: crypto.randomBytes(32), bytes: Buffer.alloc(90, h) });
-            }
-            return blocks;
-        }
-
         it('accepts a chunk whose last hash matches the node', async function () {
             const blocks = mkBlocks(3);
             const p = path.join(dir, 'chunk.xdmp');
