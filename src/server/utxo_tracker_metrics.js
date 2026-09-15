@@ -32,6 +32,40 @@
 
 'use strict';
 
+function addTrackerCollector(registry, tracker, metrics){
+    const {
+        lastCommitTs,
+        committedHeight,
+        nodeHeight,
+        synced,
+        halted,
+        lastReorgDepth,
+        reorgs
+    } = metrics;
+
+    // Gauge#set throws on a non-finite value, and several of these fields are
+    // null or -1 before the first poll. A metric simply carries no series until
+    // its source has a real value; a zero would render as a 1970 timestamp (or a
+    // genesis height) and page an operator on a healthy still-starting tracker.
+    const setIf = (gauge, value) => { if(Number.isFinite(value)) gauge.set({}, value); };
+
+    registry.addCollector(() => {
+        if(Number.isFinite(tracker.lastCommitAt) && tracker.lastCommitAt > 0)
+            lastCommitTs.set({}, tracker.lastCommitAt / 1000);
+        setIf(committedHeight, tracker.lastCommittedHeight);
+
+        const tip = Number.isFinite(tracker.latestKnownChainTip)
+            ? tracker.latestKnownChainTip
+            : tracker.blockchainInfoLastBlock;
+        if(Number.isFinite(tip) && tip >= 0) nodeHeight.set({}, tip);
+
+        synced.set({}, (typeof tracker.isSynced === 'function' && tracker.isSynced()) ? 1 : 0);
+        halted.set({}, tracker.halted ? 1 : 0);
+        setIf(lastReorgDepth, tracker.lastReorgDepth);
+        if(Number.isFinite(tracker.reorgCount)) reorgs.setMonotonic({}, tracker.reorgCount);
+    });
+}
+
 /**
  * Register the tracker's sync-freshness gauges and one scrape-time collector.
  *
@@ -88,26 +122,14 @@ function installUtxoTrackerMetrics(observability, tracker){
         help: 'Reorgs the tracker has rolled back since process start'
     });
 
-    // Gauge#set throws on a non-finite value, and several of these fields are
-    // null or -1 before the first poll. A metric simply carries no series until
-    // its source has a real value; a zero would render as a 1970 timestamp (or a
-    // genesis height) and page an operator on a healthy still-starting tracker.
-    const setIf = (gauge, value) => { if(Number.isFinite(value)) gauge.set({}, value); };
-
-    registry.addCollector(() => {
-        if(Number.isFinite(tracker.lastCommitAt) && tracker.lastCommitAt > 0)
-            lastCommitTs.set({}, tracker.lastCommitAt / 1000);
-        setIf(committedHeight, tracker.lastCommittedHeight);
-
-        const tip = Number.isFinite(tracker.latestKnownChainTip)
-            ? tracker.latestKnownChainTip
-            : tracker.blockchainInfoLastBlock;
-        if(Number.isFinite(tip) && tip >= 0) nodeHeight.set({}, tip);
-
-        synced.set({}, (typeof tracker.isSynced === 'function' && tracker.isSynced()) ? 1 : 0);
-        halted.set({}, tracker.halted ? 1 : 0);
-        setIf(lastReorgDepth, tracker.lastReorgDepth);
-        if(Number.isFinite(tracker.reorgCount)) reorgs.setMonotonic({}, tracker.reorgCount);
+    addTrackerCollector(registry, tracker, {
+        lastCommitTs,
+        committedHeight,
+        nodeHeight,
+        synced,
+        halted,
+        lastReorgDepth,
+        reorgs
     });
 
     return true;

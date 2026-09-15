@@ -42,6 +42,86 @@ const LITECOIN_MWEB_SEGWIT_FLAG = 0x09
 // the seam fail-loud and the other fail-silent.
 const HANDLED_WIRE_FORMATS = new Set(['default', 'mweb', 'auxpow'])
 
+/**
+ * Parse an MWEB block header from a buffer: reads the version, prev hash,
+ * merkle root, timestamp, bits and nonce fields in order. Returns the populated
+ * block object together with the bufferReader positioned after the header so
+ * callers can continue decoding the transaction payload.
+ */
+function readMwebBlockHeader(buffer){
+    if (buffer.length < 80) throw new Error('Buffer too small (< 80 bytes)');
+    const bufferReader = new bufferutils_js_1.BufferReader(buffer);
+    const block = new bitcoinjs.Block();
+    block.version = bufferReader.readInt32();
+    block.prevHash = bufferReader.readSlice(32);
+    block.merkleRoot = bufferReader.readSlice(32);
+    block.timestamp = bufferReader.readUInt32();
+    block.bits = bufferReader.readUInt32();
+    block.nonce = bufferReader.readUInt32();
+    return { bufferReader, block };
+}
+
+function readMwebTransaction(bufferReader){
+    const tx = transaction_js_1.Transaction.fromBuffer(
+        bufferReader.buffer.slice(bufferReader.offset),
+        true,
+    );
+    bufferReader.offset += tx.byteLength();
+    return tx;
+}
+
+function validateMwebTransactionCount(bufferReader, nTransactions){
+    // Sanity-bound the claimed tx count against the bytes actually
+    // present: the smallest possible serialized transaction is well
+    // over 10 bytes, so a varint claiming more than remaining/10
+    // transactions is structurally impossible. Without this, a forged
+    // count only failed later via a buffer over-read inside
+    // Transaction.fromBuffer, which has an unguarded loop with an incidental
+    // unnamed exit. Block bytes reach here from the trusted node AND from
+    // a bulk-sync .xdmp dump (bulk-sync/parse-worker.js), so this also keeps
+    // the tracker fail-closed on the same forged input the decoder twin
+    // already rejects by name.
+    const remainingBytes = bufferReader.buffer.length - bufferReader.offset;
+    if (nTransactions > remainingBytes / 10) {
+        throw new Error('Block declares ' + nTransactions + ' transactions but only ' +
+            remainingBytes + ' bytes remain (invalid transaction count)');
+    }
+}
+
+function stripMwebMarkerFlag(bufferReader){
+    let nextTxBuffer = bufferReader.buffer.slice(bufferReader.offset);
+    let txVersion = nextTxBuffer.readUInt32LE();
+    let marker = nextTxBuffer.readUInt8(4);
+    let flag = nextTxBuffer.readUInt8(5);
+
+    if ((txVersion == 0x01 || txVersion == 0x02) && (marker == 0x00) && (flag == LITECOIN_HOGEX_FLAG || flag == LITECOIN_MWEB_SEGWIT_FLAG)){
+        const removeOffsetStart = bufferReader.offset + 4 // 4 bytes for txVersion
+        const removeOffsetEnd = removeOffsetStart + 2 // 2 bytes for marker + flag
+
+        // Remove the marker+flag (0x08 pure-MWEB, or 0x09 segwit+MWEB), so bitcoinjs-lib parses this tx as a normal transaction
+        let bufferReaderBeforeFlag = bufferReader.buffer.slice(0, removeOffsetStart);
+        let bufferReaderAfterFlag = bufferReader.buffer.slice(removeOffsetEnd);
+        bufferReader.buffer = Buffer.concat([bufferReaderBeforeFlag, bufferReaderAfterFlag])
+
+    }
+}
+
+function readMwebTransactions(bufferReader, block, nTransactions){
+    block.transactions = [];
+    for (let i = 0; i < nTransactions; ++i) {
+      try {
+        if (i == nTransactions - 1){ // Strip MWEB marker+flag from the final tx before parsing
+            stripMwebMarkerFlag(bufferReader);
+        }
+
+        let tx = readMwebTransaction(bufferReader);
+        block.transactions.push(tx);
+      } catch (err){
+        throw err
+      }
+    }
+}
+
 class XChainBlockDecoder {
 
     constructor(networkName) {
@@ -103,79 +183,19 @@ class XChainBlockDecoder {
     blockFromBuffer(buffer){
         switch(this.wireFormat){
             case "mweb":
-
-                /**
-                *   This piece of code is the same as bitcoinjs-lib Block.fromBuffer with some changes for litecoin
-                */
-                if (buffer.length < 80) throw new Error('Buffer too small (< 80 bytes)');
-                const bufferReader = new bufferutils_js_1.BufferReader(buffer);
-                const block = new bitcoinjs.Block();
-                block.version = bufferReader.readInt32();
-                block.prevHash = bufferReader.readSlice(32);
-                block.merkleRoot = bufferReader.readSlice(32);
-                block.timestamp = bufferReader.readUInt32();
-                block.bits = bufferReader.readUInt32();
-                block.nonce = bufferReader.readUInt32();
+                const { bufferReader, block } = readMwebBlockHeader(buffer);
                 if (buffer.length === 80) return block;
-                const readTransaction = () => {
-                  const tx = transaction_js_1.Transaction.fromBuffer(
-                    bufferReader.buffer.slice(bufferReader.offset),
-                    true,
-                  );
-                  bufferReader.offset += tx.byteLength();
-                  return tx;
-                };
                 const nTransactions = bufferReader.readVarInt();
-                // Sanity-bound the claimed tx count against the bytes actually
-                // present: the smallest possible serialized transaction is well
-                // over 10 bytes, so a varint claiming more than remaining/10
-                // transactions is structurally impossible. Without this, a forged
-                // count only failed later via a buffer over-read inside
-                // Transaction.fromBuffer, which has an unguarded loop with an incidental
-                // unnamed exit. Block bytes reach here from the trusted node AND from
-                // a bulk-sync .xdmp dump (bulk-sync/parse-worker.js), so this also keeps
-                // the tracker fail-closed on the same forged input the decoder twin
-                // already rejects by name.
-                const remainingBytes = bufferReader.buffer.length - bufferReader.offset;
-                if (nTransactions > remainingBytes / 10) {
-                    throw new Error('Block declares ' + nTransactions + ' transactions but only ' +
-                        remainingBytes + ' bytes remain (invalid transaction count)');
-                }
-                block.transactions = [];
-                for (let i = 0; i < nTransactions; ++i) {
-                  try {
-                    if (i == nTransactions - 1){//If it's the last transaction, then check if it's the HogEx
-                        let nextTxBuffer = bufferReader.buffer.slice(bufferReader.offset)   
-                        let txVersion = nextTxBuffer.readUInt32LE();
-                        let marker = nextTxBuffer.readUInt8(4);
-                        let flag = nextTxBuffer.readUInt8(5);
-                        
-                        if ((txVersion == 0x01 || txVersion == 0x02) && (marker == 0x00) && (flag == LITECOIN_HOGEX_FLAG || flag == LITECOIN_MWEB_SEGWIT_FLAG)){
-                            let removeOffsetStart = bufferReader.offset + 4 //4 bytes for txVersion
-                            let removeOffsetEnd = removeOffsetStart + 2 //2 bytes for marker + flag
-                        
-                            //Remove the marker+flag (0x08 pure-MWEB, or 0x09 segwit+MWEB), so bitcoinjs-lib parses this tx as a normal transaction
-                            let bufferReaderBeforeFlag = bufferReader.buffer.slice(0, removeOffsetStart)
-                            let bufferReaderAfterFlag = bufferReader.buffer.slice(removeOffsetEnd)
-                            bufferReader.buffer = Buffer.concat([bufferReaderBeforeFlag, bufferReaderAfterFlag])
-                        
-                        }
-                    }
-                    
-                    let tx = readTransaction();
-                    block.transactions.push(tx);
-                  } catch (err){
-                    throw err
-                  }
-                }
+                validateMwebTransactionCount(bufferReader, nTransactions);
+                readMwebTransactions(bufferReader, block, nTransactions);
                 const witnessCommit = block.getWitnessCommit();
                 // This Block contains a witness commit
                 if (witnessCommit) block.witnessCommit = witnessCommit;
-                return block; 
+                return block;
             default:
                 return bitcoinjs.Block.fromBuffer(buffer)
         }
     }
 }
 
-module.exports = XChainBlockDecoder
+module.exports = XChainBlockDecoder;

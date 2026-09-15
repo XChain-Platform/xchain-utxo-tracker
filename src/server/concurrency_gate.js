@@ -59,47 +59,23 @@ function resolveLimit(rawValue, defaultLimit){
     return read.value > 0 ? read.value : 0;
 }
 
-/**
- * Build the gate middleware.
- *
- * @param {object}   options
- * @param {number}   options.limit       Max concurrent in-flight requests; <= 0 disables.
- * @param {number}   [options.retryAfter=1] Retry-After header value, seconds.
- * @param {function} [options.skip]      (req) => true to exempt a request from the cap.
- * @param {object|function} [options.body] 429 JSON body, or (req) => body.
- * @returns {function} Express middleware, with .getStats(), .limit and .hold() attached.
- */
-function createConcurrencyGate(options){
-    options = options || {};
-
-    const limit      = options.limit > 0 ? Math.floor(options.limit) : 0;
-    const retryAfter = Number.isFinite(options.retryAfter) ? options.retryAfter : 1;
-    const skip       = typeof options.skip === 'function' ? options.skip : () => false;
-    const body       = options.body || { error: 'Server busy, retry shortly', code: 'SERVER_BUSY' };
-
-    let inFlight = 0;
-    let shed     = 0;
-
-    // Per-gate slot key. The probe reserve and the main cap are both mounted on
-    // one app, so a module-level key would let either gate claim the other's slot.
-    const SLOT = Symbol('concurrencyGateSlot');
-
-    const middleware = function concurrencyGate(req, res, next){
+function createGateMiddleware(limit, retryAfter, skip, body, state, SLOT){
+    return function concurrencyGate(req, res, next){
         if(limit <= 0 || skip(req)) return next();
 
-        if(inFlight >= limit){
-            shed++;
+        if(state.inFlight >= limit){
+            state.shed++;
             res.setHeader('Retry-After', String(retryAfter));
             res.status(429).json(typeof body === 'function' ? body(req) : body);
             return;
         }
 
-        inFlight++;
+        state.inFlight++;
         let released = false;
         const release = () => {
             if(released) return;
             released = true;
-            inFlight--;
+            state.inFlight--;
         };
         const slot = { release, claimed: false };
         req[SLOT] = slot;
@@ -122,20 +98,22 @@ function createConcurrencyGate(options){
 
         next();
     };
+}
 
-    /**
-     * Bind a handler's slot to the WORK instead of to the socket.
-     *
-     * The wrapped handler owns its slot from entry until its promise settles, so
-     * an aborted request keeps counting against the cap for exactly as long as
-     * its backend read is still running. A request with no slot (gate disabled
-     * by a cap <= 0, or exempted by `skip`) is passed straight through, so
-     * wrapping is safe on every route the gate may or may not have admitted.
-     *
-     * @param {function} handler Express handler or middleware.
-     * @returns {function} The handler, holding its slot until it settles.
-     */
-    middleware.hold = (handler) => async function heldHandler(req, res, next){
+/**
+ * Bind a handler's slot to the WORK instead of to the socket.
+ *
+ * The wrapped handler owns its slot from entry until its promise settles, so
+ * an aborted request keeps counting against the cap for exactly as long as
+ * its backend read is still running. A request with no slot (gate disabled
+ * by a cap <= 0, or exempted by `skip`) is passed straight through, so
+ * wrapping is safe on every route the gate may or may not have admitted.
+ *
+ * @param {function} handler Express handler or middleware.
+ * @returns {function} The handler, holding its slot until it settles.
+ */
+function createHold(handler, SLOT){
+    return async function heldHandler(req, res, next){
         const slot = req[SLOT];
         if(!slot) return handler(req, res, next);
         slot.claimed = true;
@@ -145,11 +123,40 @@ function createConcurrencyGate(options){
             slot.release();
         }
     };
+}
+
+/**
+ * Build the gate middleware.
+ *
+ * @param {object}   options
+ * @param {number}   options.limit       Max concurrent in-flight requests; <= 0 disables.
+ * @param {number}   [options.retryAfter=1] Retry-After header value, seconds.
+ * @param {function} [options.skip]      (req) => true to exempt a request from the cap.
+ * @param {object|function} [options.body] 429 JSON body, or (req) => body.
+ * @returns {function} Express middleware, with .getStats(), .limit and .hold() attached.
+ */
+function createConcurrencyGate(options){
+    options = options || {};
+
+    const limit      = options.limit > 0 ? Math.floor(options.limit) : 0;
+    const retryAfter = Number.isFinite(options.retryAfter) ? options.retryAfter : 1;
+    const skip       = typeof options.skip === 'function' ? options.skip : () => false;
+    const body       = options.body || { error: 'Server busy, retry shortly', code: 'SERVER_BUSY' };
+
+    const state = { inFlight: 0, shed: 0 };
+
+    // Per-gate slot key. The probe reserve and the main cap are both mounted on
+    // one app, so a module-level key would let either gate claim the other's slot.
+    const SLOT = Symbol('concurrencyGateSlot');
+
+    const middleware = createGateMiddleware(limit, retryAfter, skip, body, state, SLOT);
+
+    middleware.hold = (handler) => createHold(handler, SLOT);
 
     middleware.limit    = limit;
     // Operational surface: a climbing `shed` is the signal that a stampede is
     // being refused, the same way sync exposes snapshots_rejected.
-    middleware.getStats = () => ({ limit, in_flight: inFlight, shed });
+    middleware.getStats = () => ({ limit, in_flight: state.inFlight, shed: state.shed });
 
     return middleware;
 }
