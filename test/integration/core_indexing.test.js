@@ -19,9 +19,9 @@ const {
   coinAmount, sumAmounts
 } = require('./support/helpers');
 
-describe('Integration: Core Indexing', function () {
-  let tracker;
+let tracker;
 
+function useTracker() {
   beforeEach(async function () {
     tracker = await createTestTracker();
   });
@@ -29,7 +29,9 @@ describe('Integration: Core Indexing', function () {
   afterEach(async function () {
     await closeTracker(tracker);
   });
+}
 
+function registerCoinbaseOutputTests() {
   describe('coinbase-only block', function () {
     it('indexes coinbase output and returns correct UTXO/balance', async function () {
       const coinbaseTx = makeCoinbaseTx(0, 50 * SATOSHI);
@@ -50,7 +52,11 @@ describe('Integration: Core Indexing', function () {
       expect(info.utxos.confirmed).to.equal(1);
       expect(info.utxos.pending).to.equal(0);
     });
+  });
+}
 
+function registerCoinbaseRecordTests() {
+  describe('coinbase-only block', function () {
     it('persists B record with correct height/timestamp/prevHash', async function () {
       const prevHash = '0'.repeat(64);
       const coinbaseTx = makeCoinbaseTx(0);
@@ -101,6 +107,16 @@ describe('Integration: Core Indexing', function () {
       expect(info.balances.confirmed).to.equal('0.00000000');
     });
   });
+}
+
+describe('Integration: Core Indexing', function () {
+  useTracker();
+  registerCoinbaseOutputTests();
+  registerCoinbaseRecordTests();
+});
+
+describe('Integration: Core Indexing', function () {
+  useTracker();
 
   describe('simple transfer (spend + change)', function () {
     it('updates balances correctly after spend', async function () {
@@ -150,6 +166,10 @@ describe('Integration: Core Indexing', function () {
       expect(firstSeen).to.deep.equal({ height: 1 });
     });
   });
+});
+
+describe('Integration: Core Indexing', function () {
+  useTracker();
 
   describe('multi-output transaction', function () {
     it('creates separate UTXOs for each output address', async function () {
@@ -181,6 +201,10 @@ describe('Integration: Core Indexing', function () {
       }
     });
   });
+});
+
+describe('Integration: Core Indexing', function () {
+  useTracker();
 
   describe('same-block spend', function () {
     it('handles output created and spent in the same block', async function () {
@@ -217,6 +241,10 @@ describe('Integration: Core Indexing', function () {
       expect(utxos2[0].amount).to.equal(coinAmount(24));
     });
   });
+});
+
+describe('Integration: Core Indexing', function () {
+  useTracker();
 
   describe('multiple UTXOs for same address', function () {
     it('accumulates UTXOs across blocks', async function () {
@@ -250,6 +278,10 @@ describe('Integration: Core Indexing', function () {
       expect(firstSeen).to.deep.equal({ height: 0 });
     });
   });
+});
+
+describe('Integration: Core Indexing', function () {
+  useTracker();
 
   describe('spending one of multiple UTXOs', function () {
     it('removes only the spent UTXO', async function () {
@@ -287,6 +319,10 @@ describe('Integration: Core Indexing', function () {
       expect(info1.balances.confirmed).to.equal('19.00000000');
     });
   });
+});
+
+describe('Integration: Core Indexing', function () {
+  useTracker();
 
   describe('confirmations', function () {
     it('calculates correct confirmation count', async function () {
