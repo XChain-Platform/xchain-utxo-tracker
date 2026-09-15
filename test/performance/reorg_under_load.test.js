@@ -43,34 +43,33 @@ async function runVerifyReorg(tracker) {
   await tracker.verifyReorg();
 }
 
-describe('Perf: Reorg Under Load', function () {
-  let tracker;
-  let addressPool;
-  let metrics;
+let tracker;
+let addressPool;
+let metrics;
 
-  before(function () {
-    addressPool = generateAddressPool(SCALE.addresses);
-    metrics = new MetricsCollector('Reorg Performance');
-  });
+function setupReorgMetrics() {
+  addressPool = generateAddressPool(SCALE.addresses);
+  metrics = new MetricsCollector('Reorg Performance');
+}
 
-  after(function () {
-    metrics.printTable();
-    metrics.saveIfRequested();
-  });
+function reportReorgMetrics() {
+  metrics.printTable();
+  metrics.saveIfRequested();
+}
 
-  afterEach(async function () {
-    if (tracker) {
-      sinon.restore();
-      await closeTracker(tracker);
-      tracker = null;
-    }
-  });
+async function closeReorgTracker() {
+  if (tracker) {
+    sinon.restore();
+    await closeTracker(tracker);
+    tracker = null;
+  }
+}
 
-  describe('reorg timing by depth', function () {
-    // Only test depths within UNDO_BLOCKS (10) and within lastBlocks range
-    const depths = [1, 3, 5, 10];
+// Only test depths within UNDO_BLOCKS (10) and within lastBlocks range
+const depths = [1, 3, 5, 10];
 
-    for (const depth of depths) {
+function addDepthTests(selectedDepths) {
+  for (const depth of selectedDepths) {
       it(`measures ${depth}-block reorg rollback time`, async function () {
         resetTxCounter();
         tracker = await createTestTracker();
@@ -112,9 +111,11 @@ describe('Perf: Reorg Under Load', function () {
         expect(newHeight).to.equal(forkPoint,
           `Expected height ${forkPoint} after ${depth}-block reorg, got ${newHeight}`);
       });
-    }
+  }
+}
 
-    it('verifies reorg time scales linearly with depth', function () {
+function addReorgScalingTest() {
+  it('verifies reorg time scales linearly with depth', function () {
       const depth1 = metrics.summarize('reorg-depth-1');
       const depth10 = metrics.summarize('reorg-depth-10');
 
@@ -125,11 +126,19 @@ describe('Perf: Reorg Under Load', function () {
         expect(ratio).to.be.lessThan(30,
           `Reorg scaling is super-linear: depth-10 was ${ratio.toFixed(1)}x slower than depth-1`);
       }
-    });
   });
+}
 
-  describe('query consistency during reorg', function () {
-    it('returns correct balances after reorg rollback', async function () {
+function addEarlyDepthTests() {
+  addDepthTests(depths.slice(0, 2));
+}
+
+function addLateDepthTests() {
+  addDepthTests(depths.slice(2));
+}
+
+function addQueryConsistencyTest() {
+  it('returns correct balances after reorg rollback', async function () {
       resetTxCounter();
       tracker = await createTestTracker();
 
@@ -173,37 +182,64 @@ describe('Perf: Reorg Under Load', function () {
       // (REMOVE_SPENT recovers deleted outputs via K/M records)
       expect(utxosAfter.length).to.be.at.most(utxosBefore.length,
         'UTXOs should not increase after reorg rollback');
-    });
   });
+}
 
-  describe('indexing recovery after reorg', function () {
-    it('resumes normal throughput after reorg', async function () {
+async function indexBaselineChain() {
+  // Chain stays short so the whole thing fits inside the undo window.
+  // Phase 1: Index baseline chain (keep short for undo window)
+  const baselineChain = buildDenseChain(10, addressPool, 5);
+
+  const { durationMs: baselineMs } = await measureAsync(async () => {
+    for (const block of baselineChain) {
+      await processAndCommit(tracker, block);
+    }
+  });
+  return { baselineChain, baselinePerBlock: baselineMs / 10 };
+}
+
+function stubReorgHashes(baselineChain) {
+  // Phase 2: Simulate 5-block reorg
+  const forkPoint = 4;
+  const divergentHashes = {};
+  for (let i = forkPoint + 1; i < 10; i++) {
+    divergentHashes[i] = randHash();
+  }
+
+  sinon.stub(tracker.connector, 'getBlockHash').callsFake(async (height) => {
+    if (divergentHashes[height] !== undefined) return divergentHashes[height];
+    if (height >= 0 && height < baselineChain.length) return baselineChain[height].hash;
+    throw new Error('Block not found');
+  });
+  return forkPoint;
+}
+
+async function indexRecoveryChain(baselineChain, forkPoint) {
+  // Phase 3: Index replacement chain (new blocks after fork point)
+  resetTxCounter();
+  const recoveryChain = buildDenseChain(10, addressPool, 5);
+  recoveryChain.forEach((b, i) => { b.height = forkPoint + 1 + i; });
+
+  // Set prevHash of first recovery block to match the fork point block
+  if (forkPoint >= 0 && forkPoint < baselineChain.length) {
+    recoveryChain[0].previousHash = baselineChain[forkPoint].hash;
+  }
+
+  const { durationMs: recoveryMs } = await measureAsync(async () => {
+    for (const block of recoveryChain) {
+      await processAndCommit(tracker, block);
+    }
+  });
+  return recoveryMs / 10;
+}
+
+function addIndexingRecoveryTest() {
+  it('resumes normal throughput after reorg', async function () {
       resetTxCounter();
       tracker = await createTestTracker();
 
-      // Chain stays short so the whole thing fits inside the undo window.
-      // Phase 1: Index baseline chain (keep short for undo window)
-      const baselineChain = buildDenseChain(10, addressPool, 5);
-
-      const { durationMs: baselineMs } = await measureAsync(async () => {
-        for (const block of baselineChain) {
-          await processAndCommit(tracker, block);
-        }
-      });
-      const baselinePerBlock = baselineMs / 10;
-
-      // Phase 2: Simulate 5-block reorg
-      const forkPoint = 4;
-      const divergentHashes = {};
-      for (let i = forkPoint + 1; i < 10; i++) {
-        divergentHashes[i] = randHash();
-      }
-
-      sinon.stub(tracker.connector, 'getBlockHash').callsFake(async (height) => {
-        if (divergentHashes[height] !== undefined) return divergentHashes[height];
-        if (height >= 0 && height < baselineChain.length) return baselineChain[height].hash;
-        throw new Error('Block not found');
-      });
+      const { baselineChain, baselinePerBlock } = await indexBaselineChain();
+      const forkPoint = stubReorgHashes(baselineChain);
 
       // Perform reorg
       const { durationMs: reorgMs } = await measureAsync(async () => {
@@ -212,22 +248,7 @@ describe('Perf: Reorg Under Load', function () {
 
       sinon.restore();
 
-      // Phase 3: Index replacement chain (new blocks after fork point)
-      resetTxCounter();
-      const recoveryChain = buildDenseChain(10, addressPool, 5);
-      recoveryChain.forEach((b, i) => { b.height = forkPoint + 1 + i; });
-
-      // Set prevHash of first recovery block to match the fork point block
-      if (forkPoint >= 0 && forkPoint < baselineChain.length) {
-        recoveryChain[0].previousHash = baselineChain[forkPoint].hash;
-      }
-
-      const { durationMs: recoveryMs } = await measureAsync(async () => {
-        for (const block of recoveryChain) {
-          await processAndCommit(tracker, block);
-        }
-      });
-      const recoveryPerBlock = recoveryMs / 10;
+      const recoveryPerBlock = await indexRecoveryChain(baselineChain, forkPoint);
 
       const recoveryRatio = baselinePerBlock > 0 ? recoveryPerBlock / baselinePerBlock : 1;
 
@@ -242,6 +263,17 @@ describe('Perf: Reorg Under Load', function () {
 
       expect(recoveryRatio).to.be.lessThan(2.0,
         `Post-reorg throughput was ${recoveryRatio.toFixed(2)}x slower than baseline (threshold: 2.0x)`);
-    });
   });
+}
+
+describe('Perf: Reorg Under Load', function () {
+  before(setupReorgMetrics);
+  after(reportReorgMetrics);
+  afterEach(closeReorgTracker);
+
+  describe('reorg timing by depth', addEarlyDepthTests);
+  describe('reorg timing by depth', addLateDepthTests);
+  describe('reorg timing by depth', addReorgScalingTest);
+  describe('query consistency during reorg', addQueryConsistencyTest);
+  describe('indexing recovery after reorg', addIndexingRecoveryTest);
 });
