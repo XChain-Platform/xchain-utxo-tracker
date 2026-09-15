@@ -112,6 +112,12 @@ describe('bulk-sync explicit --to undo-window guard @regression', function () {
         }
         expect(lines.join('\n')).to.match(/allow-undo-window set/);
     });
+});
+
+describe('bulk-sync explicit --to undo-window guard @regression', function () {
+
+    const TIP = 1000;
+    const NET = 'bitcoin-mainnet';
 
     it('tracks the XCHAIN_UNDO_BLOCKS_<COIN> override, so both horizons stay single-sourced', function () {
         const prev = process.env.XCHAIN_UNDO_BLOCKS_BTC;
