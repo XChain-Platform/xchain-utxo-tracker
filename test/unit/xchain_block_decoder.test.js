@@ -50,6 +50,9 @@ describe('XChainBlockDecoder', function () {
         .to.throw(/no block\/tx wire-format contract declared for coin "some"/);
     });
   });
+});
+
+describe('XChainBlockDecoder', function () {
 
   describe('doubleSha256AndReverse', function () {
     it('returns a 32-byte reversed double-SHA256', function () {
@@ -68,6 +71,9 @@ describe('XChainBlockDecoder', function () {
       expect(a).to.deep.equal(b);
     });
   });
+});
+
+describe('XChainBlockDecoder', function () {
 
   describe('blockFromHex (bitcoin)', function () {
     const decoder = new XChainBlockDecoder('bitcoin-mainnet');
@@ -111,6 +117,9 @@ describe('XChainBlockDecoder', function () {
       expect(block.merkleRoot).to.have.length(32);
     });
   });
+});
+
+describe('XChainBlockDecoder', function () {
 
   describe('blockFromHex (litecoin)', function () {
     const decoder = new XChainBlockDecoder('litecoin-mainnet');
@@ -129,6 +138,9 @@ describe('XChainBlockDecoder', function () {
       expect(() => decoder.blockFromHex('00'.repeat(40))).to.throw();
     });
   });
+});
+
+describe('XChainBlockDecoder', function () {
 
   describe('txFromHex (bitcoin)', function () {
     const decoder = new XChainBlockDecoder('bitcoin-mainnet');
@@ -155,93 +167,121 @@ describe('XChainBlockDecoder', function () {
       expect(Number(tx.outs[0].value)).to.equal(1);
     });
   });
+});
+
+function buildHogExV1Hex() {
+  // version(01000000) + marker(00) + flag(08); after stripping marker+flag
+  // the remainder must parse as a valid non-witness tx.
+  // version 01000000 + marker 00 + flag 08
+  // After stripping marker+flag → must be a valid non-witness tx
+  // Construct a tx hex with version=1, marker=0x00, flag=0x08
+  // The code should remove the 0008 bytes and parse normally
+  // We need to build a valid tx after stripping
+  const baseTxHex =
+    '01000000' +
+    '01' +
+    '0000000000000000000000000000000000000000000000000000000000000000' +
+    'ffffffff' +
+    '04' + '01020304' +
+    'ffffffff' +
+    '01' +
+    '0100000000000000' +
+    '01' + '51' + // OP_1
+    '00000000';
+
+  // Insert marker+flag after version
+  const hogexTxHex = '01000000' + '0008' + baseTxHex.substring(8);
+  return hogexTxHex;
+}
+
+function buildNormalV2Hex() {
+  const normalTxHex =
+    '02000000' +
+    '01' +
+    '0000000000000000000000000000000000000000000000000000000000000000' +
+    'ffffffff' +
+    '04' + '01020304' +
+    'ffffffff' +
+    '01' +
+    '0100000000000000' +
+    '01' + '51' +
+    '00000000';
+  return normalTxHex;
+}
+
+function buildVersionThreeHex() {
+  // version=03 → the HogEx-strip guard is false; the tx is parsed verbatim.
+  const v3Tx =
+    '03000000' +
+    '01' +
+    '0000000000000000000000000000000000000000000000000000000000000000' +
+    'ffffffff' +
+    '04' + '01020304' +
+    'ffffffff' +
+    '01' +
+    '0100000000000000' +
+    '01' + '51' +
+    '00000000';
+  return v3Tx;
+}
+
+function buildMwebV2Hex() {
+  const baseTxHex =
+    '02000000' +
+    '01' +
+    '0000000000000000000000000000000000000000000000000000000000000000' +
+    'ffffffff' +
+    '04' + '01020304' +
+    'ffffffff' +
+    '01' +
+    '0100000000000000' +
+    '01' + '51' +
+    '00000000';
+  // version(02000000) + marker(00) + flag(09) + rest-after-version
+  const mwebTxHex = '02000000' + '0009' + baseTxHex.substring(8);
+  return mwebTxHex;
+}
+
+describe('XChainBlockDecoder', function () {
 
   describe('txFromHex (litecoin) - HogEx stripping', function () {
     const decoder = new XChainBlockDecoder('litecoin-mainnet');
 
     it('strips HogEx flag (0x00 0x08) from v1 tx', function () {
-      // version(01000000) + marker(00) + flag(08); after stripping marker+flag
-      // the remainder must parse as a valid non-witness tx.
-      // version 01000000 + marker 00 + flag 08
-      // After stripping marker+flag → must be a valid non-witness tx
-      // Construct a tx hex with version=1, marker=0x00, flag=0x08
-      // The code should remove the 0008 bytes and parse normally
-      // We need to build a valid tx after stripping
-      const baseTxHex =
-        '01000000' +
-        '01' +
-        '0000000000000000000000000000000000000000000000000000000000000000' +
-        'ffffffff' +
-        '04' + '01020304' +
-        'ffffffff' +
-        '01' +
-        '0100000000000000' +
-        '01' + '51' + // OP_1
-        '00000000';
-
-      // Insert marker+flag after version
-      const hogexTxHex = '01000000' + '0008' + baseTxHex.substring(8);
-
+      const hogexTxHex = buildHogExV1Hex();
       const tx = decoder.txFromHex(hogexTxHex);
       expect(tx.ins).to.have.length(1);
       expect(tx.outs).to.have.length(1);
     });
 
     it('passes through non-HogEx tx unchanged', function () {
-      const normalTxHex =
-        '02000000' +
-        '01' +
-        '0000000000000000000000000000000000000000000000000000000000000000' +
-        'ffffffff' +
-        '04' + '01020304' +
-        'ffffffff' +
-        '01' +
-        '0100000000000000' +
-        '01' + '51' +
-        '00000000';
-
+      const normalTxHex = buildNormalV2Hex();
       const tx = decoder.txFromHex(normalTxHex);
       expect(tx.ins).to.have.length(1);
       expect(tx.outs).to.have.length(1);
     });
+  });
+
+  describe('txFromHex (litecoin) - HogEx stripping', function () {
+    const decoder = new XChainBlockDecoder('litecoin-mainnet');
 
     it('does not strip when the tx version is neither 01 nor 02', function () {
-      // version=03 → the HogEx-strip guard is false; the tx is parsed verbatim.
-      const v3Tx =
-        '03000000' +
-        '01' +
-        '0000000000000000000000000000000000000000000000000000000000000000' +
-        'ffffffff' +
-        '04' + '01020304' +
-        'ffffffff' +
-        '01' +
-        '0100000000000000' +
-        '01' + '51' +
-        '00000000';
+      const v3Tx = buildVersionThreeHex();
       const tx = decoder.txFromHex(v3Tx);
       expect(tx.version).to.equal(3);
       expect(tx.ins).to.have.length(1);
     });
 
     it('strips the MWEB+segwit flag (0x00 0x09) from a v2 tx', function () {
-      const baseTxHex =
-        '02000000' +
-        '01' +
-        '0000000000000000000000000000000000000000000000000000000000000000' +
-        'ffffffff' +
-        '04' + '01020304' +
-        'ffffffff' +
-        '01' +
-        '0100000000000000' +
-        '01' + '51' +
-        '00000000';
-      // version(02000000) + marker(00) + flag(09) + rest-after-version
-      const mwebTxHex = '02000000' + '0009' + baseTxHex.substring(8);
+      const mwebTxHex = buildMwebV2Hex();
       const tx = decoder.txFromHex(mwebTxHex);
       expect(tx.ins).to.have.length(1);
       expect(tx.outs).to.have.length(1);
     });
   });
+});
+
+describe('XChainBlockDecoder', function () {
 
   describe('blockFromBuffer (litecoin) - full block with transactions', function () {
     const decoder = new XChainBlockDecoder('litecoin-mainnet');
