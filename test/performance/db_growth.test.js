@@ -25,11 +25,11 @@ const {
   formatRate
 } = require('./support/helpers');
 
-describe('Perf: Database Growth Degradation', function () {
-  let tracker;
-  let addressPool;
-  let metrics;
+let tracker;
+let addressPool;
+let metrics;
 
+describe('Perf: Database Growth Degradation', function () {
   before(async function () {
     resetTxCounter();
     tracker = await createTestTracker();
@@ -44,99 +44,8 @@ describe('Perf: Database Growth Degradation', function () {
   });
 
   it('measures query time degradation as database grows', async function () {
-    // Build a large coinbase-only chain so UTXOs accumulate (no spending)
-    const totalBlocks = SCALE.blocks;
-    const chain = buildDenseChain(totalBlocks, addressPool, SCALE.txsPerBlock);
-    const batchSize = 100;
-
-    const checkpoints = [0.25, 0.50, 0.75, 1.00];
-    const results = [];
-    let blocksProcessed = 0;
-
-    for (const pct of checkpoints) {
-      const targetBlocks = Math.floor(totalBlocks * pct);
-      const blocksToProcess = targetBlocks - blocksProcessed;
-
-      if (blocksToProcess > 0) {
-        // Index blocks up to this checkpoint
-        for (let i = blocksProcessed; i < targetBlocks; i += batchSize) {
-          const end = Math.min(i + batchSize, targetBlocks);
-          const batch = chain.slice(i, end);
-          await processBlocksAndCommit(tracker, batch);
-        }
-        blocksProcessed = targetBlocks;
-      }
-
-      // Count total UTXOs by querying all addresses
-      let totalUtxos = 0;
-
-      // Measure serial query time
-      const sampleSize = Math.min(SCALE.addresses, 50);
-      const sampleAddresses = addressPool.slice(0, sampleSize);
-
-      // Best-of-3: a single pass is at the mercy of shared-runner scheduler
-      // jitter, and the 25% checkpoint's small baseline amplifies any blip
-      // straight into the degradation ratio. The minimum reflects intrinsic
-      // per-query cost, which is what the sub-linear-growth assertion is about.
-      let serialMs = Infinity;
-      for (let rep = 0; rep < 3; rep++) {
-        let repUtxos = 0;
-        const { durationMs } = await measureAsync(async () => {
-          for (const key of sampleAddresses) {
-            const utxos = await tracker.getUtxosAddress(key.address);
-            repUtxos += utxos.length;
-          }
-        });
-        serialMs = Math.min(serialMs, durationMs);
-        if (rep === 0) totalUtxos += repUtxos;
-      }
-
-      // Measure concurrent query time
-      const { durationMs: concurrentMs } = await measureAsync(async () => {
-        await Promise.all(sampleAddresses.map(key =>
-          tracker.getBalanceInfo(key.address)
-        ));
-      });
-
-      const perQuerySerial = serialMs / sampleSize;
-      const perQueryConcurrent = concurrentMs / sampleSize;
-
-      results.push({
-        pct,
-        blocks: targetBlocks,
-        utxos: totalUtxos,
-        serialMs,
-        concurrentMs,
-        perQuerySerial,
-        perQueryConcurrent
-      });
-
-      metrics.record(`query@${Math.round(pct * 100)}% (serial)`, perQuerySerial, {
-        blocks: targetBlocks,
-        utxos: totalUtxos
-      });
-      metrics.record(`query@${Math.round(pct * 100)}% (concurrent)`, perQueryConcurrent);
-    }
-
-    // Print degradation table
-    console.log('\n    Database Growth Degradation Report:');
-    console.log('    ' + '─'.repeat(80));
-    console.log('    ' + pad('Checkpoint', 12) + pad('Blocks', 10) + pad('UTXOs', 10) +
-      pad('Serial/q', 14) + pad('Concurrent/q', 14) + pad('Ratio', 10));
-    console.log('    ' + '─'.repeat(80));
-
-    for (const r of results) {
-      const ratio = results[0].perQuerySerial > 0
-        ? (r.perQuerySerial / results[0].perQuerySerial).toFixed(2) + 'x'
-        : 'N/A';
-
-      console.log('    ' + pad(`${Math.round(r.pct * 100)}%`, 12) +
-        pad(r.blocks, 10) + pad(r.utxos, 10) +
-        pad(formatMs(r.perQuerySerial), 14) +
-        pad(formatMs(r.perQueryConcurrent), 14) +
-        pad(ratio, 10));
-    }
-    console.log('    ' + '─'.repeat(80));
+    const results = await collectQueryMeasurements();
+    printQueryMeasurements(results);
 
     // Assert sub-linear growth: 100% should be < 4x the 25% query time
     if (results.length >= 2 && results[0].perQuerySerial > 0) {
@@ -152,45 +61,149 @@ describe('Perf: Database Growth Degradation', function () {
   });
 
   it('measures write throughput at different database sizes', async function () {
-    await closeTracker(tracker);
-    tracker = await createTestTracker();
-    resetTxCounter();
-
-    const totalBlocks = SCALE.blocks;
-    const chain = buildDenseChain(totalBlocks, addressPool, SCALE.txsPerBlock);
-    const batchSize = 100;
-    const checkpoints = [0.25, 0.50, 0.75, 1.00];
-    let blocksProcessed = 0;
-
-    for (const pct of checkpoints) {
-      const targetBlocks = Math.floor(totalBlocks * pct);
-      const startBlock = blocksProcessed;
-      const blocksToProcess = targetBlocks - startBlock;
-
-      if (blocksToProcess <= 0) continue;
-
-      const { durationMs } = await measureAsync(async () => {
-        for (let i = startBlock; i < targetBlocks; i += batchSize) {
-          const end = Math.min(i + batchSize, targetBlocks);
-          const batch = chain.slice(i, end);
-          await processBlocksAndCommit(tracker, batch);
-        }
-      });
-
-      blocksProcessed = targetBlocks;
-      const blocksPerSec = (blocksToProcess / durationMs) * 1000;
-      const txsPerSec = (blocksToProcess * SCALE.txsPerBlock / durationMs) * 1000;
-
-      metrics.record(`write@${Math.round(pct * 100)}%`, durationMs, {
-        blocks: blocksToProcess,
-        blocksPerSec,
-        txsPerSec
-      });
-
-      console.log(`    Write @${Math.round(pct * 100)}%: ${blocksToProcess} blocks in ${formatMs(durationMs)} (${formatRate(blocksToProcess, durationMs)} blocks, ${formatRate(blocksToProcess * SCALE.txsPerBlock, durationMs)} txs)`);
-    }
+    await measureWriteThroughput();
   });
 });
+
+async function collectQueryMeasurements() {
+  // Build a large coinbase-only chain so UTXOs accumulate (no spending)
+  const totalBlocks = SCALE.blocks;
+  const chain = buildDenseChain(totalBlocks, addressPool, SCALE.txsPerBlock);
+  const checkpoints = [0.25, 0.50, 0.75, 1.00];
+  const results = [];
+  let blocksProcessed = 0;
+
+  for (const pct of checkpoints) {
+    const result = await measureCheckpoint(chain, totalBlocks, blocksProcessed, pct);
+    results.push(result);
+    blocksProcessed = result.blocks;
+  }
+
+  return results;
+}
+
+async function measureCheckpoint(chain, totalBlocks, blocksProcessed, pct) {
+  const targetBlocks = Math.floor(totalBlocks * pct);
+  const blocksToProcess = targetBlocks - blocksProcessed;
+  const batchSize = 100;
+
+  if (blocksToProcess > 0) {
+    // Index blocks up to this checkpoint
+    for (let i = blocksProcessed; i < targetBlocks; i += batchSize) {
+      const end = Math.min(i + batchSize, targetBlocks);
+      const batch = chain.slice(i, end);
+      await processBlocksAndCommit(tracker, batch);
+    }
+  }
+
+  // Count total UTXOs by querying all addresses
+  // Measure serial query time
+  const sampleSize = Math.min(SCALE.addresses, 50);
+  const sampleAddresses = addressPool.slice(0, sampleSize);
+  const { serialMs, totalUtxos } = await measureSerialQueries(sampleAddresses);
+
+  // Measure concurrent query time
+  const { durationMs: concurrentMs } = await measureAsync(async () => {
+    await Promise.all(sampleAddresses.map(key =>
+      tracker.getBalanceInfo(key.address)
+    ));
+  });
+
+  const result = {
+    pct, blocks: targetBlocks, utxos: totalUtxos, serialMs, concurrentMs,
+    perQuerySerial: serialMs / sampleSize,
+    perQueryConcurrent: concurrentMs / sampleSize
+  };
+  metrics.record(`query@${Math.round(pct * 100)}% (serial)`, result.perQuerySerial, {
+    blocks: targetBlocks,
+    utxos: totalUtxos
+  });
+  metrics.record(`query@${Math.round(pct * 100)}% (concurrent)`, result.perQueryConcurrent);
+  return result;
+}
+
+async function measureSerialQueries(sampleAddresses) {
+  // Best-of-3: a single pass is at the mercy of shared-runner scheduler
+  // jitter, and the 25% checkpoint's small baseline amplifies any blip
+  // straight into the degradation ratio. The minimum reflects intrinsic
+  // per-query cost, which is what the sub-linear-growth assertion is about.
+  let serialMs = Infinity;
+  let totalUtxos = 0;
+  for (let rep = 0; rep < 3; rep++) {
+    let repUtxos = 0;
+    const { durationMs } = await measureAsync(async () => {
+      for (const key of sampleAddresses) {
+        const utxos = await tracker.getUtxosAddress(key.address);
+        repUtxos += utxos.length;
+      }
+    });
+    serialMs = Math.min(serialMs, durationMs);
+    if (rep === 0) totalUtxos += repUtxos;
+  }
+  return { serialMs, totalUtxos };
+}
+
+function printQueryMeasurements(results) {
+  // Print degradation table
+  console.log('\n    Database Growth Degradation Report:');
+  console.log('    ' + '─'.repeat(80));
+  console.log('    ' + pad('Checkpoint', 12) + pad('Blocks', 10) + pad('UTXOs', 10) +
+    pad('Serial/q', 14) + pad('Concurrent/q', 14) + pad('Ratio', 10));
+  console.log('    ' + '─'.repeat(80));
+
+  for (const r of results) {
+    const ratio = results[0].perQuerySerial > 0
+      ? (r.perQuerySerial / results[0].perQuerySerial).toFixed(2) + 'x'
+      : 'N/A';
+
+    console.log('    ' + pad(`${Math.round(r.pct * 100)}%`, 12) +
+      pad(r.blocks, 10) + pad(r.utxos, 10) +
+      pad(formatMs(r.perQuerySerial), 14) +
+      pad(formatMs(r.perQueryConcurrent), 14) +
+      pad(ratio, 10));
+  }
+  console.log('    ' + '─'.repeat(80));
+}
+
+async function measureWriteThroughput() {
+  await closeTracker(tracker);
+  tracker = await createTestTracker();
+  resetTxCounter();
+
+  const totalBlocks = SCALE.blocks;
+  const chain = buildDenseChain(totalBlocks, addressPool, SCALE.txsPerBlock);
+  const batchSize = 100;
+  const checkpoints = [0.25, 0.50, 0.75, 1.00];
+  let blocksProcessed = 0;
+
+  for (const pct of checkpoints) {
+    const targetBlocks = Math.floor(totalBlocks * pct);
+    const startBlock = blocksProcessed;
+    const blocksToProcess = targetBlocks - startBlock;
+
+    if (blocksToProcess <= 0) continue;
+
+    const { durationMs } = await measureAsync(async () => {
+      for (let i = startBlock; i < targetBlocks; i += batchSize) {
+        const end = Math.min(i + batchSize, targetBlocks);
+        const batch = chain.slice(i, end);
+        await processBlocksAndCommit(tracker, batch);
+      }
+    });
+
+    blocksProcessed = targetBlocks;
+    const blocksPerSec = (blocksToProcess / durationMs) * 1000;
+    const txsPerSec = (blocksToProcess * SCALE.txsPerBlock / durationMs) * 1000;
+
+    metrics.record(`write@${Math.round(pct * 100)}%`, durationMs, {
+      blocks: blocksToProcess,
+      blocksPerSec,
+      txsPerSec
+    });
+
+    console.log(`    Write @${Math.round(pct * 100)}%: ${blocksToProcess} blocks in ${formatMs(durationMs)} (${formatRate(blocksToProcess, durationMs)} blocks, ${formatRate(blocksToProcess * SCALE.txsPerBlock, durationMs)} txs)`);
+  }
+}
 
 function pad(str, len) {
   const s = String(str);
