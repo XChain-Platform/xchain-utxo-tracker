@@ -49,6 +49,9 @@ describe('util', function () {
       expect(hash).to.have.length(64);
     });
   });
+});
+
+describe('util', function () {
 
   describe('uint8ArrayToHex', function () {
     it('converts byte array to hex string', function () {
@@ -99,6 +102,9 @@ describe('util', function () {
       expect(result).to.include('01h');
     });
   });
+});
+
+describe('util', function () {
 
   describe('throwError', function () {
     it('throws an Error with the given message', function () {
