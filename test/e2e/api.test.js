@@ -22,12 +22,12 @@ const {
   createApiApp
 } = require('./support/helpers');
 
-describe('E2E: API Correctness', function () {
-  let tracker;
-  let restoreLevelUp;
-  let app;
-  let request;
+let tracker;
+let restoreLevelUp;
+let app;
+let request;
 
+function registerApiHooks() {
   beforeEach(function () {
     restoreLevelUp = patchLevelUpStoreInMemory();
     tracker = createE2ETracker();
@@ -38,27 +38,30 @@ describe('E2E: API Correctness', function () {
     await tracker.stopParsing();
     restoreLevelUp();
   });
+}
 
-  // Seed 3 blocks and start the API
-  async function seedAndStart() {
-    const cb0 = makeCoinbaseTx(0, 10 * SATOSHI);
-    const cb1 = makeCoinbaseTx(0, 20 * SATOSHI);
-    const cb2 = makeCoinbaseTx(0, 30 * SATOSHI);
-    const block0 = makeBlock(0, '0'.repeat(64), [cb0]);
-    const block1 = makeBlock(1, block0.hash, [cb1]);
-    const block2 = makeBlock(2, block1.hash, [cb2]);
+// Seed 3 blocks and start the API
+async function seedAndStart() {
+  const cb0 = makeCoinbaseTx(0, 10 * SATOSHI);
+  const cb1 = makeCoinbaseTx(0, 20 * SATOSHI);
+  const cb2 = makeCoinbaseTx(0, 30 * SATOSHI);
+  const block0 = makeBlock(0, '0'.repeat(64), [cb0]);
+  const block1 = makeBlock(1, block0.hash, [cb1]);
+  const block2 = makeBlock(2, block1.hash, [cb2]);
 
-    const state = stubBlockchain(tracker, [block0, block1, block2]);
-    tracker.start();
-    await waitForSynced(tracker);
+  const state = stubBlockchain(tracker, [block0, block1, block2]);
+  tracker.start();
+  await waitForSynced(tracker);
 
-    const apiSetup = createApiApp(tracker);
-    app = apiSetup.app;
-    request = apiSetup.request;
+  const apiSetup = createApiApp(tracker);
+  app = apiSetup.app;
+  request = apiSetup.request;
 
-    return { state, blocks: [block0, block1, block2], coinbases: [cb0, cb1, cb2] };
-  }
+  return { state, blocks: [block0, block1, block2], coinbases: [cb0, cb1, cb2] };
+}
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F1: REST endpoint parity', function () {
     it('all REST endpoints return consistent data', async function () {
       await seedAndStart();
@@ -96,7 +99,10 @@ describe('E2E: API Correctness', function () {
       }
     });
   });
+});
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F2: JSON-RPC method parity', function () {
     function rpcCall(method, params = {}) {
       return request.post('/')
@@ -133,7 +139,10 @@ describe('E2E: API Correctness', function () {
       expect(res.body.result.status).to.equal('success');
     });
   });
+});
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F3: get_input_from_key_pattern', function () {
     it('returns matching entries for a valid pattern', async function () {
       const { coinbases } = await seedAndStart();
@@ -162,7 +171,10 @@ describe('E2E: API Correctness', function () {
       expect(res.body.result.result).to.be.an('array');
     });
   });
+});
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F4: invalid address handling', function () {
     it('returns error for malformed addresses', async function () {
       await seedAndStart();
@@ -179,7 +191,10 @@ describe('E2E: API Correctness', function () {
       expect(res3.status).to.equal(500);
     });
   });
+});
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F5: concurrent queries during indexing', function () {
     it('handles simultaneous API requests without errors', async function () {
       // Start with 3 blocks, then add 10 more while querying
@@ -229,7 +244,10 @@ describe('E2E: API Correctness', function () {
       expect(finalRes.body.balances.confirmed).to.equal('130.00000000'); // 13 blocks * 10 BTC each
     });
   });
+});
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F6: API reflects mempool state', function () {
     it('shows pending balances through the API after mempool update', async function () {
       const { state, coinbases } = await seedAndStart();
@@ -254,7 +272,10 @@ describe('E2E: API Correctness', function () {
       expect(rpcRes.body.result.balances.pending).to.equal('8.00000000');
     });
   });
+});
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F7: non-existent address through all endpoints', function () {
     it('returns empty/zero state consistently', async function () {
       await seedAndStart();
