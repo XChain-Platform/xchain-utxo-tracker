@@ -189,6 +189,48 @@ function readHeaderBytes(filePath, headerSize) {
  *   canceled:number, orphanSpends:number,
  * }>}
  */
+function joinRecords(left, right, out, keySize, onAnomaly) {
+    let leftRead     = 0
+    let rightRead    = 0
+    let emitted      = 0
+    let canceled     = 0
+    let orphanSpends = 0
+    let leftCurr  = left.next();  if (leftCurr)  leftRead++
+    let rightCurr = right.next(); if (rightCurr) rightRead++
+    while (leftCurr) {
+        if (!rightCurr) {
+            out.writeRecord(leftCurr)
+            emitted++
+            leftCurr = left.next(); if (leftCurr) leftRead++
+            continue
+        }
+        const cmp = Buffer.compare(
+            leftCurr.subarray(0, keySize),
+            rightCurr.subarray(0, keySize),
+        )
+        if (cmp < 0) {
+            out.writeRecord(leftCurr)
+            emitted++
+            leftCurr = left.next(); if (leftCurr) leftRead++
+        } else if (cmp > 0) {
+            orphanSpends++
+            onAnomaly({ type: 'orphan-spend', key: Buffer.from(rightCurr.subarray(0, keySize)) })
+            rightCurr = right.next(); if (rightCurr) rightRead++
+        } else {
+            canceled++
+            leftCurr  = left.next();  if (leftCurr)  leftRead++
+            rightCurr = right.next(); if (rightCurr) rightRead++
+        }
+    }
+    // Drain any remaining right records; all are orphan spends.
+    while (rightCurr) {
+        orphanSpends++
+        onAnomaly({ type: 'orphan-spend', key: Buffer.from(rightCurr.subarray(0, keySize)) })
+        rightCurr = right.next(); if (rightCurr) rightRead++
+    }
+    return { leftRead, rightRead, emitted, canceled, orphanSpends }
+}
+
 async function leftAntiJoin(opts) {
     const {
         leftPath, rightPath, outputPath,
@@ -196,10 +238,8 @@ async function leftAntiJoin(opts) {
     } = opts
     const leftHeaderSize  = opts.leftHeaderSize  || 0
     const rightHeaderSize = opts.rightHeaderSize || 0
-    const copyLeftHeader  = !!opts.copyLeftHeader
     const onProgress      = opts.onProgress      || noop
     const onAnomaly       = opts.onAnomaly       || noop
-
     if (!leftPath || !rightPath || !outputPath) {
         throw new Error('leftAntiJoin: leftPath, rightPath, outputPath are required')
     }
@@ -209,69 +249,22 @@ async function leftAntiJoin(opts) {
     if (keySize > leftRecordSize || keySize > rightRecordSize) {
         throw new Error('leftAntiJoin: keySize exceeds one of the record sizes')
     }
-
     const left  = new RecordReader(leftPath,  leftHeaderSize,  leftRecordSize)
     const right = new RecordReader(rightPath, rightHeaderSize, rightRecordSize)
     const out   = new RecordWriter(outputPath, leftRecordSize)
-
-    let leftRead     = 0
-    let rightRead    = 0
-    let emitted      = 0
-    let canceled     = 0
-    let orphanSpends = 0
-
+    let result
     try {
-        if (copyLeftHeader && leftHeaderSize > 0) {
+        if (opts.copyLeftHeader && leftHeaderSize > 0) {
             out.writeRaw(readHeaderBytes(leftPath, leftHeaderSize))
         }
-
-        let leftCurr  = left.next();  if (leftCurr)  leftRead++
-        let rightCurr = right.next(); if (rightCurr) rightRead++
-
-        while (leftCurr) {
-            if (!rightCurr) {
-                out.writeRecord(leftCurr)
-                emitted++
-                leftCurr = left.next(); if (leftCurr) leftRead++
-                continue
-            }
-            const cmp = Buffer.compare(
-                leftCurr.subarray(0, keySize),
-                rightCurr.subarray(0, keySize),
-            )
-            if (cmp < 0) {
-                out.writeRecord(leftCurr)
-                emitted++
-                leftCurr = left.next(); if (leftCurr) leftRead++
-            } else if (cmp > 0) {
-                orphanSpends++
-                onAnomaly({ type: 'orphan-spend', key: Buffer.from(rightCurr.subarray(0, keySize)) })
-                rightCurr = right.next(); if (rightCurr) rightRead++
-            } else {
-                canceled++
-                leftCurr  = left.next();  if (leftCurr)  leftRead++
-                rightCurr = right.next(); if (rightCurr) rightRead++
-            }
-        }
-
-        // Drain any remaining right records; all are orphan spends.
-        while (rightCurr) {
-            orphanSpends++
-            onAnomaly({ type: 'orphan-spend', key: Buffer.from(rightCurr.subarray(0, keySize)) })
-            rightCurr = right.next(); if (rightCurr) rightRead++
-        }
+        result = joinRecords(left, right, out, keySize, onAnomaly)
     } finally {
         left.close()
         right.close()
         out.close()
     }
-
-    onProgress({
-        phase: 'done',
-        leftRead, rightRead, emitted, canceled, orphanSpends,
-    })
-
-    return { leftRead, rightRead, emitted, canceled, orphanSpends }
+    onProgress({ phase: 'done', ...result })
+    return result
 }
 
 module.exports = { leftAntiJoin, RecordReader, RecordWriter }
