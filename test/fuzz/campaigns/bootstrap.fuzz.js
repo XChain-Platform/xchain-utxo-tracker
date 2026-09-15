@@ -51,7 +51,11 @@ describe('Fuzz: Bootstrap Filename Validation (P3)', function () {
         expect(isDangerous, `Expected "${filename}" to be flagged as dangerous`).to.be.true;
       }
     });
+  });
+});
 
+describe('Fuzz: Bootstrap Filename Validation (P3)', function () {
+  describe('filename sanitization', function () {
     it('safe filenames pass validation', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -83,7 +87,9 @@ describe('Fuzz: Bootstrap Filename Validation (P3)', function () {
       );
     });
   });
+});
 
+describe('Fuzz: Bootstrap Filename Validation (P3)', function () {
   describe('filename length', function () {
     it('empty filename is detectable', function () {
       expect('').to.have.length(0);
@@ -108,7 +114,9 @@ describe('Fuzz: Bootstrap Filename Validation (P3)', function () {
       );
     });
   });
+});
 
+describe('Fuzz: Bootstrap Filename Validation (P3)', function () {
   describe('character validation', function () {
     it('null bytes are detectable in any position', async function () {
       await fc.assert(
