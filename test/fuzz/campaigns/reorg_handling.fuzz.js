@@ -20,47 +20,61 @@ const {
 } = require('../support/helpers');
 const { satoshiToDecimalString } = require('../../../src/XChainUtxoTracker');
 
-describe('Fuzz: Reorg Handling (P1)', function () {
+// This matches the production flow: verifyReorg() compares DB state with node,
+// rolls back mismatched blocks, then the main loop re-processes from fork point.
+async function setupAndRunReorg(tracker, originalBlocks, forkBlocks) {
+  // Build lookup for what the "node" reports
+  const forkHeight = forkBlocks[0].height;
+  const nodeHashes = {};
 
-  // This matches the production flow: verifyReorg() compares DB state with node,
-  // rolls back mismatched blocks, then the main loop re-processes from fork point.
-  async function setupAndRunReorg(tracker, originalBlocks, forkBlocks) {
-    // Build lookup for what the "node" reports
-    const forkHeight = forkBlocks[0].height;
-    const nodeHashes = {};
-
-    // Blocks before the fork point match the original
-    for (let i = 0; i < forkHeight; i++) {
-      nodeHashes[i] = originalBlocks[i].hash;
-    }
-    // Blocks at and after fork point use the fork
-    for (const fb of forkBlocks) {
-      nodeHashes[fb.height] = fb.hash;
-    }
-
-    // Stub the connector
-    sinon.stub(tracker.connector, 'getBlockHash').callsFake(async (height) => {
-      if (height in nodeHashes) return nodeHashes[height];
-      throw new Error('Block height out of range: ' + height);
-    });
-
-    // verifyReorg runs with transactionArray=null (direct writes)
-    if (tracker.db.transactionArray) {
-      await tracker.db.endTransaction(false);
-    }
-    tracker.db.transactionArray = null;
-    tracker.db.deletedTransactionArray = null;
-
-    await tracker.verifyReorg();
-
-    sinon.restore();
-
-    // Re-process fork blocks
-    for (const block of forkBlocks) {
-      await processAndCommit(tracker, block);
-    }
+  // Blocks before the fork point match the original
+  for (let i = 0; i < forkHeight; i++) {
+    nodeHashes[i] = originalBlocks[i].hash;
+  }
+  // Blocks at and after fork point use the fork
+  for (const fb of forkBlocks) {
+    nodeHashes[fb.height] = fb.hash;
   }
 
+  // Stub the connector
+  sinon.stub(tracker.connector, 'getBlockHash').callsFake(async (height) => {
+    if (height in nodeHashes) return nodeHashes[height];
+    throw new Error('Block height out of range: ' + height);
+  });
+
+  // verifyReorg runs with transactionArray=null (direct writes)
+  if (tracker.db.transactionArray) {
+    await tracker.db.endTransaction(false);
+  }
+  tracker.db.transactionArray = null;
+  tracker.db.deletedTransactionArray = null;
+
+  await tracker.verifyReorg();
+
+  sinon.restore();
+
+  // Re-process fork blocks
+  for (const block of forkBlocks) {
+    await processAndCommit(tracker, block);
+  }
+}
+
+async function buildAndProcessChain(tracker, chainLen) {
+  // Build and process original chain
+  const originalBlocks = [];
+  let prevHash = '0'.repeat(64);
+  for (let i = 0; i < chainLen; i++) {
+    const block = makeBlock(i, prevHash, [makeCoinbaseTx(0)]);
+    originalBlocks.push(block);
+    prevHash = block.hash;
+  }
+  for (const block of originalBlocks) {
+    await processAndCommit(tracker, block);
+  }
+  return originalBlocks;
+}
+
+describe('Fuzz: Reorg Handling (P1)', function () {
   describe('reorg height/hash rollback', function () {
     it('rolls back to correct fork point', async function () {
       await fc.assert(
@@ -73,24 +87,14 @@ describe('Fuzz: Reorg Handling (P1)', function () {
 
             const t = await createTestTracker();
             try {
-              // Build and process original chain
-              const originalBlocks = [];
-              let prevHash = '0'.repeat(64);
-              for (let i = 0; i < chainLen; i++) {
-                const block = makeBlock(i, prevHash, [makeCoinbaseTx(0)]);
-                originalBlocks.push(block);
-                prevHash = block.hash;
-              }
-              for (const block of originalBlocks) {
-                await processAndCommit(t, block);
-              }
+              const originalBlocks = await buildAndProcessChain(t, chainLen);
 
               expect(await t.db.getLastBlockHeight()).to.equal(chainLen - 1);
 
               // Build fork chain
               const forkStart = chainLen - depth;
               const forkBlocks = [];
-              prevHash = originalBlocks[forkStart - 1].hash;
+              let prevHash = originalBlocks[forkStart - 1].hash;
               for (let i = forkStart; i < chainLen; i++) {
                 const block = makeBlock(i, prevHash, [makeCoinbaseTx(1)]);
                 forkBlocks.push(block);
@@ -123,7 +127,9 @@ describe('Fuzz: Reorg Handling (P1)', function () {
       );
     });
   });
+});
 
+describe('Fuzz: Reorg Handling (P1)', function () {
   describe('spent output recovery after reorg', function () {
     it('spent output is recovered when the spending block is reorged away', async function () {
       await fc.assert(
@@ -174,7 +180,9 @@ describe('Fuzz: Reorg Handling (P1)', function () {
       );
     });
   });
+});
 
+describe('Fuzz: Reorg Handling (P1)', function () {
   describe('pre-fork block preservation', function () {
     it('blocks before the fork point are preserved after reorg', async function () {
       const t = await createTestTracker();
