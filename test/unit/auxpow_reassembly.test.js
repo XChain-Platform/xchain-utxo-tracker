@@ -52,6 +52,9 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
         expect(encodeVarintHex(0xFFFFFFFF)).to.equal('feffffffff');
         expect(() => encodeVarintHex(0x100000000)).to.throw(/out of supported range/);
     });
+});
+
+describe('malformed-AuxPoW block reassembly fallback', function () {
 
     describe('BlockchainConnector.getBlockReassembled', function () {
         it('rebuilds header + tx-count varint + raw txs, parseable as a block', async function () {
@@ -87,6 +90,9 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
             expect(err.message).to.match(/no raw tx for in-block txid/);
         });
     });
+});
+
+describe('malformed-AuxPoW block reassembly fallback', function () {
 
     describe('XChainUtxoTracker.shouldReassembleBlock', function () {
         const call = (ctx, ...args) => XChainUtxoTracker.prototype.shouldReassembleBlock.call(ctx, ...args);
@@ -102,6 +108,9 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
             expect(AUXPOW_REASSEMBLE_AFTER).to.be.below(MAX_BLOCK_FETCH_RETRIES);
         });
     });
+});
+
+describe('malformed-AuxPoW block reassembly fallback', function () {
 
     // Reassembly issues one getrawtransaction per transaction in the block. Aiming
     // that fan-out at a node that is merely unreachable makes an outage worse, so
@@ -150,6 +159,9 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
             expect(streak).to.deep.equal({ height: 102, count: 0 });
         });
     });
+});
+
+describe('malformed-AuxPoW block reassembly fallback', function () {
 
     describe('BlockchainConnector AuxPoW fault tagging', function () {
         // AuxPoW version bit set, 160-char header, and a block body skipAuxPow cannot
@@ -181,6 +193,14 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
             expect(err.auxPowParseFailure).to.equal(true);
             expect(err.cause).to.be.an('error');
         });
+    });
+});
+
+describe('malformed-AuxPoW block reassembly fallback', function () {
+
+    describe('BlockchainConnector AuxPoW fault tagging', function () {
+        const UNSTRIPPABLE_BLOCK = HEADER_HEX + 'ff';
+        const transport = () => Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
 
         it('getBlocksBatchWithoutAuxPow tags a strip fault but not a batch RPC fault', async function () {
             // The prefetch queue is the tracker's normal block source on an AuxPoW
