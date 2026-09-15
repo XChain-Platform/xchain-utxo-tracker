@@ -24,19 +24,22 @@ const { ClassicLevel } = require('classic-level')
 
 const BUF = { keyEncoding: 'buffer', valueEncoding: 'buffer' }
 
+let db, dir
+
+async function openDatabase() {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xch-cl-contract-'))
+  db = new ClassicLevel(dir, BUF)
+  await db.open()
+}
+
+async function closeDatabase() {
+  try { await db.close() } catch (e) { /* ignore */ }
+  try { fs.rmSync(dir, { recursive: true, force: true }) } catch (e) { /* ignore */ }
+}
+
 describe('classic-level backend behaviour contract', function () {
-  let db, dir
-
-  beforeEach(async function () {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xch-cl-contract-'))
-    db = new ClassicLevel(dir, BUF)
-    await db.open()
-  })
-
-  afterEach(async function () {
-    try { await db.close() } catch (e) { /* ignore */ }
-    try { fs.rmSync(dir, { recursive: true, force: true }) } catch (e) { /* ignore */ }
-  })
+  beforeEach(openDatabase)
+  afterEach(closeDatabase)
 
   // --- miss handling: LevelUpDb depends on undefined (not throw) on a miss ---
   it('get() returns undefined for a missing key (does not throw)', async function () {
@@ -66,6 +69,11 @@ describe('classic-level backend behaviour contract', function () {
     expect(Buffer.isBuffer(v)).to.equal(true)
     expect(v.length).to.equal(0)
   })
+})
+
+describe('classic-level backend behaviour contract', function () {
+  beforeEach(openDatabase)
+  afterEach(closeDatabase)
 
   // --- range boundary: mirrors LevelUpDb.rangeEnd (prefix + 12 bytes of 0xFF) ---
   it('range scan with a 12-byte 0xFF upper bound includes keys ending in 0xFF', async function () {
