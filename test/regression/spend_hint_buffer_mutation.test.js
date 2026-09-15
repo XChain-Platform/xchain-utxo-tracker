@@ -66,6 +66,24 @@ describe('Regression (cfa0902): input-hash reversal on a copy', function () {
     await parseInputsOnce(tx); // second pass (e.g. block confirmation)
     expect(input.hash.equals(original), 'buffer changed after 2nd parse').to.equal(true);
   });
+});
+
+describe('Regression (cfa0902): input-hash reversal on a copy', function () {
+  let tracker;
+
+  beforeEach(async function () {
+    tracker = await createTestTracker();
+  });
+
+  afterEach(async function () {
+    await closeTracker(tracker);
+  });
+
+  async function parseInputsOnce(tx) {
+    await tracker.db.beginTransaction();
+    await tracker.parseTxInputs(tracker.db, tx, 'b'.repeat(64), false, false);
+    await tracker.db.endTransaction();
+  }
 
   it('recovers the same correct prevTxHash on both parses (no double-reversal)', async function () {
     const input = makeSpendInput(PREV_TXID, 3);
