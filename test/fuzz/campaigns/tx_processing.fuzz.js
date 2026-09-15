@@ -19,9 +19,9 @@ const {
 } = require('../support/helpers');
 const { satoshiToDecimalString } = require('../../../src/XChainUtxoTracker');
 
-describe('Fuzz: Transaction Processing (P1)', function () {
-  let tracker;
+let tracker;
 
+function useTracker() {
   beforeEach(async function () {
     tracker = await createTestTracker();
   });
@@ -29,7 +29,9 @@ describe('Fuzz: Transaction Processing (P1)', function () {
   afterEach(async function () {
     await closeTracker(tracker);
   });
+}
 
+function registerCoinbaseOutputProperty() {
   describe('two-pass block processing', function () {
     it('every output from a coinbase-only block is retrievable', async function () {
       await fc.assert(
@@ -62,7 +64,11 @@ describe('Fuzz: Transaction Processing (P1)', function () {
         { numRuns: Math.min(FUZZ_RUNS, 200) }
       );
     });
+  });
+}
 
+function registerMultipleAddressProperty() {
+  describe('two-pass block processing', function () {
     it('outputs to multiple addresses in one block are all tracked', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -96,7 +102,11 @@ describe('Fuzz: Transaction Processing (P1)', function () {
         { numRuns: Math.min(FUZZ_RUNS, 100) }
       );
     });
+  });
+}
 
+function registerIntraBlockSpendProperty() {
+  describe('two-pass block processing', function () {
     it('intra-block spend: output created and spent in same block', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -139,6 +149,17 @@ describe('Fuzz: Transaction Processing (P1)', function () {
       );
     });
   });
+}
+
+describe('Fuzz: Transaction Processing (P1)', function () {
+  useTracker();
+  registerCoinbaseOutputProperty();
+  registerMultipleAddressProperty();
+  registerIntraBlockSpendProperty();
+});
+
+describe('Fuzz: Transaction Processing (P1)', function () {
+  useTracker();
 
   describe('multi-block chain processing', function () {
     it('chain of blocks with spends maintains correct balance', async function () {
@@ -193,6 +214,10 @@ describe('Fuzz: Transaction Processing (P1)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: Transaction Processing (P1)', function () {
+  useTracker();
 
   describe('edge cases', function () {
     it('coinbase input (0xFFFFFFFF index) is not tracked as a spend', async function () {
