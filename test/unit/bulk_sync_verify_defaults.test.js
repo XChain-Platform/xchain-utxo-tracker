@@ -60,6 +60,9 @@ describe('bulk-sync verify defaults @unit', function () {
         expect(a.verifyChain).to.equal(true);
         expect(a.verifyMerkle).to.equal(false);
     });
+});
+
+describe('bulk-sync verify defaults @unit', function () {
 
     it('merkle implies chain: --no-verify-chain alone on mainnet is overridden by default merkle', function () {
         const a = argsFor('bitcoin-mainnet', '--no-verify-chain');
