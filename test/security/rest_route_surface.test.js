@@ -132,6 +132,23 @@ describe('Security: REST address-route input surface', function () {
     expect(res.headers['x-synced']).to.equal('false');
     expect(res.headers['x-mempool-ready']).to.equal('false');
   });
+});
+
+describe('Security: REST address-route input surface', function () {
+  let tracker;
+  let app;
+
+  beforeEach(function () {
+    tracker = {
+      getUtxosAddress: sinon.stub().resolves([]),
+      getBalanceInfo: sinon.stub().resolves({ address: 'x', balances: { confirmed: '0.00000000' } }),
+      isSynced: sinon.stub().returns(true),
+      isMempoolReconverged: sinon.stub().returns(true),
+      latestKnownChainTip: 100,
+      db: { getLastBlockHeight: sinon.stub().resolves(100) },
+    };
+    app = createRealRoutesApp(tracker);
+  });
 
   it('exposes X-Mempool-Ready=false while the mempool has not reconverged', async function () {
     tracker.isMempoolReconverged.returns(false);
