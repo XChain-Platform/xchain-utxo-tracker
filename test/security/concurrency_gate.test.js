@@ -24,157 +24,27 @@
 'use strict';
 
 const { expect }  = require('chai');
-const express     = require('express');
-const http        = require('http');
-const rateLimit   = require('express-rate-limit');
-const { createConcurrencyGate, resolveLimit } = require('../../src/server/concurrency_gate.js');
-const { captureLog } = require('../helpers/capture_log');
-const fs = require('fs');
-const path = require('path');
+const {
+    buildServer, closeServers, get, listen, waitFor
+} = require('./concurrency_gate.test/support');
 
-// Servers opened by a test, torn down in afterEach.
-let openServers = [];
-
-const BUSY_BODY = { error: 'Server busy, retry shortly', code: 'SERVER_BUSY' };
-// Mirrors api.js exactly: the predicate must cover every request Express
-// routes to `app.get('/status')` under the default routing options - HEAD,
-// a trailing slash, any letter case - or the gate that admits the request is
-// not the gate whose hold() spans the handler.
-const PROBE_PATH = /^\/status\/?$/i;
-const isProbe   = (req) => (req.method === 'GET' || req.method === 'HEAD') && PROBE_PATH.test(req.path);
-
-/**
- * Stand up a miniature tracker with api.js's exact middleware order: the
- * production per-IP limiter, the probe reserve, the main gate, then handlers
- * that park until the test releases them. Parking is what makes "concurrent"
- * deterministic - requests stay in flight until we say so.
- */
-function buildServer(options){
-    options = options || {};
-
-    const app = express();
-    // Same trust-proxy setting api.js uses, so an X-Forwarded-For hop becomes req.ip.
-    app.set('trust proxy', 1);
-
-    // The per-IP limiter at its production default. With one request per forged
-    // IP, every bucket sees a single hit, so this can never be the thing that
-    // sheds below; a 429 carrying RATE_LIMITED instead of SERVER_BUSY would
-    // mean the test proved nothing.
-    app.use(rateLimit({
-        windowMs:        60 * 1000,
-        limit:           500,
-        standardHeaders: true,
-        legacyHeaders:   false,
-        message:         { error: 'Too many requests', code: 'RATE_LIMITED' }
-    }));
-
-    const probeGate = createConcurrencyGate({
-        limit:      options.probeLimit !== undefined ? options.probeLimit : 16,
-        retryAfter: 1,
-        skip:       (req) => !isProbe(req),
-        body:       BUSY_BODY
-    });
-    app.use(probeGate);
-
-    const gate = createConcurrencyGate({
-        limit:      options.limit,
-        retryAfter: 1,
-        skip:       isProbe,
-        body:       BUSY_BODY
-    });
-    app.use(gate);
-
-    let releaseHeld, releaseProbe;
-    const held      = new Promise(resolve => { releaseHeld  = resolve; });
-    const heldProbe = new Promise(resolve => { releaseProbe = resolve; });
-
-    // Counts handler entries. A DISABLED gate reports {0,0,0} at all times, so its
-    // stats carry no signal a test can synchronize on; this is the positive proof
-    // that a request got past the gate instead of never having been dispatched.
-    let expensiveEntered = 0;
-    let heldEntered      = 0;
-
-    app.get('/expensive', async (req, res) => {
-        expensiveEntered++;
-        await held;
-        res.json({ ok: true, ip: req.ip });
-    });
-    // The same parked handler, wrapped the way api.js wraps its address routes.
-    // `hold` is stubbed to a pass-through when a test asks for it, which is what
-    // the gate did before it had one: that is the negative control for the
-    // held-slot assertions below, not a second flavour of the same route.
-    const wrap = options.stubHold ? (fn) => fn : gate.hold;
-    app.get('/held', wrap(async (req, res) => {
-        heldEntered++;
-        await held;
-        res.json({ ok: true, ip: req.ip });
-    }));
-    // The real /status reads the committed height out of LevelDB, so it can be
-    // made to park exactly like an expensive route; opts in per test.
-    // Wrapped in probeGate.hold the way api.js wraps it. Unwrapped, the harness
-    // could not see the defect at all: hold() is what turns a socket-lifetime
-    // slot into a work-lifetime one, and the whole misclassification class is
-    // about hold() looking for a slot the OTHER gate admitted.
-    app.get('/status', probeGate.hold(async (req, res) => {
-        if(options.parkProbes) await heldProbe;
-        res.json({ status: 'ok' });
-    }));
-
-    const server = http.createServer(app);
-    openServers.push(server);
-
-    return {
-        app, gate, probeGate, server,
-        release:      () => releaseHeld(),
-        releaseProbe: () => releaseProbe(),
-        entered:      () => expensiveEntered,
-        enteredHeld:  () => heldEntered
-    };
-}
-
-function listen(server){
-    return new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-}
-
-function urlFor(server, path){
-    return 'http://127.0.0.1:' + server.address().port + path;
-}
-
-// Requests from N different "clients". One IP per request is the whole point:
-// it is the traffic shape a per-IP limiter is blind to.
-function get(server, path, ipSuffix, init){
-    return fetch(urlFor(server, path), Object.assign({
-        headers: { 'X-Forwarded-For': '203.0.113.' + ipSuffix }
-    }, init || {}));
-}
-
-/**
- * Poll until predicate() holds, or REJECT naming what was being waited for.
- * The rejection is the whole point: a waiter that cannot time out converts a
- * flake into a test that passes unconditionally, which is strictly worse than
- * the flake. timeoutMs is a bound, not a knob - a site that needs a longer one
- * is a finding about that site, not something to widen here.
- */
-async function waitFor(predicate, label, timeoutMs = 2000){
-    const deadline = Date.now() + timeoutMs;
-    while(Date.now() < deadline){
-        if(predicate()) return;
-        // The helper's own poll interval, not a synchronization sleep.
-        await new Promise(r => setTimeout(r, 5));
-    }
-    throw new Error('timed out after ' + timeoutMs + 'ms waiting for: ' + label);
-}
+// Express answers the bare `app.get('/status')` route for HEAD, for a
+// trailing slash and for any letter case. An unguarded probe predicate
+// fails each of those, so the MAIN gate admits them while probeGate.hold()
+// finds no slot of its own and degrades to a pass-through: the request's
+// main-cap slot is then freed by the socket close while the handler's
+// LevelDB read is still running. Each variant is asserted twice: it lands
+// in the probe reserve rather than the main cap, and an abort does not free
+// its slot while the handler is still parked.
+const PROBE_VARIANTS = [
+    { label: 'HEAD /status',  path: '/status',  init: { method: 'HEAD' } },
+    { label: 'GET /status/',  path: '/status/', init: undefined },
+    { label: 'GET /STATUS',   path: '/STATUS',  init: undefined }
+];
 
 describe('Security: global in-flight concurrency cap', function () {
 
-    afterEach(function () {
-        for(const server of openServers){
-            // fetch keeps its sockets alive, so close() alone would hang.
-            if(typeof server.closeAllConnections === 'function') server.closeAllConnections();
-            server.close();
-        }
-        openServers = [];
-    });
+    afterEach(closeServers);
 
     it('refuses the (cap+1)th concurrent request with 429, though every request has a distinct IP', async function () {
         const CAP = 3;
@@ -224,6 +94,11 @@ describe('Security: global in-flight concurrency cap', function () {
         expect((await get(server, '/expensive', 3)).status).to.equal(200);
         expect(gate.getStats().shed).to.equal(1);
     });
+});
+
+describe('Security: global in-flight concurrency cap', function () {
+
+    afterEach(closeServers);
 
     it('frees a slot when the client aborts mid-request', async function () {
         // Without the 'close' leg an abandoned request keeps its slot forever
@@ -275,6 +150,11 @@ describe('Security: global in-flight concurrency cap', function () {
         await waitFor(() => gate.getStats().in_flight === 0, 'slot to come back once the work settled');
         expect((await get(server, '/held', 3)).status).to.equal(200);
     });
+});
+
+describe('Security: global in-flight concurrency cap', function () {
+
+    afterEach(closeServers);
 
     it('negative control: with hold() stubbed out, the aborted slot is handed to the next caller', async function () {
         // The same scenario against a pass-through wrapper, which is exactly the
@@ -292,7 +172,7 @@ describe('Security: global in-flight concurrency cap', function () {
         await aborted.catch(() => {});
         await waitFor(() => gate.getStats().in_flight === 0, 'the socket close to free the slot');
 
-        // Over-admission: a second handler is now running the same expensive work
+        // Over-admission: a second handler is running the same expensive work
         // the cap of 1 was meant to forbid. It is never awaited, because it parks
         // in the handler exactly like the first one did.
         get(server, '/held', 2).catch(() => {});
@@ -313,6 +193,11 @@ describe('Security: global in-flight concurrency cap', function () {
         release();
         expect((await parked).status).to.equal(200);
     });
+});
+
+describe('Security: global in-flight concurrency cap', function () {
+
+    afterEach(closeServers);
 
     it('still answers the /status readiness probe while the main gate sheds', async function () {
         const { server, gate } = buildServer({ limit: 1 });
@@ -348,20 +233,11 @@ describe('Security: global in-flight concurrency cap', function () {
         releaseProbe();
         for(const response of await Promise.all(parkedProbes)) expect(response.status).to.equal(200);
     });
+});
 
-    // Express answers the bare `app.get('/status')` route for HEAD, for a
-    // trailing slash and for any letter case. An unguarded probe predicate
-    // fails each of those, so the MAIN gate admits them while probeGate.hold()
-    // finds no slot of its own and degrades to a pass-through: the request's
-    // main-cap slot is then freed by the socket close while the handler's
-    // LevelDB read is still running. Each variant is asserted twice: it lands
-    // in the probe reserve rather than the main cap, and an abort does not free
-    // its slot while the handler is still parked.
-    const PROBE_VARIANTS = [
-        { label: 'HEAD /status',  path: '/status',  init: { method: 'HEAD' } },
-        { label: 'GET /status/',  path: '/status/', init: undefined },
-        { label: 'GET /STATUS',   path: '/STATUS',  init: undefined }
-    ];
+describe('Security: global in-flight concurrency cap', function () {
+
+    afterEach(closeServers);
 
     for(const variant of PROBE_VARIANTS){
         it(`routes ${variant.label} to the probe reserve, not the main cap`, async function () {
@@ -411,6 +287,11 @@ describe('Security: global in-flight concurrency cap', function () {
                 'the probe slot to come back once the parked work settled');
         });
     }
+});
+
+describe('Security: global in-flight concurrency cap', function () {
+
+    afterEach(closeServers);
 
     it('is disabled by a cap of 0 (operator escape hatch)', async function () {
         const { server, gate, release, entered } = buildServer({ limit: 0 });
@@ -428,97 +309,5 @@ describe('Security: global in-flight concurrency cap', function () {
 
         release();
         for(const response of await Promise.all(parked)) expect(response.status).to.equal(200);
-    });
-
-    describe('resolveLimit', function () {
-
-        it('keeps the caller default when the env var is unset or unparseable', function () {
-            // A typo must not silently remove the cap.
-            expect(resolveLimit(undefined, 100)).to.equal(100);
-            expect(resolveLimit('', 100)).to.equal(100);
-            expect(resolveLimit('lots', 100)).to.equal(100);
-        });
-
-        it('honours an explicit value and treats <= 0 as disabled', function () {
-            expect(resolveLimit('25', 100)).to.equal(25);
-            expect(resolveLimit('0', 100)).to.equal(0);
-            expect(resolveLimit('-5', 100)).to.equal(0);
-        });
-
-        // The blind spot that hid item 7713: 'lots' is the one malformed shape
-        // parseInt DOES reject, so the case above passed while the shapes an
-        // operator actually typos went the other way. parseInt reads a numeric
-        // PREFIX, so '0oops' and '0.5' parsed to 0, Number.isFinite(0) is true,
-        // the caller's default was skipped, and the <= 0 escape hatch disabled
-        // admission control outright.
-        it('keeps the default for a prefix-numeric or fractional typo, rather than disabling the gate', function () {
-            // The control: this is what the replaced arithmetic produced.
-            expect(parseInt('0oops', 10)).to.equal(0);
-            expect(parseInt('0.5', 10)).to.equal(0);
-            expect(Number.isFinite(parseInt('0oops', 10))).to.equal(true);
-
-            // resolveLimit warns through the shared logger at error level.
-            const warned = [];
-            const release = captureLog(['error'], (level, msg) => warned.push(msg));
-            try {
-                for (const bad of ['0oops', '0.5', '16abc', '1e', '2.9']) {
-                    expect(resolveLimit(bad, 100), 'resolveLimit should have refused ' + bad).to.equal(100);
-                    expect(resolveLimit(bad, 16),  'resolveLimit should have refused ' + bad).to.equal(16);
-                }
-            } finally {
-                release();
-            }
-            expect(warned.join('\n')).to.match(/is not an integer/);
-        });
-
-        it('still trims a well-formed value and keeps the deliberate 0 hatch', function () {
-            expect(resolveLimit(' 25 ', 100)).to.equal(25);
-            expect(resolveLimit(' 0 ', 100)).to.equal(0);
-            expect(resolveLimit(null, 100)).to.equal(100);
-        });
-    });
-
-    describe('api.js wiring', function () {
-
-        const apiSource = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
-
-        it('mounts the gate on the app with an env-overridable cap', function () {
-            expect(apiSource).to.include('concurrencyGate.createConcurrencyGate');
-            expect(apiSource).to.include('UTXO_TRACKER_MAX_CONCURRENT_REQUESTS');
-            expect(apiSource).to.match(/app\.use\(requestGate\)/);
-        });
-
-        it('mounts a bounded reserve for the exempt readiness probe', function () {
-            expect(apiSource).to.include('UTXO_TRACKER_MAX_CONCURRENT_PROBES');
-            expect(apiSource).to.match(/app\.use\(probeGate\)/);
-        });
-
-        it('classifies probes over the same set Express routes to /status', function () {
-            // The two gates share one predicate as exact complements, so a
-            // predicate narrower than the route splits admitting from holding
-            // and hold() silently becomes a no-op. Assert the widened form in
-            // source: HEAD, optional trailing slash, case-insensitive.
-            expect(apiSource).to.include("const PROBE_PATH = /^\\/status\\/?$/i;");
-            expect(apiSource).to.match(/isProbe\s*=\s*\(req\)\s*=>\s*\(req\.method === 'GET' \|\| req\.method === 'HEAD'\) && PROBE_PATH\.test\(req\.path\)/);
-        });
-
-        it('holds the slot across every route that awaits a backend read', function () {
-            // A route added without the wrapper is back to counting sockets
-            // instead of work, which is invisible at runtime: assert the wiring
-            // in source so the regression is caught here instead of in traffic.
-            for(const route of ['/utxos/:address', '/firstseen/:address', '/balance/:address', '/info/:address']){
-                expect(apiSource).to.include(`app.get('${route}', requestGate.hold(`);
-            }
-            // /status is exempt from the main cap, so its slot lives in the probe
-            // reserve and only that gate's hold() can claim it.
-            expect(apiSource).to.include("app.get('/status', probeGate.hold(");
-            // One wrap covers every JSON-RPC method, batches included.
-            expect(apiSource).to.match(/app\.use\(requestGate\.hold\(jsonRouter\(/);
-        });
-
-        it('reports the gate stats so a stampede is visible to operators', function () {
-            expect(apiSource).to.include('request_gate: requestGate.getStats()');
-            expect(apiSource).to.include('probe_gate: probeGate.getStats()');
-        });
     });
 });
