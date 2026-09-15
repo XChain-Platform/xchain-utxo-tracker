@@ -90,6 +90,9 @@ describe('CORS_ORIGIN allowlist parsing', function () {
             assert.deepStrictEqual(parseCorsOrigin(`${IOS},,${EXPLORER}`), [IOS, EXPLORER])
         })
     })
+})
+
+describe('CORS_ORIGIN allowlist parsing', function () {
 
     describe('what a caller actually receives', function () {
 
@@ -117,6 +120,12 @@ describe('CORS_ORIGIN allowlist parsing', function () {
             assert.strictEqual(acao[IOS], EXPLORER)
             assert.strictEqual(acao[HOSTILE], EXPLORER)
         })
+    })
+})
+
+describe('CORS_ORIGIN allowlist parsing', function () {
+
+    describe('what a caller actually receives', function () {
 
         // The allowlist form is strictly stronger: an unlisted origin is refused at
         // the SERVER, without a header, rather than relying on the browser.
@@ -153,6 +162,9 @@ describe('CORS_ORIGIN allowlist parsing', function () {
                 'a stray `*` in a list must not widen the grant to every origin')
         })
     })
+})
+
+describe('CORS_ORIGIN allowlist parsing', function () {
 
     // The parser is only reached if api.js actually calls it. Asserting the source
     // line keeps a later edit from reverting to the raw env var while every
