@@ -55,9 +55,11 @@ function getInputFromKeyPattern(tracker, { pattern }) {
 
 const ADDR = TEST_KEYS[0];
 
-describe('Security: get_input_from_key_pattern guard + scan surface', function () {
-  let tracker;
+let tracker;
 
+// Every sibling block needs its own tracker holding one stored output, which is
+// what the scan surface under test reads.
+function registerTrackerHooks() {
   beforeEach(async function () {
     tracker = await createTestTracker();
     await tracker.db.beginTransaction();
@@ -71,7 +73,10 @@ describe('Security: get_input_from_key_pattern guard + scan surface', function (
   afterEach(async function () {
     await closeTracker(tracker);
   });
+}
 
+describe('Security: get_input_from_key_pattern guard + scan surface', function () {
+  registerTrackerHooks();
   it('rejects an empty / too-short string pattern', async function () {
     expect(await getInputFromKeyPattern(tracker, { pattern: '' })).to.deep.equal({ error: 'pattern is too short' });
     expect(await getInputFromKeyPattern(tracker, { pattern: 'ab' })).to.deep.equal({ error: 'pattern is too short' });
@@ -102,7 +107,10 @@ describe('Security: get_input_from_key_pattern guard + scan surface', function (
     const res = await getInputFromKeyPattern(tracker, { pattern: 'g'.repeat(32) });
     expect(res).to.deep.equal({ error: 'pattern must be a hex string' });
   });
+});
 
+describe('Security: get_input_from_key_pattern guard + scan surface', function () {
+  registerTrackerHooks();
   it('rejects a pattern with a non-hex character mid-string (1-byte-prefix scan)', async function () {
     // '4f' + 'g'.repeat(30) would silently truncate to the single byte 0x4f,
     // a scan of every live O-prefix UTXO in the database.
@@ -131,7 +139,10 @@ describe('Security: get_input_from_key_pattern guard + scan surface', function (
       expect(err.code).to.equal('BAD_REQUEST');
     }
   });
+});
 
+describe('Security: get_input_from_key_pattern guard + scan surface', function () {
+  registerTrackerHooks();
   it('DB layer enforces the maxValues ceiling (AddressTooLargeError)', async function () {
     // Two rows exist under ADDR's O-prefix after this insert; a ceiling of 1
     // must fail loud rather than accumulate past it.
@@ -171,7 +182,10 @@ describe('Security: get_input_from_key_pattern guard + scan surface', function (
     expect(row).to.not.have.property('amount');
     expect(row).to.not.have.property('txid');
   });
+});
 
+describe('Security: get_input_from_key_pattern guard + scan surface', function () {
+  registerTrackerHooks();
   it('a prefix matching no records returns an empty set, not the whole DB', async function () {
     // A 33-byte prefix for a scriptHash with no outputs must scope to nothing.
     // This proves the scan is prefix-bounded (rangeEnd), not a full table dump.
