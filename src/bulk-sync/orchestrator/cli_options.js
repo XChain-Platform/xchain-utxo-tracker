@@ -86,8 +86,8 @@ function resolveVerifyDefaults(args) {
 // is returned as-is because the tip is unknown here and the clamp has nothing to compare
 // against; the invariant is enforced instead in dump.js, at the one point the real tip IS
 // resolved, where an explicit --to inside the undo window is rejected unless
-// --allow-undo-window names the override. A warning-only override used to be enough to
-// let an unsafe --to through unnoticed, which is why the guard now fails loud instead.
+// --allow-undo-window names the override. The guard fails loud on an unsafe --to
+// rather than only warning, because a warning alone lets it through unnoticed.
 function effectiveTipSafety(tipSafety, to, network) {
     if (to !== null) return tipSafety
     return Math.max(tipSafety, resolveUndoBlocks(network))
