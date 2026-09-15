@@ -13,6 +13,42 @@
 const { expect } = require('chai');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 
+function createRetryState(failuresPerBlock) {
+  let top = 102;
+  const failsLeft = { 102: failuresPerBlock, 101: failuresPerBlock, 100: failuresPerBlock };
+  const deleted = [];
+  const heightOf = (hash) => parseInt(hash.replace('db', ''), 10);
+
+  // node agrees with the db at/below height 99 ('db99'), disagrees above it.
+  const connector = {
+    getBlockHash: async (h) => (h <= 99 ? 'db' + h : 'node' + h)
+  };
+  const db = {
+    getLastBlockHeight: async () => top,
+    getLastBlockHash: async () => 'db' + top,
+    getBlock: async (hash) => {
+      const h = heightOf(hash);
+      return { h, ph: 'db' + (h - 1) };
+    },
+    getLastBlock: async () => ({ hash: 'db' + top, height: top }),
+    beginTransaction: async () => {},
+    endTransaction: async () => {},
+    removeOutputScriptsInBlock: async () => {},
+    processDeletedOutputs: async () => {},
+    removeCreatedOutputsInBlock: async () => {},
+    deleteBlock: async (hash) => {
+      const h = heightOf(hash);
+      if (failsLeft[h] > 0) { failsLeft[h]--; throw new Error('transient DB error'); }
+      deleted.push(h);
+      top = h - 1;
+    },
+    setLastBlockHash: async () => {},
+    setLastBlockHeight: async () => {}
+  };
+
+  return { connector, db, deleted };
+}
+
 // Regression test for the per-block retry budget in verifyReorg.
 //
 // Bug: retryCount was declared once before the block-deletion loop and shared
@@ -37,37 +73,9 @@ describe('XChainUtxoTracker.verifyReorg retry budget', function () {
     tracker.sleep = async () => {};
     tracker.removeFromLastBlocks = async () => {};
 
-    let top = 102;
-    const failsLeft = { 102: failuresPerBlock, 101: failuresPerBlock, 100: failuresPerBlock };
-    const deleted = [];
-    const heightOf = (hash) => parseInt(hash.replace('db', ''), 10);
-
-    // node agrees with the db at/below height 99 ('db99'), disagrees above it.
-    tracker.connector = {
-      getBlockHash: async (h) => (h <= 99 ? 'db' + h : 'node' + h)
-    };
-    tracker.db = {
-      getLastBlockHeight: async () => top,
-      getLastBlockHash: async () => 'db' + top,
-      getBlock: async (hash) => {
-        const h = heightOf(hash);
-        return { h, ph: 'db' + (h - 1) };
-      },
-      getLastBlock: async () => ({ hash: 'db' + top, height: top }),
-      beginTransaction: async () => {},
-      endTransaction: async () => {},
-      removeOutputScriptsInBlock: async () => {},
-      processDeletedOutputs: async () => {},
-      removeCreatedOutputsInBlock: async () => {},
-      deleteBlock: async (hash) => {
-        const h = heightOf(hash);
-        if (failsLeft[h] > 0) { failsLeft[h]--; throw new Error('transient DB error'); }
-        deleted.push(h);
-        top = h - 1;
-      },
-      setLastBlockHash: async () => {},
-      setLastBlockHeight: async () => {}
-    };
+    const { connector, db, deleted } = createRetryState(failuresPerBlock);
+    tracker.connector = connector;
+    tracker.db = db;
 
     return { tracker, deleted };
   }
@@ -96,6 +104,10 @@ describe('XChainUtxoTracker.verifyReorg retry budget', function () {
     }
     expect(threw, 'verifyReorg should abort after 10 consecutive failures').to.equal(true);
   });
+});
+
+describe('XChainUtxoTracker.verifyReorg retry budget', function () {
+  this.timeout(0);
 
   it('throws a clear error (not a TypeError) when the block index is empty but a pointer is set', async function () {
     // Corrupt state: LAST_BLOCK_HASH points at a block whose record is gone, and
