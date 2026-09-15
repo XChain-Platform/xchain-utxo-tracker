@@ -15,7 +15,6 @@
 const { DEBUG_TRACE, logger, OUTPUT_CACHE_MAX } = require('./constants')
 const { kOutput, kOutputFromBuf, kOutHint, kOutBlk, kBlock, kHintDel, kOutDelFromBuf } = require('./key_codec')
 const { encodeOutput, encodeOutHint, decodeBlock, decodeOutput } = require('./value_codec')
-const LevelUpStore = require('../level_up_db.js')
 
 // Phase 1 lookups for removeOutputsWithInputsBatch (every phase helper is sync, so
 // each await stays in the caller): a { hKey } slot per input, filled from the open
@@ -57,8 +56,8 @@ function applyHintValues(inputs, resolved, hintDbKeys, hintDbIndices, hintValues
 // First check the in-memory output cache (recently-written outputs).
 // Most spends hit recently-created UTXOs (locality), so this absorbs
 // a large fraction of the lookups without touching the DB.
-function queueOutputLookups(inputs, resolved, outputDbKeys, outputDbIndices) {
-    const cache = LevelUpStore.outputCache
+function queueOutputLookups(store, inputs, resolved, outputDbKeys, outputDbIndices) {
+    const cache = store.constructor.outputCache
     for (let i = 0; i < inputs.length; i++) {
         if (!resolved[i] || !resolved[i].scriptPubKeyBuf) continue
         if (resolved[i].inMem) continue
@@ -74,10 +73,10 @@ function queueOutputLookups(inputs, resolved, outputDbKeys, outputDbIndices) {
         if (cached !== undefined) {
             r.oVal = cached
             cache.delete(cacheKey)   // spent: drop from cache
-            LevelUpStore.outputCacheHits++
+            store.constructor.outputCacheHits++
             continue
         }
-        LevelUpStore.outputCacheMisses++
+        store.constructor.outputCacheMisses++
 
         outputDbKeys.push(r.oKey)
         outputDbIndices.push(i)
@@ -158,12 +157,12 @@ module.exports = {
         if (output.height != null && output.height >= 0) {
             const _oi = output.outputIndex
             const cacheKey = output.txHash + String.fromCharCode((_oi >>> 16) & 0xFFFF, _oi & 0xFFFF)
-            const cache = LevelUpStore.outputCache
+            const cache = this.constructor.outputCache
             cache.set(cacheKey, oVal)
             if (cache.size > OUTPUT_CACHE_MAX) {
                 // Recreate the Map to avoid V8 tombstone accumulation from
                 // constant add+delete patterns, which causes steady degradation.
-                LevelUpStore.outputCache = new Map()
+                this.constructor.outputCache = new Map()
             }
         }
 
@@ -215,20 +214,6 @@ module.exports = {
 
     // Output + hint removal (REMOVE_SPENT path)
 
-    // Cross-block in-memory spend recovery: when an output is created and spent
-    // in the SAME batch, the spend takes the in-memory path and only survives
-    // via the per-block entry in deletedTransactionArray, which endTransaction
-    // discards on commit. A same-block create+spend is harmless (a reorg can
-    // never split one block), but a batch spans up to
-    // DB_TRANSACTION_BLOCKS_QUANTITY blocks, so a create at block N and a spend
-    // at block N+k can be split by a reorg between them; with no K/M records on
-    // disk, processDeletedOutputs finds nothing to restore and the balance is
-    // silently lost. Fix: when the spent output's creation block is strictly
-    // earlier than the spend block, write the same M/K restore records the
-    // DB/archive branch writes, keyed by the spend blockHash, so a reorg
-    // restores it normally; cleanupAgedBlocks still prunes them once they age
-    // out. spendBlockHeight comes from this batch's B record; createdHeight
-    // from the spent output's value, since the input object carries no height.
     // Cross-block in-memory spend recovery.
     //
     // When an output is created and spent within the SAME uncommitted batch the
@@ -352,20 +337,20 @@ module.exports = {
             const hintValues = await this.db.getMany(hintDbKeys)
             applyHintValues(inputs, resolved, hintDbKeys, hintDbIndices, hintValues)
         }
-        LevelUpStore.parseInBuckets.hintRead += Date.now() - _tHint
+        this.constructor.parseInBuckets.hintRead += Date.now() - _tHint
 
         // Phase 2: resolve all output values
         const _tOut = Date.now()
         const outputDbKeys = []
         const outputDbIndices = []
-        queueOutputLookups(inputs, resolved, outputDbKeys, outputDbIndices)
+        queueOutputLookups(this, inputs, resolved, outputDbKeys, outputDbIndices)
 
         // Batch DB read for cache misses
         if (outputDbKeys.length > 0) {
             const outputValues = await this.db.getMany(outputDbKeys)
             applyOutputValues(resolved, outputDbKeys, outputDbIndices, outputValues)
         }
-        LevelUpStore.parseInBuckets.outRead += Date.now() - _tOut
+        this.constructor.parseInBuckets.outRead += Date.now() - _tOut
 
         // Phase 3: stage all deletes
         const _tStage = Date.now()
@@ -393,7 +378,7 @@ module.exports = {
             await this.addTransaction("del", r.oKey)
             await this.addTransaction("del", r.hKey)
         }
-        LevelUpStore.parseInBuckets.stage += Date.now() - _tStage
+        this.constructor.parseInBuckets.stage += Date.now() - _tStage
         return inputs.length
     },
 }
