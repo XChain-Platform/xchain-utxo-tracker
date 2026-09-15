@@ -51,7 +51,11 @@ describe('Fuzz: Balance Calculation (P0)', function () {
     it('1 BTC (100000000 satoshis) produces "1.00000000"', function () {
       expect(satoshiToDecimalString(SATOSHI_BIGINT)).to.equal('1.00000000');
     });
+  });
+});
 
+describe('Fuzz: Balance Calculation (P0)', function () {
+  describe('satoshiToDecimalString', function () {
     it('negative values produce negative strings', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -98,7 +102,9 @@ describe('Fuzz: Balance Calculation (P0)', function () {
       }
     });
   });
+});
 
+describe('Fuzz: Balance Calculation (P0)', function () {
   describe('balance oracle', function () {
     let tracker;
 
@@ -148,6 +154,15 @@ describe('Fuzz: Balance Calculation (P0)', function () {
         { numRuns: Math.min(FUZZ_RUNS, 100) }
       );
     });
+  });
+});
+
+describe('Fuzz: Balance Calculation (P0)', function () {
+  describe('balance oracle', function () {
+    let tracker;
+
+    beforeEach(async function () { tracker = await createTestTracker(); });
+    afterEach(async function () { await closeTracker(tracker); });
 
     it('spending reduces balance by exact output value', async function () {
       await fc.assert(
@@ -199,6 +214,20 @@ describe('Fuzz: Balance Calculation (P0)', function () {
         ),
         { numRuns: Math.min(FUZZ_RUNS, 100) }
       );
+    });
+  });
+});
+
+describe('Fuzz: Balance Calculation (P0)', function () {
+  describe('balance oracle', function () {
+    let tracker;
+
+    beforeEach(async function () {
+      tracker = await createTestTracker();
+    });
+
+    afterEach(async function () {
+      await closeTracker(tracker);
     });
 
     it('address with no outputs returns zero balance', async function () {
