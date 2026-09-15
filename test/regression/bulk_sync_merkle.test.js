@@ -111,7 +111,9 @@ describe('Regression: bulk-sync merkle-root verification', function () {
         expect(res.ok).to.equal(false);
         expect(res.error).to.match(/no transactions|failed to parse/);
     });
+});
 
+describe('Regression: bulk-sync merkle-root verification', function () {
     it('without --merkle a substituted tx list still passes (documented scope limit)', function () {
         const b0 = makeBlock(GENESIS_PREV, 0, [makeTx(0, true), makeTx(99)], [makeTx(0, true), makeTx(1)]);
         const res = verifyBlockSequence([b0]);
@@ -141,7 +143,9 @@ describe('Regression: bulk-sync merkle-root verification', function () {
     it('requires opts.coin when merkle is requested', function () {
         expect(() => verifyBlockSequence([], { merkle: true })).to.throw(/opts\.coin/);
     });
+});
 
+describe('Regression: bulk-sync merkle-root verification', function () {
     // File path: the coin for the tx decoder is auto-derived from the .xdmp
     // header, so the orchestrator gate needs no extra plumbing.
     describe('validateChainFiles with merkle', function () {
