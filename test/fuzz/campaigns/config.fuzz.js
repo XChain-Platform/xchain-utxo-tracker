@@ -60,7 +60,11 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
         }
       }
     });
+  });
+});
 
+describe('Fuzz: Configuration Parsing (P3)', function () {
+  describe('XChainUtxoTracker constructor', function () {
     it('handles fuzzed port values', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -88,7 +92,11 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
         { numRuns: FUZZ_RUNS }
       );
     });
+  });
+});
 
+describe('Fuzz: Configuration Parsing (P3)', function () {
+  describe('XChainUtxoTracker constructor', function () {
     it('handles fuzzed URL values', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -113,7 +121,11 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
         { numRuns: FUZZ_RUNS }
       );
     });
+  });
+});
 
+describe('Fuzz: Configuration Parsing (P3)', function () {
+  describe('XChainUtxoTracker constructor', function () {
     it('handles fuzzed credentials', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -157,7 +169,11 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
         { numRuns: FUZZ_RUNS }
       );
     });
+  });
+});
 
+describe('Fuzz: Configuration Parsing (P3)', function () {
+  describe('XChainUtxoTracker constructor', function () {
     it('handles fuzzed auxPow flag', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -186,7 +202,9 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
       );
     });
   });
+});
 
+describe('Fuzz: Configuration Parsing (P3)', function () {
   describe('XChainBlockDecoder constructor', function () {
     it('handles any network name string', async function () {
       await fc.assert(
