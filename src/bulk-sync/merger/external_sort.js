@@ -111,6 +111,53 @@ class MinHeap {
  * @returns {Promise<{runsCreated:number, recordsSorted:number, bytesOut:number}>}
  */
 async function externalSort(opts) {
+    const o = resolveSortOptions(opts)
+    const { inputPath, outputPath, tmpDir, headerSize, preserveHeader, keepRuns, onProgress } = o
+
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true })
+
+    const plan = planRuns(o)
+    const { totalRecords, recordsPerRun } = plan
+
+    onProgress({
+        phase: 'start',
+        totalRecords, recordsPerRun,
+        expectedRuns: Math.ceil(totalRecords / recordsPerRun),
+    })
+
+
+    // Phase 1: create sorted runs
+    const runPaths = createSortedRuns(o, plan)
+
+    // Phase 2: k-way merge
+
+    onProgress({ phase: 'merge-start', runs: runPaths.length })
+
+    const fdOut = fs.openSync(outputPath, 'w')
+    let bytesOut = 0
+    try {
+        // Header pass-through.
+        if (preserveHeader && headerSize > 0) {
+            copyHeader(fdOut, inputPath, headerSize)
+            bytesOut += headerSize
+        }
+
+        bytesOut += mergeRuns(fdOut, runPaths, o, totalRecords)
+    } finally {
+        fs.closeSync(fdOut)
+    }
+
+    if (!keepRuns) {
+        for (const p of runPaths) { try { fs.unlinkSync(p) } catch (_) {} }
+    }
+
+    onProgress({ phase: 'done', runs: runPaths.length, totalRecords, bytesOut })
+    return { runsCreated: runPaths.length, recordsSorted: totalRecords, bytesOut }
+}
+
+// Applies the option defaults and rejects missing paths or an impossible
+// record and key size before any file is touched.
+function resolveSortOptions(opts) {
     const {
         inputPath,
         outputPath,
@@ -134,8 +181,16 @@ async function externalSort(opts) {
         throw new Error('externalSort: keySize must satisfy 0 < keySize <= recordSize')
     }
 
-    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true })
+    return {
+        inputPath, outputPath, recordSize, keySize, tmpDir,
+        headerSize, ramBudgetBytes, preserveHeader, keepRuns, onProgress,
+    }
+}
 
+// Checks the input holds whole records after its header and sizes each
+// sorted run from the RAM budget.
+function planRuns(o) {
+    const { inputPath, headerSize, recordSize, ramBudgetBytes } = o
     const inStat = fs.statSync(inputPath)
     const dataBytes = inStat.size - headerSize
     if (dataBytes < 0 || dataBytes % recordSize !== 0) {
@@ -160,15 +215,14 @@ async function externalSort(opts) {
             MAX_RECORDS_PER_RUN,
         ),
     )
+    return { inStat, totalRecords, recordsPerRun }
+}
 
-    onProgress({
-        phase: 'start',
-        totalRecords, recordsPerRun,
-        expectedRuns: Math.ceil(totalRecords / recordsPerRun),
-    })
-
-
-    // Phase 1: create sorted runs
+// Reads the input one RAM-sized chunk at a time, sorts each chunk and writes
+// it to its own run file. Returns the run paths in input order.
+function createSortedRuns(o, plan) {
+    const { inputPath, headerSize, recordSize, keySize, tmpDir, onProgress } = o
+    const { inStat, totalRecords, recordsPerRun } = plan
     const runPaths = []
     const fdIn = fs.openSync(inputPath, 'r')
     try {
@@ -181,46 +235,13 @@ async function externalSort(opts) {
             const wantBytes      = Math.min(remainingBytes, bigBuf.length)
             const wantRecords    = wantBytes / recordSize
 
-            // Cap per-syscall read to avoid int32 overflow in Node's fs.readSync length param.
-            const SAFE_READ_CHUNK = 1 << 30
-            let readSoFar = 0
-            while (readSoFar < wantBytes) {
-                const reqLen = Math.min(wantBytes - readSoFar, SAFE_READ_CHUNK)
-                const n = fs.readSync(fdIn, bigBuf, readSoFar, reqLen, position + readSoFar)
-                if (n === 0) throw new Error(`short read at position ${position + readSoFar}`)
-                readSoFar += n
-            }
+            readChunk(fdIn, bigBuf, wantBytes, position)
             position += wantBytes
 
-            // Sort by first `keySize` bytes via an index array + Buffer.compare.
-            const indices = new Array(wantRecords)
-            for (let i = 0; i < wantRecords; i++) indices[i] = i
-            indices.sort((a, b) => Buffer.compare(
-                bigBuf.subarray(a * recordSize, a * recordSize + keySize),
-                bigBuf.subarray(b * recordSize, b * recordSize + keySize),
-            ))
+            const indices = sortedIndices(bigBuf, wantRecords, recordSize, keySize)
 
             const runPath = path.join(tmpDir, `run-${String(runIdx).padStart(5, '0')}.dat`)
-            const fdOut = fs.openSync(runPath, 'w')
-            try {
-                // Write records in sorted order. Reuse a single flush buffer
-                // sized to at most ~256 KB to avoid many tiny syscalls.
-                const flushCap = Math.max(1, Math.floor((256 * 1024) / recordSize))
-                const flushBuf = Buffer.alloc(flushCap * recordSize)
-                let flushLen   = 0
-                for (let i = 0; i < wantRecords; i++) {
-                    const srcOff = indices[i] * recordSize
-                    bigBuf.copy(flushBuf, flushLen * recordSize, srcOff, srcOff + recordSize)
-                    flushLen++
-                    if (flushLen === flushCap) {
-                        fs.writeSync(fdOut, flushBuf, 0, flushLen * recordSize)
-                        flushLen = 0
-                    }
-                }
-                if (flushLen > 0) fs.writeSync(fdOut, flushBuf, 0, flushLen * recordSize)
-            } finally {
-                fs.closeSync(fdOut)
-            }
+            writeRun(runPath, bigBuf, indices, wantRecords, recordSize)
 
             runPaths.push(runPath)
             runIdx++
@@ -229,97 +250,143 @@ async function externalSort(opts) {
     } finally {
         fs.closeSync(fdIn)
     }
+    return runPaths
+}
 
-    // Phase 2: k-way merge
+// Fills the first `wantBytes` of `bigBuf` from the input at `position`.
+function readChunk(fdIn, bigBuf, wantBytes, position) {
+    // Cap per-syscall read to avoid int32 overflow in Node's fs.readSync length param.
+    const SAFE_READ_CHUNK = 1 << 30
+    let readSoFar = 0
+    while (readSoFar < wantBytes) {
+        const reqLen = Math.min(wantBytes - readSoFar, SAFE_READ_CHUNK)
+        const n = fs.readSync(fdIn, bigBuf, readSoFar, reqLen, position + readSoFar)
+        if (n === 0) throw new Error(`short read at position ${position + readSoFar}`)
+        readSoFar += n
+    }
+}
 
-    onProgress({ phase: 'merge-start', runs: runPaths.length })
+// Returns the record indices of the chunk in key-prefix order.
+function sortedIndices(bigBuf, wantRecords, recordSize, keySize) {
+    // Sort by first `keySize` bytes via an index array + Buffer.compare.
+    const indices = new Array(wantRecords)
+    for (let i = 0; i < wantRecords; i++) indices[i] = i
+    indices.sort((a, b) => Buffer.compare(
+        bigBuf.subarray(a * recordSize, a * recordSize + keySize),
+        bigBuf.subarray(b * recordSize, b * recordSize + keySize),
+    ))
+    return indices
+}
 
-    const fdOut = fs.openSync(outputPath, 'w')
-    let bytesOut = 0
+// Writes the chunk's records to a new run file in the order `indices` gives.
+function writeRun(runPath, bigBuf, indices, wantRecords, recordSize) {
+    const fdOut = fs.openSync(runPath, 'w')
     try {
-        // Header pass-through.
-        if (preserveHeader && headerSize > 0) {
-            const hdr = Buffer.alloc(headerSize)
-            const fdH = fs.openSync(inputPath, 'r')
-            try {
-                let read = 0
-                while (read < headerSize) {
-                    const n = fs.readSync(fdH, hdr, read, headerSize - read, read)
-                    if (n === 0) throw new Error('short header read')
-                    read += n
-                }
-            } finally {
-                fs.closeSync(fdH)
-            }
-            fs.writeSync(fdOut, hdr, 0, headerSize)
-            bytesOut += headerSize
-        }
-
-        // Open all run files, prime the heap with one record from each.
-        const runFds  = runPaths.map(p => fs.openSync(p, 'r'))
-        const runPos  = new Array(runPaths.length).fill(0)
-        const runSize = runPaths.map(p => fs.statSync(p).size)
-        const heap    = new MinHeap()
-
-        function readOne(runIdx) {
-            if (runPos[runIdx] >= runSize[runIdx]) return null
-            const rec = Buffer.alloc(recordSize)
-            let readSoFar = 0
-            while (readSoFar < recordSize) {
-                const n = fs.readSync(runFds[runIdx], rec, readSoFar, recordSize - readSoFar, runPos[runIdx] + readSoFar)
-                if (n === 0) throw new Error(`short run read at ${runPos[runIdx]}`)
-                readSoFar += n
-            }
-            runPos[runIdx] += recordSize
-            return rec
-        }
-
-        try {
-            for (let i = 0; i < runPaths.length; i++) {
-                const rec = readOne(i)
-                if (rec) heap.push(rec.subarray(0, keySize), { runIdx: i, record: rec }, i)
-            }
-
-            const flushCap = Math.max(1, Math.floor((256 * 1024) / recordSize))
-            const flushBuf = Buffer.alloc(flushCap * recordSize)
-            let flushLen   = 0
-            let recordsEmitted = 0
-
-            while (heap.size > 0) {
-                const { payload } = heap.pop()
-                payload.record.copy(flushBuf, flushLen * recordSize)
-                flushLen++
-                recordsEmitted++
-                if (flushLen === flushCap) {
-                    fs.writeSync(fdOut, flushBuf, 0, flushLen * recordSize)
-                    bytesOut += flushLen * recordSize
-                    flushLen = 0
-                }
-                const nextRec = readOne(payload.runIdx)
-                if (nextRec) heap.push(nextRec.subarray(0, keySize), { runIdx: payload.runIdx, record: nextRec }, payload.runIdx)
-            }
-
-            if (flushLen > 0) {
+        // Write records in sorted order. Reuse a single flush buffer
+        // sized to at most ~256 KB to avoid many tiny syscalls.
+        const flushCap = Math.max(1, Math.floor((256 * 1024) / recordSize))
+        const flushBuf = Buffer.alloc(flushCap * recordSize)
+        let flushLen   = 0
+        for (let i = 0; i < wantRecords; i++) {
+            const srcOff = indices[i] * recordSize
+            bigBuf.copy(flushBuf, flushLen * recordSize, srcOff, srcOff + recordSize)
+            flushLen++
+            if (flushLen === flushCap) {
                 fs.writeSync(fdOut, flushBuf, 0, flushLen * recordSize)
-                bytesOut += flushLen * recordSize
+                flushLen = 0
             }
-
-            if (recordsEmitted !== totalRecords) {
-                throw new Error(`merge emitted ${recordsEmitted} records, expected ${totalRecords}`)
-            }
-        } finally {
-            for (const fd of runFds) { try { fs.closeSync(fd) } catch (_) {} }
         }
+        if (flushLen > 0) fs.writeSync(fdOut, flushBuf, 0, flushLen * recordSize)
     } finally {
         fs.closeSync(fdOut)
     }
+}
 
-    if (!keepRuns) {
-        for (const p of runPaths) { try { fs.unlinkSync(p) } catch (_) {} }
+// Copies the input's first `headerSize` bytes to the output verbatim.
+function copyHeader(fdOut, inputPath, headerSize) {
+    const hdr = Buffer.alloc(headerSize)
+    const fdH = fs.openSync(inputPath, 'r')
+    try {
+        let read = 0
+        while (read < headerSize) {
+            const n = fs.readSync(fdH, hdr, read, headerSize - read, read)
+            if (n === 0) throw new Error('short header read')
+            read += n
+        }
+    } finally {
+        fs.closeSync(fdH)
     }
+    fs.writeSync(fdOut, hdr, 0, headerSize)
+}
 
-    onProgress({ phase: 'done', runs: runPaths.length, totalRecords, bytesOut })
-    return { runsCreated: runPaths.length, recordsSorted: totalRecords, bytesOut }
+// Merges every run into the output in key order and checks the record count
+// against the input. Returns the record bytes written.
+function mergeRuns(fdOut, runPaths, o, totalRecords) {
+    const { recordSize, keySize } = o
+    let bytesOut = 0
+
+    // Open all run files, prime the heap with one record from each.
+    const runFds  = runPaths.map(p => fs.openSync(p, 'r'))
+    const runPos  = new Array(runPaths.length).fill(0)
+    const runSize = runPaths.map(p => fs.statSync(p).size)
+    const heap    = new MinHeap()
+
+    const readOne = makeRunReader(runFds, runPos, runSize, recordSize)
+
+    try {
+        for (let i = 0; i < runPaths.length; i++) {
+            const rec = readOne(i)
+            if (rec) heap.push(rec.subarray(0, keySize), { runIdx: i, record: rec }, i)
+        }
+
+        const flushCap = Math.max(1, Math.floor((256 * 1024) / recordSize))
+        const flushBuf = Buffer.alloc(flushCap * recordSize)
+        let flushLen   = 0
+        let recordsEmitted = 0
+
+        while (heap.size > 0) {
+            const { payload } = heap.pop()
+            payload.record.copy(flushBuf, flushLen * recordSize)
+            flushLen++
+            recordsEmitted++
+            if (flushLen === flushCap) {
+                fs.writeSync(fdOut, flushBuf, 0, flushLen * recordSize)
+                bytesOut += flushLen * recordSize
+                flushLen = 0
+            }
+            const nextRec = readOne(payload.runIdx)
+            if (nextRec) heap.push(nextRec.subarray(0, keySize), { runIdx: payload.runIdx, record: nextRec }, payload.runIdx)
+        }
+
+        if (flushLen > 0) {
+            fs.writeSync(fdOut, flushBuf, 0, flushLen * recordSize)
+            bytesOut += flushLen * recordSize
+        }
+
+        if (recordsEmitted !== totalRecords) {
+            throw new Error(`merge emitted ${recordsEmitted} records, expected ${totalRecords}`)
+        }
+    } finally {
+        for (const fd of runFds) { try { fs.closeSync(fd) } catch (_) {} }
+    }
+    return bytesOut
+}
+
+// Returns a reader for the next whole record of a run at that run's cursor,
+// or null once the run is exhausted.
+function makeRunReader(runFds, runPos, runSize, recordSize) {
+    return function readOne(runIdx) {
+        if (runPos[runIdx] >= runSize[runIdx]) return null
+        const rec = Buffer.alloc(recordSize)
+        let readSoFar = 0
+        while (readSoFar < recordSize) {
+            const n = fs.readSync(runFds[runIdx], rec, readSoFar, recordSize - readSoFar, runPos[runIdx] + readSoFar)
+            if (n === 0) throw new Error(`short run read at ${runPos[runIdx]}`)
+            readSoFar += n
+        }
+        runPos[runIdx] += recordSize
+        return rec
+    }
 }
 
 module.exports = { externalSort, MinHeap }
