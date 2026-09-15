@@ -76,17 +76,17 @@ function defaultsIn(stmt) {
     return found;
 }
 
+const ENV = advertised();
+
+// ── Rule 1: every knob api.js validates through envInt ──────────────────
+// envInt('NAME', <default>, <min>) is the shape every bulk-sync knob uses.
+// The second argument is the authority: a numeric literal is a flat default
+// the template must repeat exactly, and anything else is DERIVED, which the
+// template must not reduce to a number.
+const envIntKnobs = [...API_SRC.matchAll(/envInt\(\s*'([A-Z][A-Z0-9_]*)'\s*,\s*([^,]+?)\s*,/g)]
+    .map((m) => ({ name: m[1], dflt: m[2].trim() }));
+
 describe('.env.example does not drift from the defaults src/api.js resolves @regression', function () {
-
-    const ENV = advertised();
-
-    // ── Rule 1: every knob api.js validates through envInt ──────────────────
-    // envInt('NAME', <default>, <min>) is the shape every bulk-sync knob uses.
-    // The second argument is the authority: a numeric literal is a flat default
-    // the template must repeat exactly, and anything else is DERIVED, which the
-    // template must not reduce to a number.
-    const envIntKnobs = [...API_SRC.matchAll(/envInt\(\s*'([A-Z][A-Z0-9_]*)'\s*,\s*([^,]+?)\s*,/g)]
-        .map((m) => ({ name: m[1], dflt: m[2].trim() }));
 
     it('finds the envInt knobs it is meant to check', function () {
         // Empty-set guard: without this the two assertions below iterate nothing
@@ -114,8 +114,11 @@ describe('.env.example does not drift from the defaults src/api.js resolves @reg
             }
         }
     });
+});
 
-    // ── Rule 2: knobs read directly off process.env in api.js ───────────────
+// ── Rule 2: knobs read directly off process.env in api.js ───────────────
+describe('.env.example does not drift from the defaults src/api.js resolves @regression', function () {
+
     it('advertises the serving-boundary caps the request path actually reads', function () {
         // Named rather than discovered: these three are the ones #5813 found
         // missing while every sibling guard on the same path was documented.
