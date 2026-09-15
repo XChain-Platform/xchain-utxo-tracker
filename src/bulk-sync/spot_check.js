@@ -56,8 +56,8 @@ function parseArgs(argv) {
             case '--truth':     args.truth     = argv[++i]; break
             case '--candidate': args.candidate = argv[++i]; break
             case '--samples':   args.samples   = parseInt(argv[++i], 10); break
-            // Legacy backend flag (the only backend now is classic-level).
-            // Accepted (and ignored) so older invocations don't error out.
+            // The legacy backend was dropped; this flag remains for backward
+            // compatibility with older invocations that still pass it.
             case '--backend':   i++; break
             case '--prefixes':  args.prefixes  = argv[++i]; break
             case '--seed':      args.seed      = parseInt(argv[++i], 10); break
@@ -160,37 +160,19 @@ async function detectPrefixes(db) {
     return [...seen].sort((a, b) => a - b)
 }
 
-async function main() {
-    const args = parseArgs(process.argv)
-    const seed = args.seed != null ? args.seed : (Date.now() & 0xFFFFFFFF)
+// Parses the comma-separated hex prefix bytes given with --prefixes.
+function parsePrefixList(spec) {
+    return spec.split(',').map(h => {
+        const n = parseInt(h.trim(), 16)
+        if (!Number.isFinite(n) || n < 0 || n > 255) {
+            throw new Error(`bad prefix: "${h}"`)
+        }
+        return n
+    })
+}
 
-    console.log(`[spot-check] truth     = ${args.truth}`)
-    console.log(`[spot-check] candidate = ${args.candidate}`)
-    console.log(`[spot-check] samples   = ${args.samples} per prefix`)
-    console.log(`[spot-check] seed      = ${seed}`)
-
-    const truthDb = await openDb(args.truth)
-    const candDb  = await openDb(args.candidate)
-
-    let prefixBytes
-    if (args.prefixes) {
-        prefixBytes = args.prefixes.split(',').map(h => {
-            const n = parseInt(h.trim(), 16)
-            if (!Number.isFinite(n) || n < 0 || n > 255) {
-                throw new Error(`bad prefix: "${h}"`)
-            }
-            return n
-        })
-    } else {
-        console.log('[spot-check] detecting prefixes in candidate...')
-        prefixBytes = await detectPrefixes(candDb)
-    }
-    console.log(`[spot-check] prefixes  = ${prefixBytes.map(prefixLabel).join(', ')}`)
-    console.log('')
-
-    const startedAt = Date.now()
+async function samplePrefixes(truthDb, candDb, prefixBytes, args, seed) {
     const rows = []
-
     for (const p of prefixBytes) {
         const itOpts = {
             keyEncoding:   'buffer',
@@ -227,10 +209,10 @@ async function main() {
             mismatches,
         })
     }
+    return rows
+}
 
-    await truthDb.close()
-    await candDb.close()
-
+function printReport(rows, startedAt) {
     // Report
     console.log('Per-prefix spot-check:')
     console.log('  prefix         total   sampled     hits    exact     diff     miss')
@@ -265,6 +247,31 @@ async function main() {
         console.log(`[spot-check] RESULT: MISMATCH - ${totalMismatch} byte-level diffs on hits`)
         process.exit(1)
     }
+}
+
+async function main() {
+    const args = parseArgs(process.argv)
+    const seed = args.seed != null ? args.seed : (Date.now() & 0xFFFFFFFF)
+    console.log(`[spot-check] truth     = ${args.truth}`)
+    console.log(`[spot-check] candidate = ${args.candidate}`)
+    console.log(`[spot-check] samples   = ${args.samples} per prefix`)
+    console.log(`[spot-check] seed      = ${seed}`)
+    const truthDb = await openDb(args.truth)
+    const candDb  = await openDb(args.candidate)
+    let prefixBytes
+    if (args.prefixes) {
+        prefixBytes = parsePrefixList(args.prefixes)
+    } else {
+        console.log('[spot-check] detecting prefixes in candidate...')
+        prefixBytes = await detectPrefixes(candDb)
+    }
+    console.log(`[spot-check] prefixes  = ${prefixBytes.map(prefixLabel).join(', ')}`)
+    console.log('')
+    const startedAt = Date.now()
+    const rows = await samplePrefixes(truthDb, candDb, prefixBytes, args, seed)
+    await truthDb.close()
+    await candDb.close()
+    printReport(rows, startedAt)
 }
 
 main().catch(err => {
