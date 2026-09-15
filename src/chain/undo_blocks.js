@@ -25,7 +25,7 @@ const logger = getLogger();
 // blocks for the same wall-clock protection.
 //
 // SINGLE SOURCE. Imported by both the live incremental worker (XChainUtxoTracker.js) and
-// the bulk seeder (bulk-sync/merger/derive-keys.js) so the seeded N-prefix can never drift
+// the bulk seeder (bulk-sync/merger/derive_keys.js) so the seeded N-prefix can never drift
 // below the live reorg depth guard for one chain. Maintaining two hand-copied tables
 // re-opened exactly that per-chain gap (the one 51aab3b closed) whenever an operator
 // re-tuned one chain's depth in only one file. A per-chain re-tune now happens here, once.
@@ -111,7 +111,7 @@ function undoBlocksKey(coin, net){
 }
 
 // SINGLE-SOURCED env-override resolver, shared by the live worker
-// (XChainUtxoTracker.js), the bulk seeder (derive-keys.js), the orchestrator,
+// (XChainUtxoTracker.js), the bulk seeder (derive_keys.js), the orchestrator,
 // and api.js. Two hand-coded copies had diverged: the live one honored a
 // non-positive override via `parseInt(...) || default` (a negative value is
 // truthy, so `XCHAIN_UNDO_BLOCKS_DOGE=-5` yielded -5 and degenerated the aging
