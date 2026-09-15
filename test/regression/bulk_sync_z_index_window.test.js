@@ -51,6 +51,62 @@ async function collectByPrefix(db, prefix) {
     return out.sort();
 }
 
+async function buildWindowedIndexes(tmp) {
+    const nBlocks = 5, startH = 100, endH = startH + nBlocks - 1;
+    const undoBlocks = 2; // window = heights 103..104
+
+    // One DISTINCT script per block so each block is some script's
+    // first-seen block (Z is keyed on first appearance, not creation).
+    const blocks = [];
+    for (let i = 0; i < nBlocks; i++) {
+        blocks.push({
+            height:    startH + i,
+            blockHash: Buffer.alloc(32, 0x40 + i),
+            txid:      fullTxid((0xb0 + i).toString(16)),
+            script:    Buffer.alloc(32, 0x60 + i),
+        });
+    }
+
+    const outputsPath = path.join(tmp, 'outputs.dat');
+    const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', startH, endH);
+    for (const b of blocks) {
+        w.append(b.txid.subarray(0, 8), 0, 5000000000n, b.height, b.txid, b.script, b.blockHash, false);
+    }
+    w.close();
+
+    const spendsPath = path.join(tmp, 'spends.dat');
+    new SpendsWriter(spendsPath, 'bitcoin', 'regtest', startH, endH).close();
+
+    const metaPath = path.join(tmp, 'meta.dat');
+    const meta = new MetaWriter(metaPath, 'bitcoin', 'regtest', startH, endH);
+    let prev = Buffer.alloc(32);
+    for (const b of blocks) {
+        meta.writeBlock(b.height, 1700000000 + b.height, b.blockHash, prev, [b.txid.subarray(0, 8)]);
+        prev = b.blockHash;
+    }
+    meta.close();
+
+    const rs = readOutputsRecordSize(outputsPath);
+    const outputsSorted = path.join(tmp, 'outputs-sorted.dat');
+    const spendsSorted  = path.join(tmp, 'spends-sorted.dat');
+    await externalSort({ inputPath: outputsPath, outputPath: outputsSorted, headerSize: HEADER_SIZE, recordSize: rs, keySize: OUTPUTS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'so') });
+    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 20, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
+    const liveUtxos = path.join(tmp, 'live-utxos.dat');
+    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 20, keySize: OUTPUTS_KEY_SIZE });
+
+    const keysDir = path.join(tmp, 'keys');
+    const { stats } = await deriveKeys({
+        metaPath, outputsPath, liveUtxosPath: liveUtxos, spendsByPrevPath: spendsSorted,
+        outDir: keysDir, tmpDir: path.join(tmp, 'derive'),
+        ramBudgetBytes: 1 << 20, network: 'bitcoin-regtest', removeSpent: true,
+        outputsRecordSize: rs, undoBlocks,
+    });
+
+    const dbPath = path.join(tmp, 'db');
+    await loadKeys({ keysDir, dbPath, removeSpent: true });
+    return { nBlocks, undoBlocks, blocks, stats, dbPath };
+}
+
 describe('Regression (bulk-sync): Z block->script index is windowed to undoBlocks', function () {
     this.timeout(20000);
 
@@ -59,58 +115,7 @@ describe('Regression (bulk-sync): Z block->script index is windowed to undoBlock
     afterEach(function () { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {} });
 
     it('emits Z only for scripts first seen in the last undoBlocks blocks; S is unwindowed', async function () {
-        const nBlocks = 5, startH = 100, endH = startH + nBlocks - 1;
-        const undoBlocks = 2; // window = heights 103..104
-
-        // One DISTINCT script per block so each block is some script's
-        // first-seen block (Z is keyed on first appearance, not creation).
-        const blocks = [];
-        for (let i = 0; i < nBlocks; i++) {
-            blocks.push({
-                height:    startH + i,
-                blockHash: Buffer.alloc(32, 0x40 + i),
-                txid:      fullTxid((0xb0 + i).toString(16)),
-                script:    Buffer.alloc(32, 0x60 + i),
-            });
-        }
-
-        const outputsPath = path.join(tmp, 'outputs.dat');
-        const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', startH, endH);
-        for (const b of blocks) {
-            w.append(b.txid.subarray(0, 8), 0, 5000000000n, b.height, b.txid, b.script, b.blockHash, false);
-        }
-        w.close();
-
-        const spendsPath = path.join(tmp, 'spends.dat');
-        new SpendsWriter(spendsPath, 'bitcoin', 'regtest', startH, endH).close();
-
-        const metaPath = path.join(tmp, 'meta.dat');
-        const meta = new MetaWriter(metaPath, 'bitcoin', 'regtest', startH, endH);
-        let prev = Buffer.alloc(32);
-        for (const b of blocks) {
-            meta.writeBlock(b.height, 1700000000 + b.height, b.blockHash, prev, [b.txid.subarray(0, 8)]);
-            prev = b.blockHash;
-        }
-        meta.close();
-
-        const rs = readOutputsRecordSize(outputsPath);
-        const outputsSorted = path.join(tmp, 'outputs-sorted.dat');
-        const spendsSorted  = path.join(tmp, 'spends-sorted.dat');
-        await externalSort({ inputPath: outputsPath, outputPath: outputsSorted, headerSize: HEADER_SIZE, recordSize: rs, keySize: OUTPUTS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'so') });
-        await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 20, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
-        const liveUtxos = path.join(tmp, 'live-utxos.dat');
-        await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 20, keySize: OUTPUTS_KEY_SIZE });
-
-        const keysDir = path.join(tmp, 'keys');
-        const { stats } = await deriveKeys({
-            metaPath, outputsPath, liveUtxosPath: liveUtxos, spendsByPrevPath: spendsSorted,
-            outDir: keysDir, tmpDir: path.join(tmp, 'derive'),
-            ramBudgetBytes: 1 << 20, network: 'bitcoin-regtest', removeSpent: true,
-            outputsRecordSize: rs, undoBlocks,
-        });
-
-        const dbPath = path.join(tmp, 'db');
-        await loadKeys({ keysDir, dbPath, removeSpent: true });
+        const { nBlocks, undoBlocks, blocks, stats, dbPath } = await buildWindowedIndexes(tmp);
 
         const db = new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' });
         await db.open();
