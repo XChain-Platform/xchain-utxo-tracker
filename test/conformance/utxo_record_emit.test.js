@@ -32,15 +32,24 @@ const fs = require('fs');
 const { buildFixture, FIXTURE_PATH } = require('./support/generate_utxo_record_fixture.js');
 
 const golden = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8'));
+let live;
+let fixtureCache;
+
+async function loadFixture() {
+    if (fixtureCache) return fixtureCache;
+    fixtureCache = await buildFixture();
+    return fixtureCache;
+}
+
+function registerFixtureHook() {
+    before(async function () {
+        live = await loadFixture();
+    });
+}
 
 describe('utxo-record conformance fixture: the tracker still emits the pinned records', function () {
     this.timeout(60000);
-
-    let live;
-
-    before(async function () {
-        live = await buildFixture();
-    });
+    registerFixtureHook();
 
     it('serves the same records, field for field', function () {
         assert.deepStrictEqual(live.servedRecords, golden.servedRecords);
@@ -65,7 +74,11 @@ describe('utxo-record conformance fixture: the tracker still emits the pinned re
             'node test/conformance/support/generate_utxo_record_fixture.js and re-vendor the xchain-encoder copy'
         );
     });
+});
 
+describe('utxo-record conformance fixture: the tracker still emits the pinned records', function () {
+    this.timeout(60000);
+    registerFixtureHook();
     describe('the contract each field carries', function () {
         it('value is satoshis as an exact decimal string, never a JS Number', function () {
             for (const r of golden.servedRecords) {
@@ -97,7 +110,13 @@ describe('utxo-record conformance fixture: the tracker still emits the pinned re
                 assert.ok(/^[0-9a-f]{64}$/.test(r.txid), `${r.txid}: txid must be 64 lowercase hex chars`);
             }
         });
+    });
+});
 
+describe('utxo-record conformance fixture: the tracker still emits the pinned records', function () {
+    this.timeout(60000);
+    registerFixtureHook();
+    describe('the contract each field carries', function () {
         it('covers a mempool record: height null, confirmations 0', function () {
             const mempool = golden.servedRecords.filter((r) => r.height === null);
             assert.strictEqual(mempool.length, 1, 'exactly one mempool record is pinned');
