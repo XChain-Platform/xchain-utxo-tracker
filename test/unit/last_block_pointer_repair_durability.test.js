@@ -94,20 +94,26 @@ describe('LAST_BLOCK_* pointer repair reaches disk', function () {
     // branch could quietly regrow its own bare-setter copy, which is exactly how
     // the two sites drifted apart the first time: the fix landed in one.
     it('neither repair site writes the pointer with bare setters', function () {
-        const src = fs.readFileSync(
+        const entrySrc = fs.readFileSync(
             path.join(__dirname, '../../src/XChainUtxoTracker.js'), 'utf8');
-        expect(src, 'commitLastBlockPointerRepair not found')
+        const lastBlocksWindowSrc = fs.readFileSync(
+            path.join(__dirname, '../../src/XChainUtxoTracker/last_blocks_window.js'), 'utf8');
+        const reorgVerificationSrc = fs.readFileSync(
+            path.join(__dirname, '../../src/XChainUtxoTracker/reorg_verification.js'), 'utf8');
+        expect(lastBlocksWindowSrc, 'commitLastBlockPointerRepair not found')
             .to.match(/async commitLastBlockPointerRepair\(hash, height\)\{/);
         // A repair site is recognisable by writing lastBlockDb's hash straight
         // through the setter; both sites must call the helper instead. (The reorg
         // walk's own setLastBlockHash(lastBlock["ph"]) is a different write, inside
         // a batch it already commits, and is deliberately not matched here.)
+        const src = entrySrc + lastBlocksWindowSrc + reorgVerificationSrc;
         const bare = src.split('\n')
             .map((line, i) => ({ line: line.trim(), n: i + 1 }))
             .filter(l => /^await this\.db\.setLastBlock(Hash|Height)\(lastBlockDb\./.test(l.line));
         expect(bare.map(l => l.n), 'a pointer-repair site is back to bare setters')
             .to.deep.equal([]);
-        expect((src.match(/await this\.commitLastBlockPointerRepair\(/g) || []).length,
+        expect((entrySrc.match(/await this\.commitLastBlockPointerRepair\(/g) || []).length
+            + (reorgVerificationSrc.match(/await this\.commitLastBlockPointerRepair\(/g) || []).length,
             'expected both repair call sites to route through the helper').to.equal(2);
     });
 });

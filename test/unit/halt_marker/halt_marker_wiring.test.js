@@ -23,6 +23,7 @@ const XChainUtxoTracker = require('../../../src/XChainUtxoTracker');
 const LevelUpStore = require('../../../src/store/level_up_db');
 
 const trackerSrc = fs.readFileSync(path.join(__dirname, '../../../src/XChainUtxoTracker.js'), 'utf8');
+const constantsSrc = fs.readFileSync(path.join(__dirname, '../../../src/XChainUtxoTracker/constants.js'), 'utf8');
 const apiSrc = fs.readFileSync(path.join(__dirname, '../../../src/api.js'), 'utf8');
 
 describe('halt marker: boot and launch wiring', function () {
@@ -42,8 +43,8 @@ describe('halt marker: boot and launch wiring', function () {
 
     it('the marker key is the reserved R byte, apart from every other single-byte record', function () {
         expect(LevelUpStore.HALT_MARKER_KEY).to.deep.equal(Buffer.from([0x52]));
-        expect(trackerSrc).to.match(/P_PENDING_CLEANUP_KEY = Buffer\.from\(\[0x50\]\)/);
-        expect(trackerSrc).to.match(/Q_UNDO_WATERMARK_KEY = Buffer\.from\(\[0x51\]\)/);
+        expect(constantsSrc).to.match(/P_PENDING_CLEANUP_KEY = Buffer\.from\(\[0x50\]\)/);
+        expect(constantsSrc).to.match(/Q_UNDO_WATERMARK_KEY = Buffer\.from\(\[0x51\]\)/);
     });
 });
 
