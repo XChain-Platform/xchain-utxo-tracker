@@ -136,6 +136,26 @@ function verifyMerkleRoot(blockBytes, decoder) {
     return null
 }
 
+function verifyBackwardLink(height, headerPrev, prevHeight, prevHash) {
+    if (prevHash === null) {
+        // First block of the dump.
+        if (height === 0 && !headerPrev.equals(ZERO32)) {
+            return `genesis prevHash is not zero: ${headerPrev.toString('hex')}`
+        }
+        // A dump that starts above 0 has no in-dump predecessor to link to,
+        // so the backward link is unverifiable for this one block; the hash
+        // recompute above still validates it.
+        return null
+    }
+    if (height !== prevHeight + 1) {
+        return `height gap: previous was ${prevHeight}`
+    }
+    if (!headerPrev.equals(prevHash)) {
+        return `prevHash link broken: header.prev=${headerPrev.toString('hex')} expected=${prevHash.toString('hex')}`
+    }
+    return null
+}
+
 /**
  * Core check, factored out of file I/O so it is unit-testable with hand-built
  * blocks. Consumes an iterable of { height, blockHash, blockBytes } in ascending
@@ -189,25 +209,9 @@ function verifyBlockSequence(blocks, opts = {}) {
         }
 
         const headerPrev = reverse32(header.slice(PREV_OFF, PREV_OFF + 32))
-
-        if (prevHash === null) {
-            // First block of the dump.
-            if (height === 0 && !headerPrev.equals(ZERO32)) {
-                return fail(height, `genesis prevHash is not zero: ${headerPrev.toString('hex')}`)
-            }
-            // A dump that starts above 0 has no in-dump predecessor to link to,
-            // so the backward link is unverifiable for this one block; the hash
-            // recompute above still validates it.
-            firstHeight = height
-        } else {
-            if (height !== prevHeight + 1) {
-                return fail(height, `height gap: previous was ${prevHeight}`)
-            }
-            if (!headerPrev.equals(prevHash)) {
-                return fail(height,
-                    `prevHash link broken: header.prev=${headerPrev.toString('hex')} expected=${prevHash.toString('hex')}`)
-            }
-        }
+        const linkError = verifyBackwardLink(height, headerPrev, prevHeight, prevHash)
+        if (linkError) return fail(height, linkError)
+        if (prevHash === null) firstHeight = height
 
         prevHeight = height
         prevHash   = blockHash
