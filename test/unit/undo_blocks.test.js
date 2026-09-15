@@ -131,12 +131,11 @@ describe('undo-blocks resolves the coin through the canonical registry (#5803)',
 // refuse anything an operator actually typed: '1.5' resolved to 1 and
 // '12garbage' to 12, silently shortening the reorg-recovery window on every
 // consumer of this single-sourced resolver at once (item 7714).
+const KEY = 'XCHAIN_UNDO_BLOCKS_DOGE';
+const saved = {};
+let consoleErrorStub;
+
 describe('resolveUndoBlocks env-override validation (item 7714)', function () {
-
-  const KEY = 'XCHAIN_UNDO_BLOCKS_DOGE';
-  const saved = {};
-  let consoleErrorStub;
-
   beforeEach(function () {
     saved.had = Object.prototype.hasOwnProperty.call(process.env, KEY);
     saved.value = process.env[KEY];
@@ -165,6 +164,20 @@ describe('resolveUndoBlocks env-override validation (item 7714)', function () {
       expect(consoleErrorStub.args.join('\n')).to.match(/is not an integer/);
     });
   }
+});
+
+describe('resolveUndoBlocks env-override validation (item 7714)', function () {
+  beforeEach(function () {
+    saved.had = Object.prototype.hasOwnProperty.call(process.env, KEY);
+    saved.value = process.env[KEY];
+    consoleErrorStub = sinon.stub(console, 'error');
+  });
+
+  afterEach(function () {
+    consoleErrorStub.restore();
+    if (saved.had) process.env[KEY] = saved.value;
+    else delete process.env[KEY];
+  });
 
   it('accepts a well-formed override, trimmed', function () {
     process.env[KEY] = '60';
