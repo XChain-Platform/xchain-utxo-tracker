@@ -17,6 +17,117 @@ const { kOutput, kOutputFromBuf, kOutHint, kOutBlk, kBlock, kHintDel, kOutDelFro
 const { encodeOutput, encodeOutHint, decodeBlock, decodeOutput } = require('./value_codec')
 const LevelUpStore = require('../level_up_db.js')
 
+// Phase 1 lookups for removeOutputsWithInputsBatch (every phase helper is sync, so
+// each await stays in the caller): a { hKey } slot per input, filled from the open
+// batch when the output was staged there, else queued for one DB read.
+function queueHintLookups(store, inputs, resolved, hintDbKeys, hintDbIndices) {
+    for (let i = 0; i < inputs.length; i++) {
+        const inp = inputs[i]
+        const hKey = kOutHint(inp.prevTxHash, inp.prevOutputIndex)
+        resolved[i] = { hKey }
+
+        // Try in-memory (same-block spend)
+        const inMem = store.getTransactionValue(hKey)
+        if (inMem != null) {
+            resolved[i].scriptPubKeyBuf = inMem
+            resolved[i].inMem = true
+            continue
+        }
+
+        // Queue for batch DB read
+        hintDbKeys.push(hKey)
+        hintDbIndices.push(i)
+    }
+}
+
+// Fills the queued slots from the hint read; a missing hint nulls its slot.
+function applyHintValues(inputs, resolved, hintDbKeys, hintDbIndices, hintValues) {
+    for (let j = 0; j < hintDbKeys.length; j++) {
+        const i = hintDbIndices[j]
+        if (hintValues[j] == null) {
+            logger.info("Warning: Missing outputHintKey for input " + JSON.stringify(inputs[i]) + " - output may have been indexed before REMOVE_SPENT was enabled")
+            resolved[i] = null
+            continue
+        }
+        resolved[i].scriptPubKeyBuf = hintValues[j]
+    }
+}
+
+// Phase 2 lookups: sets each DB-resolved slot's O key, then counts a cache hit or miss.
+// First check the in-memory output cache (recently-written outputs).
+// Most spends hit recently-created UTXOs (locality), so this absorbs
+// a large fraction of the lookups without touching the DB.
+function queueOutputLookups(inputs, resolved, outputDbKeys, outputDbIndices) {
+    const cache = LevelUpStore.outputCache
+    for (let i = 0; i < inputs.length; i++) {
+        if (!resolved[i] || !resolved[i].scriptPubKeyBuf) continue
+        if (resolved[i].inMem) continue
+
+        const inp = inputs[i]
+        const r = resolved[i]
+        r.oKey = kOutputFromBuf(r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
+
+        // Cache lookup (must match the fromCharCode encoding used in insertOutput)
+        const _pi = inp.prevOutputIndex
+        const cacheKey = inp.prevTxHash + String.fromCharCode((_pi >>> 16) & 0xFFFF, _pi & 0xFFFF)
+        const cached = cache.get(cacheKey)
+        if (cached !== undefined) {
+            r.oVal = cached
+            cache.delete(cacheKey)   // spent: drop from cache
+            LevelUpStore.outputCacheHits++
+            continue
+        }
+        LevelUpStore.outputCacheMisses++
+
+        outputDbKeys.push(r.oKey)
+        outputDbIndices.push(i)
+    }
+}
+
+// Fills each cache-missed slot with its value from the output read.
+function applyOutputValues(resolved, outputDbKeys, outputDbIndices, outputValues) {
+    for (let j = 0; j < outputDbKeys.length; j++) {
+        resolved[outputDbIndices[j]].oVal = outputValues[j]
+    }
+}
+
+// Phase 3, same-batch spend: drops the staged O and H writes and returns the
+// staged output value for the caller's cross-block recovery write.
+function unstageInMemorySpend(store, inp, r) {
+    const inMemOKey = kOutputFromBuf(r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
+    if (DEBUG_TRACE) {
+        logger.info(`TRACE delOutput db=${store.dbName} path=inMem sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+    }
+    // Capture the staged output value BEFORE removal so a cross-block
+    // spend writes durable K/M restore records (see
+    // writeCrossBlockSpendRecovery). Same-block spends write nothing.
+    const inMemOVal = store.getTransactionValue(inMemOKey)
+    // Check both removals and fail with the same outpoint-naming
+    // diagnostic the single-input path (removeOutputWithInput) throws,
+    // instead of an opaque TypeError / a silently-ignored false return.
+    if (!store.removeTransaction(inMemOKey, inp.blockHash)){
+        throw Error("Missing output match for input "+JSON.stringify(inp))
+    }
+    if (!store.removeTransaction(r.hKey, inp.blockHash)){
+        throw Error("Missing outputHintKey match for input "+JSON.stringify(inp))
+    }
+    return inMemOVal
+}
+
+// Phase 3, H without O: logs the divergence and stages nothing.
+function warnMissingOutputValue(store, inp, r) {
+    if (DEBUG_TRACE) {
+        logger.info(`TRACE delOutput db=${store.dbName} path=noOval sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+    }
+    // H present, O missing on disk: the single-input path
+    // (removeOutputWithInput) treats this as "do nothing" rather than
+    // deleting, because deleting here would drop the live H record
+    // with no K/M undo record to restore it on reorg unwind. Match
+    // that: leave both records intact and log loudly instead of
+    // silently creating an unrecoverable-on-reorg spend.
+    logger.info("Warning: Missing output value for input " + JSON.stringify(inp) + " while its outputHintKey is present - leaving O/H records intact, not deleting without an undo record")
+}
+
 module.exports = {
     // Output (O prefix)
 
@@ -234,78 +345,25 @@ module.exports = {
 
         // Phase 1: resolve all hint keys (scriptPubKey lookup)
         const _tHint = Date.now()
-        for (let i = 0; i < inputs.length; i++) {
-            const inp = inputs[i]
-            const hKey = kOutHint(inp.prevTxHash, inp.prevOutputIndex)
-            resolved[i] = { hKey }
-
-            // Try in-memory (same-block spend)
-            const inMem = this.getTransactionValue(hKey)
-            if (inMem != null) {
-                resolved[i].scriptPubKeyBuf = inMem
-                resolved[i].inMem = true
-                continue
-            }
-
-            // Queue for batch DB read
-            hintDbKeys.push(hKey)
-            hintDbIndices.push(i)
-        }
+        queueHintLookups(this, inputs, resolved, hintDbKeys, hintDbIndices)
 
         // Batch DB read for hint misses
         if (hintDbKeys.length > 0) {
             const hintValues = await this.db.getMany(hintDbKeys)
-            for (let j = 0; j < hintDbKeys.length; j++) {
-                const i = hintDbIndices[j]
-                if (hintValues[j] == null) {
-                    logger.info("Warning: Missing outputHintKey for input " + JSON.stringify(inputs[i]) + " - output may have been indexed before REMOVE_SPENT was enabled")
-                    resolved[i] = null
-                    continue
-                }
-                resolved[i].scriptPubKeyBuf = hintValues[j]
-            }
+            applyHintValues(inputs, resolved, hintDbKeys, hintDbIndices, hintValues)
         }
         LevelUpStore.parseInBuckets.hintRead += Date.now() - _tHint
 
         // Phase 2: resolve all output values
-        // First check the in-memory output cache (recently-written outputs).
-        // Most spends hit recently-created UTXOs (locality), so this absorbs
-        // a large fraction of the lookups without touching the DB.
         const _tOut = Date.now()
         const outputDbKeys = []
         const outputDbIndices = []
-        const cache = LevelUpStore.outputCache
-
-        for (let i = 0; i < inputs.length; i++) {
-            if (!resolved[i] || !resolved[i].scriptPubKeyBuf) continue
-            if (resolved[i].inMem) continue
-
-            const inp = inputs[i]
-            const r = resolved[i]
-            r.oKey = kOutputFromBuf(r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
-
-            // Cache lookup (must match the fromCharCode encoding used in insertOutput)
-            const _pi = inp.prevOutputIndex
-            const cacheKey = inp.prevTxHash + String.fromCharCode((_pi >>> 16) & 0xFFFF, _pi & 0xFFFF)
-            const cached = cache.get(cacheKey)
-            if (cached !== undefined) {
-                r.oVal = cached
-                cache.delete(cacheKey)   // spent: drop from cache
-                LevelUpStore.outputCacheHits++
-                continue
-            }
-            LevelUpStore.outputCacheMisses++
-
-            outputDbKeys.push(r.oKey)
-            outputDbIndices.push(i)
-        }
+        queueOutputLookups(inputs, resolved, outputDbKeys, outputDbIndices)
 
         // Batch DB read for cache misses
         if (outputDbKeys.length > 0) {
             const outputValues = await this.db.getMany(outputDbKeys)
-            for (let j = 0; j < outputDbKeys.length; j++) {
-                resolved[outputDbIndices[j]].oVal = outputValues[j]
-            }
+            applyOutputValues(resolved, outputDbKeys, outputDbIndices, outputValues)
         }
         LevelUpStore.parseInBuckets.outRead += Date.now() - _tOut
 
@@ -315,40 +373,13 @@ module.exports = {
             if (!resolved[i]) continue
             const inp = inputs[i]
             const r = resolved[i]
-
             if (r.inMem) {
-                const inMemOKey = kOutputFromBuf(r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
-                if (DEBUG_TRACE) {
-                    logger.info(`TRACE delOutput db=${this.dbName} path=inMem sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
-                }
-                // Capture the staged output value BEFORE removal so a cross-block
-                // spend writes durable K/M restore records (see
-                // writeCrossBlockSpendRecovery). Same-block spends write nothing.
-                const inMemOVal = this.getTransactionValue(inMemOKey)
-                // Check both removals and fail with the same outpoint-naming
-                // diagnostic the single-input path (removeOutputWithInput) throws,
-                // instead of an opaque TypeError / a silently-ignored false return.
-                if (!this.removeTransaction(inMemOKey, inp.blockHash)){
-                    throw Error("Missing output match for input "+JSON.stringify(inp))
-                }
-                if (!this.removeTransaction(r.hKey, inp.blockHash)){
-                    throw Error("Missing outputHintKey match for input "+JSON.stringify(inp))
-                }
+                const inMemOVal = unstageInMemorySpend(this, inp, r)
                 await this.writeCrossBlockSpendRecovery(inp, r.scriptPubKeyBuf, inMemOVal)
                 continue
             }
-
             if (r.oVal == null) {
-                if (DEBUG_TRACE) {
-                    logger.info(`TRACE delOutput db=${this.dbName} path=noOval sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
-                }
-                // H present, O missing on disk: the single-input path
-                // (removeOutputWithInput) treats this as "do nothing" rather than
-                // deleting, because deleting here would drop the live H record
-                // with no K/M undo record to restore it on reorg unwind. Match
-                // that: leave both records intact and log loudly instead of
-                // silently creating an unrecoverable-on-reorg spend.
-                logger.info("Warning: Missing output value for input " + JSON.stringify(inp) + " while its outputHintKey is present - leaving O/H records intact, not deleting without an undo record")
+                warnMissingOutputValue(this, inp, r)
                 continue
             }
 
@@ -363,7 +394,6 @@ module.exports = {
             await this.addTransaction("del", r.hKey)
         }
         LevelUpStore.parseInBuckets.stage += Date.now() - _tStage
-
         return inputs.length
     },
 }
