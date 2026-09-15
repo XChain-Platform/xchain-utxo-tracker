@@ -25,39 +25,39 @@ const { nodeStillCatchingUp } = XChainUtxoTracker;
 // above-tip walk, which knows its depth before the first delete, refuses up
 // front when that depth cannot fit the window, with nothing deleted and no
 // unrecoverable tag (the index is intact).
+function newTracker() {
+  const tracker = new XChainUtxoTracker(
+    'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
+  );
+  tracker.sleep = async () => {};
+  tracker.removeFromLastBlocks = async () => {};
+  return tracker;
+}
+
+// Committed tip at `top`; the node agrees with every hash at or below its tip.
+function wire(tracker, top) {
+  const deleted = [];
+  const heightOf = (hash) => parseInt(hash.replace('db', ''), 10);
+  tracker.connector = { getBlockHash: async (h) => 'db' + h };
+  tracker.db = {
+    getLastBlockHeight: async () => top,
+    getLastBlockHash: async () => 'db' + top,
+    getBlock: async (hash) => { const h = heightOf(hash); return { h, ph: 'db' + (h - 1) }; },
+    getLastBlock: async () => ({ hash: 'db' + top, height: top }),
+    beginTransaction: async () => {},
+    endTransaction: async () => {},
+    removeOutputScriptsInBlock: async () => {},
+    processDeletedOutputs: async () => {},
+    removeCreatedOutputsInBlock: async () => {},
+    deleteBlock: async (hash) => { const h = heightOf(hash); deleted.push(h); top = h - 1; },
+    setLastBlockHash: async () => {},
+    setLastBlockHeight: async () => {}
+  };
+  return deleted;
+}
+
 describe('XChainUtxoTracker: a node still catching up is not a rollback', function () {
   this.timeout(0);
-
-  function newTracker() {
-    const tracker = new XChainUtxoTracker(
-      'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
-    );
-    tracker.sleep = async () => {};
-    tracker.removeFromLastBlocks = async () => {};
-    return tracker;
-  }
-
-  // Committed tip at `top`; the node agrees with every hash at or below its tip.
-  function wire(tracker, top) {
-    const deleted = [];
-    const heightOf = (hash) => parseInt(hash.replace('db', ''), 10);
-    tracker.connector = { getBlockHash: async (h) => 'db' + h };
-    tracker.db = {
-      getLastBlockHeight: async () => top,
-      getLastBlockHash: async () => 'db' + top,
-      getBlock: async (hash) => { const h = heightOf(hash); return { h, ph: 'db' + (h - 1) }; },
-      getLastBlock: async () => ({ hash: 'db' + top, height: top }),
-      beginTransaction: async () => {},
-      endTransaction: async () => {},
-      removeOutputScriptsInBlock: async () => {},
-      processDeletedOutputs: async () => {},
-      removeCreatedOutputsInBlock: async () => {},
-      deleteBlock: async (hash) => { const h = heightOf(hash); deleted.push(h); top = h - 1; },
-      setLastBlockHash: async () => {},
-      setLastBlockHeight: async () => {}
-    };
-    return deleted;
-  }
 
   describe('nodeStillCatchingUp()', function () {
     it('is true only for a literal initialblockdownload=true', function () {
@@ -72,6 +72,10 @@ describe('XChainUtxoTracker: a node still catching up is not a rollback', functi
       expect(nodeStillCatchingUp(undefined)).to.equal(false);
     });
   });
+});
+
+describe('XChainUtxoTracker: a node still catching up is not a rollback', function () {
+  this.timeout(0);
 
   describe('verifyReorg above-tip pre-delete refusal', function () {
     it('refuses with nothing deleted when the known depth exceeds the window', async function () {
@@ -100,6 +104,10 @@ describe('XChainUtxoTracker: a node still catching up is not a rollback', functi
       expect(deleted).to.deep.equal([105, 104, 103]);
     });
   });
+});
+
+describe('XChainUtxoTracker: a node still catching up is not a rollback', function () {
+  this.timeout(0);
 
   describe('the sync loop waits on initial block download', function () {
     const src = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker.js'), 'utf8');
