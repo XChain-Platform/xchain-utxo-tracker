@@ -147,6 +147,29 @@ async function main() {
     const truthDb = await openDb(args.truth)
     const candDb  = await openDb(args.candidate)
 
+    const itOpts = iteratorOptions(args)
+
+    const itA = makeIterator(truthDb, itOpts)
+    const itB = makeIterator(candDb,  itOpts)
+
+    const startedAt = Date.now()
+    const { stats, diffs } = await walkDatabases(itA, itB, args.limit)
+
+    await itA.end()
+    await itB.end()
+    await truthDb.close()
+    await candDb.close()
+
+    // Report
+    const elapsed = Date.now() - startedAt
+    const totals = printPrefixTable(stats)
+    printDiffs(diffs)
+    printResult(totals, elapsed)
+}
+
+// Iterator bounds for the whole keyspace, or for one prefix byte when
+// --prefix is given.
+function iteratorOptions(args) {
     let itOpts = { keyEncoding: 'buffer', valueEncoding: 'buffer' }
     if (args.prefixByte != null) {
         itOpts.gte = Buffer.from([args.prefixByte])
@@ -154,11 +177,13 @@ async function main() {
         // yields an empty range = vacuous OK); leave lt unset to scan to end.
         if (args.prefixByte !== 0xFF) itOpts.lt = Buffer.from([args.prefixByte + 1])
     }
+    return itOpts
+}
 
-    const itA = makeIterator(truthDb, itOpts)
-    const itB = makeIterator(candDb,  itOpts)
-
-    const startedAt = Date.now()
+// Walks both iterators in key order, counting matches, value diffs, keys
+// missing from the candidate and extra keys per prefix byte, and keeping the
+// first `limit` differences verbatim.
+async function walkDatabases(itA, itB, limit) {
     const stats = {}
     const diffs = []
     let a = await itA.next()
@@ -167,7 +192,7 @@ async function main() {
     while (a !== null || b !== null) {
         if (a === null) {
             bump(stats, prefixKey(b.key), 'extra')
-            if (diffs.length < args.limit) {
+            if (diffs.length < limit) {
                 diffs.push({ type: 'extra', key: Buffer.from(b.key), value: Buffer.from(b.value) })
             }
             b = await itB.next()
@@ -175,7 +200,7 @@ async function main() {
         }
         if (b === null) {
             bump(stats, prefixKey(a.key), 'missing')
-            if (diffs.length < args.limit) {
+            if (diffs.length < limit) {
                 diffs.push({ type: 'missing', key: Buffer.from(a.key), value: Buffer.from(a.value) })
             }
             a = await itA.next()
@@ -189,7 +214,7 @@ async function main() {
                 bump(stats, p, 'matches')
             } else {
                 bump(stats, p, 'diffs')
-                if (diffs.length < args.limit) {
+                if (diffs.length < limit) {
                     diffs.push({
                         type: 'diff',
                         key: Buffer.from(a.key),
@@ -202,26 +227,23 @@ async function main() {
             b = await itB.next()
         } else if (cmp < 0) {
             bump(stats, prefixKey(a.key), 'missing')
-            if (diffs.length < args.limit) {
+            if (diffs.length < limit) {
                 diffs.push({ type: 'missing', key: Buffer.from(a.key), value: Buffer.from(a.value) })
             }
             a = await itA.next()
         } else {
             bump(stats, prefixKey(b.key), 'extra')
-            if (diffs.length < args.limit) {
+            if (diffs.length < limit) {
                 diffs.push({ type: 'extra', key: Buffer.from(b.key), value: Buffer.from(b.value) })
             }
             b = await itB.next()
         }
     }
+    return { stats, diffs }
+}
 
-    await itA.end()
-    await itB.end()
-    await truthDb.close()
-    await candDb.close()
-
-    // Report
-    const elapsed = Date.now() - startedAt
+// Prints one line per prefix byte plus a total line, and returns the totals.
+function printPrefixTable(stats) {
     const prefixes = Object.keys(stats).sort()
 
     let tMatches = 0, tDiffs = 0, tMissing = 0, tExtra = 0
@@ -239,7 +261,11 @@ async function main() {
     }
     console.log('  ' + '-'.repeat(55))
     console.log(`  ${'TOTAL'.padEnd(10)} ${String(tMatches).padStart(10)} ${String(tDiffs).padStart(10)} ${String(tMissing).padStart(10)} ${String(tExtra).padStart(10)}`)
+    return { tMatches, tDiffs, tMissing, tExtra }
+}
 
+// Prints the kept differences verbatim.
+function printDiffs(diffs) {
     if (diffs.length > 0) {
         console.log('')
         console.log(`First ${diffs.length} differences:`)
@@ -255,7 +281,11 @@ async function main() {
             }
         }
     }
+}
 
+// Prints the verdict and exits 0 when the databases are identical, 2 when
+// they differ.
+function printResult({ tMatches, tDiffs, tMissing, tExtra }, elapsed) {
     console.log('')
     const totalKeys = tMatches + tDiffs + tMissing + tExtra
     console.log(`[validate-db] ${totalKeys} keys compared in ${(elapsed / 1000).toFixed(1)}s`)
