@@ -26,7 +26,7 @@
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
-const { closeServers } = require('./support');
+const { closeServers } = require('../support/concurrency_gate_harness');
 
 describe('Security: global in-flight concurrency cap', function () {
     afterEach(closeServers);

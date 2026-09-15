@@ -26,7 +26,7 @@
 const { expect } = require('chai');
 const { resolveLimit } = require('../../../src/server/concurrency_gate.js');
 const { captureLog } = require('../../helpers/capture_log');
-const { closeServers } = require('./support');
+const { closeServers } = require('../support/concurrency_gate_harness');
 
 describe('Security: global in-flight concurrency cap', function () {
     afterEach(closeServers);

@@ -26,7 +26,7 @@
 const { expect }  = require('chai');
 const {
     buildServer, closeServers, get, listen, waitFor
-} = require('./concurrency_gate.test/support');
+} = require('./support/concurrency_gate_harness');
 
 // Express answers the bare `app.get('/status')` route for HEAD, for a
 // trailing slash and for any letter case. An unguarded probe predicate
