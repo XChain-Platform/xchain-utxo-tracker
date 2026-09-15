@@ -37,16 +37,15 @@ const FAIL = Date.parse('2026-09-09T12:20:00.000Z');
 const NOW  = Date.parse('2026-09-09T13:00:00.000Z');
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const connectorSrc = fs.readFileSync(path.join(__dirname, '../../src/chain/blockchain_connector.js'), 'utf8');
+const apiSrc = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+
+function newConnector() {
+  return new BlockchainConnector('127.0.0.1', '18443', 'user', 'pass');
+}
 
 describe('XChainUtxoTracker: node reachability is visible on the health surfaces', function () {
   this.timeout(0);
-
-  const connectorSrc = fs.readFileSync(path.join(__dirname, '../../src/chain/blockchain_connector.js'), 'utf8');
-  const apiSrc = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
-
-  function newConnector() {
-    return new BlockchainConnector('127.0.0.1', '18443', 'user', 'pass');
-  }
 
   describe('nodeReachabilityFrom() (the reducer both fields are derived from)', function () {
     it('reports nothing wrong before any attempt has been made', function () {
@@ -79,7 +78,13 @@ describe('XChainUtxoTracker: node reachability is visible on the health surfaces
       expect(r.node_unreachable.last_ok_at).to.equal(null);
       expect(r.node_unreachable.seconds).to.equal(3600);
     });
+  });
+});
 
+describe('XChainUtxoTracker: node reachability is visible on the health surfaces', function () {
+  this.timeout(0);
+
+  describe('nodeReachabilityFrom() (the reducer both fields are derived from)', function () {
     it('clears the outage as soon as one attempt succeeds again', function () {
       const later = FAIL + 60000;
       const r = nodeReachabilityFrom(T0, later, FAIL, NOW);
@@ -116,6 +121,10 @@ describe('XChainUtxoTracker: node reachability is visible on the health surfaces
       }
     });
   });
+});
+
+describe('XChainUtxoTracker: node reachability is visible on the health surfaces', function () {
+  this.timeout(0);
 
   describe('the connector records both instants at its single POST choke point', function () {
     it('starts with never-succeeded, never-failed and a start time', function () {
@@ -138,7 +147,13 @@ describe('XChainUtxoTracker: node reachability is visible on the health surfaces
       expect(c.lastNodeOkAt).to.be.greaterThan(0);
       expect(c.nodeReachability().node_unreachable).to.equal(null);
     });
+  });
+});
 
+describe('XChainUtxoTracker: node reachability is visible on the health surfaces', function () {
+  this.timeout(0);
+
+  describe('the connector records both instants at its single POST choke point', function () {
     it('a failing POST stamps lastNodeFailAt and rethrows the original error', async function () {
       const c = newConnector();
       const boom = new Error('timeout of 30000ms exceeded');
@@ -183,9 +198,13 @@ describe('XChainUtxoTracker: node reachability is visible on the health surfaces
       expect(connectorSrc.indexOf('this.client.post(')).to.be.greaterThan(at);
     });
   });
+});
 
-  // api.js builds its payloads inside startApi() against a live tracker, so the wiring
-  // is guarded at source level, the shape nodeCatchingUpStatus.test.js uses.
+// api.js builds its payloads inside startApi() against a live tracker, so the wiring
+// is guarded at source level, the shape nodeCatchingUpStatus.test.js uses.
+describe('XChainUtxoTracker: node reachability is visible on the health surfaces', function () {
+  this.timeout(0);
+
   describe('the api payloads carry node_last_ok_at and node_unreachable', function () {
     it('rides the per-query freshness meta, which both GET /status branches spread', function () {
       const at = apiSrc.indexOf('async function getFreshnessMeta(');
@@ -216,7 +235,13 @@ describe('XChainUtxoTracker: node reachability is visible on the health surfaces
       expect(healthBody).to.match(/const sync = await jsonRpcController\.get_sync_status\(\)/);
       expect(healthBody).to.match(/\.\.\.sync/);
     });
+  });
+});
 
+describe('XChainUtxoTracker: node reachability is visible on the health surfaces', function () {
+  this.timeout(0);
+
+  describe('the api payloads carry node_last_ok_at and node_unreachable', function () {
     it('sits beside node_catching_up on every surface that carries it', function () {
       const sites = [];
       for (let at = apiSrc.indexOf('node_catching_up ='); at !== -1; at = apiSrc.indexOf('node_catching_up =', at + 1)) sites.push(at);
