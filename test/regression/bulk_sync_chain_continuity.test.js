@@ -97,7 +97,9 @@ describe('Regression: bulk-sync chain-continuity validator', function () {
         expect(res.error).to.match(/height 2:.*hash mismatch/);
         expect(res.blocksChecked).to.equal(2); // 0 and 1 passed before the break
     });
+});
 
+describe('Regression: bulk-sync chain-continuity validator', function () {
     it('rejects a broken prevHash link (orphan block spliced in)', function () {
         const chain = makeChain(4, 0, Buffer.alloc(32, 0));
         // Rebuild height 3 pointing at a wrong parent; its stored hash stays
