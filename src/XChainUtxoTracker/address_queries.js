@@ -43,19 +43,11 @@ module.exports = {
         const confirmedKeys = new Set()
 
         for (let nextOutput of confirmedOutputs) {
-            let txid = nextOutput.fullTxid || nextOutput.txid
-
             // Same fail-loud guard as getUtxosAddress: a 16-char fallback means
             // the O-record predates the fullTxHash field. get_utxos already throws
             // here; get_info must too, or a pre-format DB silently returns balances
             // while every spend path errors, masking the need for a re-index.
-            if (txid.length !== 64) {
-                throw new Error(
-                    `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
-                    ` This record predates the O-record fullTxHash field; re-index this LevelDB before use.` +
-                    ` UTXO key: ${nextOutput.txid}`
-                )
-            }
+            let txid = requireFullTxid(nextOutput)
 
             confirmedKeys.add(txid + ':' + nextOutput.vout)
 
@@ -66,29 +58,16 @@ module.exports = {
 
             // getInput keys on the 8-byte (16-hex) txid prefix, matching insertInput.
             let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
-            if (mempoolInput != null) {
-                // Confirmed output being spent in the mempool: counts as confirmed but pending out
-                confirmedBalance += amount
-                pendingBalance -= amount
-                utxosConfirmed++
-            } else {
-                confirmedBalance += amount
-                utxosConfirmed++
-            }
+            // Confirmed output being spent in the mempool: counts as confirmed but pending out
+            if (mempoolInput != null) pendingBalance -= amount
+            confirmedBalance += amount
+            utxosConfirmed++
         }
 
         for (let nextOutput of mempoolOutputs) {
-            let txid = nextOutput.fullTxid || nextOutput.txid
-
             // See the confirmed-output loop above: a 16-char fallback means the
             // O-record predates the fullTxHash field and can never spend validly.
-            if (txid.length !== 64) {
-                throw new Error(
-                    `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
-                    ` This record predates the O-record fullTxHash field; re-index this LevelDB before use.` +
-                    ` UTXO key: ${nextOutput.txid}`
-                )
-            }
+            let txid = requireFullTxid(nextOutput)
 
             // Skip an outpoint already counted from the confirmed store (just-mined
             // tx still present in both stores during the cleanup window).
@@ -101,19 +80,7 @@ module.exports = {
             }
         }
 
-        return {
-            "address": address,
-            "type": this.getAddressType(address, this.network),
-            "balances": {
-                "confirmed": satoshiToDecimalString(confirmedBalance),
-                "pending": satoshiToDecimalString(pendingBalance),
-                "received": satoshiToDecimalString(totalReceived)
-            },
-            "utxos": {
-                "confirmed": utxosConfirmed,
-                "pending": utxosPending
-            }
-        }
+        return balanceInfoResult.call(this, address, { confirmedBalance, pendingBalance, totalReceived, utxosConfirmed, utxosPending })
     },
 
     async getUtxosAddress(address, { limit = null, after = null } = {}){
@@ -277,5 +244,37 @@ module.exports = {
         if (!record) return null
 
         return { height: record.h }
+    }
+}
+
+// The fail-loud txid guard: a stored output must carry its full 64-char txid,
+// since a 16-char key prefix means the record predates the fullTxHash field.
+function requireFullTxid(nextOutput){
+    let txid = nextOutput.fullTxid || nextOutput.txid
+
+    if (txid.length !== 64) {
+        throw new Error(
+            `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
+            ` This record predates the O-record fullTxHash field; re-index this LevelDB before use.` +
+            ` UTXO key: ${nextOutput.txid}`
+        )
+    }
+    return txid
+}
+
+// The get_info response body, balances as coin-denominated decimal strings.
+function balanceInfoResult(address, { confirmedBalance, pendingBalance, totalReceived, utxosConfirmed, utxosPending }){
+    return {
+        "address": address,
+        "type": this.getAddressType(address, this.network),
+        "balances": {
+            "confirmed": satoshiToDecimalString(confirmedBalance),
+            "pending": satoshiToDecimalString(pendingBalance),
+            "received": satoshiToDecimalString(totalReceived)
+        },
+        "utxos": {
+            "confirmed": utxosConfirmed,
+            "pending": utxosPending
+        }
     }
 }
