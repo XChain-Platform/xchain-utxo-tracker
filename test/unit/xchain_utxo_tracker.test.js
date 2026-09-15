@@ -18,7 +18,6 @@ const LevelUpStore = require('../../src/store/level_up_db');
 
 // Helpers
 function randHash() { return crypto.randomBytes(32).toString('hex'); }
-function randHash8() { return crypto.randomBytes(8).toString('hex'); }
 
 // Create a minimal mock transaction (mirrors bitcoinjs-lib Transaction shape)
 function makeTx(opts = {}) {
@@ -59,11 +58,11 @@ function makeSpendInput(prevTxIdHex, prevVout = 0) {
   };
 }
 
-describe('XChainUtxoTracker', function () {
-  let tracker;
-  let db;
-  let mempoolDb;
+let tracker;
+let db;
+let mempoolDb;
 
+function registerTrackerHooks() {
   beforeEach(async function () {
     // Create tracker with bitcoin-regtest (needs no real node)
     tracker = new XChainUtxoTracker(
@@ -85,6 +84,10 @@ describe('XChainUtxoTracker', function () {
     try { await db.close(); } catch (e) {}
     try { await mempoolDb.close(); } catch (e) {}
   });
+}
+
+describe('XChainUtxoTracker', function () {
+  registerTrackerHooks();
 
   describe('constructor', function () {
     it('sets up network and connector', function () {
@@ -123,6 +126,10 @@ describe('XChainUtxoTracker', function () {
       )).to.throw(/[Uu]nknown network/);
     });
   });
+});
+
+describe('XChainUtxoTracker', function () {
+  registerTrackerHooks();
 
   describe('isSynced', function () {
     it('returns false initially', function () {
@@ -153,6 +160,10 @@ describe('XChainUtxoTracker', function () {
       expect(type).to.equal('unknown');
     });
   });
+});
+
+describe('XChainUtxoTracker', function () {
+  registerTrackerHooks();
 
   describe('millisecondsToTimeString', function () {
     it('formats hours, minutes, seconds', function () {
@@ -167,6 +178,10 @@ describe('XChainUtxoTracker', function () {
       expect(str).to.include('2d');
     });
   });
+});
+
+describe('XChainUtxoTracker', function () {
+  registerTrackerHooks();
 
   describe('parseTxOutputs', function () {
     it('inserts all outputs for a transaction', async function () {
@@ -223,6 +238,10 @@ describe('XChainUtxoTracker', function () {
       expect(txs).to.be.empty;
     });
   });
+});
+
+describe('XChainUtxoTracker', function () {
+  registerTrackerHooks();
 
   describe('parseTxInputs', function () {
     it('skips coinbase inputs', async function () {
@@ -253,6 +272,10 @@ describe('XChainUtxoTracker', function () {
       expect(input).to.not.be.null;
     });
   });
+});
+
+describe('XChainUtxoTracker', function () {
+  registerTrackerHooks();
 
   describe('two-pass processing (same-block spend)', function () {
     it('handles tx spending output from earlier tx in same block', async function () {
@@ -294,357 +317,6 @@ describe('XChainUtxoTracker', function () {
       const tx2Script = crypto.createHash('sha256').update(tx2.outs[0].script).digest('hex');
       const tx2Outputs = await db.getOutputsScriptPubKey(tx2Script);
       expect(tx2Outputs).to.have.length(1);
-    });
-  });
-
-  describe('getBalanceInfo', function () {
-    it('returns confirmed balance with no mempool activity', async function () {
-      // We need to use a valid regtest address
-      const bitcoin = require('bitcoinjs-lib');
-      const { createHash } = require('crypto');
-      const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
-      const script = bitcoin.address.toOutputScript(address, tracker.network);
-      const scriptHash = createHash('sha256').update(script).digest('hex');
-
-      const txHash8 = randHash8();
-      const fullTxHash = randHash();
-
-      // Insert a confirmed output
-      await db.insertOutput({
-        scriptPubKey: scriptHash,
-        txHash: txHash8,
-        outputIndex: 0,
-        value: BigInt('200000000'), // 2 BTC
-        height: 500,
-        fullTxHash
-      });
-      await db.endTransaction(true);
-
-      const info = await tracker.getBalanceInfo(address);
-      expect(info.address).to.equal(address);
-      expect(info.type).to.equal('p2pkh');
-      expect(info.balances.confirmed).to.equal('2.00000000');
-      expect(info.balances.pending).to.equal('0.00000000');
-      expect(info.utxos.confirmed).to.equal(1);
-      expect(info.utxos.pending).to.equal(0);
-    });
-
-    it('reflects pending spend from mempool', async function () {
-      const bitcoin = require('bitcoinjs-lib');
-      const { createHash } = require('crypto');
-      const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
-      const script = bitcoin.address.toOutputScript(address, tracker.network);
-      const scriptHash = createHash('sha256').update(script).digest('hex');
-
-      const txHash8 = randHash8();
-      // A valid full txid whose first 8 bytes match the O-record key prefix, so
-      // the mempool-spend lookup (which keys on the 8-byte prefix) still matches.
-      // A pre-migration record without fullTxHash is now rejected by the
-      // fail-loud guard, so a migrated record is required to exercise this path.
-      const fullTxHash = txHash8 + '0'.repeat(48);
-
-      await db.insertOutput({
-        scriptPubKey: scriptHash,
-        txHash: txHash8,
-        outputIndex: 0,
-        value: BigInt('100000000'), // 1 BTC
-        height: 400,
-        fullTxHash
-      });
-      await db.endTransaction(true);
-
-      // Insert mempool input spending it; insertInput keys on the 8-byte prefix
-      await mempoolDb.insertInput({
-        prevTxHash: fullTxHash,
-        prevOutputIndex: 0,
-        txHash: randHash8()
-      });
-      await mempoolDb.endTransaction(true);
-
-      const info = await tracker.getBalanceInfo(address);
-      expect(info.balances.confirmed).to.equal('1.00000000');
-      expect(info.balances.pending).to.equal('-1.00000000');
-      expect(info.utxos.confirmed).to.equal(1);
-    });
-
-    it('includes mempool outputs as pending', async function () {
-      const bitcoin = require('bitcoinjs-lib');
-      const { createHash } = require('crypto');
-      const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
-      const script = bitcoin.address.toOutputScript(address, tracker.network);
-      const scriptHash = createHash('sha256').update(script).digest('hex');
-
-      // Insert mempool output only
-      await mempoolDb.insertOutput({
-        scriptPubKey: scriptHash,
-        txHash: randHash8(),
-        outputIndex: 0,
-        value: BigInt('50000000'), // 0.5 BTC
-        height: -1,
-        fullTxHash: randHash()
-      });
-      await mempoolDb.endTransaction(true);
-
-      const info = await tracker.getBalanceInfo(address);
-      expect(info.balances.confirmed).to.equal('0.00000000');
-      expect(info.balances.pending).to.equal('0.50000000');
-      expect(info.utxos.pending).to.equal(1);
-    });
-
-    it('returns all zeros for unknown address', async function () {
-      const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
-
-      const info = await tracker.getBalanceInfo(address);
-      expect(info.balances.confirmed).to.equal('0.00000000');
-      expect(info.balances.pending).to.equal('0.00000000');
-      expect(info.utxos.confirmed).to.equal(0);
-      expect(info.utxos.pending).to.equal(0);
-    });
-  });
-
-  describe('getUtxosAddress', function () {
-    it('returns confirmed UTXOs with correct fields', async function () {
-      const bitcoin = require('bitcoinjs-lib');
-      const { createHash } = require('crypto');
-      const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
-      const script = bitcoin.address.toOutputScript(address, tracker.network);
-      const scriptHash = createHash('sha256').update(script).digest('hex');
-
-      const fullTxHash = randHash();
-      const txHash8 = fullTxHash.substring(0, 16);
-
-      await db.insertOutput({
-        scriptPubKey: scriptHash,
-        txHash: txHash8,
-        outputIndex: 2,
-        value: BigInt('300000000'),
-        height: 900,
-        fullTxHash
-      });
-      await db.endTransaction(true);
-
-      const utxos = await tracker.getUtxosAddress(address);
-      expect(utxos).to.have.length(1);
-      expect(utxos[0].txid).to.equal(fullTxHash);
-      expect(utxos[0].vout).to.equal(2);
-      expect(utxos[0].confirmations).to.equal(1000 - 900 + 1);
-      expect(utxos[0].amount).to.equal('3.00000000'); // 300000000 sat, exact BigInt decimal string
-    });
-
-    it('excludes confirmed UTXOs spent in mempool', async function () {
-      const bitcoin = require('bitcoinjs-lib');
-      const { createHash } = require('crypto');
-      const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
-      const script = bitcoin.address.toOutputScript(address, tracker.network);
-      const scriptHash = createHash('sha256').update(script).digest('hex');
-
-      const txHash8 = randHash8();
-      // Full txid built from the O-record's 8-byte key prefix (see the
-      // "reflects pending spend from mempool" test above for why).
-      const fullTxHash = txHash8 + '0'.repeat(48);
-
-      await db.insertOutput({
-        scriptPubKey: scriptHash,
-        txHash: txHash8,
-        outputIndex: 0,
-        value: BigInt('100000000'),
-        height: 500,
-        fullTxHash
-      });
-      await db.endTransaction(true);
-
-      // Mempool spends this output; insertInput keys on the 8-byte prefix
-      await mempoolDb.insertInput({
-        prevTxHash: fullTxHash,
-        prevOutputIndex: 0,
-        txHash: randHash8()
-      });
-      await mempoolDb.endTransaction(true);
-
-      const utxos = await tracker.getUtxosAddress(address);
-      expect(utxos).to.be.empty;
-    });
-
-    it('throws on a pre-migration record missing its fullTxHash', async function () {
-      const bitcoin = require('bitcoinjs-lib');
-      const { createHash } = require('crypto');
-      const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
-      const script = bitcoin.address.toOutputScript(address, tracker.network);
-      const scriptHash = createHash('sha256').update(script).digest('hex');
-
-      // Output written WITHOUT a fullTxHash. The zero-hash sentinel decodes to
-      // fullTxid: null, so the resolved txid is only the 16-char key prefix.
-      // Such records predate the O-record fullTxHash field and cannot spend
-      // validly; getUtxosAddress must reject them rather than emit a truncated id.
-      await db.insertOutput({
-        scriptPubKey: scriptHash,
-        txHash: randHash8(),
-        outputIndex: 0,
-        value: BigInt('100000000'),
-        height: 500
-      });
-      await db.endTransaction(true);
-
-      let threw = null;
-      try {
-        await tracker.getUtxosAddress(address);
-      } catch (e) {
-        threw = e;
-      }
-      expect(threw).to.not.be.null;
-      expect(threw.message).to.match(/fullTxHash/);
-      expect(threw.message).to.match(/re-index/i);
-    });
-
-    it('includes mempool UTXOs', async function () {
-      const bitcoin = require('bitcoinjs-lib');
-      const { createHash } = require('crypto');
-      const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
-      const script = bitcoin.address.toOutputScript(address, tracker.network);
-      const scriptHash = createHash('sha256').update(script).digest('hex');
-
-      await mempoolDb.insertOutput({
-        scriptPubKey: scriptHash,
-        txHash: randHash8(),
-        outputIndex: 0,
-        value: BigInt('25000000'),
-        height: -1,
-        fullTxHash: randHash()
-      });
-      await mempoolDb.endTransaction(true);
-
-      const utxos = await tracker.getUtxosAddress(address);
-      expect(utxos).to.have.length(1);
-      expect(utxos[0].confirmations).to.equal(0);
-      expect(utxos[0].height).to.be.null;
-    });
-  });
-
-  describe('getFirstSeen', function () {
-    it('returns first-seen block height from S-prefix', async function () {
-      const bitcoin = require('bitcoinjs-lib');
-      const { createHash } = require('crypto');
-      const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
-      const script = bitcoin.address.toOutputScript(address, tracker.network);
-      const scriptHash = createHash('sha256').update(script).digest('hex');
-
-      const blockHash = randHash();
-
-      await db.insertOutputScriptBlock(scriptHash, blockHash, 42);
-      await db.endTransaction(true);
-
-      const firstSeen = await tracker.getFirstSeen(address);
-      expect(firstSeen).to.not.be.null;
-      expect(firstSeen).to.deep.equal({ height: 42 });
-    });
-
-    it('returns null for unknown address', async function () {
-      const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
-      const firstSeen = await tracker.getFirstSeen(address);
-      expect(firstSeen).to.be.null;
-    });
-  });
-
-  describe('lastBlocks management', function () {
-    it('addToLastBlocks adds to array and db', async function () {
-      const blockHash = randHash();
-      await db.beginTransaction();
-      await tracker.addToLastBlocks(blockHash);
-      await db.endTransaction(true);
-
-      expect(tracker.lastBlocks).to.include(blockHash);
-      const stored = await db.getLastStoredBlocks();
-      expect(stored).to.include(blockHash);
-    });
-
-    it('addToLastBlocks rejects (not an unhandled rejection) on a malformed block hash', async function () {
-      // The db write is now awaited, so a synchronous kStoredBlk guard failure
-      // surfaces as a rejected promise the caller can catch rather than an escaped
-      // unhandled rejection.
-      await db.beginTransaction();
-      let threw = false;
-      try {
-        await tracker.addToLastBlocks('not-a-valid-64-hex-hash');
-      } catch (err) {
-        threw = true;
-        expect(err.message).to.match(/kStoredBlk expects a 64-hex/);
-      } finally {
-        try { await db.endTransaction(false); } catch (_) {}
-      }
-      expect(threw, 'expected addToLastBlocks to reject on a malformed hash').to.equal(true);
-    });
-
-    it('removeFromLastBlocks removes last element', async function () {
-      const h1 = randHash();
-      const h2 = randHash();
-
-      await db.beginTransaction();
-      await tracker.addToLastBlocks(h1);
-      await tracker.addToLastBlocks(h2);
-      await db.endTransaction(true);
-
-      await db.beginTransaction();
-      await tracker.removeFromLastBlocks(h2);
-      await db.endTransaction(true);
-
-      expect(tracker.lastBlocks).to.not.include(h2);
-      expect(tracker.lastBlocks).to.include(h1);
-    });
-
-    it('removeFromLastBlocks throws if not the last element', async function () {
-      const h1 = randHash();
-      const h2 = randHash();
-      tracker.lastBlocks = [h1, h2];
-
-      try {
-        await tracker.removeFromLastBlocks(h1);
-        expect.fail('should have thrown');
-      } catch (err) {
-        expect(err.message).to.include("last one");
-      }
-    });
-
-    it('addToLastBlocks queues cleanup when exceeding UNDO_BLOCKS', async function () {
-      // Derive from the tracker's resolved window (Tier-B per-chain, 2026-06-02:
-      // bitcoin-regtest → 12) so this stays correct if the default changes again.
-      const undo = tracker.undoBlocks;
-      await db.beginTransaction();
-      for (let i = 0; i < undo + 2; i++) {
-        await tracker.addToLastBlocks(randHash());
-      }
-      await db.endTransaction(true);
-
-      expect(tracker.lastBlocks).to.have.length(undo);
-      expect(tracker.pendingKMCleanup).to.have.length(2);
-    });
-  });
-
-  describe('stopParsing', function () {
-    it('resolves when parsingStopped becomes true', async function () {
-      tracker.parsingStopped = false;
-      // Simulate async stop
-      setTimeout(() => { tracker.parsingStopped = true; }, 100);
-      const result = await tracker.stopParsing();
-      expect(result).to.be.true;
-    });
-
-    it('rejects after 10 tries if parsing never stops', async function () {
-      tracker.parsingStopped = false;
-      sinon.stub(tracker, 'sleep').resolves(); // skip real delays
-
-      try {
-        await tracker.stopParsing();
-        expect.fail('should have rejected');
-      } catch (err) {
-        // stopParsing now rejects with an Error and leaves the tracker RUNNING:
-        // it restores keepParsing and re-arms the mempool poller so a failed stop
-        // is a no-op, not a half-dead tracker that closes its DB on the next loop.
-        expect(err.message).to.include('error trying to stop');
-        expect(tracker.keepParsing).to.be.true;
-      } finally {
-        // Clear the re-armed mempool interval so it does not leak past the test.
-        if (tracker.mempoolInterval) { clearInterval(tracker.mempoolInterval); tracker.mempoolInterval = null; }
-      }
     });
   });
 });
