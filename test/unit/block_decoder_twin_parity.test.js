@@ -76,19 +76,20 @@ function verdict(instance, method, hex) {
     }
 }
 
+let TwinDecoder = null;
+
+function loadTwinDecoder() {
+    if (!TWIN_PRESENT) {
+        if (REQUIRE_SIBLINGS)
+            throw new Error('XCHAIN_REQUIRE_SIBLINGS=1 but the xchain-decoder twin was not found at ' + TWIN_FILE);
+        this.skip();
+        return;
+    }
+    if (TwinDecoder === null) TwinDecoder = require(TWIN_FILE);
+}
+
 describe('XChainBlockDecoder twin parity with xchain-decoder @regression', function () {
-
-    let TwinDecoder = null;
-
-    before(function () {
-        if (!TWIN_PRESENT) {
-            if (REQUIRE_SIBLINGS)
-                throw new Error('XCHAIN_REQUIRE_SIBLINGS=1 but the xchain-decoder twin was not found at ' + TWIN_FILE);
-            this.skip();
-            return;
-        }
-        TwinDecoder = require(TWIN_FILE);
-    });
+    before(loadTwinDecoder);
 
     it('each twin exposes exactly one tx-parse entry point, from the known pair', function () {
         const local = new LocalDecoder('litecoin-mainnet');
@@ -128,6 +129,10 @@ describe('XChainBlockDecoder twin parity with xchain-decoder @regression', funct
         // nothing else. That count moves the moment the strip predicate changes.
         expect(stripped, 'parse-success count moved; the strip predicate changed or the matrix went inert').to.equal(7);
     });
+});
+
+describe('XChainBlockDecoder twin parity with xchain-decoder @regression', function () {
+    before(loadTwinDecoder);
 
     it('agrees on a plain transaction under the non-MWEB wire formats', function () {
         for (const network of ['bitcoin-mainnet', 'dogecoin-mainnet']) {
