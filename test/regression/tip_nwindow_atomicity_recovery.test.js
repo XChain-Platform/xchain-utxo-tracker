@@ -59,9 +59,8 @@ async function simulateRestart(tracker) {
     return { tipHeight, tipHash };
 }
 
-describe('Regression: tip-pointer / N-window atomicity and restart recovery', function () {
-    let tracker;
-
+let tracker;
+function registerTrackerHooks() {
     beforeEach(async function () {
         tracker = await createTestTracker();
         tracker.undoBlocks = 3; // small window so aging/cleanup engages quickly
@@ -70,7 +69,10 @@ describe('Regression: tip-pointer / N-window atomicity and restart recovery', fu
     afterEach(async function () {
         await closeTracker(tracker);
     });
+}
 
+describe('Regression: tip-pointer / N-window atomicity and restart recovery', function () {
+    registerTrackerHooks();
     it('tip pointer and N-window agree at the tip after a clean restart', async function () {
         const blocks = buildCoinbaseChain(6, 0, 0);
         await processBlocksAndCommit(tracker, blocks);
@@ -109,7 +111,10 @@ describe('Regression: tip-pointer / N-window atomicity and restart recovery', fu
         expect(tipHash).to.equal(blocks[4].hash);
         expect(tracker.lastBlocks[tracker.lastBlocks.length - 1]).to.equal(blocks[4].hash);
     });
+});
 
+describe('Regression: tip-pointer / N-window atomicity and restart recovery', function () {
+    registerTrackerHooks();
     it('crash before cleanupAgedBlocks leaves no tip/N desync at the tip', async function () {
         // Commit blocks 0..4 in one batch, staging the P-key like the live forward
         // path (XChainUtxoTracker.js ~1511), but SKIP cleanupAgedBlocks to model a
@@ -147,7 +152,10 @@ describe('Regression: tip-pointer / N-window atomicity and restart recovery', fu
         }
         expect(threw, threw && threw.message).to.equal(null);
     });
+});
 
+describe('Regression: tip-pointer / N-window atomicity and restart recovery', function () {
+    registerTrackerHooks();
     it('recovered pendingKMCleanup self-heals: aged records prune without deleting the live tip', async function () {
         const blocks = buildCoinbaseChain(5, 0, 0);
         await tracker.db.beginTransaction();
