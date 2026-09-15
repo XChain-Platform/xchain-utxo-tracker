@@ -68,7 +68,9 @@ describe('computeFreshness', function () {
     // Only a strict boolean asserts readiness.
     expect(XChainUtxoTracker.computeFreshness(10, 10, true, { mempoolReconverged: 'yes' }).mempool_ready).to.equal(false);
   });
+});
 
+describe('computeFreshness', function () {
   // The per-query sibling is what create_tx gates on, so the negative-lag
   // floor get_sync_status applies has to hold here too. Without it the two surfaces
   // disagreed for the same instant: get_sync_status said synced:false while get_utxos
@@ -118,7 +120,9 @@ describe('computeFreshness', function () {
     expect(body).to.match(/halted:\s*!!tracker\.halted/);
     expect(body).to.match(/haltReason:\s*tracker\.haltReason/);
   });
+});
 
+describe('computeFreshness', function () {
   // Same wiring guard, for the rollback counter. Every get_utxos PAGE carries this
   // object as its `sync` sibling, and a paginating consumer proves two pages are one
   // snapshot by comparing them. Height cannot do it alone: a rewind that re-applies
