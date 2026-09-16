@@ -168,6 +168,7 @@ function generateMutantsForFile(source, fileName) {
         continue;
       }
 
+      // Only mutate on lines that declare a P_* constant
       if (!lineContains(source, idx, 'const P_')) {
         continue;
       }
@@ -187,6 +188,14 @@ function generateMutantsForFile(source, fileName) {
   return mutants;
 }
 
+// Stryker plugin registration, and why this file registers almost nothing.
+//
+// The mutants this file generates are key-schema mutants: they flip the prefix
+// byte of a store key, which is the class of defect that reads and writes
+// perfectly well and silently files a record under the wrong index. Stryker's
+// own mutators never produce one, because to them a prefix byte is just a
+// number.
+//
 // Stryker v8 discovers custom plugins by requiring the module listed in the
 // "plugins" config array, and expects a `strykerPlugins` array of
 // { kind, name, factory } objects. It exposes no public "MutantGenerator"
@@ -226,12 +235,18 @@ function generate(files) {
 }
 
 const DEFAULT_TARGETS = [
-  'src/LevelUpDb.js',
+  'src/store/level_up_db.js',
   'src/XChainUtxoTracker.js',
-  'src/bufferutils.js',
+  'src/chain/bufferutils.js',
   'src/api.js',
-  'src/BlockchainConnector.js',
-  'src/XChainBlockDecoder.js',
+  'src/chain/blockchain_connector.js',
+  'src/chain/blockchain_connector/auxpow_codec.js',
+  'src/chain/blockchain_connector/batch_fetch.js',
+  'src/chain/blockchain_connector/block_queries.js',
+  'src/chain/blockchain_connector/constants.js',
+  'src/chain/blockchain_connector/rpc_helpers.js',
+  'src/chain/blockchain_connector/transport_and_mempool.js',
+  'src/chain/XChainBlockDecoder.js',
 ];
 
 // CLI invocation: print mutants as JSON
@@ -246,6 +261,16 @@ if (require.main === module) {
 // Stryker v8 loads this module as a plugin; the empty strykerPlugins array
 // lets it load without error (see the file-level note above for why this
 // isn't a real MutantGenerator plugin).
+//
+// Stryker v8 loads this as a plugin. We export a strykerPlugins array.
+// Since custom mutant generation is not a first-class plugin kind in Stryker
+// v8's public API, we register as a no-op plugin that Stryker will load
+// without error. The actual mutation injection happens via the standalone
+// `generate()` function or by running this file as a pre-processing step
+// that feeds results into Stryker's `--mutate` pipeline.
+//
+// For full integration, use the companion script `run-with-custom-mutants.js`
+// which applies custom mutations one at a time and runs the test suite.
 module.exports = {
   strykerPlugins: [],
   generate,

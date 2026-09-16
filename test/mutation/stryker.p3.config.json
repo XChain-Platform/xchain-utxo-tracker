@@ -11,8 +11,8 @@
     "config": "test/mutation/.mocharc.stryker.yml"
   },
   "mutate": [
-    "src/CryptoNetworks.js",
-    "src/util.js"
+    "src/chain/crypto_networks.js",
+    "src/common/util.js"
   ],
   "reporters": ["html", "clear-text", "progress"],
   "htmlReporter": {

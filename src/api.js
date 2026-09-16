@@ -18,6 +18,7 @@
  * 
  ********************************************************************/
 
+// Load required libraries
 const dotenv = require('dotenv')
 dotenv.config()
 
@@ -34,7 +35,7 @@ patchConsole({
 
 const { spawn, spawnSync } = require('child_process');
 const os = require('os')
-const LevelUpStore = require('./LevelUpDb.js')
+const LevelUpStore = require('./store/level_up_db.js')
 const fs = require('fs')
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -42,19 +43,20 @@ const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const XChainUtxoTracker  = require('./XChainUtxoTracker');
-const BlockchainConnector = require('./BlockchainConnector');
-const { resolveUndoBlocks } = require('./bulk-sync/merger/derive-keys.js')
-const { handleBootstrapFailure, handleRestoreFailure } = require('./bootstrap-recovery.js')
-const memoryBudget = require('./memoryBudget')
+const BlockchainConnector = require('./chain/blockchain_connector');
+const { resolveUndoBlocks } = require('./bulk-sync/merger/derive_keys.js')
+const { handleBootstrapFailure, handleRestoreFailure } = require('./bootstrap/bootstrap_recovery.js')
+const memoryBudget = require('./store/memory_budget')
 const { isWrapperArchive, parseSha256Sidecar,
-        hasRequiredLevelDbMembers, parseDetachedSignature } = require('./restore-validation.js')
+        hasRequiredLevelDbMembers, parseDetachedSignature } = require('./bootstrap/restore_validation.js')
 const { installObservability } = require('./observability');   // default-off /metrics + structured log shim
-const { installUtxoTrackerMetrics } = require('./utxoTrackerMetrics');   // sync-freshness heartbeat gauges
-const { installCrashHandlers, noteCrash } = require('./crashHandlers.js')
-const { createShutdown, createTrackerDrain } = require('./shutdown.js')
+const { installUtxoTrackerMetrics } = require('./server/utxo_tracker_metrics');   // sync-freshness heartbeat gauges
+const { installCrashHandlers, noteCrash } = require('./server/crash_handlers.js')
+const { createShutdown, createTrackerDrain } = require('./server/shutdown.js')
 const jsonRouter = require('express-json-rpc-router')
-const concurrencyGate = require('./concurrencyGate.js')
-const { parseCorsOrigin } = require('./corsOrigin.js')
+const concurrencyGate = require('./server/concurrency_gate.js')
+const { envInt: sharedEnvInt } = require('./config/env_int')
+const { parseCorsOrigin } = require('./server/cors_origin.js')
 const { randomUUID, timingSafeEqual, createHash,
         createPublicKey, verify: verifyAsymmetric } = require('crypto')
 const path = require('path')
@@ -111,11 +113,14 @@ const MAX_PAGE_LIMIT = Number(process.env.UTXO_MAX_PAGE_LIMIT) > 0
     ? Math.floor(Number(process.env.UTXO_MAX_PAGE_LIMIT))
     : 10000
 
-// Validate-or-fall-back resolver for the bulk-sync numeric env knobs, the same shape
-// resolveUndoBlocks (undo-blocks.js) applies to XCHAIN_UNDO_BLOCKS_<COIN>: a malformed
-// override is refused and the default stands, loudly. Number() rather than parseInt()
-// because parseInt happily truncates '10abc' to 10 and reads a typo as intent; a knob
-// this pipeline FATALs on deserves the strict read.
+// Validate-or-fall-back resolver for the bulk-sync numeric env knobs. The reader
+// itself now lives in src/config/env_int.js and is the SAME function resolveUndoBlocks
+// (undo-blocks.js) and resolveCoinbaseMaturity call, so the parity is true by
+// construction rather than by hand-copy; before that extraction those two sites
+// were still on parseInt while this comment asserted otherwise.
+// Number() rather than parseInt() because parseInt happily truncates '10abc' to 10
+// and reads a typo as intent; a knob this pipeline FATALs on deserves the strict
+// read. This wrapper adds only the bulk-sync sentence on the warning line.
 //
 // These values are not just forwarded. BULK_SYNC_TIP_SAFETY also feeds the
 // too-short-chain pre-flight in runBulkSyncIfEmpty, and a raw string ran through
@@ -131,16 +136,7 @@ const MAX_PAGE_LIMIT = Number(process.env.UTXO_MAX_PAGE_LIMIT) > 0
 // Warn-and-default rather than throw: the pre-flight's whole purpose is that a
 // misconfigured tracker still comes up on the incremental path.
 function envInt(name, fallback, min){
-    const raw = process.env[name]
-    if (raw === undefined || raw === null || String(raw).trim() === '') return fallback
-    const parsed = Number(String(raw).trim())
-    if (!Number.isInteger(parsed) || parsed < min) {
-        console.error(
-            `WARNING: ${name}='${raw}' is not an integer >= ${min}; falling back to ${fallback}. ` +
-            'Bulk-sync will run with the default for this knob.')
-        return fallback
-    }
-    return parsed
+    return sharedEnvInt(name, fallback, min, 'Bulk-sync will run with the default for this knob.')
 }
 
 // Bulk-sync pre-flight (activates on empty DB). See runBulkSyncIfEmpty below.
@@ -184,11 +180,14 @@ var bootstrapBusy = false
 // regress to a bare unhandledRejection that skips the rollback.
 // Returns the settled promise so the SIGTERM drain can wait for the loop to
 // break at a block boundary; a halt resolves it too (the process stays up).
+// The halt writes its marker to the store before this settles, so a SIGTERM
+// that follows the halt cannot cut the write short. A store already carrying
+// the marker never reaches this guard: start() resolves into the halted state.
 function launchTracker(tracker){
-    return tracker.start().catch((err) => {
+    return tracker.start().catch(async (err) => {
         try { if (tracker.db && tracker.db.endTransaction) tracker.db.endTransaction(false) } catch (_) {}
         if (XChainUtxoTracker.isUnrecoverableReorg(err)) {
-            tracker.haltForResync(err && err.message)
+            await tracker.haltForResync(err && err.message)
             return
         }
         noteCrash('pollingLoopTerminated', err)
@@ -274,6 +273,7 @@ function installUnmatchedRouteLabel(app){
 }
 
 async function startApi(){
+    //Start the tracker
     const tracker = new XChainUtxoTracker(NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW);
     const trackerExited = launchTracker(tracker)
 
@@ -360,7 +360,9 @@ async function startApi(){
         const freshness = XChainUtxoTracker.computeFreshness(committedHeight, rawTip, tracker.isSynced(), {
             mempoolReconverged: tracker.isMempoolReconverged(),
             halted:             !!tracker.halted,
-            haltReason:         tracker.haltReason
+            haltReason:         tracker.haltReason,
+            haltedAt:           tracker.haltedAt,
+            haltedHeight:       tracker.haltedHeight
         });
         // Non-null ({node_height, stored_height, since}) while the sync loop is waiting
         // out a node in initial block download whose tip is below our committed tip:
@@ -374,6 +376,20 @@ async function startApi(){
         const reach = nodeReachabilityFields(tracker);
         freshness.node_last_ok_at  = reach.node_last_ok_at;
         freshness.node_unreachable = reach.node_unreachable;
+        // The lifetime rollback counter, the same field get_sync_status publishes.
+        // It is here because every get_utxos PAGE carries this object as its `sync`
+        // sibling, and a paginating consumer compares consecutive pages to prove
+        // they describe one snapshot. Height alone cannot: a rewind that re-applies
+        // to the SAME height leaves tracker_height, lag and synced identical on both
+        // pages while an early page's outpoint is already orphaned, so the consumer's
+        // counter comparison (xchain-encoder/src/build/utxo_tracker.js snapshotDivergence)
+        // was written against a field the producer never sent and could never fire.
+        // Published as a number so a page that omits it still reads as an older
+        // tracker rather than as a moved counter.
+        freshness.reorg_count = (tracker && typeof tracker.reorgCount === 'number')
+            ? tracker.reorgCount
+            : undefined;
+        if (freshness.reorg_count === undefined) delete freshness.reorg_count;
         return freshness;
     }
 
@@ -399,6 +415,7 @@ async function startApi(){
     // Use Helmet to increase security
     app.use(helmet());
 
+    // Allow JSON requests
     app.use(bodyParser.json());
 
     // CORS disabled by default. CORS_ORIGIN is a comma-separated ALLOWLIST, not a
@@ -441,7 +458,19 @@ async function startApi(){
     // a small private reserve rather than a blanket exemption, because it still
     // does a LevelDB read and an uncapped exempt route is just where the
     // stampede would move next.
-    const isProbe = (req) => req.method === 'GET' && req.path === '/status';
+    // Must match exactly the set Express routes to the `/status` handler below.
+    // Under the default routing options the app runs with, a bare `app.get`
+    // also answers HEAD, a trailing slash, and any letter case, so a stricter
+    // predicate here admits those variants on the MAIN gate while the handler
+    // is wrapped in probeGate.hold(): hold() finds no slot under its own gate's
+    // key, degrades to a pass-through, and the main slot is freed by the socket
+    // 'close' leg while the LevelDB read is still running (item 7712). Same
+    // root cause, second symptom: a HEAD healthcheck charged to the 100-slot
+    // main cap can be shed with 429, which is the restart thrash the reserve
+    // exists to prevent. Changing this route, adding a /status alias, or
+    // enabling strict/case-sensitive routing means changing both sites.
+    const PROBE_PATH = /^\/status\/?$/i;
+    const isProbe = (req) => (req.method === 'GET' || req.method === 'HEAD') && PROBE_PATH.test(req.path);
     const BUSY_BODY = { error: 'Server busy, retry shortly', code: 'SERVER_BUSY' };
 
     const probeGate = concurrencyGate.createConcurrencyGate({
@@ -618,6 +647,17 @@ async function startApi(){
         // `tracker_height` and `committed_height` are aliases, both report
         // the last committed block. `committed_height` is the canonical name
         // going forward; `tracker_height` retained for existing callers.
+        // The tracker's height fields all report the LAST COMMITTED state,
+        // not in-flight processing. This matters because the tracker buffers
+        // up to DB_TRANSACTION_BLOCKS_QUANTITY blocks before flushing via
+        // endTransaction(). During a mid-batch state, in-memory has the new
+        // UTXOs but disk doesn't; and getLastBlockHeight() reads from disk.
+        // So getLastBlockHeight() returning N is a hard guarantee that every
+        // output in blocks 0..N is queryable via get_utxos / get_balance.
+        // is_quiescent() builds on this: it returns ready=true only when the
+        // committed height matches the node tip AND the node's mempool is
+        // empty, giving callers a barrier they can wait on without needing
+        // to know any of the tracker's batching internals.
         async get_sync_status() {
             let committedHeight = -1;
             try { committedHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
@@ -691,10 +731,14 @@ async function startApi(){
             if (tracker.blockFetchDesync) result.block_fetch_desync = tracker.blockFetchDesync;
             // Halted (unrecoverable reorg): persists, since the tracker no longer
             // exits on this fault but halts in place, so a monitor can alert and an
-            // operator can resync. /status also returns 503 while halted.
+            // operator can resync. /status also returns 503 while halted. halted_at
+            // and halted_height come from the store's marker, so after a restart
+            // they still name the FIRST halt, not this process's boot.
             if (tracker.halted) {
-                result.halted = true;
-                result.halt_reason = tracker.haltReason;
+                result.halted        = true;
+                result.halt_reason   = tracker.haltReason;
+                result.halted_at     = tracker.haltedAt;
+                result.halted_height = tracker.haltedHeight;
             }
             return result;
         },
@@ -776,6 +820,7 @@ async function startApi(){
         // path, so wrapping it (the null case included) would change historical
         // outcomes. Callers needing freshness use get_first_seen_status below or
         // the REST /firstseen/:address headers.
+        // Function to retrieve the height of the block where an address was first seen
         async get_first_seen({address}) {
             return await getFirstSeen(address)
         },
@@ -794,12 +839,15 @@ async function startApi(){
             let balance = await getBalance(address)
 
             // sync is an additive freshness surface; see getFreshnessMeta above.
+            // Return balance; sync is an additive freshness surface (M-11).
             return { balance: balance, sync: await getFreshnessMeta() }
         },
 
+        // Function to retrieve the confirmed, pending balances of an address
         async get_info({address}) {
             const info = await getInfo(address)
             // Additive freshness surface; leaves existing fields intact.
+            // Additive freshness surface (M-11); leaves existing fields intact.
             if (info && typeof info === 'object') info.sync = await getFreshnessMeta()
             return info
         },
@@ -903,7 +951,11 @@ async function startApi(){
                     // tracker instance this process ever builds keeps reporting halted=true
                     // and 503 after a successful resync, and xchain-node's bootstrap gate
                     // refuses it forever. Only the restore path clears it: getbootstrap
-                    // leaves the data untouched, so a halt there is still true.
+                    // leaves the data untouched, so a halt there is still true. The
+                    // persisted marker went with the wiped store; the restored store
+                    // answers for itself when start() reads it, and there is no RPC to
+                    // clear a marker in place because the only recovery that changes
+                    // the data is this restore or `xchain-node reset`.
                     tracker.clearHalt()
                     launchTracker(tracker)
                 }).catch(error => {
@@ -944,7 +996,9 @@ async function startApi(){
     // error body), making a DB-down tracker appear healthy to healthchecks.
     // Held on the PROBE gate, not the main one: /status is exempt from the main
     // cap by `skip`, so its slot lives in probeGate's reserve and only that
-    // gate's hold() finds it.
+    // gate's hold() finds it. `isProbe` / PROBE_PATH above must keep matching
+    // every request this route answers (HEAD, trailing slash, any case), or the
+    // admitting gate stops being the holding gate and hold() silently no-ops.
     app.get('/status', probeGate.hold(async (req, res) => {
         let dbOk = false
         let committedHeight = -1
@@ -966,7 +1020,9 @@ async function startApi(){
         const freshness = await getFreshnessMeta(committedHeight)
         if (tracker.halted) {
             res.status(503)
-            return res.json({ status: 'halted', halt_reason: tracker.haltReason, db: dbOk, committed_height: committedHeight, ...freshness })
+            return res.json({ status: 'halted', halt_reason: tracker.haltReason,
+                halted_at: tracker.haltedAt, halted_height: tracker.haltedHeight,
+                db: dbOk, committed_height: committedHeight, ...freshness })
         }
         // A readable store is not forward progress. The tracking loop retries a
         // failing getBlockchainInfo forever, so a coin node that is down or unsynced
@@ -1010,7 +1066,7 @@ async function startApi(){
     // Graceful shutdown. node is PID 1 in the image, so `docker stop` delivers
     // SIGTERM here; without a handler node's default action killed the block
     // loop wherever it stood and the container exited 1. The drain is bounded
-    // by its own hard-exit timer (src/shutdown.js) because installing a handler
+    // by its own hard-exit timer (src/server/shutdown.js) because installing a handler
     // removes node's default terminate.
     const shutdown = createShutdown({
         drain: createTrackerDrain({
@@ -1126,6 +1182,7 @@ async function compressDirPigz(taskId, source, destination) {
             }
         })
 
+        // Handling init errors
         tar.on('error', (err) => reject(new Error(`tar failed to init: ${err.message}`)))
         pv.on('error', (err) => reject(new Error(`pv failed to init: ${err.message}`)))
         pigz.on('error', (err) => reject(new Error(`pigz fail to init: ${err.message}`)))
@@ -1530,6 +1587,7 @@ async function decompressPigzInner(taskId, source, destination) {
         }
     })
 
+    // Handling errors
     pigz.stderr.on('data', (data) => { console.error(`Error from pigz: ${data}`) })
     tar.stderr.on('data', (data) => { console.error(`Error from tar: ${data}`) })
 

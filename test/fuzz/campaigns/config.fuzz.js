@@ -11,9 +11,9 @@
 // contact legal@dankest.llc.
 
 const { expect } = require('chai');
-const { fc, FUZZ_RUNS } = require('../helpers');
+const { fc, FUZZ_RUNS } = require('../support/helpers');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker');
-const XChainBlockDecoder = require('../../../src/XChainBlockDecoder');
+const XChainBlockDecoder = require('../../../src/chain/XChainBlockDecoder');
 
 describe('Fuzz: Configuration Parsing (P3)', function () {
 
@@ -53,12 +53,18 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
           const tracker = new XChainUtxoTracker(
             network, '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
           );
+        // Should succeed
         } catch (e) {
           // Some listed networks may not be supported yet; that is not a failure here.
+        // Some networks may not be supported yet, that's fine
         }
       }
     });
+  });
+});
 
+describe('Fuzz: Configuration Parsing (P3)', function () {
+  describe('XChainUtxoTracker constructor', function () {
     it('handles fuzzed port values', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -86,7 +92,11 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
         { numRuns: FUZZ_RUNS }
       );
     });
+  });
+});
 
+describe('Fuzz: Configuration Parsing (P3)', function () {
+  describe('XChainUtxoTracker constructor', function () {
     it('handles fuzzed URL values', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -111,7 +121,11 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
         { numRuns: FUZZ_RUNS }
       );
     });
+  });
+});
 
+describe('Fuzz: Configuration Parsing (P3)', function () {
+  describe('XChainUtxoTracker constructor', function () {
     it('handles fuzzed credentials', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -155,7 +169,11 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
         { numRuns: FUZZ_RUNS }
       );
     });
+  });
+});
 
+describe('Fuzz: Configuration Parsing (P3)', function () {
+  describe('XChainUtxoTracker constructor', function () {
     it('handles fuzzed auxPow flag', async function () {
       await fc.assert(
         fc.asyncProperty(
@@ -184,7 +202,9 @@ describe('Fuzz: Configuration Parsing (P3)', function () {
       );
     });
   });
+});
 
+describe('Fuzz: Configuration Parsing (P3)', function () {
   describe('XChainBlockDecoder constructor', function () {
     it('handles any network name string', async function () {
       await fc.assert(

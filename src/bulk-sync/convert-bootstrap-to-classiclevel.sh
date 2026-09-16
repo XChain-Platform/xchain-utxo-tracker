@@ -40,8 +40,8 @@
 # snapshot (src/api.js): unsigned, and it says so.
 #
 # Run INSIDE the migration sidecar (needs rocksdb + classic-level + node + tar + gzip):
-#   MIGRATE_JS  path to migrate-rocksdb-to-classiclevel.js
-#               (default /XChainUtxoTracker/src/bulk-sync/migrate-rocksdb-to-classiclevel.js)
+#   MIGRATE_JS  path to migrate_rocksdb_to_classiclevel.js
+#               (default /XChainUtxoTracker/src/bulk-sync/migrate_rocksdb_to_classiclevel.js)
 #   NODE_PATH   must point at the classic-level node_modules (e.g. /opt/cl/node_modules)
 #
 # Usage:
@@ -56,7 +56,7 @@ set -euo pipefail
 SRC="${1:?usage: $0 <src-bootstrap.tar.gz> <out-bootstrap.tar.gz> <workdir>}"
 OUT="${2:?missing <out-bootstrap.tar.gz>}"
 WORK="${3:?missing <workdir>}"
-MIGRATE_JS="${MIGRATE_JS:-/XChainUtxoTracker/src/bulk-sync/migrate-rocksdb-to-classiclevel.js}"
+MIGRATE_JS="${MIGRATE_JS:-/XChainUtxoTracker/src/bulk-sync/migrate_rocksdb_to_classiclevel.js}"
 
 sha256() {
     node -e 'const c=require("crypto"),fs=require("fs");const h=c.createHash("sha256");

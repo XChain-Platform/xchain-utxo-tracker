@@ -82,8 +82,8 @@ Run the no-external-services tiers before every commit; the README documents the
 
 ## Coding style
 
-- **Plain JavaScript**, no TypeScript. LevelDB access goes through `src/LevelUpDb.js`; the API layer uses Express with helmet.
-- **No linter is configured.** Match the style of the surrounding file: naming, structure, and comment density.
+- **Plain JavaScript**, no TypeScript. LevelDB access goes through `src/store/level_up_db.js`; the API layer uses Express with helmet.
+- **`npm run lint` runs ESLint.** Match the style of the surrounding file: naming, structure, and comment density.
 - **Comments are rare on purpose.** Don't restate what well-named code already says. Do comment a *why* that isn't obvious: a hidden invariant, a reorg-safety constraint, a workaround with a reference.
 - **Never use the em-dash character** in code, comments, or docs. Rewrite the sentence (a comma, colon, or parentheses) instead.
 - **Two trailing spaces** on consecutive bold-label markdown lines so CommonMark renders the line break instead of collapsing them.

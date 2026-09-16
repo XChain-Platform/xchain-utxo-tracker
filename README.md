@@ -4,8 +4,8 @@
 # XChain Platform UTXO Tracker
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.17.0-blue" alt="Version">
-  <img src="https://img.shields.io/badge/tests-1%2C465%2B%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/version-0.19.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/tests-1%2C534%2B%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/node-%3E%3D22-green" alt="Node">
   <img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue" alt="License">
 </p>
@@ -24,7 +24,7 @@ UTXO indexing service for the XChain Platform. Continuously polls the coin nodes
 - **Active-UTXO-only storage**: only unspent outputs in the live index; spent outputs archived temporarily for reorg recovery
 - **Real-time mempool tracking**: unconfirmed transactions in a separate in-memory LevelDB, updated every 60 seconds
 - **BigInt precision**: JSON-RPC `get_info` returns full-precision balance strings via `satoshiToDecimalString()`; the REST `/balance` endpoint returns a float (use `get_info` when precision matters)
-- **Reorg handling**: per-chain undo history (BTC: 12, LTC: 120, DOGE: 120 blocks) with K/M archive records and automatic rollback on chain reorganization; depth overridable via `XCHAIN_UNDO_BLOCKS_<COIN>`
+- **Reorg handling**: per-chain, per-network undo history (mainnet BTC: 12, LTC: 120, DOGE: 120 blocks; every testnet 120; regtest as mainnet) with K/M archive records and automatic rollback on chain reorganization; depth overridable via `XCHAIN_UNDO_BLOCKS_<COIN>`
 - **Concurrent block prefetch**: up to 10 blocks pre-fetched concurrently via JSON-RPC batch requests with HTTP keep-alive
 - **Batch writes**: LevelDB writes batched in groups of 200 blocks with atomic commit
 - **Two-pass transaction processing**: outputs inserted before inputs within each block, correctly handling intra-block spends
@@ -128,13 +128,13 @@ neither source sets one, so these defaults hold on an unconfigured box:
 | Command | Description |
 |---|---|
 | `npm run api` | Start the tracker and API server |
-| `npm test` | Unit tests (~913 tests) |
+| `npm test` | Unit tests (~961 tests) |
 | `npm run test:smoke` | Smoke tests (9 tests) |
 | `npm run test:integration` | Integration tests (~69 tests) |
 | `npm run test:e2e` | End-to-end tests (~36 tests) |
 | `npm run test:boundary` | Boundary condition tests (~29 tests) |
-| `npm run test:security` | Security tests (~69 tests) |
-| `npm run test:regression` | Regression tests (~160 tests) |
+| `npm run test:security` | Security tests (~78 tests) |
+| `npm run test:regression` | Regression tests (~172 tests) |
 | `npm run test:fuzz` | Fuzz tests (13 campaigns, 1000 iterations each, 106 tests) |
 | `npm run test:fuzz:quick` | Quick fuzz (100 iterations, 106 tests) |
 | `npm run test:fuzz:deep` | Deep fuzz (10,000 iterations, 106 tests) |
@@ -142,7 +142,7 @@ neither source sets one, so these defaults hold on an unconfigured box:
 | `npm run test:perf:quick` | Quick performance (small scale, 32 tests) |
 | `npm run test:perf:deep` | Deep performance (large scale, 4 GB heap, 32 tests) |
 | `npm run test:chaos` | Chaos engineering tests (~31 tests) |
-| `npm run test:all` | All unit + integration + e2e tests (1,296 tests) |
+| `npm run test:all` | All unit + integration + e2e tests (1,365 tests) |
 | `npm run mutate` | Mutation testing (Stryker Mutator) |
 | `npm run mutate:quick` | Quick mutation testing |
 | `npm run mutate:p1` | P1 priority mutation testing |
@@ -153,12 +153,12 @@ neither source sets one, so these defaults hold on an unconfigured box:
 
 | Type | Tests | Description |
 |---|---|---|
-| Unit | ~544 | `LevelUpDb.test.js`, `XChainUtxoTracker.test.js`, `BlockchainConnector.test.js`, `api.test.js`, `XChainBlockDecoder.test.js`, `bufferutils.test.js`, `CryptoNetworks.test.js`, `util.test.js`, `boundary.test.js` |
-| Integration | ~69 | `core-indexing.test.js`, `reorg.test.js`, `mempool.test.js`, `api-queries.test.js`, `batch-boundaries.test.js`, `boundary.test.js` |
+| Unit | ~544 | `level_up_db.test.js`, `xchain_utxo_tracker.test.js`, `blockchain_connector.test.js`, `api.test.js`, `xchain_block_decoder.test.js`, `bufferutils.test.js`, `crypto_networks.test.js`, `util.test.js`, `boundary.test.js` |
+| Integration | ~69 | `core_indexing.test.js`, `reorg.test.js`, `mempool.test.js`, `api_queries.test.js`, `batch_boundaries.test.js`, `boundary.test.js` |
 | E2E | ~36 | `lifecycle.test.js`, `persistence.test.js`, `reorg.test.js`, `api.test.js`, `mempool.test.js` |
 | Smoke | 9 | `smoke.test.js`: module loading, config, API liveness |
-| Boundary | ~20 | `confirmations.test.js`, `key-range-scan.test.js`, `varint-thresholds.test.js` |
-| Security | ~27 | `address-validation.test.js`, `concurrency-gate.test.js`, `key-pattern-injection.test.js`, `rest-route-surface.test.js` |
+| Boundary | ~20 | `confirmations.test.js`, `key_range_scan.test.js`, `varint_thresholds.test.js` |
+| Security | ~27 | `address_validation.test.js`, `concurrency_gate.test.js`, `key_pattern_injection.test.js`, `rest_route_surface.test.js` |
 | Fuzz | ~105 | 13 campaigns: blockDecoder, txProcessing, connector, addressValidation, balanceCalc, outputEncoding, leveldbKeys, apiEndpoints, bootstrap, config, reorgHandling, mempool, keySchema |
 | Regression | ~120 | Curated critical-path suite: bulk-sync chain continuity/coinbase/merkle/resume, reorg/undo-window, coinbase maturity, connector cred scrub, satoshi precision |
 | Performance | ~29 | Indexing throughput, query load, mempool stress, DB growth, reorg under load, mainnet-scale queries |

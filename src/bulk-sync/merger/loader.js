@@ -16,7 +16,7 @@
  *
  * XChain UTXO Tracker - Bulk Sync Loader
  *
- * Streams the per-prefix fixed-record files produced by derive-keys.js
+ * Streams the per-prefix fixed-record files produced by derive_keys.js
  * into a classic-level (LevelDB) DB via db.batch() writes.
  *
  * Each .dat file is a flat concatenation of (key || value) records of a
@@ -33,9 +33,10 @@
 const fs   = require('fs')
 const path = require('path')
 
-const { LAYOUT }       = require('./derive-keys.js')
-const { RecordReader } = require('./streaming-join.js')
-const { encodeOutput, kOutBlk } = require('../../LevelUpDb.js')
+const { LAYOUT }       = require('./derive_keys.js')
+const { RecordReader } = require('./streaming_join.js')
+const { encodeOutput, kOutBlk } = require('../../store/level_up_db.js')
+const { ClassicLevel } = require('classic-level')
 
 // The intermediate O.dat value is fixed-width (value8 + height4 + fullTxHash32 +
 // coinbase1 = 45B) so the external sort can treat it as a plain record. On the
@@ -61,7 +62,7 @@ const PREFIX_FILES = ['B', 'H', 'I', 'J', 'N', 'O', 'S', 'T', 'W', 'Z']
 // match silently re-introduces the phantom-UTXO corruption the index exists to
 // prevent. For every seeded W record we decompose the key, rebuild it through
 // the live insertOutputBlock key-builder (LevelUpDb.kOutBlk), and assert the
-// rebuilt key is byte-identical to what derive-keys emitted, plus that the value
+// rebuilt key is byte-identical to what derive_keys.js emitted, plus that the value
 // is the 32-byte scriptPubKey the live path stores. A single mismatch aborts the
 // load rather than shipping a subtly-wrong reorg window.
 function validateWRecord(key, value) {
@@ -83,7 +84,6 @@ function validateWRecord(key, value) {
 function noop() {}
 
 function openDb(dbPath) {
-    const { ClassicLevel } = require('classic-level')
     // Match LevelUpDb.js: open with buffer encodings so Buffer keys/values
     // pass through db.batch() verbatim.
     return new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' })
@@ -172,7 +172,7 @@ async function loadKeys(opts) {
                 // deriveKeys run. A missing one means a partial derive; a
                 // silent skip would still write LAST_* markers below and
                 // produce a DB that claims full sync with missing records.
-                throw new Error(`loadKeys: missing ${pfx}.dat in ${keysDir} (partial derive-keys output; re-run derive)`)
+                throw new Error(`loadKeys: missing ${pfx}.dat in ${keysDir} (partial derive_keys.js output; re-run derive)`)
             }
             const t0 = Date.now()
             const valueTransform  = (pfx === 'O') ? transformOValue : null

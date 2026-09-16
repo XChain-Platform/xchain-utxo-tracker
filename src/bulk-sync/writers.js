@@ -88,7 +88,7 @@ function openTmp(finalPath) {
 /**
  * Shared base for the two fixed-record streams (outputs, spends). Subclasses
  * implement append(...) to pack their record layout into the scratch buffer
- * at `_slotOffset()`, then call `_advance()`.
+ * at `slotOffset()`, then call `advance()`.
  */
 class FixedRecordWriter {
     constructor(finalPath, magic, chain, netName, firstHeight, lastHeight, recordSize) {
@@ -107,17 +107,17 @@ class FixedRecordWriter {
         this._count    = 0
     }
 
-    _slotOffset() {
+    slotOffset() {
         return this._batchLen * this._recordSize
     }
 
-    _advance() {
+    advance() {
         this._batchLen++
         this._count++
-        if (this._batchLen === this._batchCap) this._flush()
+        if (this._batchLen === this._batchCap) this.flush()
     }
 
-    _flush() {
+    flush() {
         if (this._batchLen === 0) return
         fs.writeSync(this._fd, this._batch, 0, this._batchLen * this._recordSize)
         this._batchLen = 0
@@ -126,7 +126,7 @@ class FixedRecordWriter {
     close() {
         if (this._closed) return
         this._closed = true
-        this._flush()
+        this.flush()
         backfillRecordCount(this._fd, this._count)
         fs.closeSync(this._fd)
         fs.renameSync(this._tmpPath, this._finalPath)
@@ -159,7 +159,7 @@ class OutputsWriter extends FixedRecordWriter {
     }
 
     append(txHash8, vout, value, height, fullTxHash, scriptPubKey, blockHash, isCoinbase) {
-        const off = this._slotOffset()
+        const off = this.slotOffset()
         const b   = this._batch
         txHash8.copy(b, off + 0, 0, 8)
         b.writeUInt32BE(vout >>> 0, off + 8)
@@ -171,7 +171,7 @@ class OutputsWriter extends FixedRecordWriter {
         // Coinbase flag rides the value byte-for-byte through the sort and the
         // anti-join into the O-record, where it drives maturity gating.
         b.writeUInt8(isCoinbase ? 1 : 0, off + 120)
-        this._advance()
+        this.advance()
     }
 }
 
@@ -188,12 +188,12 @@ class SpendsWriter extends FixedRecordWriter {
     }
 
     append(prevTxHash8, prevVout, spenderTxHash8) {
-        const off = this._slotOffset()
+        const off = this.slotOffset()
         const b   = this._batch
         prevTxHash8.copy(b, off + 0, 0, 8)
         b.writeUInt32BE(prevVout >>> 0, off + 8)
         spenderTxHash8.copy(b, off + 12, 0, 8)
-        this._advance()
+        this.advance()
     }
 }
 
@@ -229,7 +229,7 @@ class MetaWriter {
     writeBlock(height, timestamp, blockHash, previousHash, txHash8List) {
         const txCount    = txHash8List.length
         const recordSize = 76 + 8 * txCount
-        this._ensure(recordSize)
+        this.ensure(recordSize)
 
         const b = this._buf
         let   off = this._pos
@@ -246,15 +246,15 @@ class MetaWriter {
         this._count++
     }
 
-    _ensure(needed) {
+    ensure(needed) {
         if (this._pos + needed <= this._buf.length) return
-        this._flush()
+        this.flush()
         if (needed > this._buf.length) {
             this._buf = Buffer.alloc(needed)
         }
     }
 
-    _flush() {
+    flush() {
         if (this._pos === 0) return
         fs.writeSync(this._fd, this._buf, 0, this._pos)
         this._pos = 0
@@ -263,7 +263,7 @@ class MetaWriter {
     close() {
         if (this._closed) return
         this._closed = true
-        this._flush()
+        this.flush()
         backfillRecordCount(this._fd, this._count)
         fs.closeSync(this._fd)
         fs.renameSync(this._tmpPath, this._finalPath)

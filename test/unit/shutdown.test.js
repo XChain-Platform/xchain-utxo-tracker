@@ -20,10 +20,16 @@
 const assert = require('assert')
 const fs = require('fs')
 const path = require('path')
-const { createShutdown, createTrackerDrain, closeServer, closeStores, resolveTimeoutMs, DEFAULT_SHUTDOWN_TIMEOUT_MS } = require('../../src/shutdown')
+const sinon = require('sinon')
+const { createShutdown, createTrackerDrain, closeServer, closeStores, resolveTimeoutMs, DEFAULT_SHUTDOWN_TIMEOUT_MS } = require('../../src/server/shutdown')
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker')
+const pkg = require('../../package.json');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+// Turn the event loop a bounded number of times. The tracker/server doubles below
+// resolve their callbacks with setImmediate, so a handful of macrotask turns is
+// strictly more than a drain needs to reach its await - with no wall clock in it.
+const flushMacrotasks = async (n = 5) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)) }
 async function waitUntil(predicate, timeoutMs = 5000, intervalMs = 10){
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline){
@@ -97,23 +103,44 @@ describe('graceful shutdown', function(){
             assert.ok(await waitUntil(() => codes.length > 0), 'timed out waiting for the hard-exit timer to fire')
             assert.deepStrictEqual(codes, [1])
         })
+    })
+})
 
+describe('graceful shutdown', function(){
+
+    describe('createShutdown', function(){
         it('exits non-zero when the drain throws, and only once', async function(){
             const codes = []
-            const shutdown = createShutdown({ drain: async () => { throw new Error('store refused to close') }, timeoutMs: 50, exit: (c) => codes.push(c), log: silentLog })
-            shutdown('SIGTERM')
-            await sleep(120)
-            assert.deepStrictEqual(codes, [1])
+            // The budget timer is the second exit path, so the claim is that nothing
+            // else arrives after it would have fired. A fake clock makes that window
+            // virtual: advance far past the budget and prove the code list is frozen.
+            const clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+            try {
+                const shutdown = createShutdown({ drain: async () => { throw new Error('store refused to close') }, timeoutMs: 50, exit: (c) => codes.push(c), log: silentLog })
+                shutdown('SIGTERM')
+                await clock.tickAsync(0)
+                assert.deepStrictEqual(codes, [1])
+                await clock.tickAsync(500)
+                assert.deepStrictEqual(codes, [1], 'a cleared timer must not add a second exit')
+            } finally { clock.restore() }
         })
 
         it('does not fire the hard-exit timer after a clean drain', async function(){
             const codes = []
-            const shutdown = createShutdown({ drain: async () => {}, timeoutMs: 20, exit: (c) => codes.push(c), log: silentLog })
-            shutdown('SIGTERM')
-            await sleep(80)
-            assert.deepStrictEqual(codes, [0], 'a cleared timer must not add a second exit')
+            const clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+            try {
+                const shutdown = createShutdown({ drain: async () => {}, timeoutMs: 20, exit: (c) => codes.push(c), log: silentLog })
+                shutdown('SIGTERM')
+                await clock.tickAsync(0)
+                assert.deepStrictEqual(codes, [0])
+                await clock.tickAsync(500)
+                assert.deepStrictEqual(codes, [0], 'a cleared timer must not add a second exit')
+            } finally { clock.restore() }
         })
     })
+})
+
+describe('graceful shutdown', function(){
 
     describe('resolveTimeoutMs', function(){
         it('prefers an explicit budget, then the env var, then the default', function(){
@@ -142,6 +169,9 @@ describe('graceful shutdown', function(){
             await closeServer({})
         })
     })
+})
+
+describe('graceful shutdown', function(){
 
     describe('closeStores', function(){
         it('closes each handle once and survives one that refuses', async function(){
@@ -152,6 +182,9 @@ describe('graceful shutdown', function(){
             assert.strictEqual(closes, 1)
         })
     })
+})
+
+describe('graceful shutdown', function(){
 
     describe('createTrackerDrain', function(){
 
@@ -181,7 +214,7 @@ describe('graceful shutdown', function(){
 
             let settled = false
             const running = drain().then(() => { settled = true })
-            await sleep(30)
+            await flushMacrotasks()
             assert.strictEqual(settled, false, 'the drain must not finish while the block loop is mid-batch')
             assert.strictEqual(tracker.db.closed, false, 'closing the store under an open batch is the abort this fix removes')
 
@@ -189,7 +222,12 @@ describe('graceful shutdown', function(){
             await running
             assert.strictEqual(tracker.db.closed, true)
         })
+    })
+})
 
+describe('graceful shutdown', function(){
+
+    describe('createTrackerDrain', function(){
         it('survives a rejected loop promise', async function(){
             const order   = []
             const tracker = makeTracker(order)
@@ -204,10 +242,13 @@ describe('graceful shutdown', function(){
             await drain()
         })
     })
+})
 
-    // The real stop(): it must only ASK. stopParsing() restores keepParsing when
-    // the loop does not stop in ten seconds, which for a drain would mean the
-    // process outlives its signal with the loop running again.
+// The real stop(): it must only ASK. stopParsing() restores keepParsing when
+// the loop does not stop in ten seconds, which for a drain would mean the
+// process outlives its signal with the loop running again.
+describe('graceful shutdown', function(){
+
     describe('XChainUtxoTracker.stop()', function(){
         it('drops keepParsing and clears the mempool poller without waiting', function(){
             const tracker = Object.create(XChainUtxoTracker.prototype)
@@ -225,7 +266,6 @@ describe('graceful shutdown', function(){
             const dockerfile = fs.readFileSync(path.join(__dirname, '../../Dockerfile'), 'utf8')
             const cmd = dockerfile.split('\n').filter(l => l.startsWith('CMD')).pop()
             assert.strictEqual(cmd, 'CMD ["node", "--max-old-space-size=4096", "./src/api.js"]')
-            const pkg = require('../../package.json')
             assert.strictEqual(pkg.scripts.api, 'node --max-old-space-size=4096 ./src/api.js', 'the CMD mirrors the api script; change both together')
         })
     })

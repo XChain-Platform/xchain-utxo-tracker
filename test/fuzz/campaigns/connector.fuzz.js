@@ -12,8 +12,8 @@
 
 const { expect } = require('chai');
 const sinon = require('sinon');
-const { fc, FUZZ_RUNS } = require('../helpers');
-const BlockchainConnector = require('../../../src/BlockchainConnector');
+const { fc, FUZZ_RUNS } = require('../support/helpers');
+const BlockchainConnector = require('../../../src/chain/blockchain_connector');
 
 describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
   let connector;
@@ -71,6 +71,20 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
+  let connector;
+  let clientStub;
+
+  beforeEach(function () {
+    connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
+    clientStub = sinon.stub(connector.client, 'post');
+  });
+
+  afterEach(function () {
+    sinon.restore();
+  });
 
   describe('getBlockHash', function () {
     it('handles non-string results without crashing', async function () {
@@ -114,6 +128,20 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
+  let connector;
+  let clientStub;
+
+  beforeEach(function () {
+    connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
+    clientStub = sinon.stub(connector.client, 'post');
+  });
+
+  afterEach(function () {
+    sinon.restore();
+  });
 
   describe('getBlock', function () {
     it('handles any result type without crashing', async function () {
@@ -132,6 +160,20 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
         { numRuns: FUZZ_RUNS }
       );
     });
+  });
+});
+
+describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
+  let connector;
+  let clientStub;
+
+  beforeEach(function () {
+    connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
+    clientStub = sinon.stub(connector.client, 'post');
+  });
+
+  afterEach(function () {
+    sinon.restore();
   });
 
   describe('getRawMempool', function () {
@@ -169,6 +211,20 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
+  let connector;
+  let clientStub;
+
+  beforeEach(function () {
+    connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
+    clientStub = sinon.stub(connector.client, 'post');
+  });
+
+  afterEach(function () {
+    sinon.restore();
+  });
 
   describe('getRawTransactions', function () {
     it('handles batch responses with mixed results/errors', async function () {
@@ -176,6 +232,7 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
         fc.asyncProperty(
           fc.integer({ min: 1, max: 5 }),
           async (count) => {
+            // Generate mix of success and error responses
             const batchResponse = [];
             for (let i = 0; i < count; i++) {
               batchResponse.push({
@@ -197,6 +254,20 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
       );
     });
   });
+});
+
+describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
+  let connector;
+  let clientStub;
+
+  beforeEach(function () {
+    connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
+    clientStub = sinon.stub(connector.client, 'post');
+  });
+
+  afterEach(function () {
+    sinon.restore();
+  });
 
   describe('getBlocksBatch', function () {
     it('handles empty height array', async function () {
@@ -217,6 +288,7 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
             const heights = Array.from({ length: count }, (_, i) => i);
             // getBlocksBatch makes two batched RPC calls: hashes, then blocks
             // by hash, so the stub must answer them in that order.
+            // First call returns hashes, second returns blocks
             clientStub.onCall(0).resolves({
               data: heights.map((h, i) => ({ result: 'a'.repeat(64), id: i }))
             });
@@ -234,6 +306,20 @@ describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
         { numRuns: Math.min(FUZZ_RUNS, 200) }
       );
     });
+  });
+});
+
+describe('Fuzz: BlockchainConnector Response Handling (P2)', function () {
+  let connector;
+  let clientStub;
+
+  beforeEach(function () {
+    connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
+    clientStub = sinon.stub(connector.client, 'post');
+  });
+
+  afterEach(function () {
+    sinon.restore();
   });
 
   describe('malformed responses', function () {

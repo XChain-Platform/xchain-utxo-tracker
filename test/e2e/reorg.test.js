@@ -19,7 +19,7 @@ const {
   stubBlockchain, addBlockToState,
   sleep, waitForHeight, waitForSynced,
   createE2ETracker, patchLevelUpStoreInMemory
-} = require('./helpers');
+} = require('./support/helpers');
 
 // Poll until predicate() resolves truthy. waitForHeight only waits for the height to
 // climb (h >= target); a rollback moves the committed height/hash backward or sideways,
@@ -33,30 +33,55 @@ async function waitForCondition(predicate, timeoutMs = 30000) {
   throw new Error('Timed out waiting for condition');
 }
 
+let tracker;
+let restoreLevelUp;
+
+function createTracker() {
+  restoreLevelUp = patchLevelUpStoreInMemory();
+  tracker = createE2ETracker();
+}
+
+async function closeTracker() {
+  sinon.restore();
+  await tracker.stopParsing();
+  restoreLevelUp();
+}
+
+function replaceThreeBlocks(state, blocks) {
+  // Replace blocks 5, 6, 7 with new blocks to addr 1
+  const newBlock5 = makeBlock(5, blocks[4].hash, [makeCoinbaseTx(1, 10 * SATOSHI)]);
+  const newBlock6 = makeBlock(6, newBlock5.hash, [makeCoinbaseTx(1, 10 * SATOSHI)]);
+  const newBlock7 = makeBlock(7, newBlock6.hash, [makeCoinbaseTx(1, 10 * SATOSHI)]);
+
+  for (let i = 5; i <= 7; i++) {
+    state.hashToBlock.delete(state.blocks[i].hash);
+  }
+  state.blocks[5] = newBlock5;
+  state.blocks[6] = newBlock6;
+  state.blocks[7] = newBlock7;
+  state.hashToBlock.set(newBlock5.hash, newBlock5);
+  state.hashToBlock.set(newBlock6.hash, newBlock6);
+  state.hashToBlock.set(newBlock7.hash, newBlock7);
+
+  // Add block 8 on the replacement chain to trigger reorg detection
+  const newBlock8 = makeBlock(8, newBlock7.hash, [makeCoinbaseTx(1, 10 * SATOSHI)]);
+  addBlockToState(state, newBlock8);
+  return { newBlock5, newBlock6, newBlock7, newBlock8 };
+}
+
+/**
+ * Reorg detection in the start() loop:
+ * When fetching block at height N+1, if block.prevHash != lastProcessedBlockHash,
+ * verifyReorg() is called. It compares stored block hashes against the node's
+ * getBlockHash() responses, rolling back mismatched blocks.
+ *
+ * To trigger: replace blocks in state AND add a new tip block linking to
+ * the replacement chain (so the tracker fetches a block whose prevHash mismatches).
+ */
+
 describe('E2E: Chain Reorganization via start() Loop', function () {
-  let tracker;
-  let restoreLevelUp;
-
-  beforeEach(function () {
-    restoreLevelUp = patchLevelUpStoreInMemory();
-    tracker = createE2ETracker();
-  });
-
-  afterEach(async function () {
-    sinon.restore();
-    await tracker.stopParsing();
-    restoreLevelUp();
-  });
-
-  /**
-   * Reorg detection in the start() loop:
-   * When fetching block at height N+1, if block.prevHash != lastProcessedBlockHash,
-   * verifyReorg() is called. It compares stored block hashes against the node's
-   * getBlockHash() responses, rolling back mismatched blocks.
-   *
-   * To trigger: replace blocks in state AND add a new tip block linking to
-   * the replacement chain (so the tracker fetches a block whose prevHash mismatches).
-   */
+  beforeEach(createTracker);
+  afterEach(closeTracker);
 
   describe('D1: reorg detection and recovery', function () {
     it('detects reorg, rolls back, and re-syncs to the new chain', async function () {
@@ -68,36 +93,49 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
 
       expect(await tracker.db.getLastBlockHeight()).to.equal(4);
 
+      // Replace block 4 with a different block to addr 1
       const replacementBlock4 = makeBlock(4, blocks[3].hash, [makeCoinbaseTx(1, 50 * SATOSHI)]);
       state.hashToBlock.delete(blocks[4].hash);
       state.blocks[4] = replacementBlock4;
       state.hashToBlock.set(replacementBlock4.hash, replacementBlock4);
 
+      // Add block 5 on the replacement chain to trigger reorg detection
       const block5 = makeBlock(5, replacementBlock4.hash, [makeCoinbaseTx(1, 50 * SATOSHI)]);
       addBlockToState(state, block5);
 
+      // Wait for tracker to detect reorg and re-sync
       await waitForHeight(tracker, 5, 30000);
       await waitForSynced(tracker, 10000);
 
+      // After reorg: tracker is synced at height 5 with the new chain
       expect(await tracker.db.getLastBlockHeight()).to.equal(5);
       expect(await tracker.db.getLastBlockHash()).to.equal(block5.hash);
 
+      // Block 5's B record exists
       const b5 = await tracker.db.getBlock(block5.hash);
       expect(b5).to.not.be.null;
       expect(b5.h).to.equal(5);
 
+      // Replacement block 4's B record exists
       const b4 = await tracker.db.getBlock(replacementBlock4.hash);
       expect(b4).to.not.be.null;
       expect(b4.h).to.equal(4);
 
+      // Old block 4's B record was deleted during reorg
       const oldB4 = await tracker.db.getBlock(blocks[4].hash);
       expect(oldB4).to.be.null;
 
+      // Addr 1 received the replacement chain's coinbases
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('100.00000000'); // blocks 4+5
       expect(info1.utxos.confirmed).to.equal(2);
     });
   });
+});
+
+describe('E2E: Chain Reorganization via start() Loop', function () {
+  beforeEach(createTracker);
+  afterEach(closeTracker);
 
   describe('D2: multi-block reorg (3 blocks replaced)', function () {
     it('rolls back multiple blocks and indexes the replacement chain', async function () {
@@ -109,34 +147,22 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
 
       expect(await tracker.db.getLastBlockHeight()).to.equal(7);
 
-      const newBlock5 = makeBlock(5, blocks[4].hash, [makeCoinbaseTx(1, 10 * SATOSHI)]);
-      const newBlock6 = makeBlock(6, newBlock5.hash, [makeCoinbaseTx(1, 10 * SATOSHI)]);
-      const newBlock7 = makeBlock(7, newBlock6.hash, [makeCoinbaseTx(1, 10 * SATOSHI)]);
-
-      for (let i = 5; i <= 7; i++) {
-        state.hashToBlock.delete(state.blocks[i].hash);
-      }
-      state.blocks[5] = newBlock5;
-      state.blocks[6] = newBlock6;
-      state.blocks[7] = newBlock7;
-      state.hashToBlock.set(newBlock5.hash, newBlock5);
-      state.hashToBlock.set(newBlock6.hash, newBlock6);
-      state.hashToBlock.set(newBlock7.hash, newBlock7);
-
-      const newBlock8 = makeBlock(8, newBlock7.hash, [makeCoinbaseTx(1, 10 * SATOSHI)]);
-      addBlockToState(state, newBlock8);
+      const { newBlock5, newBlock6, newBlock7, newBlock8 } = replaceThreeBlocks(state, blocks);
 
       await waitForHeight(tracker, 8, 30000);
       await waitForSynced(tracker, 10000);
 
+      // Tracker is synced at height 8 on the new chain
       expect(await tracker.db.getLastBlockHeight()).to.equal(8);
       expect(await tracker.db.getLastBlockHash()).to.equal(newBlock8.hash);
 
+      // Old blocks' B records are deleted
       for (let i = 5; i <= 7; i++) {
         const b = await tracker.db.getBlock(blocks[i].hash);
         expect(b, `old block ${i}`).to.be.null;
       }
 
+      // New blocks' B records exist
       expect(await tracker.db.getBlock(newBlock5.hash)).to.not.be.null;
       expect(await tracker.db.getBlock(newBlock6.hash)).to.not.be.null;
       expect(await tracker.db.getBlock(newBlock7.hash)).to.not.be.null;
@@ -146,6 +172,7 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       expect(info1.balances.confirmed).to.equal('40.00000000'); // 4 replacement blocks (5-8) x 10 BTC
       expect(info1.utxos.confirmed).to.equal(4);
 
+      // Blocks 0-4 remain intact
       for (let i = 0; i <= 4; i++) {
         const b = await tracker.db.getBlock(blocks[i].hash);
         expect(b, `block ${i}`).to.not.be.null;
@@ -153,6 +180,11 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       }
     });
   });
+});
+
+describe('E2E: Chain Reorganization via start() Loop', function () {
+  beforeEach(createTracker);
+  afterEach(closeTracker);
 
   describe('D3: reorg followed by continued indexing', function () {
     it('resumes normal indexing after a reorg', async function () {
@@ -162,6 +194,7 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       tracker.start();
       await waitForSynced(tracker);
 
+      // Replace block 4 and add blocks 5-6 on replacement chain
       const replacement4 = makeBlock(4, blocks[3].hash, [makeCoinbaseTx(1, 25 * SATOSHI)]);
       state.hashToBlock.delete(blocks[4].hash);
       state.blocks[4] = replacement4;
@@ -172,9 +205,11 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
 
       await waitForHeight(tracker, 5, 30000);
 
+      // After reorg + re-index, addr 1 has the replacement chain coinbases
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('55.00000000'); // 25 + 30
 
+      // Can still add more blocks and they index correctly
       const block6 = makeBlock(6, block5.hash, [makeCoinbaseTx(2, 15 * SATOSHI)]);
       addBlockToState(state, block6);
 
@@ -184,6 +219,11 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       expect(info2.balances.confirmed).to.equal('15.00000000');
     });
   });
+});
+
+describe('E2E: Chain Reorganization via start() Loop', function () {
+  beforeEach(createTracker);
+  afterEach(closeTracker);
 
   describe('D4: reorg detection mechanism validation', function () {
     it('triggers verifyReorg when new block prevHash does not match', async function () {
@@ -196,8 +236,10 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       const heightBefore = await tracker.db.getLastBlockHeight();
       expect(heightBefore).to.equal(2);
 
+      // Spy on verifyReorg to confirm it was called
       const reorgSpy = sinon.spy(tracker, 'verifyReorg');
 
+      // Replace block 2 and add block 3 with new prevHash
       const replacement2 = makeBlock(2, blocks[1].hash, [makeCoinbaseTx(1, 20 * SATOSHI)]);
       state.hashToBlock.delete(blocks[2].hash);
       state.blocks[2] = replacement2;
@@ -208,14 +250,23 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
 
       await waitForHeight(tracker, 3, 30000);
 
+      // verifyReorg was called (reorg was detected)
       expect(reorgSpy.called).to.be.true;
+      // Tracker recovered and continued
       expect(await tracker.db.getLastBlockHeight()).to.equal(3);
     });
   });
+});
 
-  // Drill for the verifyReorg(nodeTip) path. When the node's tip drops below our
-  // committed tip, the pre-fix loop warned then spun forever fetching a block the node
-  // no longer had, while still serving the orphaned tip's UTXOs.
+// Node-tip regression: the node is reset or reindexed and comes back BELOW a
+// tip this tracker has already committed.
+// Drill for the verifyReorg(nodeTip) path. When the node's tip drops below our
+// committed tip, the pre-fix loop warned then spun forever fetching a block the node
+// no longer had, while still serving the orphaned tip's UTXOs.
+
+describe('E2E: Chain Reorganization via start() Loop', function () {
+  beforeEach(createTracker);
+  afterEach(closeTracker);
 
   describe('D5: node-tip regression below the committed tip', function () {
     it('rolls back to the node tip instead of spinning on a vanished block', async function () {
@@ -251,6 +302,7 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       expect(reorgSpy.called).to.be.true;
       expect(reorgSpy.firstCall.args[0]).to.equal(2);
 
+      // Orphaned blocks 3-5 are purged and addr 1's UTXOs are no longer served.
       for (let h = 3; h <= 5; h++) {
         expect(await tracker.db.getBlock(all[h].hash), `orphaned block ${h}`).to.be.null;
       }
@@ -258,16 +310,24 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       expect(info1.balances.confirmed).to.equal('0.00000000');
       expect(info1.utxos.confirmed).to.equal(0);
 
+      // Common-ancestor blocks 0-2 stay intact, and the tracker is synced (not spinning).
       for (let h = 0; h <= 2; h++) {
         expect(await tracker.db.getBlock(all[h].hash), `block ${h}`).to.not.be.null;
       }
       expect(tracker.synced).to.be.true;
     });
   });
+});
 
-  // Drill for the synced same-height re-check. The node swaps its tip block at the SAME
-  // height and stalls; the pre-fix tracker kept serving the orphaned block's UTXOs until
-  // a new height arrived.
+// Same-height tip reorg while the tracker is already synced, which is the case
+// a loop watching only the height cannot see at all.
+// Drill for the synced same-height re-check. The node swaps its tip block at the SAME
+// height and stalls; the pre-fix tracker kept serving the orphaned block's UTXOs until
+// a new height arrived.
+
+describe('E2E: Chain Reorganization via start() Loop', function () {
+  beforeEach(createTracker);
+  afterEach(closeTracker);
 
   describe('D6: same-height tip reorg while synced', function () {
     it('re-checks the committed tip hash and rolls onto the replacement tip', async function () {
@@ -299,6 +359,7 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       expect(reorgSpy.called).to.be.true;
       expect(reorgSpy.firstCall.args[0]).to.equal(undefined);
 
+      // Old tip purged, replacement indexed, UTXO ownership moved to addr 1.
       expect(await tracker.db.getBlock(blocks[4].hash)).to.be.null;
       expect(await tracker.db.getBlock(replacement4.hash)).to.not.be.null;
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);

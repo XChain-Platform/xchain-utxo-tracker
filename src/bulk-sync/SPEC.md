@@ -73,7 +73,7 @@ offset    size  field
 record. The header's `record_size` field (offset 28) is the explicit discriminator: a
 legacy dump reports 120 with no flag byte, a current dump reports 121. The merger reads
 `record_size` from the header and threads it through the outputs sort, the anti-join, and
-`derive-keys`, so both widths merge; a 120-byte record carries no flag and its output is
+`derive_keys.js`, so both widths merge; a 120-byte record carries no flag and its output is
 treated as non-coinbase (matching the LevelUpDb legacy-decode rule). The coinbase fact is
 re-derived from the block bytes at parse time (the generation tx's single 0xFFFFFFFF-index
 input), so even a `.xdmp` produced before this field existed yields correctly-flagged outputs when
@@ -150,7 +150,7 @@ for that stream:
 The `K` and `M` reorg-recovery reverse indices are skipped entirely. The `W`
 creation-block reverse index IS seeded (one record per output in the pre-cancellation
 outputs stream, matching where the live path calls `insertOutputBlock`; see the W.dat
-layout in `merger/derive-keys.js` and `validateWRecord` in `loader.js`). The design
+layout in `merger/derive_keys.js` and `validateWRecord` in `loader.js`). The design
 relies on bulk-sync stopping at least `UNDO_BLOCKS` before the tip so the regular
 incremental worker builds W/K/M for every block inside the reorg window. The
 orchestrator enforces this: it clamps `--tip-safety` up to `resolveUndoBlocks(network)`
@@ -201,7 +201,7 @@ reason and rebuilds the artifact. If the parsed inputs needed for a rebuild
 are gone, concat fails loud ("no input files") pointing at a re-parse.
 Pre-manifest sorted artifacts are simply re-sorted; there is no
 compatibility shim. Regression coverage:
-`test/regression/bulk-sync-resume-manifest.test.js`.
+`test/regression/bulk_sync_resume_manifest.test.js`.
 
 ## Chain and merkle verification gate
 
@@ -232,7 +232,7 @@ hash of the stripped tx IS the true txid; pure-MWEB txs live outside the
 merkle tree by protocol design, and bulk-sync never reads MWEB payload
 bytes, so they cannot affect the built DB. For DOGE, AuxPoW is stripped at
 dump time, so `.xdmp` blocks are always header + tx section. Regression
-coverage: `test/regression/bulk-sync-merkle.test.js`.
+coverage: `test/regression/bulk_sync_merkle.test.js`.
 
 ## Endianness rationale
 

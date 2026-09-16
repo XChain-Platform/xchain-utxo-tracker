@@ -20,14 +20,14 @@ const {
   sleep, waitForHeight, waitForSynced,
   createE2ETracker, patchLevelUpStoreInMemory,
   createApiApp
-} = require('./helpers');
+} = require('./support/helpers');
 
-describe('E2E: API Correctness', function () {
-  let tracker;
-  let restoreLevelUp;
-  let app;
-  let request;
+let tracker;
+let restoreLevelUp;
+let app;
+let request;
 
+function registerApiHooks() {
   beforeEach(function () {
     restoreLevelUp = patchLevelUpStoreInMemory();
     tracker = createE2ETracker();
@@ -38,26 +38,30 @@ describe('E2E: API Correctness', function () {
     await tracker.stopParsing();
     restoreLevelUp();
   });
+}
 
-  async function seedAndStart() {
-    const cb0 = makeCoinbaseTx(0, 10 * SATOSHI);
-    const cb1 = makeCoinbaseTx(0, 20 * SATOSHI);
-    const cb2 = makeCoinbaseTx(0, 30 * SATOSHI);
-    const block0 = makeBlock(0, '0'.repeat(64), [cb0]);
-    const block1 = makeBlock(1, block0.hash, [cb1]);
-    const block2 = makeBlock(2, block1.hash, [cb2]);
+// Seed 3 blocks and start the API
+async function seedAndStart() {
+  const cb0 = makeCoinbaseTx(0, 10 * SATOSHI);
+  const cb1 = makeCoinbaseTx(0, 20 * SATOSHI);
+  const cb2 = makeCoinbaseTx(0, 30 * SATOSHI);
+  const block0 = makeBlock(0, '0'.repeat(64), [cb0]);
+  const block1 = makeBlock(1, block0.hash, [cb1]);
+  const block2 = makeBlock(2, block1.hash, [cb2]);
 
-    const state = stubBlockchain(tracker, [block0, block1, block2]);
-    tracker.start();
-    await waitForSynced(tracker);
+  const state = stubBlockchain(tracker, [block0, block1, block2]);
+  tracker.start();
+  await waitForSynced(tracker);
 
-    const apiSetup = createApiApp(tracker);
-    app = apiSetup.app;
-    request = apiSetup.request;
+  const apiSetup = createApiApp(tracker);
+  app = apiSetup.app;
+  request = apiSetup.request;
 
-    return { state, blocks: [block0, block1, block2], coinbases: [cb0, cb1, cb2] };
-  }
+  return { state, blocks: [block0, block1, block2], coinbases: [cb0, cb1, cb2] };
+}
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F1: REST endpoint parity', function () {
     it('all REST endpoints return consistent data', async function () {
       await seedAndStart();
@@ -67,22 +71,27 @@ describe('E2E: API Correctness', function () {
       const infoRes = await request.get('/info/' + TEST_KEYS[0].address).expect(200);
       const firstSeenRes = await request.get('/firstseen/' + TEST_KEYS[0].address).expect(200);
 
+      // Consistency checks
       const utxos = utxosRes.body;
       const balance = balanceRes.body;
       const info = infoRes.body;
 
       expect(utxos).to.be.an('array').with.length(3);
 
+      // Balance = sum of UTXO amounts
       const utxoSum = utxos.reduce((sum, u) => sum + u.amount, 0);
       expect(balance).to.equal(utxoSum);
       expect(balance).to.equal(60); // 10 + 20 + 30
 
+      // Info confirmed = balance
       expect(parseFloat(info.balances.confirmed)).to.equal(balance);
       expect(info.utxos.confirmed).to.equal(utxos.length);
 
+      // Address info
       expect(info.address).to.equal(TEST_KEYS[0].address);
       expect(info.type).to.equal('p2pkh');
 
+      // First-seen height <= all UTXO heights
       const firstSeen = firstSeenRes.body;
       expect(firstSeen).to.deep.equal({ height: 0 });
       for (const u of utxos) {
@@ -90,7 +99,10 @@ describe('E2E: API Correctness', function () {
       }
     });
   });
+});
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F2: JSON-RPC method parity', function () {
     function rpcCall(method, params = {}) {
       return request.post('/')
@@ -102,16 +114,19 @@ describe('E2E: API Correctness', function () {
       await seedAndStart();
       const addr = TEST_KEYS[0].address;
 
+      // REST calls
       const restUtxos = await request.get('/utxos/' + addr).expect(200);
       const restBalance = await request.get('/balance/' + addr).expect(200);
       const restInfo = await request.get('/info/' + addr).expect(200);
       const restFirstSeen = await request.get('/firstseen/' + addr).expect(200);
 
+      // JSON-RPC calls
       const rpcUtxos = await rpcCall('get_utxos', { address: addr });
       const rpcBalance = await rpcCall('get_balance', { address: addr });
       const rpcInfo = await rpcCall('get_info', { address: addr });
       const rpcFirstSeen = await rpcCall('get_first_seen', { address: addr });
 
+      // Compare
       expect(rpcUtxos.body.result.utxos).to.deep.equal(restUtxos.body);
       expect(rpcBalance.body.result.balance).to.equal(restBalance.body);
       expect(rpcInfo.body.result.balances).to.deep.equal(restInfo.body.balances);
@@ -124,13 +139,20 @@ describe('E2E: API Correctness', function () {
       expect(res.body.result.status).to.equal('success');
     });
   });
+});
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F3: get_input_from_key_pattern', function () {
     it('returns matching entries for a valid pattern', async function () {
       const { coinbases } = await seedAndStart();
 
       // Pattern must be at least 32 hex chars (16 bytes); addr 0's scriptHash
       // (64 hex chars) satisfies that.
+      // Use the first 16 hex chars of a known txid as pattern (must be >= 32 chars)
+      // Build a pattern from the H prefix key: 0x48 + txHash8 (16 chars) = need more
+      // Actually the pattern needs to be >= 32 hex chars (16 bytes)
+      // Let's use the scriptHash of addr 0 which is 64 hex chars
       const pattern = TEST_KEYS[0].scriptHash;
 
       const res = await request.post('/')
@@ -143,17 +165,22 @@ describe('E2E: API Correctness', function () {
         .expect(200);
 
       // O-prefix keys contain the scriptPubKey, so this finds entries keyed by scriptHash.
+      // Should find entries keyed by scriptHash (O prefix keys contain scriptPubKey)
       expect(res.body.result).to.not.be.null;
       // The pattern matches any key starting with those bytes.
       expect(res.body.result.result).to.be.an('array');
     });
   });
+});
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F4: invalid address handling', function () {
     it('returns error for malformed addresses', async function () {
       await seedAndStart();
 
       // Malformed addresses should return 500 or empty results, never crash the process.
+      // These should return 500 or empty results, not crash
       const res = await request.get('/info/invalidaddress123');
       expect(res.status).to.equal(500);
 
@@ -164,9 +191,13 @@ describe('E2E: API Correctness', function () {
       expect(res3.status).to.equal(500);
     });
   });
+});
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F5: concurrent queries during indexing', function () {
     it('handles simultaneous API requests without errors', async function () {
+      // Start with 3 blocks, then add 10 more while querying
       const blocks = buildCoinbaseChain(3, 0, 0, 10 * SATOSHI);
       const state = stubBlockchain(tracker, blocks);
 
@@ -177,6 +208,7 @@ describe('E2E: API Correctness', function () {
       app = apiSetup.app;
       request = apiSetup.request;
 
+      // Add 10 more blocks
       for (let i = 3; i < 13; i++) {
         const prevHash = state.blocks[state.blocks.length - 1].hash;
         const newBlock = makeBlock(i, prevHash, [makeCoinbaseTx(0, 10 * SATOSHI)]);
@@ -184,6 +216,7 @@ describe('E2E: API Correctness', function () {
       }
 
       // Fire concurrent queries while the tracker is still indexing the new blocks.
+      // Fire concurrent queries while tracker is indexing
       const queryPromises = [];
       for (let i = 0; i < 10; i++) {
         queryPromises.push(
@@ -197,22 +230,29 @@ describe('E2E: API Correctness', function () {
 
       const balances = await Promise.all(queryPromises);
 
+      // All queries should succeed (no 500s)
       for (const b of balances) {
         expect(b).to.be.a('number');
         expect(b).to.be.at.least(30); // At least the initial 3 blocks
       }
 
+      // Wait for indexing to finish
       await waitForHeight(tracker, 12);
 
+      // Final balance should be 130 BTC (13 blocks * 10 BTC each)
       const finalRes = await request.get('/info/' + TEST_KEYS[0].address).expect(200);
       expect(finalRes.body.balances.confirmed).to.equal('130.00000000'); // 13 blocks * 10 BTC each
     });
   });
+});
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F6: API reflects mempool state', function () {
     it('shows pending balances through the API after mempool update', async function () {
       const { state, coinbases } = await seedAndStart();
 
+      // Add mempool tx
       const mempoolTx = makeTx({
         ins: [makeSpendInput(coinbases[0]._txid, 0)],
         outs: [makeOutput(1, 8 * SATOSHI)]
@@ -220,17 +260,22 @@ describe('E2E: API Correctness', function () {
       addMempoolTx(state, mempoolTx);
       await tracker.updateMempool();
 
+      // Query via REST
       const infoRes = await request.get('/info/' + TEST_KEYS[1].address).expect(200);
       expect(infoRes.body.balances.pending).to.equal('8.00000000');
       expect(infoRes.body.balances.confirmed).to.equal('0.00000000');
 
+      // Query via JSON-RPC
       const rpcRes = await request.post('/')
         .send({ jsonrpc: '2.0', method: 'get_info', params: { address: TEST_KEYS[1].address }, id: 1 })
         .expect(200);
       expect(rpcRes.body.result.balances.pending).to.equal('8.00000000');
     });
   });
+});
 
+describe('E2E: API Correctness', function () {
+  registerApiHooks();
   describe('F7: non-existent address through all endpoints', function () {
     it('returns empty/zero state consistently', async function () {
       await seedAndStart();

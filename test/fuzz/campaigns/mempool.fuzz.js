@@ -16,19 +16,108 @@ const {
   createTestTracker, closeTracker, randHash, randHash8,
   makeTx, makeCoinbaseTx, makeCoinbaseInput, makeSpendInput, makeBlock,
   processAndCommit
-} = require('../helpers');
+} = require('../support/helpers');
 const { satoshiToDecimalString } = require('../../../src/XChainUtxoTracker');
 
+// Helper: put one transaction into the mempool store, the way the service
+// does when it polls the node. A fuzz case that built the record by hand
+// would be testing its own idea of the shape rather than the tracker's.
+// Mirrors the real updateMempool() flow: parseTransaction(mempoolDb, tx, null, -1, addHints=true).
+async function addToMempool(tracker, transaction) {
+  const mdb = tracker.mempoolDb;
+  await mdb.beginTransaction();
+  await tracker.parseTransaction(mdb, transaction, null, -1, true);
+  await mdb.endTransaction(true);
+}
+
+function pendingSpendTests() {
+  it('confirmed output spent in mempool shows negative pending', async function () {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.bigInt({ min: 10000n, max: 10000000000n }),
+        fc.integer({ min: 0, max: 4 }),
+        async (value, addrIdx) => {
+          const t = await createTestTracker();
+          try {
+            const otherIdx = (addrIdx + 1) % 10;
+
+            const coinbaseTx = makeTx({
+              ins: [makeCoinbaseInput()],
+              outs: [{ value, script: TEST_KEYS[addrIdx].script }]
+            });
+            const block = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
+            await processAndCommit(t, block);
+
+            const spendTx = makeTx({
+              ins: [makeSpendInput(coinbaseTx._txid, 0)],
+              outs: [{ value, script: TEST_KEYS[otherIdx].script }]
+            });
+            await addToMempool(t, spendTx);
+
+            // getInput takes the 8-byte (16-hex) txid prefix that the I-key stores;
+            // kInput asserts this contract (a full 64-hex txid throws by design), and
+            // every real caller in XChainUtxoTracker passes txid.substring(0,16).
+            const txHash8 = coinbaseTx._txid.substring(0, 16);
+            const inputByTxHash8 = await t.mempoolDb.getInput(txHash8, 0);
+            expect(inputByTxHash8).to.not.be.null;
+
+            // addrIdx: confirmed stays, pending shows negative (being spent)
+            const info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);
+            expect(info.balances.confirmed).to.equal(satoshiToDecimalString(value));
+            expect(info.balances.pending).to.equal(satoshiToDecimalString(-value));
+          } finally {
+            await closeTracker(t);
+          }
+        }
+      ),
+      { numRuns: Math.min(FUZZ_RUNS, 50) }
+    );
+  });
+}
+
+function spentOutputTests() {
+  it('confirmed output spent in mempool is excluded from UTXO list', async function () {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.bigInt({ min: 10000n, max: 10000000000n }),
+        fc.integer({ min: 0, max: 4 }),
+        async (value, addrIdx) => {
+          const t = await createTestTracker();
+          try {
+            const otherIdx = (addrIdx + 1) % 10;
+
+            const coinbaseTx = makeTx({
+              ins: [makeCoinbaseInput()],
+              outs: [{ value, script: TEST_KEYS[addrIdx].script }]
+            });
+            const block = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
+            await processAndCommit(t, block);
+
+            const spendTx = makeTx({
+              ins: [makeSpendInput(coinbaseTx._txid, 0)],
+              outs: [{ value, script: TEST_KEYS[otherIdx].script }]
+            });
+            await addToMempool(t, spendTx);
+
+            // UTXO list for addrIdx should be empty (output is being spent)
+            const utxos = await t.getUtxosAddress(TEST_KEYS[addrIdx].address);
+            expect(utxos.length).to.equal(0);
+
+            // otherIdx should have the mempool UTXO
+            const otherUtxos = await t.getUtxosAddress(TEST_KEYS[otherIdx].address);
+            expect(otherUtxos.length).to.equal(1);
+            expect(otherUtxos[0].confirmations).to.equal(0);
+          } finally {
+            await closeTracker(t);
+          }
+        }
+      ),
+      { numRuns: Math.min(FUZZ_RUNS, 50) }
+    );
+  });
+}
+
 describe('Fuzz: Mempool Operations (P2)', function () {
-
-  // Mirrors the real updateMempool() flow: parseTransaction(mempoolDb, tx, null, -1, addHints=true).
-  async function addToMempool(tracker, transaction) {
-    const mdb = tracker.mempoolDb;
-    await mdb.beginTransaction();
-    await tracker.parseTransaction(mdb, transaction, null, -1, true);
-    await mdb.endTransaction(true);
-  }
-
   describe('mempool incoming outputs', function () {
     it('pending balance reflects mempool incoming tx', async function () {
       await fc.assert(
@@ -41,6 +130,7 @@ describe('Fuzz: Mempool Operations (P2)', function () {
             try {
               const otherIdx = (addrIdx + 1) % 10;
 
+              // Confirmed: coinbase to addrIdx
               const coinbaseTx = makeTx({
                 ins: [makeCoinbaseInput()],
                 outs: [{ value: confirmedValue, script: TEST_KEYS[addrIdx].script }]
@@ -48,15 +138,18 @@ describe('Fuzz: Mempool Operations (P2)', function () {
               const block = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
               await processAndCommit(t, block);
 
+              // Mempool: someone creates output to otherIdx
               const mempoolTx = makeTx({
                 ins: [makeCoinbaseInput()],
                 outs: [{ value: mempoolValue, script: TEST_KEYS[otherIdx].script }]
               });
               await addToMempool(t, mempoolTx);
 
+              // addrIdx: only confirmed balance
               const info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);
               expect(info.balances.confirmed).to.equal(satoshiToDecimalString(confirmedValue));
 
+              // otherIdx: only pending balance
               const otherInfo = await t.getBalanceInfo(TEST_KEYS[otherIdx].address);
               expect(otherInfo.balances.pending).to.equal(satoshiToDecimalString(mempoolValue));
               expect(otherInfo.balances.confirmed).to.equal('0.00000000');
@@ -70,7 +163,9 @@ describe('Fuzz: Mempool Operations (P2)', function () {
       );
     });
   });
+});
 
+describe('Fuzz: Mempool Operations (P2)', function () {
   describe('multiple mempool transactions', function () {
     it('multiple mempool outputs to same address sum correctly', async function () {
       await fc.assert(
@@ -104,89 +199,14 @@ describe('Fuzz: Mempool Operations (P2)', function () {
       );
     });
   });
+});
 
-  describe('mempool spend detection', function () {
-    it('confirmed output spent in mempool shows negative pending', async function () {
-      await fc.assert(
-        fc.asyncProperty(
-          fc.bigInt({ min: 10000n, max: 10000000000n }),
-          fc.integer({ min: 0, max: 4 }),
-          async (value, addrIdx) => {
-            const t = await createTestTracker();
-            try {
-              const otherIdx = (addrIdx + 1) % 10;
+describe('Fuzz: Mempool Operations (P2)', function () {
+  describe('mempool spend detection', pendingSpendTests);
+  describe('mempool spend detection', spentOutputTests);
+});
 
-              const coinbaseTx = makeTx({
-                ins: [makeCoinbaseInput()],
-                outs: [{ value, script: TEST_KEYS[addrIdx].script }]
-              });
-              const block = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
-              await processAndCommit(t, block);
-
-              const spendTx = makeTx({
-                ins: [makeSpendInput(coinbaseTx._txid, 0)],
-                outs: [{ value, script: TEST_KEYS[otherIdx].script }]
-              });
-              await addToMempool(t, spendTx);
-
-              // getInput takes the 8-byte (16-hex) txid prefix that the I-key stores;
-              // kInput asserts this contract (a full 64-hex txid throws by design), and
-              // every real caller in XChainUtxoTracker passes txid.substring(0,16).
-              const txHash8 = coinbaseTx._txid.substring(0, 16);
-              const inputByTxHash8 = await t.mempoolDb.getInput(txHash8, 0);
-              expect(inputByTxHash8).to.not.be.null;
-
-              const info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);
-              expect(info.balances.confirmed).to.equal(satoshiToDecimalString(value));
-              expect(info.balances.pending).to.equal(satoshiToDecimalString(-value));
-            } finally {
-              await closeTracker(t);
-            }
-          }
-        ),
-        { numRuns: Math.min(FUZZ_RUNS, 50) }
-      );
-    });
-
-    it('confirmed output spent in mempool is excluded from UTXO list', async function () {
-      await fc.assert(
-        fc.asyncProperty(
-          fc.bigInt({ min: 10000n, max: 10000000000n }),
-          fc.integer({ min: 0, max: 4 }),
-          async (value, addrIdx) => {
-            const t = await createTestTracker();
-            try {
-              const otherIdx = (addrIdx + 1) % 10;
-
-              const coinbaseTx = makeTx({
-                ins: [makeCoinbaseInput()],
-                outs: [{ value, script: TEST_KEYS[addrIdx].script }]
-              });
-              const block = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
-              await processAndCommit(t, block);
-
-              const spendTx = makeTx({
-                ins: [makeSpendInput(coinbaseTx._txid, 0)],
-                outs: [{ value, script: TEST_KEYS[otherIdx].script }]
-              });
-              await addToMempool(t, spendTx);
-
-              const utxos = await t.getUtxosAddress(TEST_KEYS[addrIdx].address);
-              expect(utxos.length).to.equal(0);
-
-              const otherUtxos = await t.getUtxosAddress(TEST_KEYS[otherIdx].address);
-              expect(otherUtxos.length).to.equal(1);
-              expect(otherUtxos[0].confirmations).to.equal(0);
-            } finally {
-              await closeTracker(t);
-            }
-          }
-        ),
-        { numRuns: Math.min(FUZZ_RUNS, 50) }
-      );
-    });
-  });
-
+describe('Fuzz: Mempool Operations (P2)', function () {
   describe('mempool output queries', function () {
     it('mempool outputs appear in UTXO list with 0 confirmations', async function () {
       await fc.assert(
