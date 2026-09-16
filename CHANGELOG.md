@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-16
+
+### Changed
+- The shared coin bundles are re-vendored for the bridge escrow roles.
+- Audited transitive packages move to their patched releases (lockfile only).
+- Restructured under the platform code-structure standard (feature directories, snake_case files, split test suites, restored comments); consensus identity byte-identical and pinned.
+
+### Fixed
+- The reorg undo window is sized per coin and network (every testnet 120 blocks, still under the decoder's 126 lockstep ceiling) instead of by coin alone, so a bitcoin testnet fork past 12 blocks no longer drains the window and forces a rebuild.
+- A halt on an unrecoverable reorg persists a marker with its reason, height and time, so a restart reports the halted state directly instead of re-deriving it by throwing again; `/status` and `get_sync_status` carry `halted_at` and `halted_height`.
+
 ## [0.18.0] - 2026-09-11
 
 ### Fixed
