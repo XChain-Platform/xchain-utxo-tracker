@@ -23,6 +23,29 @@ const { CHECK_BLOCK_DELAY_MS, MEMPOOL_INTERVAL, MIN_VERIFICATION_PROGRESS_TO_PAR
 const { nodeStillCatchingUp, catchUpWaitState } = require('./catch_up_helpers.js')
 const { indexNextBlock, resetBatchAfterReorg } = require('./sync_loop_block_apply.js')
 
+// Whether this node's tip is worth parsing. Pure and exported so the policy is
+// testable without a loop or a node.
+
+// bitcoind derives verificationprogress from the WALL-CLOCK AGE of the tip
+// block, so on a chain mined on demand it decays toward 0 while the node stays
+// healthy. On regtest the premise fails, so the gate is dropped, not re-tuned.
+
+// Nothing replaces it there, and specifically not initialblockdownload:
+// nodeStillCatchingUp() reads that flag on the tip-BELOW-ours path, and
+// consuming it here would end the pass first and swallow the catch-up wait.
+
+// A regtest tracker genuinely behind its node is still reported: the synced
+// verdict comes from the two heights, and a node that cannot answer
+// getblockchaininfo at all still leaves lastNodeRpcOkAt unstamped below.
+
+// The `< MIN` comparison keeps its original form so an ABSENT field (an older
+// node, a trimmed proxy) still reads usable instead of inverting to a refusal.
+function nodeTipIsParseable(info, consensusNetwork){
+    if (!info) return false
+    if (consensusNetwork === 'regtest') return true
+    return !(info["verificationprogress"] < MIN_VERIFICATION_PROGRESS_TO_PARSE)
+}
+
 // Sync loop steps, called with the tracker as `this`; sync_loop.js says how.
 
 // Reads the node's tip. An unsynced node or a failed RPC is waited out and ends
@@ -32,7 +55,7 @@ async function refreshNodeTip(sync){
         sync.lastBlockchainInfo = await this.connector.getBlockchainInfo()
         this.latestKnownChainTip = sync.lastBlockchainInfo["blocks"]
 
-        if (sync.lastBlockchainInfo["verificationprogress"] < MIN_VERIFICATION_PROGRESS_TO_PARSE){
+        if (!nodeTipIsParseable(sync.lastBlockchainInfo, this.consensusNetwork)){
             if (!sync.nodeSyncedProblem){
                 logger.info("The node is not synced. Waiting for it to synchronize...")
             }
@@ -286,4 +309,4 @@ async function rollBackSameHeightTipSwap(sync){
     return () => resetBatchAfterReorg.call(this, sync)
 }
 
-module.exports = { refreshNodeTip, pollAtTipOrIndex }
+module.exports = { refreshNodeTip, pollAtTipOrIndex, nodeTipIsParseable }
