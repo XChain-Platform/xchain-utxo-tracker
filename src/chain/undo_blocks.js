@@ -34,7 +34,9 @@ const logger = getLogger();
 // value, and the chain that needs one most is a fast one, which is exactly the
 // chain a generic default under-protects.
 //
-// TESTNET IS SIZED SEPARATELY, and every coin's testnet sits at the ceiling.
+// TESTNET IS SIZED SEPARATELY. Litecoin testnet uses the 5000-block class
+// needed for deep public-testnet forks; the other tracked testnets keep their
+// existing defaults.
 // Nominal block time is the wrong sizing input for a testnet: its minimum-
 // difficulty rule admits a difficulty-1 block after a gap (20 minutes on
 // bitcoin testnet3), so a lone miner can extend a private branch regardless of
@@ -47,32 +49,30 @@ const logger = getLogger();
 // bitcoin testnet tracker halted at 150774 with the persisted window drained
 // to zero, because the table was keyed by coin alone and BTC testnet carried
 // mainnet's 12. LTC was raised to 120 after the first event and BTC testnet
-// was left alone, which is the gap the second event fell through. 120 is the
-// deepest value this table can carry without also raising MAX_SAFE_UNDO_BLOCKS
-// below and DISPENSER_EXPIRE_SAFE_DEPTH in the decoder, which move in lockstep.
+// was left alone, which is the gap the second event fell through. Each default
+// must stay within the matching dispenser-expiry depth in the decoder.
 //
 // Regtest keeps the mainnet numbers, unchanged from when the table was keyed
 // by coin: a regtest chain is mined on demand by a harness that decides its
 // own fork depth, and the reorg suites on the rail are sized against these.
 //
 // FLAT KEYS, <TICK>_<NET>, on purpose. The decoder's dispenser_safe_depth
-// conformance suite reads this export and takes Math.max over its VALUES to
-// prove DISPENSER_EXPIRE_SAFE_DEPTH clears the deepest window in this table;
-// a nested per-coin shape would hide the testnet column from that read.
+// conformance suite reads this export and checks each network-specific value.
 const DEFAULT_UNDO_BLOCKS = {
     BTC_MAINNET: 12,  LTC_MAINNET: 120, DOGE_MAINNET: 120,
-    BTC_TESTNET: 120, LTC_TESTNET: 120, DOGE_TESTNET: 120,
+    BTC_TESTNET: 120, LTC_TESTNET: 5000, DOGE_TESTNET: 120,
     BTC_REGTEST: 12,  LTC_REGTEST: 120, DOGE_REGTEST: 120
 }
 
 // The recovery window MUST NOT exceed the decoder's dispenser-expiry safe depth.
-// This value MUST equal `DISPENSER_EXPIRE_SAFE_DEPTH` in the decoder
-// (xchain-decoder/src/XChainDecoder.js, = deepest DEFAULT_UNDO_BLOCKS window + 6):
+// The standard ceiling and the LTC testnet ceiling MUST equal their matching
+// decoder depths:
 // the decoder aborts reorg recovery past that depth, so an XCHAIN_UNDO_BLOCKS_<COIN>
 // env override that raises a chain's tracker window above this ceiling silently
 // splits the two components' effective reorg windows. Raising either constant
 // requires raising both, in lockstep.
 const MAX_SAFE_UNDO_BLOCKS = 126
+const LTC_TESTNET_SAFE_UNDO_BLOCKS = 5006
 
 // Map a network string ('bitcoin-mainnet', 'dogecoin-regtest', ...) to a coin
 // tick, THROUGH the canonical registry (item 5803). A hardcoded coin-name list
@@ -108,6 +108,11 @@ function netFromNetwork(network){
 // The DEFAULT_UNDO_BLOCKS key for a (tick, net) pair, e.g. 'BTC_TESTNET'.
 function undoBlocksKey(coin, net){
     return coin + '_' + net.toUpperCase()
+}
+
+function safeUndoBlocksCeiling(network){
+    const key = undoBlocksKey(coinFromNetwork(network), netFromNetwork(network))
+    return key === 'LTC_TESTNET' ? LTC_TESTNET_SAFE_UNDO_BLOCKS : MAX_SAFE_UNDO_BLOCKS
 }
 
 // SINGLE-SOURCED env-override resolver, shared by the live worker
@@ -172,11 +177,12 @@ function resolveUndoBlocks(network, optsUndoBlocks){
     // knob) when the resolved window exceeds the decoder's dispenser-expiry safe
     // depth. Past that ceiling the decoder aborts reorg recovery while the tracker
     // keeps auto-recovering, silently splitting the two effective reorg windows.
-    if (resolved > MAX_SAFE_UNDO_BLOCKS) {
+    const safeCeiling = safeUndoBlocksCeiling(network)
+    if (resolved > safeCeiling) {
         logger.error(
             'WARNING: resolved undo-blocks window for ' + coin + ' (' + network + ') is ' + resolved +
-            ', which exceeds the decoder dispenser-expiry safe depth (' + MAX_SAFE_UNDO_BLOCKS + '). ' +
-            'The decoder will abort reorg recovery past ' + MAX_SAFE_UNDO_BLOCKS + ' blocks while this ' +
+            ', which exceeds the decoder dispenser-expiry safe depth (' + safeCeiling + '). ' +
+            'The decoder will abort reorg recovery past ' + safeCeiling + ' blocks while this ' +
             'tracker auto-recovers, splitting the two effective reorg windows. Raise ' +
             'DISPENSER_EXPIRE_SAFE_DEPTH in the decoder to match, or lower ' + envKey + '.'
         )
@@ -184,4 +190,5 @@ function resolveUndoBlocks(network, optsUndoBlocks){
     return resolved
 }
 
-module.exports = { DEFAULT_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS, coinFromNetwork, netFromNetwork, undoBlocksKey, resolveUndoBlocks }
+module.exports = { DEFAULT_UNDO_BLOCKS, MAX_SAFE_UNDO_BLOCKS, coinFromNetwork, netFromNetwork,
+    undoBlocksKey, safeUndoBlocksCeiling, resolveUndoBlocks }
