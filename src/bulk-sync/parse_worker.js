@@ -140,6 +140,83 @@ function existingDatLooksComplete(filePath) {
     }
 }
 
+function newProgress() {
+    const startedAt = Date.now()
+    return {
+        startedAt,
+        lastTickAt: startedAt,
+        lastTickBlocks: 0,
+        totalBlocks: 0,
+        totalTxs: 0,
+        totalOutputs: 0,
+        totalSpends: 0,
+        lastHeightSeen: -1,
+    }
+}
+
+function reportProgress(progress, reader, height) {
+    const now        = Date.now()
+    const sinceTick  = (now - progress.lastTickAt) / 1000
+    const blocksTick = progress.totalBlocks - progress.lastTickBlocks
+    const instRate   = sinceTick > 0 ? (blocksTick / sinceTick).toFixed(1) : 'n/a'
+    const avgRate    = ((progress.totalBlocks * 1000) / (now - progress.startedAt)).toFixed(1)
+    const remaining  = reader.blockCount - progress.totalBlocks
+    const etaSec     = Number(avgRate) > 0 ? Math.round(remaining / Number(avgRate)) : -1
+    const etaStr     = etaSec >= 0 ? fmtDuration(etaSec * 1000) : '?'
+    console.log(
+        `[parse-worker] h=${height} blocks=${progress.totalBlocks}/${reader.blockCount}` +
+        ` outputs=${progress.totalOutputs} spends=${progress.totalSpends}` +
+        ` rate=${instRate} blk/s avg=${avgRate} blk/s eta=${etaStr}`
+    )
+    progress.lastTickAt     = now
+    progress.lastTickBlocks = progress.totalBlocks
+}
+
+function processBlocks(reader, decoder, writers, progress) {
+    const { outputs, spends, meta } = writers
+    try {
+        for (const { height, blockHash, blockBytes } of reader.blocks()) {
+            progress.lastHeightSeen = height
+            const block = decoder.blockFromBuffer(blockBytes)
+            const stats = processBlock(block, height, blockHash, writers)
+
+            progress.totalBlocks++
+            progress.totalTxs     += stats.txs
+            progress.totalOutputs += stats.outputs
+            progress.totalSpends  += stats.spends
+
+            if (progress.totalBlocks % PROGRESS_EVERY_N_BLOCKS === 0) {
+                reportProgress(progress, reader, height)
+            }
+        }
+    } catch (err) {
+        console.error(`[parse-worker] FATAL at height=${progress.lastHeightSeen}: ${err.message}`)
+        if (err.stack) console.error(err.stack)
+        outputs.abort()
+        spends.abort()
+        meta.abort()
+        reader.close()
+        process.exit(1)
+    }
+}
+
+function finishOutputs(reader, writers, paths, progress) {
+    writers.outputs.close()
+    writers.spends.close()
+    writers.meta.close()
+    reader.close()
+
+    const elapsed = Date.now() - progress.startedAt
+    const outputsStat = fs.statSync(paths.outputs)
+    const spendsStat  = fs.statSync(paths.spends)
+    const metaStat    = fs.statSync(paths.meta)
+
+    console.log(`[parse-worker] done:`)
+    console.log(`  blocks=${progress.totalBlocks} txs=${progress.totalTxs} outputs=${progress.totalOutputs} spends=${progress.totalSpends}`)
+    console.log(`  outputs=${fmtMB(outputsStat.size)}  spends=${fmtMB(spendsStat.size)}  meta=${fmtMB(metaStat.size)}`)
+    console.log(`  duration=${fmtDuration(elapsed)} rate=${((progress.totalBlocks * 1000) / elapsed).toFixed(1)} blk/s`)
+}
+
 function main() {
     const args = parseArgs(process.argv)
     validateArgs(args)
@@ -179,68 +256,9 @@ function main() {
     const meta    = new MetaWriter(paths.meta,       reader.chain, reader.network, reader.firstHeight, reader.lastHeight)
     const writers = { outputs, spends, meta }
 
-    const startedAt        = Date.now()
-    let   lastTickAt       = startedAt
-    let   lastTickBlocks   = 0
-    let   totalBlocks      = 0
-    let   totalTxs         = 0
-    let   totalOutputs     = 0
-    let   totalSpends      = 0
-    let   lastHeightSeen   = -1
-
-    try {
-        for (const { height, blockHash, blockBytes } of reader.blocks()) {
-            lastHeightSeen = height
-            const block = decoder.blockFromBuffer(blockBytes)
-            const stats = processBlock(block, height, blockHash, writers)
-
-            totalBlocks++
-            totalTxs     += stats.txs
-            totalOutputs += stats.outputs
-            totalSpends  += stats.spends
-
-            if (totalBlocks % PROGRESS_EVERY_N_BLOCKS === 0) {
-                const now        = Date.now()
-                const sinceTick  = (now - lastTickAt) / 1000
-                const blocksTick = totalBlocks - lastTickBlocks
-                const instRate   = sinceTick > 0 ? (blocksTick / sinceTick).toFixed(1) : 'n/a'
-                const avgRate    = ((totalBlocks * 1000) / (now - startedAt)).toFixed(1)
-                const remaining  = reader.blockCount - totalBlocks
-                const etaSec     = Number(avgRate) > 0 ? Math.round(remaining / Number(avgRate)) : -1
-                const etaStr     = etaSec >= 0 ? fmtDuration(etaSec * 1000) : '?'
-                console.log(
-                    `[parse-worker] h=${height} blocks=${totalBlocks}/${reader.blockCount}` +
-                    ` outputs=${totalOutputs} spends=${totalSpends}` +
-                    ` rate=${instRate} blk/s avg=${avgRate} blk/s eta=${etaStr}`
-                )
-                lastTickAt     = now
-                lastTickBlocks = totalBlocks
-            }
-        }
-    } catch (err) {
-        console.error(`[parse-worker] FATAL at height=${lastHeightSeen}: ${err.message}`)
-        if (err.stack) console.error(err.stack)
-        outputs.abort()
-        spends.abort()
-        meta.abort()
-        reader.close()
-        process.exit(1)
-    }
-
-    outputs.close()
-    spends.close()
-    meta.close()
-    reader.close()
-
-    const elapsed = Date.now() - startedAt
-    const outputsStat = fs.statSync(paths.outputs)
-    const spendsStat  = fs.statSync(paths.spends)
-    const metaStat    = fs.statSync(paths.meta)
-
-    console.log(`[parse-worker] done:`)
-    console.log(`  blocks=${totalBlocks} txs=${totalTxs} outputs=${totalOutputs} spends=${totalSpends}`)
-    console.log(`  outputs=${fmtMB(outputsStat.size)}  spends=${fmtMB(spendsStat.size)}  meta=${fmtMB(metaStat.size)}`)
-    console.log(`  duration=${fmtDuration(elapsed)} rate=${((totalBlocks * 1000) / elapsed).toFixed(1)} blk/s`)
+    const progress = newProgress()
+    processBlocks(reader, decoder, writers, progress)
+    finishOutputs(reader, writers, paths, progress)
 }
 
 module.exports = { existingDatLooksComplete }
