@@ -335,10 +335,10 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
       expect(prologue).to.match(/this\.parsingAborted = false/);
     });
 
-    // The bootstrap RPCs live inside startApi()'s closure and are not reachable
+    // The bootstrap RPCs live inside the route controller and are not reachable
     // from a require, so the halt-clear wiring is guarded at the source too.
     it('clears the halt on the restore success path only, never on a snapshot', function () {
-      const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+      const src = fs.readFileSync(path.join(__dirname, '../../src/api/routes.js'), 'utf8');
 
       const restore = src.slice(src.indexOf('async restorebootstrap('),
         src.indexOf('async getbootstraprestorestatus('));

@@ -47,7 +47,9 @@ const connectorSrc = [path.join(__dirname, '../../src/chain/blockchain_connector
     .map(f => path.join(connectorDir, f)))
   .map(p => fs.readFileSync(p, 'utf8'))
   .join('\n');
-const apiSrc = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+const startupSrc = fs.readFileSync(path.join(__dirname, '../../src/api/startup.js'), 'utf8');
+const routesSrc = fs.readFileSync(path.join(__dirname, '../../src/api/routes.js'), 'utf8');
+const syncStatusSrc = fs.readFileSync(path.join(__dirname, '../../src/api/sync_status.js'), 'utf8');
 
 function newConnector() {
   return new BlockchainConnector('127.0.0.1', '18443', 'user', 'pass');
@@ -209,38 +211,38 @@ describe('XChainUtxoTracker: node reachability is visible on the health surfaces
   });
 });
 
-// api.js builds its payloads inside startApi() against a live tracker, so the wiring
-// is guarded at source level, the shape nodeCatchingUpStatus.test.js uses.
+// The API modules build their payloads against a live tracker, so the wiring is
+// guarded at source level, the shape nodeCatchingUpStatus.test.js uses.
 describe('XChainUtxoTracker: node reachability is visible on the health surfaces', function () {
   this.timeout(0);
 
   describe('the api payloads carry node_last_ok_at and node_unreachable', function () {
     it('rides the per-query freshness meta, which both GET /status branches spread', function () {
-      const at = apiSrc.indexOf('async function getFreshnessMeta(');
+      const at = startupSrc.indexOf('async function getFreshnessMeta(');
       expect(at).to.be.greaterThan(0);
-      const body = apiSrc.slice(at, apiSrc.indexOf('async function setFreshnessHeaders', at));
-      expect(body).to.match(/const reach = nodeReachabilityFields\(tracker\);/);
-      expect(body).to.match(/freshness\.node_last_ok_at\s+= reach\.node_last_ok_at;/);
-      expect(body).to.match(/freshness\.node_unreachable = reach\.node_unreachable;/);
+      const body = startupSrc.slice(at, startupSrc.indexOf('async function setFreshnessHeaders', at));
+      expect(body).to.match(/const reach = nodeReachabilityFields\(tracker\)/);
+      expect(body).to.match(/freshness\.node_last_ok_at\s+= reach\.node_last_ok_at/);
+      expect(body).to.match(/freshness\.node_unreachable = reach\.node_unreachable/);
 
-      const route = apiSrc.indexOf("app.get('/status'");
+      const route = syncStatusSrc.indexOf("app.get('/status'");
       expect(route).to.be.greaterThan(0);
-      const routeBody = apiSrc.slice(route, route + 3000);
+      const routeBody = syncStatusSrc.slice(route, route + 3000);
       expect(routeBody).to.match(/const freshness = await getFreshnessMeta\(committedHeight\)/);
       // The halted branch and the ok branch, both spreading the same meta.
       expect(routeBody.match(/\.\.\.freshness/g) || []).to.have.length.of.at.least(2);
     });
 
     it('rides get_sync_status, which the JSON-RPC health answer spreads', function () {
-      const at = apiSrc.indexOf('async get_sync_status()');
+      const at = syncStatusSrc.indexOf('async function get_sync_status(');
       expect(at).to.be.greaterThan(0);
-      const syncBody = apiSrc.slice(at, apiSrc.indexOf('async health()', at));
-      expect(syncBody).to.match(/const reach = nodeReachabilityFields\(tracker\);/);
-      expect(syncBody).to.match(/result\.node_last_ok_at\s+= reach\.node_last_ok_at;/);
-      expect(syncBody).to.match(/result\.node_unreachable = reach\.node_unreachable;/);
+      const syncBody = syncStatusSrc.slice(at);
+      expect(syncBody).to.match(/const reach = nodeReachabilityFields\(tracker\)/);
+      expect(syncBody).to.match(/result\.node_last_ok_at\s+= reach\.node_last_ok_at/);
+      expect(syncBody).to.match(/result\.node_unreachable = reach\.node_unreachable/);
 
-      const health = apiSrc.indexOf('async health()');
-      const healthBody = apiSrc.slice(health, health + 900);
+      const health = routesSrc.indexOf('async health()');
+      const healthBody = routesSrc.slice(health, health + 900);
       expect(healthBody).to.match(/const sync = await jsonRpcController\.get_sync_status\(\)/);
       expect(healthBody).to.match(/\.\.\.sync/);
     });
@@ -253,10 +255,11 @@ describe('XChainUtxoTracker: node reachability is visible on the health surfaces
   describe('the api payloads carry node_last_ok_at and node_unreachable', function () {
     it('sits beside node_catching_up on every surface that carries it', function () {
       const sites = [];
-      for (let at = apiSrc.indexOf('node_catching_up ='); at !== -1; at = apiSrc.indexOf('node_catching_up =', at + 1)) sites.push(at);
+      const statusSources = startupSrc + '\n' + syncStatusSrc;
+      for (let at = statusSources.indexOf('node_catching_up ='); at !== -1; at = statusSources.indexOf('node_catching_up =', at + 1)) sites.push(at);
       expect(sites, 'the freshness meta and get_sync_status').to.have.lengthOf(2);
       for (const at of sites) {
-        expect(apiSrc.slice(at, at + 900)).to.match(/nodeReachabilityFields\(tracker\)/);
+        expect(statusSources.slice(at, at + 900)).to.match(/nodeReachabilityFields\(tracker\)/);
       }
     });
 

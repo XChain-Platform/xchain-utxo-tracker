@@ -34,7 +34,7 @@ const express = require('express')
 const cors    = require('cors')
 const { parseCorsOrigin } = require('../../src/server/cors_origin.js')
 
-// Mount cors exactly as src/api.js does (including its unset default of `false`,
+// Mount cors exactly as src/api/startup.js does (including its unset default of `false`,
 // meaning CORS off) and ask what a browser would receive.
 async function acaoFor (rawEnv, origins) {
     const app = express()
@@ -166,17 +166,17 @@ describe('CORS_ORIGIN allowlist parsing', function () {
 
 describe('CORS_ORIGIN allowlist parsing', function () {
 
-    // The parser is only reached if api.js actually calls it. Asserting the source
+    // The parser is only reached if startup.js actually calls it. Asserting the source
     // line keeps a later edit from reverting to the raw env var while every
     // behavioural test above still passes against the helper in isolation.
     describe('src/api.js wiring', function () {
 
         it('mounts cors through parseCorsOrigin, never the raw env var', function () {
-            const src = require('fs').readFileSync(require('path').join(__dirname, '../../src/api.js'), 'utf8')
-            assert.ok(/cors\(\{\s*origin:\s*parseCorsOrigin\(process\.env\.CORS_ORIGIN\)/.test(src),
-                'api.js must mount cors with parseCorsOrigin(process.env.CORS_ORIGIN)')
-            assert.ok(!/cors\(\{\s*origin:\s*process\.env\.CORS_ORIGIN/.test(src),
-                'api.js must not hand the raw CORS_ORIGIN string to cors')
+            const src = require('fs').readFileSync(require('path').join(__dirname, '../../src/api/startup.js'), 'utf8')
+            assert.ok(/cors\(\{\s*origin:\s*parseCorsOrigin\(config\.CORS_ORIGIN\)/.test(src),
+                'startup.js must mount cors with parseCorsOrigin(config.CORS_ORIGIN)')
+            assert.ok(!/cors\(\{\s*origin:\s*config\.CORS_ORIGIN/.test(src),
+                'startup.js must not hand the raw CORS_ORIGIN string to cors')
         })
     })
 })

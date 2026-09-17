@@ -371,8 +371,8 @@ describe('Regression: the reorg rollback budget survives a restart', function ()
     it('publishes the remaining undo window on get_sync_status', function () {
         const fs = require('fs');
         const path = require('path');
-        const src = fs.readFileSync(path.join(__dirname, '../../../src/api.js'), 'utf8');
-        const method = src.slice(src.indexOf('async get_sync_status()'));
+        const src = fs.readFileSync(path.join(__dirname, '../../../src/api/sync_status.js'), 'utf8');
+        const method = src.slice(src.indexOf('async function get_sync_status('));
         expect(method).to.match(/result\.undo_window_blocks\s*=\s*tracker\.undoBlocks/);
         expect(method).to.match(/result\.undo_window_remaining\s*=/);
     });

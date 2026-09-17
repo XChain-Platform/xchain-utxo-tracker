@@ -59,6 +59,7 @@ function readStatement(name) {
     const lines = [];
     for (let i = at; i < API_LINES.length && i < at + 6; i++) {
         if (i > at && API_LINES[i].trim() === '') break;
+        if (i > at && /^(?:const|let|var)\s+/.test(API_LINES[i])) break;
         lines.push(API_LINES[i]);
     }
     return lines.join('\n');

@@ -123,19 +123,22 @@ describe('HTTP metric route labels stay bounded under invented paths @security',
 });
 
 describe('src/api.js mounts the unmatched-route label first @regression', function () {
-    const SRC = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+    const SRC = fs.readFileSync(path.join(__dirname, '../../src/api/startup.js'), 'utf8');
 
     it('installs the label on the app ahead of every middleware that can shed', function () {
         const create = SRC.indexOf('const app = express()');
-        expect(create, 'src/api.js no longer creates the app with `const app = express()`').to.be.greaterThan(-1);
+        expect(create, 'src/api/startup.js no longer creates the app with `const app = express()`').to.be.greaterThan(-1);
 
-        // Searched from the app's creation so the function's own declaration,
-        // which sits above it, is not mistaken for the call site.
-        const mount = SRC.indexOf('installUnmatchedRouteLabel(app);', create);
-        const helmet = SRC.indexOf('app.use(helmet())');
+        const baseCall = SRC.indexOf('installBaseMiddleware(app, config)', create);
+        expect(baseCall, 'startup.js must install base middleware after creating the app').to.be.greaterThan(create);
 
-        expect(mount, 'src/api.js does not mount installUnmatchedRouteLabel, so invented paths mint a metric series each').to.be.greaterThan(create);
-        expect(helmet, 'src/api.js no longer mounts helmet, so this ordering guard needs rewriting').to.be.greaterThan(-1);
+        const baseStart = SRC.indexOf('function installBaseMiddleware(');
+        const baseBody = SRC.slice(baseStart, SRC.indexOf('\n}', baseStart));
+        const mount = baseBody.indexOf('config.installUnmatchedRouteLabel(app)');
+        const helmet = baseBody.indexOf('app.use(helmet())');
+
+        expect(mount, 'src/api/startup.js does not mount installUnmatchedRouteLabel, so invented paths mint a metric series each').to.be.greaterThan(-1);
+        expect(helmet, 'src/api/startup.js no longer mounts helmet, so this ordering guard needs rewriting').to.be.greaterThan(-1);
         expect(mount, 'the unmatched-route label is mounted after middleware that can answer a request, so shed requests stay caller-labelled').to.be.lessThan(helmet);
     });
 });

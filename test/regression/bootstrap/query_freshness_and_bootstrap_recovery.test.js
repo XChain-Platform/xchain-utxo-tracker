@@ -109,13 +109,13 @@ describe('computeFreshness', function () {
     expect(halted.halt_reason).to.equal('rolled back past the recovery window');
   });
 
-  // Wiring guard: getFreshnessMeta lives inside startApi()'s closure and is not
+  // Wiring guard: getFreshnessMeta lives in the startup module and is not
   // reachable from a require, so an unwired state argument would leave every
   // assertion above green while get_utxos still shipped the old four fields.
   it('feeds the tracker\'s mempool and halt state into the per-query sibling', function () {
-    const src = fs.readFileSync(path.join(__dirname, '../../../src/api.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '../../../src/api/startup.js'), 'utf8');
     const fn = src.slice(src.indexOf('async function getFreshnessMeta('));
-    const body = fn.slice(0, fn.indexOf('\n    }'));
+    const body = fn.slice(0, fn.indexOf('async function setFreshnessHeaders'));
     expect(body).to.match(/mempoolReconverged:\s*tracker\.isMempoolReconverged\(\)/);
     expect(body).to.match(/halted:\s*!!tracker\.halted/);
     expect(body).to.match(/haltReason:\s*tracker\.haltReason/);
@@ -131,21 +131,21 @@ describe('computeFreshness', function () {
   // reorg_count when both pages carry it, and until this line existed no page ever
   // did, so that comparison could never fire.
   it('publishes the rollback counter on the per-query sibling', function () {
-    const src = fs.readFileSync(path.join(__dirname, '../../../src/api.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '../../../src/api/startup.js'), 'utf8');
     const fn = src.slice(src.indexOf('async function getFreshnessMeta('));
-    const body = fn.slice(0, fn.indexOf('\n    }'));
+    const body = fn.slice(0, fn.indexOf('async function setFreshnessHeaders'));
     expect(body).to.match(/freshness\.reorg_count\s*=/);
     expect(body).to.match(/tracker\.reorgCount/);
   });
 
-  // Wiring guard, same reason: the REST address routes live inside startApi()'s
-  // closure too. X-Mempool-Ready is built from the floored freshness meta, not
+  // Wiring guard, same reason: the REST address routes live in routes.js.
+  // X-Mempool-Ready is built from the floored freshness meta, not
   // the RAW pair `tracker.isSynced() && tracker.isMempoolReconverged()`, which is
   // not floored on a negative lag: an orphaned view (committed tip above the
   // node's) would ship X-Synced:false and X-Mempool-Ready:true on the SAME
   // response. All three sites read the floored freshness meta.
   it('builds every X-Mempool-Ready header from the floored freshness meta', function () {
-    const src = fs.readFileSync(path.join(__dirname, '../../../src/api.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '../../../src/api/routes.js'), 'utf8');
     const sites = src.match(/res\.set\('X-Mempool-Ready'[^\n]*\)/g) || [];
     expect(sites).to.have.lengthOf(3);
     for (const site of sites) {

@@ -92,13 +92,13 @@ describe('bootstrap signing key: the shipped trust anchor @security', function (
 
     it('is the file the restore path actually loads', function () {
         // A guard on a file nothing reads is worth nothing, so tie the path this
-        // test asserts on to the constant api.js resolves. Read as TEXT rather than
-        // required: loading api.js pulls the whole service in for one string.
-        const src = fs.readFileSync(path.join(REPO, 'src', 'api.js'), 'utf8');
-        expect(src, 'src/api.js no longer pins config/bootstrap_signing_pubkey.pem, so this parity guard '
+        // test asserts on to the constant errors.js resolves. Read as TEXT rather than
+        // required: loading the module pulls service dependencies in for one string.
+        const src = fs.readFileSync(path.join(REPO, 'src', 'api', 'errors.js'), 'utf8');
+        expect(src, 'src/api/errors.js no longer pins config/bootstrap_signing_pubkey.pem, so this parity guard '
             + 'is watching a file the restore path does not load. Re-point it at the new constant rather '
             + 'than deleting the assertion').to.match(
-            /DEFAULT_BOOTSTRAP_PUBKEY_PATH\s*=\s*path\.join\(__dirname,\s*'config',\s*'bootstrap_signing_pubkey\.pem'\)/);
+            /DEFAULT_BOOTSTRAP_PUBKEY_PATH\s*=\s*path\.join\(__dirname,\s*'\.\.',\s*'config',\s*'bootstrap_signing_pubkey\.pem'\)/);
     });
 
     it('is byte-for-byte the key xchain-node publishes with', function () {

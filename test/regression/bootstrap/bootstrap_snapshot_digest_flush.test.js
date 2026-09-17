@@ -34,20 +34,26 @@ const childProcess = require('child_process');
 const { expect } = require('chai');
 
 const API_PATH = require.resolve('../../../src/api.js');
+const COMPRESSION_PATH = require.resolve('../../../src/api/compression.js');
 
-// api.js destructures `spawn` at require time, so the stub is installed before
-// the module loads and the private instance is dropped from the cache after.
+// compression.js destructures `spawn` at require time, so the stub is installed
+// before that module loads and both private module instances are dropped after.
 function loadApiWithStubbedSpawn(stub) {
     const realSpawn = childProcess.spawn;
     const hadCached = Object.prototype.hasOwnProperty.call(require.cache, API_PATH);
     const cached = require.cache[API_PATH];
+    const hadCompressionCached = Object.prototype.hasOwnProperty.call(require.cache, COMPRESSION_PATH);
+    const cachedCompression = require.cache[COMPRESSION_PATH];
     childProcess.spawn = stub;
     delete require.cache[API_PATH];
+    delete require.cache[COMPRESSION_PATH];
     try {
         return require(API_PATH);
     } finally {
         childProcess.spawn = realSpawn;
         delete require.cache[API_PATH];
+        delete require.cache[COMPRESSION_PATH];
+        if (hadCompressionCached) require.cache[COMPRESSION_PATH] = cachedCompression;
         if (hadCached) require.cache[API_PATH] = cached;
     }
 }
@@ -112,7 +118,7 @@ describe('bootstrap snapshot digest describes the flushed archive', function () 
 
         try {
             const { compressDirPigz } = loadApiWithStubbedSpawn(stub);
-            expect(compressDirPigz, 'src/api.js must export compressDirPigz for this guard').to.be.a('function');
+            expect(compressDirPigz, 'src/api.js must re-export compressDirPigz for this guard').to.be.a('function');
 
             const out = await compressDirPigz('regression-snapshot-digest', '/data/xchain', destination);
             const sidecar = fs.readFileSync(`${out}.sha256`, 'utf8').trim().split(/\s+/)[0];
