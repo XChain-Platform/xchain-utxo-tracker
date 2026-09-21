@@ -45,22 +45,26 @@ function parseOutputCursor(cursor) {
 }
 
 function rangeEnd(prefix) {
-    // The 0xFF suffix must be at least as long as the longest key suffix of any
-    // range scan, or a key whose suffix bytes are all 0xFF sorts above the
+    // The 0xFF suffix must be at least as long as the longest key suffix of ANY
+    // range scan, or a key whose leading suffix bytes are all 0xFF sorts above the
     // (shorter) inclusive `lte` bound and is silently dropped from the iterator.
-    // A previous 12-byte suffix covered the common O/H/I/M scans (33-byte prefix
-    // over 45-byte keys) but under-covered the reorg-consistency scans: K's
-    // 33-byte prefix over 77-byte keys leaves a 44-byte suffix, and Z leaves a
-    // 32-byte suffix. A dropped K key means a spent output is not restored on
-    // reorg rollback (permanent balance under-count); a dropped Z key leaves a
-    // stale first-seen (S) record.
+    // The previous 12-byte suffix covered only the 12-byte-suffix scans (O/H/I/M:
+    // 33-byte prefix over 45-byte keys), but UNDER-covered the reorg-consistency
+    // scans: the K/P_OUT_DEL restore scan uses a 33-byte [K+blockHash] prefix over
+    // 77-byte keys (44-byte suffix) and the Z/P_BLK_SCRIPT scan leaves a 32-byte
+    // scriptHash suffix. A dropped K key means a spent output is NOT restored on a
+    // reorg rollback (permanent balance under-count); a dropped Z key leaves a stale
+    // first-seen (S) record. 64 bytes covers the current maximum (44) with margin; a
+    // longer all-0xFF upper bound never bleeds into the next prefix (the differing
+    // prefix byte is compared first) and never excludes a valid key.
     //
-    // 64 bytes covers that 44-byte maximum with margin, and a longer all-0xFF
-    // bound never bleeds into the next prefix (the differing prefix byte sorts
-    // first) or excludes a valid key. The length is derived from prefix.length
-    // rather than fixed, because getValuesFromKeyPattern accepts patterns as
-    // short as 2 bytes, which over the 77-byte K key would leave a 75-byte
-    // suffix that a fixed 64-byte bound would under-cover.
+    // The suffix is sized so that prefix.length + suffix.length is at least the
+    // longest key in the schema (77 bytes: K/P_OUT_DEL). The internal fixed-prefix
+    // scans always leave >= 33-byte prefixes, but getValuesFromKeyPattern accepts
+    // patterns as short as 2 bytes, which over a 77-byte K key leaves a 75-byte
+    // suffix that a fixed 64-byte 0xFF bound would under-cover. Deriving the length
+    // from the prefix keeps the bound valid for every scan while retaining the
+    // 64-byte floor for the common fixed-prefix cases.
     const MAX_KEY_LEN = 77
     return Buffer.concat([prefix, Buffer.alloc(Math.max(64, MAX_KEY_LEN - prefix.length), 0xFF)])
 }
