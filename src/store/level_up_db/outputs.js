@@ -135,25 +135,29 @@ module.exports = {
         const oVal = encodeOutput(output.value, output.height, output.fullTxHash || null, output.coinbase === true)
 
         // Populate the recent-output cache so Phase 2 of removeOutputsWithInputsBatch
-        // can absorb spends without a DB read. outputIndex is packed into 2 BMP
-        // chars (high/low 16 bits) rather than ":" + String(n) to avoid a
-        // string-conversion hot spot seen in profiling, while covering the full
-        // 32-bit range.
+        // can absorb spends of this output without a DB read.
+        // Pack outputIndex into 2 BMP chars (high/low 16 bits) instead of
+        // ":" + String(n): avoids the NumberPrototypeToString hot spot from the
+        // profile while covering the full 32-bit range.
         //
-        // outputCache is a process-global static shared by the confirmed and
-        // mempool stores; the mempool store also calls insertOutput (height=-1).
-        // Correctness relies on block Pass 1 overwriting any mempool entry with
-        // the confirmed height before Pass 2 reads it (a confirmed block can only
-        // spend an already-mined output). The reorg path deletes O records for
-        // orphaned outputs but does not evict the cache; those entries are never
-        // re-read because the spending tx is also gone after the reorg.
+        // outputCache is a process-global static shared by the confirmed and mempool
+        // store instances, but only confirmed outputs populate it: the guard below
+        // excludes the negative height (blockHeight=-1) passed by the mempool store.
+        // A confirmed block's Pass 1 (parseTxOutputs / insertOutput) therefore writes
+        // the confirmed height before Pass 2 (removeOutputsWithInputsBatch) reads it.
+        // A confirmed block can only spend an already-mined output, so every relevant
+        // cache entry carries a confirmed height by the time Pass 2 runs. The reorg
+        // path (removeCreatedOutputsInBlock) deletes O records for orphaned outputs
+        // but does not evict the cache; stale entries from the orphaned block are
+        // never re-read because the spending tx is also gone after the reorg.
         //
-        // Never cache a mempool (unconfirmed) output: it is the only caller that
-        // passes height<0, and a concurrent mempool re-cache after Pass 1 wrote
-        // the confirmed height could make Pass 2 archive a K restore record with
-        // a bogus height=-1, later restored on reorg with a wrong confirmation
-        // count. The mempool store never reads this cache, so skipping the write
-        // for height<0 removes the only writer of bad heights.
+        // The negative-height exclusion prevents a concurrent updateMempool pass
+        // from replacing a just-mined tx's confirmed cache value after Pass 1. Such
+        // a replacement would make Pass 2 archive a K restore record with height=-1,
+        // and a later reorg would restore that output with a bogus confirmation count
+        // (tip+2). The mempool store never READS this cache because
+        // removeOutputsWithInputsBatch runs only on the confirmed store, so excluding
+        // mempool writes leaves the confirmed hot path unchanged.
         if (output.height != null && output.height >= 0) {
             const _oi = output.outputIndex
             const cacheKey = output.txHash + String.fromCharCode((_oi >>> 16) & 0xFFFF, _oi & 0xFFFF)
