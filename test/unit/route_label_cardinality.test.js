@@ -111,14 +111,25 @@ describe('HTTP metric route labels stay bounded under invented paths @security',
             .to.not.match(/xchain_metrics_series_dropped_total\{metric="http_requests_total"\} [1-9]/);
     });
 
-    it('reproduces the unbounded label without the guard', async function () {
+    // The vendored observability module now caps its own unmatched-path
+    // fallback: past UNMATCHED_ROUTE_LABEL_CAP distinct first segments every
+    // further one shares a fixed overflow label. So even without the app-level
+    // guard a caller inventing paths can no longer spend the series budget,
+    // and the declared route stays on the scrape. The app guard above remains
+    // the tighter of the two (one label for every unmatched request), which the
+    // first case proves; this case proves the module's floor.
+    it('stays bounded without the app guard, on the module cap alone', async function () {
         stack = buildStack({ bounded: false });
         const body = await driveAndScrape(stack);
 
         const labels = routeLabelsIn(body);
-        expect(labels.size, 'invented paths no longer mint one series each').to.be.at.least(DEFAULT_MAX_SERIES);
-        expect(labels.has('/utxos/:address'), 'the declared route survived the cap without the guard').to.equal(false);
-        expect(body).to.match(/xchain_metrics_series_dropped_total\{metric="http_requests_total"\} [1-9]/);
+        expect(labels.size, 'invented paths minted more series than the module cap allows')
+            .to.be.below(DEFAULT_MAX_SERIES);
+        expect(labels.has('/_unmatched'), `no /_unmatched overflow series; route labels: ${[...labels].join(', ')}`)
+            .to.equal(true);
+        expect(labels.has('/utxos/:address'), 'the declared route lost its series to invented labels').to.equal(true);
+        expect(body, 'observations were dropped, so the module cap did not hold')
+            .to.not.match(/xchain_metrics_series_dropped_total\{metric="http_requests_total"\} [1-9]/);
     });
 });
 
