@@ -68,10 +68,14 @@ describe('restore-validation', function () {
             expect(hasRequiredLevelDbMembers(['CURRENT', 'MANIFEST-000001', '000005.ldb', '000004.log', 'LOCK']))
                 .to.equal(true);
         });
-        it('accepts the same members behind a ./ or directory prefix', function () {
+        it('accepts the same members behind a ./ prefix', function () {
             expect(hasRequiredLevelDbMembers(['./', './CURRENT', './MANIFEST-000007', './000005.ldb']))
                 .to.equal(true);
-            expect(hasRequiredLevelDbMembers(['store/CURRENT', 'store/MANIFEST-000007'])).to.equal(true);
+        });
+        it('rejects a store nested under a directory, which extraction cannot place at the root', function () {
+            expect(hasRequiredLevelDbMembers(['store/CURRENT', 'store/MANIFEST-000007'])).to.equal(false);
+            expect(hasRequiredLevelDbMembers(['./xchain-utxo-tracker/CURRENT', './xchain-utxo-tracker/MANIFEST-000007']))
+                .to.equal(false);
         });
         it('rejects an archive of unrelated files', function () {
             expect(hasRequiredLevelDbMembers(['README.txt', 'payload.bin', 'etc/passwd'])).to.equal(false);

@@ -18,15 +18,23 @@
 #
 # Convert a legacy RocksDB xchain-utxo-tracker *bootstrap tarball* into a
 # classic-level (LevelDB) bootstrap tarball - entirely offline, without
-# touching any running tracker. Output is byte-for-byte the bootstrap a
-# from-scratch classic-level resync + `bootstrap create` would produce, in
-# disk-IO time instead of a multi-day reparse.
+# touching any running tracker. Output restores exactly as the bootstrap a
+# from-scratch classic-level resync + `bootstrap create` would produce, with the
+# same wrapper members in the same order, in disk-IO time instead of a multi-day
+# reparse. It is not byte-identical: tar mtimes and gzip framing differ.
 #
 # Wrapper format (must match xchain-node BootstrapService create/restore):
 #   <bootstrap>.tar.gz  (outer, gzip)
+#     ├── bootstrap.json = { format: 1, module, coin, network, height, created }
+#     │                    (FIRST, so a restore reads the end height cheaply)
 #     ├── data.tar.gz    = gzip of `tar -C <db-dir> .`  (DB files at tar root)
 #     └── data.sha256    = "<sha256 of data.tar.gz>  data.tar.gz"
 #   restore: tar xzf outer -> verify data.sha256 -> gunzip data.tar.gz | tar xf - -C /data
+# DB files sit at the tar root because the producer tars the tracker volume, and
+# that volume's root IS the store (mounted at /data/<DB_NAME> in the tracker).
+# `height` is read from the converted store's LAST_BLOCK_HEIGHT; a store it cannot
+# be read from writes null, which a restore treats as "height unknown". coin and
+# network come from BOOTSTRAP_COIN / BOOTSTRAP_NETWORK when set, else null.
 #
 # Provenance: the output is UNSIGNED. data.sha256 proves the archive is internally
 # consistent, not who made it, and no ed25519 signing key belongs in a throwaway
@@ -65,6 +73,28 @@ s.on("end",()=>process.stdout.write(h.digest("hex")));s.on("error",e=>{console.e
 }
 log() { echo "[$(date -u +%H:%M:%S)Z] $*"; }
 
+# Print the store's LAST_BLOCK_HEIGHT (a hex string) as a decimal, or nothing.
+store_height() {
+    node -e 'const { ClassicLevel } = require("classic-level");
+(async () => {
+    const db = new ClassicLevel(process.argv[1], { createIfMissing: false, keyEncoding: "buffer", valueEncoding: "buffer" });
+    let value;
+    try { value = await db.get(Buffer.from("LAST_BLOCK_HEIGHT")); } finally { await db.close(); }
+    const hex = value === undefined ? "" : value.toString();
+    const height = /^[0-9a-f]+$/i.test(hex) ? parseInt(hex, 16) : NaN;
+    if (Number.isSafeInteger(height)) process.stdout.write(String(height));
+})().catch((e) => { console.error(e.message); process.exit(1); });' "$1"
+}
+
+# Write bootstrap.json in the publisher's shape; an empty height is null.
+write_meta() {
+    node -e 'const [out, height, coin, network] = process.argv.slice(1);
+const meta = { format: 1, module: "xchain-utxo-tracker", coin: coin || null, network: network || null,
+    height: height === "" ? null : Number(height), created: new Date().toISOString() };
+require("fs").writeFileSync(out, JSON.stringify(meta, null, 2) + "\n");' \
+        "$1" "$2" "${BOOTSTRAP_COIN:-}" "${BOOTSTRAP_NETWORK:-}"
+}
+
 [ -f "$SRC" ] || { echo "FATAL: src not found: $SRC"; exit 1; }
 [ -e "$OUT" ] && { echo "FATAL: out already exists, refusing to overwrite: $OUT"; exit 1; }
 
@@ -92,6 +122,15 @@ log "[4/7] convert rocksdb -> classic-level (with built-in key-by-key verify)"
 node "$MIGRATE_JS" --src "$WORK/rocksdb" --dst "$WORK/classic"   # exits non-zero on any mismatch
 rm -rf "$WORK/rocksdb"                      # free source DB
 
+# Best-effort: a missing height must never fail a finished multi-hour conversion.
+height="$(store_height "$WORK/classic")" || height=""
+if [ -n "$height" ]; then
+    log "  converted store tip height = $height"
+else
+    log "  WARNING: could not read LAST_BLOCK_HEIGHT; bootstrap.json carries height null"
+fi
+write_meta "$WORK/wrap/bootstrap.json" "$height"
+
 log "[5/7] re-wrap classic-level DB into data.tar.gz (tar -C classic .)"
 tar cf - -C "$WORK/classic" . | gzip > "$WORK/wrap/data.tar.gz"
 rm -rf "$WORK/classic"                      # free converted DB (now inside data.tar.gz)
@@ -102,11 +141,12 @@ printf '%s  data.tar.gz\n' "$h" > "$WORK/wrap/data.sha256"
 log "  data.tar.gz sha256 = $h"
 
 log "[7/7] wrap outer archive -> $OUT"
-tar czf "$OUT" -C "$WORK/wrap" data.tar.gz data.sha256
+tar czf "$OUT" -C "$WORK/wrap" bootstrap.json data.tar.gz data.sha256
 rm -rf "$WORK/wrap" "$WORK/outer"
 
 ls -la "$OUT"
 log "DONE: classic-level bootstrap written to $OUT"
+[ -n "$height" ] || log "WARNING: bootstrap.json has no height, so a restore cannot compare the snapshot tip with the coin node (it reads \"height unknown\")."
 log "NOTE: this archive is UNSIGNED (no $OUT.sig). Both restore paths are fail-closed on"
 log "      provenance, so it is REFUSED by default. Pick one before you restore:"
 log "  publish  - sign it on the key-holding host (publish-bootstraps.sh, XCHAIN_NODE_BOOTSTRAP_SIGNING_KEY),"

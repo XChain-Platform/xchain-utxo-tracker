@@ -15,6 +15,7 @@
 const util = require('node:util');
 const { logger } = require('./constants');
 const { nodeReachabilityFrom, sanitizeRpcError } = require('./rpc_helpers');
+const { envInt } = require('../../config/env_int');
 
 module.exports = {
     async sleep(ms) {
@@ -106,16 +107,19 @@ module.exports = {
         })
     },
 
+    // Fetch raw transactions with bounded concurrency, in order-preserving waves.
+    // Firing a whole list at once holds one socket per txid against the operator's
+    // node (a 1000-tx mempool chunk, or every tx of a large block on the reassembly
+    // path), and each dropped request then retries up to 10x. The bound is read per
+    // call so a test or an operator can retune it; tune via UTXO_TRACKER_RPC_CONCURRENCY.
     async getRawTransactions(txIdArray){
-        let requests = []
-
-        for (let nextTxIdIndex in txIdArray){
-            let nextTxId = txIdArray[nextTxIdIndex]
-
-            requests.push(this.getRawTransaction(nextTxId))
+        const concurrency = envInt('UTXO_TRACKER_RPC_CONCURRENCY', 50, 1)
+        const results = []
+        for (let i = 0; i < txIdArray.length; i += concurrency){
+            const wave = txIdArray.slice(i, i + concurrency)
+            results.push(...await Promise.all(wave.map((txid) => this.getRawTransaction(txid))))
         }
-
-        return Promise.all(requests)
+        return results
     },
 
     // POST a (batched) JSON-RPC payload, retrying on transient connection timeouts.

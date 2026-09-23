@@ -213,9 +213,10 @@ function addOperationalStatus(result, tracker, nodeHeightStale) {
 // error body), making a DB-down tracker appear healthy to healthchecks.
 // Held on the PROBE gate, not the main one: /status is exempt from the main
 // cap by `skip`, so its slot lives in probeGate's reserve and only that
-// gate's hold() finds it. `isProbe` / PROBE_PATH above must keep matching
-// every request this route answers (HEAD, trailing slash, any case), or the
-// admitting gate stops being the holding gate and hold() silently no-ops.
+// gate's hold() finds it. `isProbe` / `probePath` in installConcurrencyGates
+// (src/api/startup.js) must keep matching every request this route answers
+// (HEAD, trailing slash, any case), or the admitting gate stops being the
+// holding gate and hold() silently no-ops.
 
 // DB unreachable; fall through to 503
 

@@ -16,7 +16,8 @@
 
 const { expect } = require('chai');
 const sinon = require('sinon');
-const { readInt, envInt } = require('../../src/config/env_int');
+const { readInt, envInt, intKnob } = require('../../src/config/env_int');
+const { resolveRateLimitRpm } = require('../../src/api/startup.js');
 
 describe('readInt', function () {
   // parseInt reads a numeric prefix, so '1.5' truncates to 1 under parseInt.
@@ -60,6 +61,62 @@ describe('envInt', function () {
       expect(envInt(KEY, 7, 1)).to.not.equal(0);
     } finally {
       if (had) process.env[KEY] = prev; else delete process.env[KEY];
+    }
+  });
+});
+
+describe('intKnob', function () {
+  let errorStub;
+
+  beforeEach(function () {
+    errorStub = sinon.stub(console, 'error');
+  });
+
+  afterEach(function () {
+    errorStub.restore();
+  });
+
+  it('keeps the default silently when the knob is unset or blank', function () {
+    expect(intKnob('X_KNOB', undefined, { fallback: 9, min: 1 })).to.equal(9);
+    expect(intKnob('X_KNOB', '  ', { fallback: 9, min: 1 })).to.equal(9);
+    expect(errorStub.called).to.equal(false);
+  });
+
+  it('warns once, naming the knob, and keeps the default on a typo', function () {
+    expect(intKnob('X_KNOB', '30s', { fallback: 9, min: 1 })).to.equal(9);
+    expect(errorStub.calledOnce).to.equal(true);
+    expect(String(errorStub.firstCall.args[0])).to.include("X_KNOB='30s'");
+  });
+});
+
+describe('resolveRateLimitRpm', function () {
+  let errorStub;
+
+  beforeEach(function () {
+    errorStub = sinon.stub(console, 'error');
+  });
+
+  afterEach(function () {
+    errorStub.restore();
+  });
+
+  it('reads the whole string, so 1e6 is a million rather than its prefix 1', function () {
+    expect(resolveRateLimitRpm('1e6')).to.equal(1000000);
+    expect(resolveRateLimitRpm('750')).to.equal(750);
+    expect(errorStub.called).to.equal(false);
+  });
+
+  it('keeps 500 without a warning when the knob is unset', function () {
+    expect(resolveRateLimitRpm(undefined)).to.equal(500);
+    expect(errorStub.called).to.equal(false);
+  });
+
+  it('refuses 0 and junk with a warning, since a limit of 0 blocks every request', function () {
+    for (const raw of ['0', '12garbage', '-5', '1.5']) {
+      errorStub.resetHistory();
+      expect(resolveRateLimitRpm(raw), raw).to.equal(500);
+      expect(errorStub.calledOnce, raw).to.equal(true);
+      expect(String(errorStub.firstCall.args[0])).to.include('UTXO_TRACKER_RATE_LIMIT_RPM');
     }
   });
 });

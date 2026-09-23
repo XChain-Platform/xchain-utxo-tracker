@@ -269,7 +269,7 @@ function initStatusCounters(){
     // Forward-progress heartbeat, stamped when a block batch is committed.
     // Kept in memory because the /metrics collector runs synchronously and so
     // cannot await the durable pointer (db.getLastBlockHeight()); see
-    // src/utxoTrackerMetrics.js. Null until the first commit, which is what
+    // src/server/utxo_tracker_metrics.js. Null until the first commit, which is what
     // keeps a still-starting tracker out of the stall alert. A rollback moves
     // the durable pointer without stamping these, so the height is corrected
     // at the next forward commit; reorgCount/lastReorgDepth are the signals

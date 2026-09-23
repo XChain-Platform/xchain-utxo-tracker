@@ -11,6 +11,7 @@ const { installUtxoTrackerMetrics } = require('../server/utxo_tracker_metrics')
 const { createShutdown, createTrackerDrain } = require('../server/shutdown.js')
 const concurrencyGate = require('../server/concurrency_gate.js')
 const { parseCorsOrigin } = require('../server/cors_origin.js')
+const { intKnob } = require('../config/env_int')
 const memoryBudget = require('../store/memory_budget')
 const { nodeReachabilityFields } = require('./sync_status.js')
 const { registerRoutes } = require('./routes.js')
@@ -152,7 +153,7 @@ async function setFreshnessHeaders(tracker, res){
 // single origin: handing `cors` the raw string makes it echo that string
 // verbatim to every caller, a multi-value header no browser accepts, so every
 // listed origin is blocked while the header reads as configured. Parsing is
-// what makes the list work; see src/corsOrigin.js.
+// what makes the list work; see src/server/cors_origin.js.
 
 // Trust only the first proxy hop so the rate limiter keys on the real client
 // IP rather than the fronting proxy (and to satisfy express-rate-limit's
@@ -179,10 +180,10 @@ async function setFreshnessHeaders(tracker, res){
 // a small private reserve rather than a blanket exemption, because it still
 // does a LevelDB read and an uncapped exempt route is just where the
 // stampede would move next.
-// Must match exactly the set Express routes to the `/status` handler below.
-// Under the default routing options the app runs with, a bare `app.get`
-// also answers HEAD, a trailing slash, and any letter case, so a stricter
-// predicate here admits those variants on the MAIN gate while the handler
+// Must match exactly the set Express routes to the `/status` handler in
+// src/api/sync_status.js. Under the default routing options the app runs
+// with, a bare `app.get` also answers HEAD, a trailing slash, and any letter
+// case, so a stricter predicate here admits those variants on the MAIN gate while the handler
 // is wrapped in probeGate.hold(): hold() finds no slot under its own gate's
 // key, degrades to a pass-through, and the main slot is freed by the socket
 // 'close' leg while the LevelDB read is still running (item 7712). Same
@@ -205,7 +206,8 @@ async function setFreshnessHeaders(tracker, res){
 // itself regresses. Registration is unconditional: the registry is always
 // built and only the /metrics route is gated, so the series exist even where
 // METRICS_ENABLED is off; their values come from a scrape-time collector, so
-// they are sampled only once something scrapes. See src/utxoTrackerMetrics.js.
+// they are sampled only once something scrapes. See
+// src/server/utxo_tracker_metrics.js.
 
 // API key enforcement for admin JSON-RPC methods. Fails closed: without a
 // configured key these methods are rejected, never left open.
@@ -227,6 +229,12 @@ async function setFreshnessHeaders(tracker, res){
 // while its own scan is still running. Adding a route here without the
 // wrapper puts it back outside the cap.
 
+// Read the per-IP rpm through the strict reader. 0 is refused, not a disable
+// switch: express-rate-limit v7+ blocks every request at a limit of 0.
+function resolveRateLimitRpm(raw) {
+    return intKnob('UTXO_TRACKER_RATE_LIMIT_RPM', raw, { fallback: 500, min: 1 })
+}
+
 function installBaseMiddleware(app, config) {
     config.installUnmatchedRouteLabel(app)
     app.use(helmet())
@@ -235,7 +243,7 @@ function installBaseMiddleware(app, config) {
     app.set('trust proxy', 1)
     app.use(rateLimit({
         windowMs: 60 * 1000,
-        limit: parseInt(config.UTXO_TRACKER_RATE_LIMIT_RPM, 10) || 500,
+        limit: resolveRateLimitRpm(config.UTXO_TRACKER_RATE_LIMIT_RPM),
         standardHeaders: true,
         legacyHeaders: false,
         message: { error: 'Too many requests', code: 'RATE_LIMITED' }
@@ -244,6 +252,7 @@ function installBaseMiddleware(app, config) {
 
 // GET /status has a private reserve so it stays answerable while the main gate
 // sheds. The predicate matches Express route semantics for HEAD, slash, and case.
+// Keep it in step with the GET /status route in src/api/sync_status.js.
 function installConcurrencyGates(app, config) {
     const probePath = /^\/status\/?$/i
     const isProbe = (req) => (req.method === 'GET' || req.method === 'HEAD') && probePath.test(req.path)
@@ -267,14 +276,14 @@ function installConcurrencyGates(app, config) {
 
 // Registration is unconditional so scrape-time freshness gauges exist whenever
 // metrics is enabled. The /metrics route itself remains default off.
-function installMetrics(app, tracker, config) {
+function installMetrics(app, tracker, config, gates) {
     let trackerVersion = ''
     try { trackerVersion = require('../../package.json').version } catch { /* version label is cosmetic */ }
     const observability = installObservability(app, {
         service: 'xchain-utxo-tracker', version: trackerVersion,
         coin: config.COIN || '', network: config.NETWORK || ''
     })
-    installUtxoTrackerMetrics(observability, tracker)
+    installUtxoTrackerMetrics(observability, tracker, gates)
 }
 
 // Gate the whole JSON-RPC request if any batch entry names an admin method.
@@ -324,7 +333,7 @@ async function startApi(config){
     const app = express()
     installBaseMiddleware(app, config)
     const { probeGate, requestGate } = installConcurrencyGates(app, config)
-    installMetrics(app, tracker, config)
+    installMetrics(app, tracker, config, { request: requestGate, probe: probeGate })
     installAdminGuard(app, config)
     registerRoutes({
         app, tracker, probeGate, requestGate,
@@ -341,4 +350,4 @@ async function startApi(config){
     listen(app, tracker, trackerExited, config)
 }
 
-module.exports = { startApi }
+module.exports = { startApi, resolveRateLimitRpm }

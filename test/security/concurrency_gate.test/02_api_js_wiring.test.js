@@ -76,5 +76,10 @@ describe('Security: global in-flight concurrency cap', function () {
             expect(statusSource).to.include('request_gate: requestGate.getStats()');
             expect(statusSource).to.include('probe_gate: probeGate.getStats()');
         });
+
+        it('hands both gates to the scrape, so shedding is not visible on /status alone', function () {
+            expect(startupSource).to.include('installMetrics(app, tracker, config, { request: requestGate, probe: probeGate })');
+            expect(startupSource).to.include('installUtxoTrackerMetrics(observability, tracker, gates)');
+        });
     });
 });

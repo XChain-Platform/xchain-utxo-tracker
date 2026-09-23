@@ -46,7 +46,12 @@ function readInt(raw){
 // here once turned one typo into a crash-loop where a graceful fallback was
 // intended (api.js bulk-sync pre-flight).
 function envInt(name, fallback, min, warnSuffix){
-    const raw = process.env[name]
+    return intKnob(name, process.env[name], { fallback, min, warnSuffix })
+}
+
+// Same warn-and-default resolver for a knob whose raw value arrives already
+// read (a config object handed to the server), named for the warning line.
+function intKnob(name, raw, { fallback, min, warnSuffix }){
     const read = readInt(raw)
     if (read.absent) return fallback
     if (read.value === null || read.value < min) {
@@ -58,4 +63,4 @@ function envInt(name, fallback, min, warnSuffix){
     return read.value
 }
 
-module.exports = { readInt, envInt }
+module.exports = { readInt, envInt, intKnob }

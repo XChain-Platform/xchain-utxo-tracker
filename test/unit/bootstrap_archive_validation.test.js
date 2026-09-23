@@ -71,11 +71,11 @@ function buildNonStoreArchive(dir) {
 // Build a two-layer wrapper archive: outer gzip tar containing data.tar.gz +
 // data.sha256, mirroring xchain-node's BootstrapService output. The inner payload is
 // a real store archive so the content gate sees what the restore pipeline would.
-function buildWrapperArchive(dir, { corruptChecksum = false, innerIsStore = true } = {}) {
+function buildWrapperArchive(dir, { corruptChecksum = false, innerIsStore = true, nestUnder = null } = {}) {
     const stageDir = fs.mkdtempSync(path.join(dir, 'wrap-'));
     const inner = path.join(stageDir, 'data.tar.gz');
     const payloadDir = path.join(dir, innerIsStore ? 'wrapper-store' : 'wrapper-junk');
-    if (innerIsStore) writeStoreFiles(payloadDir);
+    if (innerIsStore) writeStoreFiles(nestUnder ? path.join(payloadDir, nestUnder) : payloadDir);
     else { fs.mkdirSync(payloadDir, { recursive: true }); fs.writeFileSync(path.join(payloadDir, 'README.txt'), 'no store here'); }
     tarDir(payloadDir, inner);
     const digest = corruptChecksum ? '0'.repeat(64) : sha256File(inner);
@@ -310,6 +310,16 @@ describe('validateBootstrapArchiveOrThrow', function () {
             expect(threw, 'expected the unwrapped inner archive to be gated too').to.equal(true);
         });
 
+        it('refuses a store nested one level down before the wipe, not after it', async function () {
+            // tar -x -C <dbroot> keeps the directory, so this store would land where
+            // ClassicLevel never looks; the member listing already says so.
+            const archive = buildWrapperArchive(tmp, { nestUnder: 'xchain-utxo-tracker' });
+            let threw = false;
+            try { await validateBootstrapArchiveOrThrow(archive); }
+            catch (e) { threw = true; expect(e.message).to.match(/LevelDB store at its root/); }
+            expect(threw, 'expected a nested store to be refused while the live DB is intact').to.equal(true);
+        });
+
         it('accepts a store whose CURRENT/MANIFEST sort past the first ten members', async function () {
             // The limit-10 listing used for wrapper detection would not see them, so this
             // pins the full-member scan rather than a reused short list.
@@ -327,9 +337,9 @@ describe('validateBootstrapArchiveOrThrow', function () {
 
     // The pre-wipe member gate predicts the layout from the tar listing; only the disk
     // knows where the members actually landed. `tar -x -C <dbroot>` preserves the
-    // archive's own directories, so a store packed one level down passes every gate and
-    // still leaves nothing at the root, after which the restore path cleared the halt
-    // and relaunched over a wiped database while reporting progress 100.
+    // archive's own directories, so a store that lands one level down leaves nothing at
+    // the root, and without this backstop the restore path clears the halt and
+    // relaunches over a wiped database while reporting progress 100.
     describe('post-extraction store assertion', function () {
         let tmp;
         beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-extract-test-')); });

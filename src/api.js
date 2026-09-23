@@ -41,7 +41,7 @@ const BlockchainConnector = require('./chain/blockchain_connector');
 const { resolveUndoBlocks } = require('./bulk-sync/merger/derive_keys.js')
 const memoryBudget = require('./store/memory_budget')
 const { installCrashHandlers, noteCrash } = require('./server/crash_handlers.js')
-const { envInt: sharedEnvInt } = require('./config/env_int')
+const { envInt: sharedEnvInt, intKnob } = require('./config/env_int')
 const { timingSafeEqual } = require('crypto')
 const path = require('path')
 const { startApi } = require('./api/startup.js')
@@ -67,7 +67,8 @@ const NODE_PASSWORD =  process.env.NODE_PASSWORD
 const UTXO_TRACKER_API_PORT = process.env.UTXO_TRACKER_API_PORT
 const DB_NAME =  "xchain-utxo-tracker"
 const AUX_POW = process.env.AUX_POW === 'true' || process.env.AUX_POW === '1'
-const NODE_RPC_STALE_MS = parseInt(process.env.UTXO_TRACKER_NODE_RPC_STALE_MS, 10) || 150000
+const NODE_RPC_STALE_MS = intKnob('UTXO_TRACKER_NODE_RPC_STALE_MS',
+    process.env.UTXO_TRACKER_NODE_RPC_STALE_MS, { fallback: 150000, min: 1 })
 
 configureNodeRpcStaleMs(NODE_RPC_STALE_MS)
 configureRestoreOptions(() => ({

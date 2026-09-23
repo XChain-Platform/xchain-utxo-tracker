@@ -32,9 +32,9 @@
  * no browser sends, so a fat-fingered `*,https://x` grants x and nothing more
  * rather than silently opening the service to everyone.
  *
- * Identical by intent to xchain-encoder/src/server/cors_origin.js, xchain-hub's
- * src/lib/corsOrigin.js, and xchain-indexer/src/api/corsOrigin.js; keep the four in
- * step.
+ * Identical by intent to xchain-encoder/src/server/cors_origin.js,
+ * xchain-hub/src/api/cors_origin.js, and xchain-indexer/src/api/cors_origin.js;
+ * keep the four in step.
  *
  * @param {string|undefined|null} raw - the raw CORS_ORIGIN value
  * @returns {false|string|string[]} `false` (disabled), `'*'` (any), one origin, or an allowlist

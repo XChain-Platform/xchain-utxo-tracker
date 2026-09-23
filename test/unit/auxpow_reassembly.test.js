@@ -94,6 +94,51 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
 
 describe('malformed-AuxPoW block reassembly fallback', function () {
 
+    describe('BlockchainConnector.getBlockReassembled batching', function () {
+        const saved = process.env.UTXO_TRACKER_RPC_CONCURRENCY;
+        beforeEach(function () { process.env.UTXO_TRACKER_RPC_CONCURRENCY = '3'; });
+        afterEach(function () {
+            if (saved === undefined) delete process.env.UTXO_TRACKER_RPC_CONCURRENCY;
+            else process.env.UTXO_TRACKER_RPC_CONCURRENCY = saved;
+        });
+
+        it('fetches in parallel waves no wider than the bound, keeping block order', async function () {
+            const txids = Array.from({ length: 10 }, (_, i) => String(i).repeat(64).slice(0, 64));
+            let inFlight = 0;
+            let peak = 0;
+            const connector = makeConnector({
+                getBlockHeader: async () => HEADER_HEX,
+                getBlockVerbose: async () => ({ tx: txids }),
+                getRawTransaction: async (txid) => {
+                    peak = Math.max(peak, ++inFlight);
+                    await new Promise((r) => setTimeout(r, 10 - Number(txid[0])));
+                    inFlight--;
+                    return 'aa' + txid.slice(0, 2);
+                },
+            });
+            const hex = await connector.getBlockReassembled('hash');
+            expect(peak).to.equal(3);
+            expect(hex).to.equal(HEADER_HEX + '0a' + txids.map((t) => 'aa' + t.slice(0, 2)).join(''));
+        });
+
+        it('keeps the underlying fault as cause and code on the rethrow', async function () {
+            const fault = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+            const connector = makeConnector({
+                getBlockHeader: async () => HEADER_HEX,
+                getBlockVerbose: async () => ({ tx: [TXID] }),
+                getRawTransaction: async () => { throw fault; },
+            });
+            let err = null;
+            try { await connector.getBlockReassembled('hash'); } catch (e) { err = e; }
+            expect(err.message).to.match(/reassembling a block without auxpow\. socket hang up/);
+            expect(err.code).to.equal('ECONNRESET');
+            expect(err.cause).to.equal(fault);
+        });
+    });
+});
+
+describe('malformed-AuxPoW block reassembly fallback', function () {
+
     describe('XChainUtxoTracker.shouldReassembleBlock', function () {
         const call = (ctx, ...args) => XChainUtxoTracker.prototype.shouldReassembleBlock.call(ctx, ...args);
 

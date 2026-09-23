@@ -273,17 +273,16 @@ async function assertLevelDbArchiveOrThrow(archivePath, reportedSource) {
     const members = await listArchiveMembers(archivePath, Infinity)
     if (!hasRequiredLevelDbMembers(members))
         throw new Error(`Refusing to restore "${reportedSource}": the archive does not contain a LevelDB store `
-            + `(no CURRENT plus MANIFEST-* member), so extracting it over the wiped /data would leave the `
-            + `tracker on an empty database.`)
+            + `at its root (no CURRENT plus MANIFEST-* member at depth 0), so extracting it over the wiped /data `
+            + `would leave the tracker on an empty database. A store nested in a directory must be repacked `
+            + `from inside that directory (tar -cf - -C <store> .).`)
 }
 
 // Post-extraction ground truth: the store must be AT the database root, because that
 // is the only place ClassicLevel("/data/<DB_NAME>") will look for it. The pre-wipe
-// member gate can only predict the layout from the tar listing, and `tar -x -C <root>`
-// preserves whatever directories the archive carries, so an archive whose store sits
-// one level down (the publisher tars the whole tracker volume, yielding
-// `./xchain-utxo-tracker/CURRENT`) satisfies that gate and still leaves nothing at the
-// root. Throwing here routes the restore into handleRestoreFailure's fail-loud branch:
+// member gate predicts the same layout from the tar listing and refuses a nested store
+// before the wipe; this is the backstop for whatever the listing could not predict.
+// Throwing here routes the restore into handleRestoreFailure's fail-loud branch:
 // the DB is already gone either way, so the choice is between an operator who knows
 // the restore failed and a tracker that quietly serves an empty database.
 function assertExtractedStoreOrThrow(destination) {

@@ -71,34 +71,32 @@ function memberParts(raw) {
              base: path.posix.basename(clean) };
 }
 
-// True when the archive's member list looks like a LevelDB store: `CURRENT` AND at
-// least one `MANIFEST-<n>`, IN THE SAME DIRECTORY. A checksum proves only that the
-// archive is the one that was published, never that it holds a store, so without this
-// a correctly-checksummed tar of unrelated files passes validation and the
-// unconditional pre-extract /data wipe leaves the tracker on a fresh empty DB.
+// True when the archive's member list holds a LevelDB store AT THE ARCHIVE ROOT:
+// `CURRENT` AND at least one `MANIFEST-<n>`, both at depth 0. A checksum proves only
+// that the archive is the one that was published, never that it holds a store, so
+// without this a correctly-checksummed tar of unrelated files passes validation and
+// the unconditional pre-extract /data wipe leaves the tracker on a fresh empty DB.
 //
-// The same-directory requirement is the part that is easy to get wrong. Comparing
-// bare basenames also accepted a `CURRENT` under one directory and a `MANIFEST-<n>`
-// under an unrelated one, which is no store anywhere in the tree and still wiped the
-// live DB. It deliberately does NOT require depth 0: the publisher (xchain-node
-// BootstrapService) tars the whole tracker volume, so a genuine published archive
-// carries the store one level down (`./xchain-utxo-tracker/CURRENT`), and refusing
-// that here would make the only restore path reject every official bootstrap. A
-// nested store that this gate passes but `tar -x -C <dbroot>` cannot place correctly
-// is caught after extraction by assertExtractedStoreOrThrow in api.js, which fails
-// loud instead of reporting success over a wiped database.
+// Both halves must sit in the root directory. Comparing bare basenames accepted a
+// `CURRENT` under one directory and a `MANIFEST-<n>` under an unrelated one, which is
+// no store anywhere in the tree. A pair nested one level down is a store, but
+// `tar -x -C <dbroot>` preserves the archive's directories, so it lands where
+// ClassicLevel never looks and assertExtractedStoreOrThrow refuses it only after the
+// wipe. Every producer packs from inside the store (xchain-node BootstrapService tars
+// the tracker volume, whose root IS the store, and getbootstrap tars /data/<DB_NAME>),
+// so refusing a nested store here costs no restore that could have succeeded.
 function hasRequiredLevelDbMembers(memberNames) {
     if (!Array.isArray(memberNames)) return false;
-    const currentDirs = new Set();
-    const manifestDirs = new Set();
+    let hasCurrent = false;
+    let hasManifest = false;
     for (const raw of memberNames) {
         if (typeof raw !== 'string') continue;
         const { dir, base } = memberParts(raw);
-        if (base === 'CURRENT') currentDirs.add(dir);
-        else if (LEVELDB_MANIFEST_PATTERN.test(base)) manifestDirs.add(dir);
+        if (dir !== '') continue;
+        if (base === 'CURRENT') hasCurrent = true;
+        else if (LEVELDB_MANIFEST_PATTERN.test(base)) hasManifest = true;
     }
-    for (const dir of currentDirs) if (manifestDirs.has(dir)) return true;
-    return false;
+    return hasCurrent && hasManifest;
 }
 
 // Parse a detached bootstrap signature file. The publisher (xchain-node's

@@ -125,8 +125,51 @@ function registerMetricEdgeTests({ realObservability, fakeTracker }) {
     });
 }
 
+// A gate stand-in exposing the same getStats() shape the real gate publishes.
+function fakeGate(limit){
+    const stats = { limit, in_flight: 0, shed: 0 };
+    return { stats, getStats: () => ({ ...stats }) };
+}
+
+function registerMetricGateTests({ realObservability, fakeTracker }) {
+    it('publishes both gates on the scrape, labelled by gate', function () {
+        const observability = realObservability();
+        const gates = { request: fakeGate(100), probe: fakeGate(16) };
+        gates.request.stats.in_flight = 7;
+        installUtxoTrackerMetrics(observability, fakeTracker(), gates);
+        const out = observability.registry.render();
+        assert.match(out, /xchain_utxo_tracker_gate_limit\{gate="request"\} 100\b/);
+        assert.match(out, /xchain_utxo_tracker_gate_limit\{gate="probe"\} 16\b/);
+        assert.match(out, /xchain_utxo_tracker_gate_in_flight\{gate="request"\} 7\b/);
+        assert.match(out, /xchain_utxo_tracker_gate_shed_total\{gate="probe"\} 0\b/);
+    });
+
+    it('reads shed live at scrape time and never adds it to itself', function () {
+        const observability = realObservability();
+        const gates = { request: fakeGate(100), probe: fakeGate(16) };
+        installUtxoTrackerMetrics(observability, fakeTracker(), gates);
+        observability.registry.render();
+        gates.request.stats.shed = 42;
+        assert.match(observability.registry.render(),
+            /xchain_utxo_tracker_gate_shed_total\{gate="request"\} 42\b/,
+            'a value captured at registration would freeze at the first scrape');
+        assert.match(observability.registry.render(),
+            /xchain_utxo_tracker_gate_shed_total\{gate="request"\} 42\b/,
+            'a re-scrape must not double the lifetime count');
+    });
+
+    it('registers the tracker series alone when no gates are passed', function () {
+        const observability = realObservability();
+        assert.strictEqual(installUtxoTrackerMetrics(observability, fakeTracker()), true);
+        const out = observability.registry.render();
+        assert.match(out, /xchain_utxo_tracker_halted 0\b/);
+        assert.ok(!/xchain_utxo_tracker_gate_/.test(out));
+    });
+}
+
 module.exports = {
     registerMetricAvailabilityTests,
     registerMetricFreshnessTests,
-    registerMetricEdgeTests
+    registerMetricEdgeTests,
+    registerMetricGateTests
 };

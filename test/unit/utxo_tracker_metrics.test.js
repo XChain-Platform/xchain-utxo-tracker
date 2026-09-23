@@ -25,7 +25,8 @@ const { installObservability } = require('../../src/observability');
 const {
     registerMetricAvailabilityTests,
     registerMetricFreshnessTests,
-    registerMetricEdgeTests
+    registerMetricEdgeTests,
+    registerMetricGateTests
 } = require('./utxo_tracker_metrics.test/01_metric_registration.test.js');
 
 function realObservability(enabled = true){
@@ -61,4 +62,5 @@ describe('utxo-tracker sync-freshness metrics', function () {
     registerMetricAvailabilityTests(helpers);
     registerMetricFreshnessTests(helpers);
     registerMetricEdgeTests(helpers);
+    registerMetricGateTests(helpers);
 });
