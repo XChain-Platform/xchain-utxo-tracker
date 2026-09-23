@@ -60,6 +60,9 @@ async function refreshNodeTip(sync){
                 logger.info("The node is not synced. Waiting for it to synchronize...")
             }
 
+            // A reindexing node reports its low tip here, below the parse gate;
+            // the latch must drop with it, as in recoverFromTipBelowOurs.
+            if (this.latestKnownChainTip < sync.lastProcessedBlockIndex) this.synced = false
             sync.lastBlockchainInfo = null
             sync.nodeSyncedProblem = true
             await this.sleep(3000)
@@ -135,6 +138,10 @@ async function waitOnCatchingUpNode(sync){
 // roll back onto the node's chain or repair the stored tip pointer.
 async function recoverFromTipBelowOurs(sync){
     const { lastBlockchainInfo, lastProcessedBlockIndex } = sync
+    // Clear the latch on every branch below (wait, refusal, rollback, repair) so
+    // isSynced(), the synced gauge and GET /status agree without a floor; the
+    // next pass at the node's tip sets it again.
+    this.synced = false
     if (nodeStillCatchingUp(lastBlockchainInfo)) return waitOnCatchingUpNode.call(this, sync)
     if (sync.nodeCatchingUpProblem){
         logger.info("The node has left initial block download with its tip ("+this.blockchainInfoLastBlock+") still below the last processed block ("+lastProcessedBlockIndex+"); treating the gap as a rollback from here on.")
