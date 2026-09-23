@@ -111,7 +111,7 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
     // disagrees with that shape across paths. Both paths share the single
     // resolver, so a non-positive override falls back to the per-chain default
     // on BOTH, in agreement.
-    const { resolveUndoBlocks: seederResolveNP } = require('../../../src/bulk-sync/merger/derive_keys.js');
+    const { resolveUndoBlocks: seederResolveNP } = require('../../../src/bulk_sync/merger/derive_keys.js');
     for (const bad of ['-5', '0']) {
       it('a non-positive override (' + bad + ') falls back to the default on live AND seeder', function () {
         process.env.XCHAIN_UNDO_BLOCKS_DOGE = bad;
@@ -129,7 +129,7 @@ describe('Regression (0e8c043): per-chain reorg recovery window', function () {
 // second table to drift).
 describe('Regression (0e8c043): per-chain reorg recovery window', function () {
   describe('bulk seeder shares the live per-chain window (single-source)', function () {
-    const { resolveUndoBlocks: seederResolve } = require('../../../src/bulk-sync/merger/derive_keys.js');
+    const { resolveUndoBlocks: seederResolve } = require('../../../src/bulk_sync/merger/derive_keys.js');
     for (const [network, expected] of [['bitcoin-mainnet', 12], ['litecoin-mainnet', 120], ['dogecoin-mainnet', 120],
                                        ['bitcoin-testnet', 120], ['litecoin-testnet', 5000], ['dogecoin-testnet', 120],
                                        ['bitcoin-regtest', 12]]) {

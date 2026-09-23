@@ -27,7 +27,7 @@ const path = require('path');
 const { expect } = require('chai');
 const { ClassicLevel } = require('classic-level');
 
-const { loadKeys } = require('../../../src/bulk-sync/merger/loader.js');
+const { loadKeys } = require('../../../src/bulk_sync/merger/loader.js');
 
 // Seed one record of the shape a crashed load leaves behind: a data key with
 // no LAST_* markers, which is precisely what isDbEmpty() reads as empty.

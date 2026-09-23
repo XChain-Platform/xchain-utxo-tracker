@@ -224,7 +224,7 @@ function initSyncState(network){
     // chains never carry, truncating any block whose version signals bit 0x100.
     // The answer comes from the coin's declared wireFormat in the canonical
     // registry (src/coins), matching the decoder and the bulk seeder
-    // (bulk-sync/dump.js). coinFromNetwork resolves the tick through that same
+    // (bulk_sync/dump.js). coinFromNetwork resolves the tick through that same
     // registry (item 5803): it was a hardcoded coin-name list until then, so a
     // chain onboarded by registry edit alone resolved to null here and read as
     // NOT merge-mined. The remaining per-chain value that is not in src/coins is

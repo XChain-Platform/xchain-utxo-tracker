@@ -100,7 +100,7 @@ describe('utxo-tracker boot BigInt-safe bufferutils verification', function () {
     it('covers the two bulk-sync entry points the constructor cannot reach', function () {
         // Both are separate processes that build a decoder without a tracker, so the
         // constructor check above never runs for them.
-        for (const rel of [['bulk-sync', 'parse_worker.js'], ['bulk-sync', 'validate_chain.js']]) {
+        for (const rel of [['bulk_sync', 'parse_worker.js'], ['bulk_sync', 'validate_chain.js']]) {
             const file = path.join(__dirname, '..', '..', 'src', ...rel);
             const src = fs.readFileSync(file, 'utf8');
             const decoderAt = src.indexOf('new XChainBlockDecoder(');

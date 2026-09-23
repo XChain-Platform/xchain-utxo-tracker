@@ -82,7 +82,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-    console.log(`Usage: node src/bulk-sync/dump.js [options]
+    console.log(`Usage: node src/bulk_sync/dump.js [options]
 
 Options:
   --network <name>      e.g. bitcoin-regtest, bitcoin-mainnet, litecoin-mainnet
@@ -95,8 +95,8 @@ Options:
   --out <dir>           Output directory (required)
 
 Examples:
-  node src/bulk-sync/dump.js --network bitcoin-regtest --from 0 --to 3400 --out /tmp/dumps/
-  node src/bulk-sync/dump.js --network bitcoin-mainnet --from 0 --out /data/dumps/
+  node src/bulk_sync/dump.js --network bitcoin-regtest --from 0 --to 3400 --out /tmp/dumps/
+  node src/bulk_sync/dump.js --network bitcoin-mainnet --from 0 --out /data/dumps/
 `)
 }
 

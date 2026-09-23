@@ -37,7 +37,7 @@
     "ci:smoke": "mocha --timeout 10000 test/smoke/smoke.test.js --exit",
     "test:smoke": "mocha --timeout 10000 test/smoke/smoke.test.js",
     "test:lint-ratchet": "mocha --timeout 10000 test/unit/lint_ratchet.test.js",
-    "test:manual:bulk-sync": "node test/manual/bulk-sync/support/smoke_writers.js && node test/manual/bulk-sync/support/smoke_xdmp_reader.js && node test/manual/bulk-sync/support/smoke_process_block.js && node test/manual/bulk-sync/merger/support/smoke_external_sort.js && node test/manual/bulk-sync/merger/support/smoke_streaming_join.js && node test/manual/bulk-sync/merger/support/smoke_derive_keys.js && node test/manual/bulk-sync/merger/support/smoke_loader.js",
+    "test:manual:bulk-sync": "node test/manual/bulk_sync/support/smoke_writers.js && node test/manual/bulk_sync/support/smoke_xdmp_reader.js && node test/manual/bulk_sync/support/smoke_process_block.js && node test/manual/bulk_sync/merger/support/smoke_external_sort.js && node test/manual/bulk_sync/merger/support/smoke_streaming_join.js && node test/manual/bulk_sync/merger/support/smoke_derive_keys.js && node test/manual/bulk_sync/merger/support/smoke_loader.js",
     "test:boundary": "mocha --timeout 30000 --recursive test/boundary/**/*.test.js --exit",
     "test:security": "mocha --timeout 30000 --recursive test/security/**/*.test.js --exit",
     "test:regression": "mocha --timeout 30000 --recursive 'test/regression/**/*.test.js' --exit",

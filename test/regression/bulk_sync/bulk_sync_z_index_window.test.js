@@ -27,12 +27,12 @@ const os   = require('os');
 const path = require('path');
 const { expect } = require('chai');
 
-const { OutputsWriter, SpendsWriter, MetaWriter } = require('../../../src/bulk-sync/writers.js');
-const { externalSort } = require('../../../src/bulk-sync/merger/external_sort.js');
-const { leftAntiJoin } = require('../../../src/bulk-sync/merger/streaming_join.js');
-const { deriveKeys }   = require('../../../src/bulk-sync/merger/derive_keys.js');
-const { loadKeys }     = require('../../../src/bulk-sync/merger/loader.js');
-const { readOutputsRecordSize } = require('../../../src/bulk-sync/orchestrator.js');
+const { OutputsWriter, SpendsWriter, MetaWriter } = require('../../../src/bulk_sync/writers.js');
+const { externalSort } = require('../../../src/bulk_sync/merger/external_sort.js');
+const { leftAntiJoin } = require('../../../src/bulk_sync/merger/streaming_join.js');
+const { deriveKeys }   = require('../../../src/bulk_sync/merger/derive_keys.js');
+const { loadKeys }     = require('../../../src/bulk_sync/merger/loader.js');
+const { readOutputsRecordSize } = require('../../../src/bulk_sync/orchestrator.js');
 const { ClassicLevel } = require('classic-level');
 
 const OUTPUTS_KEY_SIZE = 12;

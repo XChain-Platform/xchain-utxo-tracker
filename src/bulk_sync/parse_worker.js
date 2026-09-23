@@ -26,7 +26,7 @@
  * from an external launcher, not inside this worker.
  *
  * Usage:
- *   node src/bulk-sync/parse_worker.js --in <dump.xdmp> --out <dir>
+ *   node src/bulk_sync/parse_worker.js --in <dump.xdmp> --out <dir>
  *
  ********************************************************************/
 
@@ -64,7 +64,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-    console.log(`Usage: node src/bulk-sync/parse_worker.js --in <dump.xdmp> --out <dir>
+    console.log(`Usage: node src/bulk_sync/parse_worker.js --in <dump.xdmp> --out <dir>
 
 Reads one .xdmp dump file and emits three intermediate streams:
   outputs-h{FIRST}-h{LAST}.dat

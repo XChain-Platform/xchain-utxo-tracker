@@ -18,7 +18,7 @@
  *
  * Streams blocks out of a meta-*.dat file written by MetaWriter.
  *
- * File layout (see src/bulk-sync/writers.js):
+ * File layout (see src/bulk_sync/writers.js):
  *   - 64-byte header: magic XCHNMTA1, chain/net codes, version, first/last
  *     height, record_count (blocks) at offset 20, record_size=0 at 28.
  *   - Variable-length block records:
