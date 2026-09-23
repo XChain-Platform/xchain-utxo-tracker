@@ -25,7 +25,25 @@ const { createShutdown, createTrackerDrain, closeServer, closeStores, resolveTim
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker')
 const pkg = require('../../package.json');
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const NODE_DIR = process.env.XCHAIN_NODE_DIR || path.join(__dirname, '..', '..', '..', 'xchain-node')
+const NODE_STOP_BUDGET_SRC = path.join(NODE_DIR, 'src', 'services', 'stop_budget_service.js')
+const REQUIRE_SIBLINGS = process.env.XCHAIN_REQUIRE_SIBLINGS === '1'
+
+// Read the budget xchain-node stops `module` with, from its source text (the
+// sibling's npm deps are not installed on the venue, so it is not required).
+// Throws on a shape it cannot read, so a moved table fails instead of skipping.
+function nodeStopBudgetSeconds(module){
+    const src = fs.readFileSync(NODE_STOP_BUDGET_SRC, 'utf8')
+    const table = /MODULE_STOP_TIMEOUT_SECONDS\s*=\s*Object\.freeze\(\{([\s\S]*?)\}\)/.exec(src)
+    if (!table) throw new Error('no MODULE_STOP_TIMEOUT_SECONDS table in ' + NODE_STOP_BUDGET_SRC)
+    const row = new RegExp("'" + module + "'\\s*:\\s*(\\d+)").exec(table[1])
+    if (row) return parseInt(row[1], 10)
+    const fallback = /DEFAULT_MODULE_STOP_TIMEOUT_SECONDS\s*=\s*(\d+)/.exec(src)
+    if (!fallback) throw new Error('no DEFAULT_MODULE_STOP_TIMEOUT_SECONDS in ' + NODE_STOP_BUDGET_SRC)
+    return parseInt(fallback[1], 10)
+}
+
+const sleep =(ms) => new Promise((resolve) => setTimeout(resolve, ms))
 // Turn the event loop a bounded number of times. The tracker/server doubles below
 // resolve their callbacks with setImmediate, so a handful of macrotask turns is
 // strictly more than a drain needs to reach its await - with no wall clock in it.
@@ -153,6 +171,19 @@ describe('graceful shutdown', function(){
         it('stays under the 120 s budget xchain-node gives a tracker, and above docker\'s ten seconds', function(){
             assert.ok(DEFAULT_SHUTDOWN_TIMEOUT_MS < 120000)
             assert.ok(DEFAULT_SHUTDOWN_TIMEOUT_MS > 10000)
+        })
+
+        // The literal above is a copy of xchain-node's number; this holds the
+        // relation against the sibling's own table, so a one-sided edit goes red.
+        it('stays under the stop budget in xchain-node\'s own table when that checkout is beside this one', function(){
+            if (!fs.existsSync(NODE_STOP_BUDGET_SRC)) {
+                if (REQUIRE_SIBLINGS) throw new Error('XCHAIN_REQUIRE_SIBLINGS=1 but ' + NODE_STOP_BUDGET_SRC + ' is absent')
+                this.skip()
+            }
+            const budgetSeconds = nodeStopBudgetSeconds('xchain-utxo-tracker')
+            assert.ok(DEFAULT_SHUTDOWN_TIMEOUT_MS < budgetSeconds * 1000,
+                'xchain-utxo-tracker drains for ' + DEFAULT_SHUTDOWN_TIMEOUT_MS + ' ms but xchain-node stops it after '
+                + budgetSeconds + ' s (' + NODE_STOP_BUDGET_SRC + '), so every overrun ends in the daemon\'s SIGKILL')
         })
     })
 
