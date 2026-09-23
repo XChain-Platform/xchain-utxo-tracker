@@ -17,7 +17,7 @@
 // block bytes under divergent network params once a pin is armed. The mainnet
 // pin is null today, so the live mainnet check is a no-op.
 //
-// The standalone bulk seeder (src/bulk-sync/dump.js) is its own process and is
+// The standalone bulk seeder (src/bulk_sync/dump.js) is its own process and is
 // covered here too: it never constructs a tracker, so the constructor check
 // cannot reach it.
 
@@ -74,7 +74,7 @@ describe('utxo-tracker boot consensus-pin verification', function () {
         // helpers above main() and textual order across the whole file is not
         // execution order.
         const src = fs.readFileSync(
-            path.join(__dirname, '../../src/bulk-sync/dump.js'), 'utf8');
+            path.join(__dirname, '../../src/bulk_sync/dump.js'), 'utf8');
         const main = src.slice(src.indexOf('async function main()'));
         expect(main).to.not.equal('');
         const pinAt = main.indexOf('coins.verifyConsensusPin(args.netName)');

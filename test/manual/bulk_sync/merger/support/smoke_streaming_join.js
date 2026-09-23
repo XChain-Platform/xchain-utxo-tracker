@@ -26,7 +26,7 @@ const os     = require('os')
 const path   = require('path')
 const assert = require('assert')
 
-const { leftAntiJoin } = require('../../../../../src/bulk-sync/merger/streaming_join.js')
+const { leftAntiJoin } = require('../../../../../src/bulk_sync/merger/streaming_join.js')
 
 const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-stream-join-'))
 console.log('[smoke/streaming-join] tmp dir:', TMP_DIR)

@@ -25,7 +25,7 @@ const logger = getLogger();
 // blocks for the same wall-clock protection.
 //
 // SINGLE SOURCE. Imported by both the live incremental worker (XChainUtxoTracker.js) and
-// the bulk seeder (bulk-sync/merger/derive_keys.js) so the seeded N-prefix can never drift
+// the bulk seeder (bulk_sync/merger/derive_keys.js) so the seeded N-prefix can never drift
 // below the live reorg depth guard for one chain. Maintaining two hand-copied tables
 // re-opened exactly that per-chain gap (the one 51aab3b closed) whenever an operator
 // re-tuned one chain's depth in only one file. A per-chain re-tune now happens here, once.
@@ -82,7 +82,7 @@ const LTC_TESTNET_SAFE_UNDO_BLOCKS = 5006
 // ... so onboarding a merge-mined chain is a registry edit", and a registry-only
 // edit resolved to null, WIRE_FORMAT[null] to undefined, and auxPow to false -
 // merged-mined headers parsed as plain Bitcoin ones. Same lookup as
-// CryptoNetworks.js and bulk-sync/dump.js, so the tracker has one name->tick
+// CryptoNetworks.js and bulk_sync/dump.js, so the tracker has one name->tick
 // table and not three. Returns null for a name no registered coin claims;
 // resolveUndoBlocks below is what refuses it.
 function coinFromNetwork(network){

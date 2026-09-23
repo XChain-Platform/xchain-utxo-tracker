@@ -286,7 +286,7 @@ function findXdmpFiles(dir) {
 }
 
 function printHelp() {
-    console.log(`Usage: node src/bulk-sync/validate_chain.js [options]
+    console.log(`Usage: node src/bulk_sync/validate_chain.js [options]
 
 Verifies a bulk-sync dump forms one contiguous, hash-consistent block chain:
 each record's stored hash is recomputed from its 80-byte header, and each
@@ -305,8 +305,8 @@ Options:
 Exit codes: 0 = chain OK, 2 = chain broken, 1 = fatal/bad usage.
 
 Examples:
-  node src/bulk-sync/validate_chain.js --dumps /data/dumps
-  node src/bulk-sync/validate_chain.js --file a.xdmp --file b.xdmp --from 0
+  node src/bulk_sync/validate_chain.js --dumps /data/dumps
+  node src/bulk_sync/validate_chain.js --file a.xdmp --file b.xdmp --from 0
 `)
 }
 

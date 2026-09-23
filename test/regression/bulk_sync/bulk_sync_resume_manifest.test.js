@@ -24,12 +24,12 @@ const os   = require('os');
 const path = require('path');
 const { expect } = require('chai');
 
-const { OutputsWriter } = require('../../../src/bulk-sync/writers.js');
-const { concatFilesWithHeader } = require('../../../src/bulk-sync/orchestrator.js');
+const { OutputsWriter } = require('../../../src/bulk_sync/writers.js');
+const { concatFilesWithHeader } = require('../../../src/bulk_sync/orchestrator.js');
 const {
     parseDatHeader, networkToCodes, validateConcatArtifact,
     writeSortedManifest, checkSortedManifest, manifestPath,
-} = require('../../../src/bulk-sync/merger/resume_manifest.js');
+} = require('../../../src/bulk_sync/merger/resume_manifest.js');
 
 const HEADER_SIZE = 64;
 

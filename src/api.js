@@ -38,7 +38,7 @@ const LevelUpStore = require('./store/level_up_db.js')
 const fs = require('fs')
 const XChainUtxoTracker  = require('./XChainUtxoTracker');
 const BlockchainConnector = require('./chain/blockchain_connector');
-const { resolveUndoBlocks } = require('./bulk-sync/merger/derive_keys.js')
+const { resolveUndoBlocks } = require('./bulk_sync/merger/derive_keys.js')
 const memoryBudget = require('./store/memory_budget')
 const { installCrashHandlers, noteCrash } = require('./server/crash_handlers.js')
 const { envInt: sharedEnvInt, intKnob } = require('./config/env_int')
@@ -237,7 +237,7 @@ async function waitForNodeSynced() {
 
 function runBulkSyncOrchestrator() {
     const dbPath   = path.join('/data', DB_NAME)
-    const orchPath = path.join(__dirname, 'bulk-sync', 'orchestrator.js')
+    const orchPath = path.join(__dirname, 'bulk_sync', 'orchestrator.js')
 
     // String() because the knobs above are resolved NUMBERS now and spawn refuses a
     // non-string argv element; the values themselves are already validated integers,

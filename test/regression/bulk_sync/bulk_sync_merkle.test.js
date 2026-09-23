@@ -25,7 +25,7 @@ const os = require('os');
 const path = require('path');
 const { expect } = require('chai');
 const { Transaction } = require('bitcoinjs-lib');
-const { verifyBlockSequence, validateChainFiles, computeMerkleRoot } = require('../../../src/bulk-sync/validate_chain');
+const { verifyBlockSequence, validateChainFiles, computeMerkleRoot } = require('../../../src/bulk_sync/validate_chain');
 
 function sha256(b) { return crypto.createHash('sha256').update(b).digest(); }
 function hash256(b) { return sha256(sha256(b)); }
