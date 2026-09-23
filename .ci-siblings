@@ -12,3 +12,8 @@
 # Vendored coins-registry byte-identity and consensus-pin conformance
 # (drift-guards job).
 xchain-hub
+# XChainBlockDecoder twin behavioural parity (MWEB strip decision matrix).
+xchain-decoder
+# Bootstrap signing trust-anchor parity: this repo's pinned public key
+# against xchain-node's, the publisher side of the same rotation.
+xchain-node
