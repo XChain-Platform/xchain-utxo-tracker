@@ -228,6 +228,17 @@ const jsonRpcController = {
             if (info && typeof info === 'object') info.sync = await getFreshnessMeta()
             return info
         },
+        // Exact full-txid to block lookup, frozen shape: {block_hash, block_height,
+        // sync} or null (never an error object) for a well-formed but unknown/
+        // unindexed/rolled-back txid, matching get_first_seen's bare-value contract.
+        // A malformed txid is the one case that returns {error}, since that is a
+        // caller mistake rather than "not found".
+        async get_tx_block({txid}) {
+            if (typeof txid !== 'string' || !/^[0-9a-fA-F]{64}$/.test(txid)) {
+                return { error: "txid must be a 64-hex-character string" }
+            }
+            return await tracker.db.getTxBlock(txid)
+        },
         async get_input_from_key_pattern({pattern}) {
             if (typeof pattern !== 'string' || pattern.length < 32){
                 return {error: "pattern is too short"}

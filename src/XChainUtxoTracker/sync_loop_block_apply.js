@@ -161,8 +161,15 @@ async function parseBlockTransactions(sync, transactions, nextBlockHash, nextBlo
     // order, matching bulk-sync.
     const blockOutputCounts = new Array(transactions.length)
     for (let txIdx = 0; txIdx < transactions.length; txIdx++) {
+        const tx = transactions[txIdx]
+        // parseTxOutputs only writes the T (txid->block) record when
+        // removeSpent is false, and REMOVE_SPENT is true on this path, so the
+        // exact-txid index is written here directly rather than by threading
+        // another flag through parseTxOutputs.
+        const txId = "id" in tx ? tx["id"] : tx.getId()
+        await this.db.insertTransaction({ hash: txId, blockHash: nextBlockHash })
         blockOutputCounts[txIdx] = await this.parseTxOutputs(
-            this.db, transactions[txIdx], nextBlockHash, nextBlockHeight, false, REMOVE_SPENT
+            this.db, tx, nextBlockHash, nextBlockHeight, false, REMOVE_SPENT
         )
     }
     sync._t.parseOut += Date.now() - _tParseOut

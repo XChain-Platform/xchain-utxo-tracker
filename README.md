@@ -20,7 +20,7 @@ UTXO indexing service for the XChain Platform. Continuously polls the coin nodes
 
 - **Full UTXO index**: every unspent output indexed by SHA-256 scriptPubKey hash for fast address lookups
 - **Compact binary encoding**: 11 LevelDB key prefix types stored as raw binary Buffers, reducing DB size ~50% vs hex strings
-- **Truncated txid keys**: 8-byte transaction ID truncations in index keys for further space savings
+- **Truncated txid keys**: 8-byte transaction ID truncations in most index keys for further space savings; JSON-RPC `get_tx_block` instead resolves against a separate index keyed on the full 64-hex txid, so two txids that happen to share their 8-byte prefix never contend for the same record and a rollback of one cannot delete the other's mapping
 - **Active-UTXO-only storage**: only unspent outputs in the live index; spent outputs archived temporarily for reorg recovery
 - **Real-time mempool tracking**: unconfirmed transactions in a separate in-memory LevelDB, updated every 60 seconds
 - **BigInt precision**: JSON-RPC `get_info` returns full-precision balance strings via `satoshiToDecimalString()`; the REST `/balance` endpoint returns a float (use `get_info` when precision matters)
@@ -93,6 +93,25 @@ npm run api
 > "missing a fullTxHash ... re-index this LevelDB" error on the first spend attempt
 > rather than silently producing an invalid transaction. A fresh sync, or any DB
 > already synced under the current format, needs no action.
+
+> [!IMPORTANT]
+> **`get_tx_block` needs a re-index against pre-migration history too.**
+> `get_tx_block` is served from an exact-match index keyed on the full
+> 32-byte txid (not the `T` record's 8-byte-prefix key), so two txids sharing
+> an 8-byte prefix each get their own record and neither can overwrite or
+> delete the other's mapping. This index is written by `insertTransaction`
+> alongside the `T` record, so a `T` record written before this index
+> existed has no matching entry: `get_tx_block` treats it as unindexed and
+> returns `null` rather than falling back to the collision-prone `T` key.
+>
+> Blocks indexed via bulk-sync (the initial-sync fast path) never populate
+> this index either: with the default `removeSpent` setting bulk-sync calls
+> neither `insertTransaction` nor its exact-match write. `get_tx_block`
+> returns `null` for any txid from bulk-synced history until bulk-sync's
+> writer is updated to populate it; until then, wipe the data directory and
+> re-sync live (not via bulk-sync) to backfill `get_tx_block` for existing
+> history. Address, UTXO and balance queries are unaffected either way,
+> since they never depended on the `T` record or this index.
 
 ## Metrics and log shipping (optional, off by default)
 
