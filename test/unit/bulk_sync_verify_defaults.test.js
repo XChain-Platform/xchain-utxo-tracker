@@ -18,7 +18,7 @@
 // (regtest/testnet) keep verification OFF by default.
 
 const { expect } = require('chai');
-const { parseArgs, resolveVerifyDefaults, isMainnetNetwork } = require('../../src/bulk-sync/orchestrator');
+const { parseArgs, resolveVerifyDefaults, isMainnetNetwork } = require('../../src/bulk_sync/orchestrator');
 
 function argsFor(network, ...extra) {
     return parseArgs(['node', 'orchestrator.js',

@@ -224,7 +224,7 @@ function initSyncState(network){
     // chains never carry, truncating any block whose version signals bit 0x100.
     // The answer comes from the coin's declared wireFormat in the canonical
     // registry (src/coins), matching the decoder and the bulk seeder
-    // (bulk-sync/dump.js). coinFromNetwork resolves the tick through that same
+    // (bulk_sync/dump.js). coinFromNetwork resolves the tick through that same
     // registry (item 5803): it was a hardcoded coin-name list until then, so a
     // chain onboarded by registry edit alone resolved to null here and read as
     // NOT merge-mined. The remaining per-chain value that is not in src/coins is
@@ -269,7 +269,7 @@ function initStatusCounters(){
     // Forward-progress heartbeat, stamped when a block batch is committed.
     // Kept in memory because the /metrics collector runs synchronously and so
     // cannot await the durable pointer (db.getLastBlockHeight()); see
-    // src/utxoTrackerMetrics.js. Null until the first commit, which is what
+    // src/server/utxo_tracker_metrics.js. Null until the first commit, which is what
     // keeps a still-starting tracker out of the stall alert. A rollback moves
     // the durable pointer without stamping these, so the height is corrected
     // at the next forward commit; reorgCount/lastReorgDepth are the signals

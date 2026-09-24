@@ -14,7 +14,7 @@
     "src/coins/consensus_pin.js": "f41142b6b3c9e3f1c1d491b9737fee5e6fd988d700bd96f0d200f7bd0b301ae7",
     "src/coins/index.js": "dd350bc0ec999849fe302ac4381f37b7be3eaa866f019a35cbcceebb4d5ebd4b",
     "src/observability/README.md": "4f58f8e59d21121ddd794f68f1fe2a6318484c5c868b158a5b7311c9a0e1166a",
-    "src/observability/index.js": "5343eebf30c5c95f34933d2c236a45e7294494ea5be58cd14e6fdebebd84ccb3",
+    "src/observability/index.js": "6d29637dc3a815d896076642823393866e4f74a68b59dc363ff1cd828aff422a",
     "src/observability/logShipper.js": "7ee07789936ff2d769fe417b265007e4c2ea9a5d16b89a5d393cca2767298dd7",
     "src/observability/metrics.js": "b29a0f2855e0dc4d8d97dde22c36daa6ab0408391945eda1b47b47398c0cd261"
   }

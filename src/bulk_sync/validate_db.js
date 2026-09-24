@@ -56,7 +56,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-    console.log(`Usage: node src/bulk-sync/validate_db.js [options]
+    console.log(`Usage: node src/bulk_sync/validate_db.js [options]
 
 Options:
   --truth <path>              Ground-truth DB directory (required)
@@ -67,8 +67,8 @@ Options:
 Both DBs are classic-level (LevelDB) directories and must be closed.
 
 Examples:
-  node src/bulk-sync/validate_db.js --truth /data/a --candidate /data/b
-  node src/bulk-sync/validate_db.js --truth /data/truth --candidate /data/cand --prefix 4F
+  node src/bulk_sync/validate_db.js --truth /data/a --candidate /data/b
+  node src/bulk_sync/validate_db.js --truth /data/truth --candidate /data/cand --prefix 4F
 `)
 }
 

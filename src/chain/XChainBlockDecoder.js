@@ -78,7 +78,7 @@ function validateMwebTransactionCount(bufferReader, nTransactions){
     // count only failed later via a buffer over-read inside
     // Transaction.fromBuffer, which has an unguarded loop with an incidental
     // unnamed exit. Block bytes reach here from the trusted node AND from
-    // a bulk-sync .xdmp dump (bulk-sync/parse-worker.js), so this also keeps
+    // a bulk-sync .xdmp dump (bulk_sync/parse-worker.js), so this also keeps
     // the tracker fail-closed on the same forged input the decoder twin
     // already rejects by name.
     const remainingBytes = bufferReader.buffer.length - bufferReader.offset;

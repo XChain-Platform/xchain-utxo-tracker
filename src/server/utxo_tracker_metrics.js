@@ -27,6 +27,8 @@
  * evaluator bug) a wedged or halted tracker keeps serving frozen UTXO data to
  * the wallet and encoder with no independent stall signal. These gauges make
  * `time() - xchain_utxo_tracker_last_commit_timestamp_seconds` that signal.
+ * The HTTP concurrency gates' shed counts get the same second rail: /status
+ * is the probe a stampede contends, so it cannot be the only place they show.
  *
  ********************************************************************/
 
@@ -82,9 +84,11 @@ function addTrackerCollector(registry, tracker, metrics){
  *                                              so an unscraped box holds the series unsampled.
  *                                              Only an absent handle or registry registers nothing.
  * @param {?object} tracker  the live XChainUtxoTracker, read at scrape time.
+ * @param {?Object<string, {getStats: function}>} [gates]  concurrency gates keyed by the
+ *                                              `gate` label value (request, probe); optional.
  * @returns {boolean} true when the metrics were registered.
  */
-function installUtxoTrackerMetrics(observability, tracker){
+function installUtxoTrackerMetrics(observability, tracker, gates){
     const registry = observability && observability.registry;
     if(!registry || !tracker) return false;
 
@@ -131,8 +135,43 @@ function installUtxoTrackerMetrics(observability, tracker){
         lastReorgDepth,
         reorgs
     });
+    addGateCollector(registry, gates);
 
     return true;
+}
+
+// Mirror each gate's lifetime shed count, live occupancy and cap at scrape time.
+function addGateCollector(registry, gates){
+    const entries = Object.entries(gates || {})
+        .filter(([, gate]) => gate && typeof gate.getStats === 'function');
+    if(entries.length === 0) return;
+
+    // setMonotonic, not inc: shed is a lifetime count the gate already keeps.
+    const shed = registry.counter({
+        name: 'xchain_utxo_tracker_gate_shed_total',
+        help: 'Requests refused with 429 by the in-flight concurrency gate since process start',
+        labelNames: ['gate']
+    });
+    const inFlight = registry.gauge({
+        name: 'xchain_utxo_tracker_gate_in_flight',
+        help: 'Requests currently holding a slot under the gate',
+        labelNames: ['gate']
+    });
+    const limit = registry.gauge({
+        name: 'xchain_utxo_tracker_gate_limit',
+        help: 'Concurrent-request cap of the gate; 0 means the gate is disabled',
+        labelNames: ['gate']
+    });
+
+    registry.addCollector(() => {
+        for(const [name, gate] of entries){
+            const stats = gate.getStats();
+            const labels = { gate: name };
+            shed.setMonotonic(labels, stats.shed);
+            if(Number.isFinite(stats.in_flight)) inFlight.set(labels, stats.in_flight);
+            if(Number.isFinite(stats.limit)) limit.set(labels, stats.limit);
+        }
+    });
 }
 
 module.exports = { installUtxoTrackerMetrics };

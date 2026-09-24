@@ -125,18 +125,25 @@ module.exports = {
             if (!verboseBlock || !Array.isArray(verboseBlock.tx)) {
                 throw new Error('verbose getblock returned no tx array')
             }
-            const txHexes = []
-            for (const txid of verboseBlock.tx) {
+            // Fetch via the bounded-concurrency batch helper: serial per-tx fetches
+            // with per-tx retry backoff take minutes on a large DOGE block, stalling
+            // the sync loop at the one height this path exists to get past.
+            const txHexes = await this.getRawTransactions(verboseBlock.tx)
+            for (let i = 0; i < txHexes.length; i++) {
                 // getRawTransaction resolves null for a missing tx (mempool-eviction
                 // tolerance); for a confirmed in-block tx that is an RPC fault, and
                 // assembling without it would emit a corrupt block. Fail instead.
-                const txHex = await this.getRawTransaction(txid)
-                if (!txHex) throw new Error('no raw tx for in-block txid ' + txid)
-                txHexes.push(txHex)
+                if (!txHexes[i]) throw new Error('no raw tx for in-block txid ' + verboseBlock.tx[i])
             }
             return headerHex + encodeVarintHex(txHexes.length) + txHexes.join('')
         } catch (err) {
-            throw new Error("There were problems reassembling a block without auxpow. " + err.message)
+            // Keep the fault's identity: error.code separates a transport fault from a
+            // content fault. The RPC helpers sanitize before rethrowing, so cause carries
+            // no credential.
+            const reassembleErr = new Error("There were problems reassembling a block without auxpow. " + err.message)
+            reassembleErr.cause = err
+            if (err && err.code !== undefined) reassembleErr.code = err.code
+            throw reassembleErr
         }
     },
 

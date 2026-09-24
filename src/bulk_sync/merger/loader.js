@@ -117,6 +117,46 @@ async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize, valu
     return total
 }
 
+function preparePrefixLoad(keysDir, pfx) {
+    const { keySize, recordSize } = LAYOUT[pfx]
+    const filePath = path.join(keysDir, pfx + '.dat')
+    if (!fs.existsSync(filePath)) {
+        // Every selected prefix file is produced by a completed
+        // deriveKeys run. A missing one means a partial derive; a
+        // silent skip would still write LAST_* markers below and
+        // produce a DB that claims full sync with missing records.
+        throw new Error(`loadKeys: missing ${pfx}.dat in ${keysDir} (partial derive_keys.js output; re-run derive)`)
+    }
+    const startedAt = Date.now()
+    return {
+        keySize,
+        recordSize,
+        filePath,
+        startedAt,
+        valueTransform: (pfx === 'O') ? transformOValue : null,
+        recordValidator: (pfx === 'W') ? validateWRecord : null,
+    }
+}
+
+function recordPrefixLoaded(stats, onProgress, pfx, count, startedAt) {
+    stats[pfx] = count
+    onProgress({
+        phase: 'prefix-done', prefix: pfx,
+        count, elapsed_ms: Date.now() - startedAt,
+    })
+}
+
+function readLastMarkers(keysDir) {
+    // L markers: string keys, string values (match LevelUpDb schema).
+    const lPath = path.join(keysDir, 'L.json')
+    if (!fs.existsSync(lPath)) throw new Error(`loadKeys: missing L.json at ${lPath}`)
+    const L = JSON.parse(fs.readFileSync(lPath, 'utf8'))
+    if (!('LAST_BLOCK_HEIGHT' in L) || !('LAST_BLOCK_HASH' in L)) {
+        throw new Error('loadKeys: L.json missing LAST_BLOCK_HEIGHT / LAST_BLOCK_HASH')
+    }
+    return L
+}
+
 /**
  * @param {Object}  opts
  * @param {string}  opts.keysDir      directory with B.dat..Z.dat + L.json
@@ -165,33 +205,12 @@ async function loadKeys(opts) {
         }
 
         for (const pfx of prefixes) {
-            const { keySize, recordSize } = LAYOUT[pfx]
-            const filePath = path.join(keysDir, pfx + '.dat')
-            if (!fs.existsSync(filePath)) {
-                // Every selected prefix file is produced by a completed
-                // deriveKeys run. A missing one means a partial derive; a
-                // silent skip would still write LAST_* markers below and
-                // produce a DB that claims full sync with missing records.
-                throw new Error(`loadKeys: missing ${pfx}.dat in ${keysDir} (partial derive_keys.js output; re-run derive)`)
-            }
-            const t0 = Date.now()
-            const valueTransform  = (pfx === 'O') ? transformOValue : null
-            const recordValidator = (pfx === 'W') ? validateWRecord : null
+            const { keySize, recordSize, filePath, startedAt, valueTransform, recordValidator } = preparePrefixLoad(keysDir, pfx)
             const count = await loadPrefixFile(db, filePath, keySize, recordSize, batchSize, valueTransform, recordValidator)
-            stats[pfx] = count
-            onProgress({
-                phase: 'prefix-done', prefix: pfx,
-                count, elapsed_ms: Date.now() - t0,
-            })
+            recordPrefixLoaded(stats, onProgress, pfx, count, startedAt)
         }
 
-        // L markers: string keys, string values (match LevelUpDb schema).
-        const lPath = path.join(keysDir, 'L.json')
-        if (!fs.existsSync(lPath)) throw new Error(`loadKeys: missing L.json at ${lPath}`)
-        const L = JSON.parse(fs.readFileSync(lPath, 'utf8'))
-        if (!('LAST_BLOCK_HEIGHT' in L) || !('LAST_BLOCK_HASH' in L)) {
-            throw new Error('loadKeys: L.json missing LAST_BLOCK_HEIGHT / LAST_BLOCK_HASH')
-        }
+        const L = readLastMarkers(keysDir)
         // DB is opened with buffer encodings; store the string metadata keys
         // and values as their UTF-8 byte Buffers (matches LevelUpDb.js).
         await db.batch([

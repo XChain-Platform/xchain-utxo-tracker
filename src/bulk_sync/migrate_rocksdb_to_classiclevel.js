@@ -42,7 +42,7 @@
  *     docker exec <classic-level-ctr> tar c -C /XChainUtxoTracker/node_modules . \
  *       | docker exec -i mig tar x -C /opt/cl/node_modules
  *     docker exec -e NODE_PATH=/opt/cl/node_modules mig \
- *       node /XChainUtxoTracker/src/bulk-sync/migrate_rocksdb_to_classiclevel.js --src ... --dst ...
+ *       node /XChainUtxoTracker/src/bulk_sync/migrate_rocksdb_to_classiclevel.js --src ... --dst ...
  *   rocksdb resolves from the image's own node_modules; classic-level from NODE_PATH.
  *
  * Usage:

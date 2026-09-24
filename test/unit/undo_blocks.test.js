@@ -146,10 +146,15 @@ describe('undo-blocks resolves the window per network, not per coin', function (
     expect(resolveUndoBlocks('bitcoin-testnet')).to.not.equal(12);
   });
 
-  it('every coin sits at 120 on testnet', function () {
-    for (const tick of coins.ALLOWED_COINS) {
-      expect(resolveUndoBlocks(coins.COIN_FULL_NAME[tick] + '-testnet'), tick + ' testnet').to.equal(120);
-    }
+  it('litecoin testnet uses the 5000-block public-testnet window', function () {
+    expect(resolveUndoBlocks('litecoin-testnet')).to.equal(5000);
+    expect(resolveUndoBlocks('litecoin-mainnet')).to.equal(120);
+    expect(resolveUndoBlocks('litecoin-regtest')).to.equal(120);
+  });
+
+  it('keeps the other tracked testnet defaults unchanged', function () {
+    expect(resolveUndoBlocks('bitcoin-testnet')).to.equal(120);
+    expect(resolveUndoBlocks('dogecoin-testnet')).to.equal(120);
   });
 
   it('LTC and DOGE keep 120 on mainnet; regtest keeps the mainnet numbers', function () {
@@ -171,9 +176,23 @@ describe('undo-blocks resolves the window per network, not per coin', function (
     // Math.max over Object.values of this export, and a nested shape reads NaN.
     for (const v of Object.values(DEFAULT_UNDO_BLOCKS)) expect(Number.isInteger(v)).to.equal(true);
   });
+});
 
-  it('no default exceeds the decoder lockstep ceiling', function () {
-    expect(Math.max(...Object.values(DEFAULT_UNDO_BLOCKS))).to.be.at.most(MAX_SAFE_UNDO_BLOCKS);
+describe('undo-blocks enforces network-specific safety ceilings', function () {
+  const { netFromNetwork, undoBlocksKey } = require('../../src/chain/undo_blocks');
+  const coins = require('../../src/coins');
+
+  it('no default exceeds its network-specific decoder lockstep ceiling', function () {
+    const { safeUndoBlocksCeiling } = require('../../src/chain/undo_blocks');
+    for (const tick of coins.ALLOWED_COINS) {
+      const full = coins.COIN_FULL_NAME[tick];
+      for (const net of coins.NETWORKS) {
+        const key = undoBlocksKey(tick, net);
+        expect(DEFAULT_UNDO_BLOCKS[key], key).to.be.at.most(safeUndoBlocksCeiling(full + '-' + net));
+      }
+    }
+    expect(safeUndoBlocksCeiling('litecoin-mainnet')).to.equal(MAX_SAFE_UNDO_BLOCKS);
+    expect(safeUndoBlocksCeiling('litecoin-testnet')).to.equal(5006);
   });
 
   it('refuses a network with no net suffix rather than guessing a net', function () {

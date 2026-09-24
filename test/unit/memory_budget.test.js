@@ -283,10 +283,10 @@ describe('utxo-tracker memory budget', function () {
         })
 
         it('is fed the resolved BULK_SYNC_RAM_BUDGET at the startup call site', function () {
-            const apiSrc = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8')
-            expect(apiSrc, 'the log must state the value the orchestrator is spawned with')
-                .to.match(/memoryBudget\.describe\(BULK_SYNC_RAM_BUDGET\)/)
-            expect(apiSrc).to.not.match(/memoryBudget\.describe\(\s*\)/)
+            const startupSrc = fs.readFileSync(path.join(__dirname, '../../src/api/startup.js'), 'utf8')
+            expect(startupSrc, 'the log must state the value the orchestrator is spawned with')
+                .to.match(/memoryBudget\.describe\(config\.BULK_SYNC_RAM_BUDGET\)/)
+            expect(startupSrc).to.not.match(/memoryBudget\.describe\(\s*\)/)
         })
     })
 })

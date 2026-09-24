@@ -26,7 +26,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { expect } = require('chai');
-const { verifyBlockSequence, validateChainFiles } = require('../../../src/bulk-sync/validate_chain');
+const { verifyBlockSequence, validateChainFiles } = require('../../../src/bulk_sync/validate_chain');
 
 function sha256(b) { return crypto.createHash('sha256').update(b).digest(); }
 function hash256(b) { return sha256(sha256(b)); }

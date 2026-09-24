@@ -119,6 +119,20 @@
       "test/unit/blockchain_connector.test/08_post_with_retry.test.js",
       "test/unit/blockchain_connector.test/09_get_blocks_batch_without_aux_pow.test.js",
       "test/unit/blockchain_connector.test/10_rpc_credential_log_sanitization.test.js"
+    ],
+    "test/unit/observability.test.js": [
+      "test/unit/observability.test.js",
+      "test/unit/observability.test/01_metrics_and_routes.test.js",
+      "test/unit/observability.test/02_log_shipper_hooks.test.js",
+      "test/unit/observability.test/03_health_and_flush.test.js"
+    ],
+    "test/unit/crash_handlers.test.js": [
+      "test/unit/crash_handlers.test.js",
+      "test/unit/crash_handlers.test/01_signal_registration.test.js"
+    ],
+    "test/unit/utxo_tracker_metrics.test.js": [
+      "test/unit/utxo_tracker_metrics.test.js",
+      "test/unit/utxo_tracker_metrics.test/01_metric_registration.test.js"
     ]
   }
 }

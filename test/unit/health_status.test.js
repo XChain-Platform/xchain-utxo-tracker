@@ -58,7 +58,7 @@ describe('health status policy', function () {
   // the behavior two lines below it. The tracker has no durable marker to compare
   // against at all. Guard the description instead of the comparison.
   it('documents that halt reaches the status word, without the decoder analogy', function () {
-    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api/sync_status.js'), 'utf8');
     const doc = src.slice(0, src.indexOf('function deriveHealthStatus('))
       .split('\n\n').pop();
     expect(doc).to.match(/'halted'/);
@@ -70,7 +70,7 @@ describe('health status policy', function () {
   // the source level. Without a registered `health`, the gate's first probe gets
   // method-not-found and falls back to /status, which carries no lag at all.
   it('registers health on the JSON-RPC controller', function () {
-    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api/routes.js'), 'utf8');
     const controller = src.slice(src.indexOf('const jsonRpcController = {'));
     expect(controller).to.match(/^\s+async health\(\)\s*\{/m);
     expect(controller).to.match(/deriveHealthStatus\(/);
@@ -114,7 +114,7 @@ describe('node-RPC staleness policy', function () {
   // is not reachable from a require. Without this gate the staleness policy is
   // computed by nobody and the probe is DB-only again.
   it('gates GET /status on the staleness verdict', function () {
-    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api/sync_status.js'), 'utf8');
     const route = src.slice(src.indexOf("app.get('/status'"));
     expect(route).to.match(/isNodeRpcStale\(/);
     expect(route).to.match(/nodeRpcStale\) res\.status\(503\)|!dbOk \|\| nodeRpcStale\) res\.status\(503\)/);
@@ -125,7 +125,7 @@ describe('node-RPC staleness policy', function () {
   // (lag/node_height/synced from the cached tip, no RPC) must ride on BOTH the
   // halted and the normal branch so the fallback probe is never lag-free.
   it('spreads the freshness meta into every GET /status body', function () {
-    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api/sync_status.js'), 'utf8');
     const route = src.slice(src.indexOf("app.get('/status'"), src.indexOf("app.use((req, res, next) => { if (req.body === undefined)"));
     expect(route).to.match(/const freshness = await getFreshnessMeta\(committedHeight\)/);
     expect(route.match(/\.\.\.freshness/g) || []).to.have.lengthOf(2);
@@ -178,8 +178,8 @@ describe('sync verdict bounds', function () {
   // reachable from a require, so an unwired helper would leave the old inline
   // expression in force with every test above still green.
   it('computes get_sync_status.synced from the helper', function () {
-    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
-    const method = src.slice(src.indexOf('async get_sync_status()'));
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api/sync_status.js'), 'utf8');
+    const method = src.slice(src.indexOf('async function get_sync_status('));
     expect(method).to.match(/synced:\s*deriveSyncedVerdict\(\{ lag, nodeHeightStale \}\)/);
   });
 
@@ -189,8 +189,8 @@ describe('sync verdict bounds', function () {
   // whole restart window in which every create_tx is refused. Same closure problem as
   // the guard above, so the same source-level assertion.
   it('publishes mempool_ready on get_sync_status, floored by the same synced verdict', function () {
-    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
-    const method = src.slice(src.indexOf('async get_sync_status()'));
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api/sync_status.js'), 'utf8');
+    const method = src.slice(src.indexOf('async function get_sync_status('));
     expect(method).to.match(
       /result\.mempool_ready\s*=\s*result\.synced\s*&&\s*tracker\.isMempoolReconverged\(\)\s*===\s*true/
     );

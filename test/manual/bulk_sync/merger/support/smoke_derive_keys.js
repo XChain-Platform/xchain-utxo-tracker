@@ -37,11 +37,11 @@ const assert = require('assert')
 
 const { OutputsWriter,
         SpendsWriter,
-        MetaWriter }     = require('../../../../../src/bulk-sync/writers.js')
-const { externalSort }   = require('../../../../../src/bulk-sync/merger/external_sort.js')
-const { leftAntiJoin }   = require('../../../../../src/bulk-sync/merger/streaming_join.js')
+        MetaWriter }     = require('../../../../../src/bulk_sync/writers.js')
+const { externalSort }   = require('../../../../../src/bulk_sync/merger/external_sort.js')
+const { leftAntiJoin }   = require('../../../../../src/bulk_sync/merger/streaming_join.js')
 const { deriveKeys,
-        LAYOUT }         = require('../../../../../src/bulk-sync/merger/derive_keys.js')
+        LAYOUT }         = require('../../../../../src/bulk_sync/merger/derive_keys.js')
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-derive-keys-'))
 console.log('[smoke/derive-keys] tmp dir:', TMP)

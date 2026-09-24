@@ -31,19 +31,22 @@ const { closeServers } = require('../support/concurrency_gate_harness');
 describe('Security: global in-flight concurrency cap', function () {
     afterEach(closeServers);
 
-    describe('api.js wiring', function () {
+    describe('API seam wiring', function () {
 
-        const apiSource = fs.readFileSync(path.join(__dirname, '../../../src/api.js'), 'utf8');
+        const entrySource = fs.readFileSync(path.join(__dirname, '../../../src/api.js'), 'utf8');
+        const startupSource = fs.readFileSync(path.join(__dirname, '../../../src/api/startup.js'), 'utf8');
+        const routesSource = fs.readFileSync(path.join(__dirname, '../../../src/api/routes.js'), 'utf8');
+        const statusSource = fs.readFileSync(path.join(__dirname, '../../../src/api/sync_status.js'), 'utf8');
 
         it('mounts the gate on the app with an env-overridable cap', function () {
-            expect(apiSource).to.include('concurrencyGate.createConcurrencyGate');
-            expect(apiSource).to.include('UTXO_TRACKER_MAX_CONCURRENT_REQUESTS');
-            expect(apiSource).to.match(/app\.use\(requestGate\)/);
+            expect(startupSource).to.include('concurrencyGate.createConcurrencyGate');
+            expect(entrySource).to.include('UTXO_TRACKER_MAX_CONCURRENT_REQUESTS');
+            expect(startupSource).to.match(/app\.use\(requestGate\)/);
         });
 
         it('mounts a bounded reserve for the exempt readiness probe', function () {
-            expect(apiSource).to.include('UTXO_TRACKER_MAX_CONCURRENT_PROBES');
-            expect(apiSource).to.match(/app\.use\(probeGate\)/);
+            expect(entrySource).to.include('UTXO_TRACKER_MAX_CONCURRENT_PROBES');
+            expect(startupSource).to.match(/app\.use\(probeGate\)/);
         });
 
         it('classifies probes over the same set Express routes to /status', function () {
@@ -51,8 +54,8 @@ describe('Security: global in-flight concurrency cap', function () {
             // predicate narrower than the route splits admitting from holding
             // and hold() silently becomes a no-op. Assert the widened form in
             // source: HEAD, optional trailing slash, case-insensitive.
-            expect(apiSource).to.include("const PROBE_PATH = /^\\/status\\/?$/i;");
-            expect(apiSource).to.match(/isProbe\s*=\s*\(req\)\s*=>\s*\(req\.method === 'GET' \|\| req\.method === 'HEAD'\) && PROBE_PATH\.test\(req\.path\)/);
+            expect(startupSource).to.include("const probePath = /^\\/status\\/?$/i");
+            expect(startupSource).to.match(/isProbe\s*=\s*\(req\)\s*=>\s*\(req\.method === 'GET' \|\| req\.method === 'HEAD'\) && probePath\.test\(req\.path\)/);
         });
 
         it('holds the slot across every route that awaits a backend read', function () {
@@ -60,18 +63,23 @@ describe('Security: global in-flight concurrency cap', function () {
             // instead of work, which is invisible at runtime: assert the wiring
             // in source so the regression is caught here instead of in traffic.
             for(const route of ['/utxos/:address', '/firstseen/:address', '/balance/:address', '/info/:address']){
-                expect(apiSource).to.include(`app.get('${route}', requestGate.hold(`);
+                expect(routesSource).to.include(`app.get('${route}', requestGate.hold(`);
             }
             // /status is exempt from the main cap, so its slot lives in the probe
             // reserve and only that gate's hold() can claim it.
-            expect(apiSource).to.include("app.get('/status', probeGate.hold(");
+            expect(statusSource).to.include("app.get('/status', probeGate.hold(");
             // One wrap covers every JSON-RPC method, batches included.
-            expect(apiSource).to.match(/app\.use\(requestGate\.hold\(jsonRouter\(/);
+            expect(routesSource).to.match(/app\.use\(requestGate\.hold\(jsonRouter\(/);
         });
 
         it('reports the gate stats so a stampede is visible to operators', function () {
-            expect(apiSource).to.include('request_gate: requestGate.getStats()');
-            expect(apiSource).to.include('probe_gate: probeGate.getStats()');
+            expect(statusSource).to.include('request_gate: requestGate.getStats()');
+            expect(statusSource).to.include('probe_gate: probeGate.getStats()');
+        });
+
+        it('hands both gates to the scrape, so shedding is not visible on /status alone', function () {
+            expect(startupSource).to.include('installMetrics(app, tracker, config, { request: requestGate, probe: probeGate })');
+            expect(startupSource).to.include('installUtxoTrackerMetrics(observability, tracker, gates)');
         });
     });
 });

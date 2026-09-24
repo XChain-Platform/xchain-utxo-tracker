@@ -25,12 +25,12 @@ const path = require('path');
 // xchain-indexer's UtxoTracker client parses it positionally into a
 // replay-frozen dispenser verdict.
 //
-// The controller lives inside startApi()'s closure and is not reachable from a
+// The controller lives inside routes.js and is not reachable from a
 // require, so these are source guards, the same shape as the getFreshnessMeta
 // wiring guard in query-freshness-and-bootstrap-recovery.test.js.
 describe('get_first_seen_status (freshness-aware sibling)', function () {
 
-  const src = fs.readFileSync(path.join(__dirname, '../../../src/api.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '../../../src/api/routes.js'), 'utf8');
 
   function methodBody(name) {
     const start = src.indexOf('async ' + name + '({');

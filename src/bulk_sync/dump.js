@@ -82,7 +82,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-    console.log(`Usage: node src/bulk-sync/dump.js [options]
+    console.log(`Usage: node src/bulk_sync/dump.js [options]
 
 Options:
   --network <name>      e.g. bitcoin-regtest, bitcoin-mainnet, litecoin-mainnet
@@ -95,8 +95,8 @@ Options:
   --out <dir>           Output directory (required)
 
 Examples:
-  node src/bulk-sync/dump.js --network bitcoin-regtest --from 0 --to 3400 --out /tmp/dumps/
-  node src/bulk-sync/dump.js --network bitcoin-mainnet --from 0 --out /data/dumps/
+  node src/bulk_sync/dump.js --network bitcoin-regtest --from 0 --to 3400 --out /tmp/dumps/
+  node src/bulk_sync/dump.js --network bitcoin-mainnet --from 0 --out /data/dumps/
 `)
 }
 
@@ -183,6 +183,43 @@ async function existingChunkMatchesChain(connector, filePath, chunkStart, chunkE
     }
 }
 
+function writeDumpHeader(fd, args, chunkStart, chunkEnd, chainTipAtDump) {
+    const header = makeHeader(args.chain, args.netName, chunkStart, chunkEnd, chainTipAtDump)
+    fs.writeSync(fd, header, 0, HEADER_SIZE)
+    return HEADER_SIZE
+}
+function batchHeights(cursor, batchEnd) {
+    const heights = []
+    for (let h = cursor; h <= batchEnd; h++) heights.push(h)
+    return heights
+}
+function writeBlockRecords(fd, blocks) {
+    let bytesWritten = 0
+    for (const { height, hash, hex } of blocks) {
+        const blockBytes = Buffer.from(hex, 'hex')
+        if (blockBytes.length === 0 || blockBytes.length > MAX_BLOCK_SIZE) {
+            throw new Error(`block ${height} has invalid size ${blockBytes.length}`)
+        }
+        const hashBytes = Buffer.from(hash, 'hex')
+        if (hashBytes.length !== 32) {
+            throw new Error(`block ${height} has invalid hash length ${hashBytes.length}`)
+        }
+        const record = Buffer.alloc(40)
+        record.writeUInt32LE(blockBytes.length, 0)
+        record.writeUInt32LE(height, 4)
+        hashBytes.copy(record, 8)
+        fs.writeSync(fd, record, 0, 40)
+        fs.writeSync(fd, blockBytes, 0, blockBytes.length)
+        bytesWritten += 40 + blockBytes.length
+    }
+    return bytesWritten
+}
+
+function openDumpFile(tmpPath) {
+    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath)
+    return { startedAt: Date.now(), fd: fs.openSync(tmpPath, 'w') }
+}
+
 async function dumpChunk(connector, args, chunkStart, chunkEnd, chainTipAtDump) {
     const fileName  = chunkFileName(args.chain, args.netName, chunkStart, chunkEnd)
     const finalPath = path.join(args.out, fileName)
@@ -201,24 +238,16 @@ async function dumpChunk(connector, args, chunkStart, chunkEnd, chainTipAtDump) 
         console.log(`[redo] ${fileName} exists but does not match the node's chain (reorg or wrong node?); re-dumping`)
         fs.unlinkSync(finalPath)
     }
-    if (fs.existsSync(tmpPath)) {
-        fs.unlinkSync(tmpPath)
-    }
-
-    const startedAt = Date.now()
-    const fd = fs.openSync(tmpPath, 'w')
+    const { startedAt, fd } = openDumpFile(tmpPath)
     let bytesWritten = 0
 
     try {
-        const header = makeHeader(args.chain, args.netName, chunkStart, chunkEnd, chainTipAtDump)
-        fs.writeSync(fd, header, 0, HEADER_SIZE)
-        bytesWritten += HEADER_SIZE
+        bytesWritten += writeDumpHeader(fd, args, chunkStart, chunkEnd, chainTipAtDump)
 
         let cursor = chunkStart
         while (cursor <= chunkEnd) {
             const batchEnd = Math.min(cursor + RPC_BATCH_SIZE - 1, chunkEnd)
-            const heights  = []
-            for (let h = cursor; h <= batchEnd; h++) heights.push(h)
+            const heights  = batchHeights(cursor, batchEnd)
 
             // Merge-mined ('auxpow') chains carry an AuxPoW section between the
             // 80-byte header and the tx count; strip it via the without-AuxPoW
@@ -230,25 +259,7 @@ async function dumpChunk(connector, args, chunkStart, chunkEnd, chainTipAtDump) 
                 ? await connector.getBlocksBatchWithoutAuxPow(heights)
                 : await connector.getBlocksBatch(heights)
 
-            for (const { height, hash, hex } of blocks) {
-                const blockBytes = Buffer.from(hex, 'hex')
-                if (blockBytes.length === 0 || blockBytes.length > MAX_BLOCK_SIZE) {
-                    throw new Error(`block ${height} has invalid size ${blockBytes.length}`)
-                }
-                const hashBytes = Buffer.from(hash, 'hex')
-                if (hashBytes.length !== 32) {
-                    throw new Error(`block ${height} has invalid hash length ${hashBytes.length}`)
-                }
-
-                const record = Buffer.alloc(40)
-                record.writeUInt32LE(blockBytes.length, 0)
-                record.writeUInt32LE(height, 4)
-                hashBytes.copy(record, 8)
-
-                fs.writeSync(fd, record, 0, 40)
-                fs.writeSync(fd, blockBytes, 0, blockBytes.length)
-                bytesWritten += 40 + blockBytes.length
-            }
+            bytesWritten += writeBlockRecords(fd, blocks)
 
             cursor = batchEnd + 1
         }
@@ -276,9 +287,13 @@ async function dumpChunk(connector, args, chunkStart, chunkEnd, chainTipAtDump) 
 // resolved, so this is the only place left to catch it. Fail loud instead of letting it
 // through on a warning alone. --allow-undo-window is the named, auditable opt-in for a
 // deliberate partial or backfill seed, and it still warns so the risky choice is logged.
-function assertExplicitToOutsideUndoWindow(dumpEnd, chainTipAtDump, network, allowUndoWindow) {
+function undoWindowBounds(chainTipAtDump, network) {
     const undoBlocks = resolveUndoBlocks(network)
-    const safeEnd = chainTipAtDump - undoBlocks
+    return { undoBlocks, safeEnd: chainTipAtDump - undoBlocks }
+}
+
+function assertExplicitToOutsideUndoWindow(dumpEnd, chainTipAtDump, network, allowUndoWindow) {
+    const { undoBlocks, safeEnd } = undoWindowBounds(chainTipAtDump, network)
     if (dumpEnd <= safeEnd) return safeEnd
     if (!allowUndoWindow) {
         throw new Error(
@@ -294,6 +309,25 @@ function assertExplicitToOutsideUndoWindow(dumpEnd, chainTipAtDump, network, all
         `live undo window (safe end ${safeEnd}); a reorg into that range is unrecoverable`
     )
     return safeEnd
+}
+
+function resolveDumpEnd(args, chainTipAtDump) {
+    if (args.toExplicit) {
+        const dumpEnd = args.to
+        if (dumpEnd > chainTipAtDump) {
+            throw new Error(`--to ${dumpEnd} is beyond current tip ${chainTipAtDump}`)
+        }
+        assertExplicitToOutsideUndoWindow(dumpEnd, chainTipAtDump, args.network, args.allowUndoWindow)
+        return dumpEnd
+    }
+
+    const dumpEnd = chainTipAtDump - args.tipSafety
+    if (dumpEnd < args.from) {
+        throw new Error(
+            `computed dump end (tip=${chainTipAtDump} - safety=${args.tipSafety}) is before --from=${args.from}`
+        )
+    }
+    return dumpEnd
 }
 
 async function main() {
@@ -324,22 +358,7 @@ async function main() {
 
     const info = await connector.getBlockchainInfo()
     const chainTipAtDump = info.blocks
-
-    let dumpEnd
-    if (args.toExplicit) {
-        dumpEnd = args.to
-        if (dumpEnd > chainTipAtDump) {
-            throw new Error(`--to ${dumpEnd} is beyond current tip ${chainTipAtDump}`)
-        }
-        assertExplicitToOutsideUndoWindow(dumpEnd, chainTipAtDump, args.network, args.allowUndoWindow)
-    } else {
-        dumpEnd = chainTipAtDump - args.tipSafety
-        if (dumpEnd < args.from) {
-            throw new Error(
-                `computed dump end (tip=${chainTipAtDump} - safety=${args.tipSafety}) is before --from=${args.from}`
-            )
-        }
-    }
+    const dumpEnd = resolveDumpEnd(args, chainTipAtDump)
 
     const totalBlocks = dumpEnd - args.from + 1
     console.log(`[bulk-sync/dump] ${args.network}: blocks ${args.from}..${dumpEnd} (${totalBlocks} total, tip=${chainTipAtDump})`)

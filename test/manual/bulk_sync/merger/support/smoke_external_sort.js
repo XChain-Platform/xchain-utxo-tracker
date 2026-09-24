@@ -23,7 +23,7 @@ const path   = require('path')
 const crypto = require('crypto')
 const assert = require('assert')
 
-const { externalSort, MinHeap } = require('../../../../../src/bulk-sync/merger/external_sort.js')
+const { externalSort, MinHeap } = require('../../../../../src/bulk_sync/merger/external_sort.js')
 
 const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-ext-sort-'))
 console.log('[smoke/external-sort] tmp dir:', TMP_DIR)

@@ -28,11 +28,11 @@ const path = require('path');
 const crypto = require('crypto');
 const { expect } = require('chai');
 
-const { concatFilesWithHeader } = require('../../../src/bulk-sync/orchestrator');
-const { externalSort } = require('../../../src/bulk-sync/merger/external_sort');
-const { RecordReader } = require('../../../src/bulk-sync/merger/streaming_join');
-const { existingDatLooksComplete } = require('../../../src/bulk-sync/parse_worker');
-const { existingChunkMatchesChain } = require('../../../src/bulk-sync/dump');
+const { concatFilesWithHeader } = require('../../../src/bulk_sync/orchestrator');
+const { externalSort } = require('../../../src/bulk_sync/merger/external_sort');
+const { RecordReader } = require('../../../src/bulk_sync/merger/streaming_join');
+const { existingDatLooksComplete } = require('../../../src/bulk_sync/parse_worker');
+const { existingChunkMatchesChain } = require('../../../src/bulk_sync/dump');
 
 const HEADER_SIZE = 64;
 

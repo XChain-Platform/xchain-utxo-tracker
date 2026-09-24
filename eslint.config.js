@@ -96,11 +96,11 @@ const vendored = {
 };
 
 // Programs rather than modules. The offline bootstrap pipeline under
-// src/bulk-sync/ is nine commands an operator types; their console output IS
+// src/bulk_sync/ is nine commands an operator types; their console output IS
 // their result and they read their own argv, so the logger rule and the
 // environment rule would both be reporting a design, not a defect.
 const bootstrapTools = {
-    files: ['src/bulk-sync/**/*.js', 'test/manual/**/*.js'],
+    files: ['src/bulk_sync/**/*.js', 'test/manual/**/*.js'],
     rules: {
         'no-console': 'off',
         'no-restricted-syntax': ['error',

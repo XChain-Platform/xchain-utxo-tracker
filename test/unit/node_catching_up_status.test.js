@@ -23,7 +23,9 @@ const { catchUpWaitState } = XChainUtxoTracker;
 // a tracker that looks stalled. So the wait is published as `node_catching_up` on the
 // instance and on both health payloads, and reads null the rest of the time.
 const nodeTipSrc = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker/sync_loop_node_tip.js'), 'utf8');
-const apiSrc = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
+const startupSrc = fs.readFileSync(path.join(__dirname, '../../src/api/startup.js'), 'utf8');
+const routesSrc = fs.readFileSync(path.join(__dirname, '../../src/api/routes.js'), 'utf8');
+const syncStatusSrc = fs.readFileSync(path.join(__dirname, '../../src/api/sync_status.js'), 'utf8');
 
 function newTracker() {
   return new XChainUtxoTracker(
@@ -120,34 +122,34 @@ describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces
   });
 });
 
-// api.js builds its payloads inside startApi() against a live tracker, so the two
-// sites are guarded at source level too.
+// The API modules build their payloads against a live tracker, so the two sites
+// are guarded at source level too.
 describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces', function () {
   this.timeout(0);
 
   describe('the api payloads carry node_catching_up', function () {
     it('rides the per-query freshness meta, which both GET /status branches spread', function () {
-      const at = apiSrc.indexOf('async function getFreshnessMeta(');
+      const at = startupSrc.indexOf('async function getFreshnessMeta(');
       expect(at).to.be.greaterThan(0);
-      const body = apiSrc.slice(at, apiSrc.indexOf('async function setFreshnessHeaders', at));
+      const body = startupSrc.slice(at, startupSrc.indexOf('async function setFreshnessHeaders', at));
       expect(body).to.match(/freshness\.node_catching_up = \(tracker && tracker\.nodeCatchingUp\) \|\| null/);
 
-      const route = apiSrc.indexOf("app.get('/status'");
+      const route = syncStatusSrc.indexOf("app.get('/status'");
       expect(route).to.be.greaterThan(0);
-      const routeBody = apiSrc.slice(route, route + 3000);
+      const routeBody = syncStatusSrc.slice(route, route + 3000);
       expect(routeBody).to.match(/const freshness = await getFreshnessMeta\(committedHeight\)/);
       // The halted branch and the ok branch, both spreading the same meta.
       expect(routeBody.match(/\.\.\.freshness/g) || []).to.have.length.of.at.least(2);
     });
 
     it('rides get_sync_status, which the JSON-RPC health answer spreads', function () {
-      const at = apiSrc.indexOf('async get_sync_status()');
+      const at = syncStatusSrc.indexOf('async function get_sync_status(');
       expect(at).to.be.greaterThan(0);
-      const syncBody = apiSrc.slice(at, apiSrc.indexOf('async health()', at));
+      const syncBody = syncStatusSrc.slice(at);
       expect(syncBody).to.match(/result\.node_catching_up = \(tracker && tracker\.nodeCatchingUp\) \|\| null/);
 
-      const health = apiSrc.indexOf('async health()');
-      const healthBody = apiSrc.slice(health, health + 900);
+      const health = routesSrc.indexOf('async health()');
+      const healthBody = routesSrc.slice(health, health + 900);
       expect(healthBody).to.match(/const sync = await jsonRpcController\.get_sync_status\(\)/);
       expect(healthBody).to.match(/\.\.\.sync/);
     });
@@ -156,7 +158,8 @@ describe('XChainUtxoTracker: the catch-up wait is visible on the health surfaces
       // Both sites use the same `(tracker && tracker.nodeCatchingUp) || null` form:
       // an absent instance, or one constructed before the field existed, reports null
       // rather than throwing inside a health probe.
-      const guards = apiSrc.match(/\(tracker && tracker\.nodeCatchingUp\) \|\| null/g) || [];
+      const guards = (startupSrc + '\n' + syncStatusSrc)
+        .match(/\(tracker && tracker\.nodeCatchingUp\) \|\| null/g) || [];
       expect(guards).to.have.lengthOf(2);
       const read = (t) => (t && t.nodeCatchingUp) || null;
       expect(read(undefined)).to.equal(null);

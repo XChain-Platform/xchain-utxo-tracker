@@ -1,0 +1,89 @@
+'use strict'
+
+// Copyright © 2025–2026 Dankest, LLC
+// Based on XChain Platform by Dankest, LLC – https://dankest.llc
+//
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// This file is part of XChain Platform. Licensed under the GNU Affero
+// General Public License v3.0 or later; see LICENSE.md. A commercial
+// license (without AGPL source-disclosure terms) is available -
+// contact legal@dankest.llc.
+
+const assert = require('assert')
+const fs = require('fs')
+const path = require('path')
+const suiteDir = path.dirname(__dirname)
+
+function registerSignalTests ({ crash, observability, lines, crashCount, fakeProc }) {
+  it('an uncaught exception emits one CRASH record and exits non-zero', function () {
+    const proc = fakeProc()
+    crash.installCrashHandlers({ proc })
+
+    proc.emit('uncaughtException', new Error('probe-uncaught-tracker'))
+
+    assert.strictEqual(lines().length, 1)
+    assert.ok(lines()[0].includes('kind=uncaughtException'), lines()[0])
+    assert.ok(lines()[0].includes('probe-uncaught-tracker'), lines()[0])
+    assert.ok(lines()[0].includes('[xchain-utxo-tracker]'), lines()[0])
+    assert.deepStrictEqual(proc.exits, [1])
+    assert.strictEqual(crashCount('uncaughtException'), 1)
+  })
+
+  it('an unhandled rejection emits CRASH and lets the process continue', function () {
+    const proc = fakeProc()
+    crash.installCrashHandlers({ proc })
+
+    proc.emit('unhandledRejection', new Error('probe-rejection-tracker'))
+
+    assert.strictEqual(lines().length, 1)
+    assert.ok(lines()[0].includes('kind=unhandledRejection'), lines()[0])
+    assert.deepStrictEqual(proc.exits, [], 'a stray promise does not by itself corrupt shared state')
+    assert.strictEqual(crashCount('unhandledRejection'), 1)
+  })
+
+  it('a non-Error rejection reason still yields a readable record', function () {
+    const proc = fakeProc()
+    crash.installCrashHandlers({ proc })
+    proc.emit('unhandledRejection', 'plain string reason')
+    assert.ok(lines()[0].includes('plain string reason'), lines()[0])
+  })
+
+  it('a broken logger cannot swallow the exit', function () {
+    const proc = fakeProc()
+    crash.installCrashHandlers({ proc })
+    observability._resetObservability()
+    proc.emit('uncaughtException', new Error('probe-no-sink'))
+    assert.deepStrictEqual(proc.exits, [1])
+  })
+}
+
+function registerCrashRecordTests ({ crash, lines, crashCount }) {
+  const __dirname = suiteDir
+
+  // The polling loop and the bulk-sync boot end the process on their own, so
+  // they take the same record shape rather than a bare stderr line.
+  it('a terminated polling loop takes the CRASH shape, with its own kind', function () {
+    crash.noteCrash('pollingLoopTerminated', new Error('node RPC gone'))
+
+    assert.strictEqual(lines().length, 1)
+    assert.ok(lines()[0].includes('kind=pollingLoopTerminated'), lines()[0])
+    assert.ok(lines()[0].includes('node RPC gone'), lines()[0])
+    assert.ok(lines()[0].includes('stack='), lines()[0])
+    assert.strictEqual(crashCount('pollingLoopTerminated'), 1)
+  })
+
+  // The handlers are worth nothing unless the entry point installs them, and
+  // requiring api.js here boots bulk-sync, so the wiring is read off the file.
+  it('api.js installs them from the entry-point guard and uses noteCrash on both exit paths', function () {
+    const src = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8')
+    const guard = src.indexOf('require.main === module')
+    const install = src.indexOf('installCrashHandlers()')
+    assert.ok(guard > 0, 'entry-point guard present')
+    assert.ok(install > guard, 'installCrashHandlers() is called inside the entry-point guard')
+    assert.ok(src.includes("noteCrash('pollingLoopTerminated'"), 'the polling loop records a CRASH')
+    assert.ok(src.includes("noteCrash('bootFailed'"), 'the boot chain records a CRASH')
+  })
+}
+
+module.exports = { registerSignalTests, registerCrashRecordTests }

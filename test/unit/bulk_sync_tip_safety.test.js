@@ -26,8 +26,8 @@
 // derive-keys uses to size the seeded N-window) whenever --to is not pinned.
 
 const { expect } = require('chai');
-const { effectiveTipSafety, resolveUndoBlocks, parseArgs } = require('../../src/bulk-sync/orchestrator');
-const dump = require('../../src/bulk-sync/dump');
+const { effectiveTipSafety, resolveUndoBlocks, parseArgs } = require('../../src/bulk_sync/orchestrator');
+const dump = require('../../src/bulk_sync/dump');
 
 describe('bulk-sync tip-safety clamp @regression', function () {
 

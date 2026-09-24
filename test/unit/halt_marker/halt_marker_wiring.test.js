@@ -25,6 +25,8 @@ const LevelUpStore = require('../../../src/store/level_up_db');
 const syncLoopSrc = fs.readFileSync(path.join(__dirname, '../../../src/XChainUtxoTracker/sync_loop.js'), 'utf8');
 const constantsSrc = fs.readFileSync(path.join(__dirname, '../../../src/XChainUtxoTracker/constants.js'), 'utf8');
 const apiSrc = fs.readFileSync(path.join(__dirname, '../../../src/api.js'), 'utf8');
+const startupSrc = fs.readFileSync(path.join(__dirname, '../../../src/api/startup.js'), 'utf8');
+const syncStatusSrc = fs.readFileSync(path.join(__dirname, '../../../src/api/sync_status.js'), 'utf8');
 
 describe('halt marker: boot and launch wiring', function () {
     it('start() reads the marker before the sync loop and returns into the halted state', function () {
@@ -50,13 +52,13 @@ describe('halt marker: boot and launch wiring', function () {
 
 describe('halt marker: status surfaces', function () {
     it('halted_at and halted_height ride every halt surface', function () {
-        const status = apiSrc.slice(apiSrc.indexOf("app.get('/status'"));
+        const status = syncStatusSrc.slice(syncStatusSrc.indexOf("app.get('/status'"));
         expect(status).to.match(/halted_at: tracker\.haltedAt/);
         expect(status).to.match(/halted_height: tracker\.haltedHeight/);
-        const sync = apiSrc.slice(apiSrc.indexOf('async get_sync_status()'), apiSrc.indexOf('async health()'));
+        const sync = syncStatusSrc.slice(syncStatusSrc.indexOf('async function get_sync_status('));
         expect(sync).to.match(/result\.halted_at\s*=\s*tracker\.haltedAt/);
         expect(sync).to.match(/result\.halted_height\s*=\s*tracker\.haltedHeight/);
-        const meta = apiSrc.slice(apiSrc.indexOf('async function getFreshnessMeta('));
+        const meta = startupSrc.slice(startupSrc.indexOf('async function getFreshnessMeta('));
         expect(meta).to.match(/haltedAt:\s*tracker\.haltedAt/);
         expect(meta).to.match(/haltedHeight:\s*tracker\.haltedHeight/);
     });

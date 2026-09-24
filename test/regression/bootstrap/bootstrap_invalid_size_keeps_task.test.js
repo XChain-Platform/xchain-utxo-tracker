@@ -32,22 +32,28 @@ const { expect } = require('chai');
 const { handleBootstrapFailure } = require('../../../src/bootstrap/bootstrap_recovery');
 
 const API_PATH = require.resolve('../../../src/api.js');
+const COMPRESSION_PATH = require.resolve('../../../src/api/compression.js');
 
-// api.js destructures `spawn` from child_process at require time, so the stub has
-// to be installed before the module is loaded. Load a private instance around the
-// stub and drop it from the cache afterwards, so neither the stub nor this second
-// instance leaks into any other test file's copy of api.js.
+// compression.js destructures `spawn` from child_process at require time, so the
+// stub has to be installed before that module is loaded. Load a private API and
+// compression instance around the stub, then restore both cache entries so neither
+// the stub nor these private instances leak into another test.
 function loadApiWithStubbedSpawn(stub) {
     const realSpawn = childProcess.spawn;
     const hadCached = Object.prototype.hasOwnProperty.call(require.cache, API_PATH);
     const cached = require.cache[API_PATH];
+    const hadCompressionCached = Object.prototype.hasOwnProperty.call(require.cache, COMPRESSION_PATH);
+    const cachedCompression = require.cache[COMPRESSION_PATH];
     childProcess.spawn = stub;
     delete require.cache[API_PATH];
+    delete require.cache[COMPRESSION_PATH];
     try {
         return require(API_PATH);
     } finally {
         childProcess.spawn = realSpawn;
         delete require.cache[API_PATH];
+        delete require.cache[COMPRESSION_PATH];
+        if (hadCompressionCached) require.cache[COMPRESSION_PATH] = cachedCompression;
         if (hadCached) require.cache[API_PATH] = cached;
     }
 }
@@ -75,7 +81,7 @@ describe('invalid source size keeps its bootstrap task record', function () {
     it('leaves the task record in place so handleBootstrapFailure can stamp progress -1 and the error', async function () {
         const api = loadApiWithStubbedSpawn(stubDuEmitting('notanumber\t/data/xchain\n'));
         const { compressDirPigz, bootstrapTasks } = api;
-        expect(compressDirPigz, 'src/api.js must export compressDirPigz for this guard').to.be.a('function');
+        expect(compressDirPigz, 'src/api.js must re-export compressDirPigz for this guard').to.be.a('function');
 
         const taskId = 'regression-4371-invalid-size';
         let thrown = null;
@@ -109,9 +115,9 @@ describe('invalid source size keeps its bootstrap task record', function () {
     // assertion alone cannot pin against a well-meaning re-add.
     it('compressDirPigz contains no delete of its own task record', function () {
         const fs = require('fs');
-        const src = fs.readFileSync(API_PATH, 'utf8');
+        const src = fs.readFileSync(COMPRESSION_PATH, 'utf8');
         const start = src.indexOf('async function compressDirPigz(');
-        expect(start, 'compressDirPigz must exist in src/api.js').to.be.greaterThan(-1);
+        expect(start, 'compressDirPigz must exist in src/api/compression.js').to.be.greaterThan(-1);
         const body = src.slice(start, src.indexOf('\n}', start));
         expect(body).to.match(/Invalid size for source/);
         expect(body, 'the failure handler owns the record; compressDirPigz must not delete it')
