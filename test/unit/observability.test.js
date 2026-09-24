@@ -33,7 +33,7 @@ const {
     registerInstallEndpointTests,
     registerRouteLabelTests,
     registerCustomRouteTests
-} = require('./observability.test/01_metrics_and_routes.test.js');
+} = require('./observability.test/01_metrics_and_routes.register.js');
 const {
     registerTextFieldFormatTests,
     registerTextFieldSafetyTests,
@@ -41,14 +41,14 @@ const {
     registerConsoleRoutingTests,
     registerConsoleLifecycleTests,
     registerConsoleRecordTests
-} = require('./observability.test/02_log_shipper_hooks.test.js');
+} = require('./observability.test/02_log_shipper_hooks.register.js');
 const {
     registerLocalShipperTests,
     registerShipperRedactionTests,
     registerShipperBatchTests,
     registerShipperFailureTests,
     registerShipperShutdownTests
-} = require('./observability.test/03_health_and_flush.test.js');
+} = require('./observability.test/03_health_and_flush.register.js');
 
 describe('observability/metrics: exposition format', function () {
     registerMetricDeclarationTests();

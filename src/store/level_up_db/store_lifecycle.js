@@ -30,7 +30,12 @@ module.exports = {
         await this.db.close()
     },
 
-    async createDatabase() {
+    // dataDir overrides the on-disk store's directory (defaults to "/data/"+dbName)
+    // and, when given, forces the ClassicLevel branch even if inMemory is set: this
+    // is the one seam the on-disk test hook uses, so it exercises this exact open
+    // path (resetCaches, cache/write-buffer sizing, error wrapping) instead of a
+    // hand-rolled substitute that happens to also use ClassicLevel.
+    async createDatabase(dataDir) {
         // Open time is the one moment a store is guaranteed to have no batch in flight,
         // which is why the reset lives here and not in the constructor: an in-flight
         // batch's staged outputs are in outputCache but not yet on disk, so clearing it
@@ -39,14 +44,14 @@ module.exports = {
         // completion before startApi launches the tracker) opens cold.
         LevelUpStore.resetCaches()
         try {
-            if (this.inMemory){
+            if (this.inMemory && !dataDir){
                 this.db = new MemoryLevel({ keyEncoding: 'buffer', valueEncoding: 'buffer' })
             } else {
                 // A large block cache keeps hot UTXO index blocks resident: on big
                 // mainnet DBs on spinning disks, the 8 MB default turns every cold
                 // lookup into a random seek. Sized by memoryBudget against what this
                 // process may use; LEVELDB_CACHE_BYTES overrides outright.
-                this.db = new ClassicLevel("/data/"+this.dbName, { keyEncoding: 'buffer', valueEncoding: 'buffer',
+                this.db = new ClassicLevel(dataDir || ("/data/"+this.dbName), { keyEncoding: 'buffer', valueEncoding: 'buffer',
                     cacheSize: memoryBudget.leveldbCacheBytes(),
                     writeBufferSize: config.LEVELDB_WRITE_BUFFER_BYTES })
             }

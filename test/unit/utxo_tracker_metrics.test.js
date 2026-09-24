@@ -27,7 +27,7 @@ const {
     registerMetricFreshnessTests,
     registerMetricEdgeTests,
     registerMetricGateTests
-} = require('./utxo_tracker_metrics.test/01_metric_registration.test.js');
+} = require('./utxo_tracker_metrics.test/01_metric_registration.register.js');
 
 function realObservability(enabled = true){
     return installObservability(null, {

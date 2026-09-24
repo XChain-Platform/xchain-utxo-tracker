@@ -19,25 +19,28 @@
 // Each createDatabase() call gets its own temp dir, matching the fresh-store
 // semantics the suites assume; all dirs are removed after the run.
 //
-// Usage: mocha --require ./test/ondisk-classiclevel-hook.js <specs>
+// The override takes a dataDir parameter and sets only that: it picks the temp
+// directory and delegates everything else (resetCaches, cache/write-buffer
+// sizing, the open error wrapping, and forcing the ClassicLevel branch over
+// inMemory) to production's own createDatabase in store_lifecycle.js, so the
+// on-disk suites exercise the real open path rather than a hand-rolled
+// substitute that happens to also use ClassicLevel.
+//
+// Usage: mocha --require ./test/helpers/ondisk_classiclevel_hook.js <specs>
 // (see the test:unit:ondisk / test:integration:ondisk npm scripts)
 
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { ClassicLevel } = require('classic-level')
 const LevelUpStore = require('../../src/store/level_up_db')
 
 const tmpDirs = []
+const originalCreateDatabase = LevelUpStore.prototype.createDatabase
 
-LevelUpStore.prototype.createDatabase = async function () {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-ondisk-'))
+LevelUpStore.prototype.createDatabase = function (dataDir) {
+  const dir = dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-ondisk-'))
   tmpDirs.push(dir)
-  // Always on-disk classic-level, regardless of the inMemory constructor flag,
-  // so the full assertion set runs against the real storage engine.
-  this.db = new ClassicLevel(dir, { keyEncoding: 'buffer', valueEncoding: 'buffer' })
-  await this.db.open()
-  return this.db
+  return originalCreateDatabase.call(this, dir)
 }
 
 exports.mochaHooks = {
