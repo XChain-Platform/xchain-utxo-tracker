@@ -55,7 +55,7 @@ async function captureCreateDatabaseOptions() {
 
     try {
         const storeLifecycle = require(STORE_LIFECYCLE_PATH);
-        await storeLifecycle.createDatabase.call({ dbName: 'lane-xc-2305-test', inMemory: false });
+        await storeLifecycle.createDatabase.call({ dbName: 'leveldb-file-limits-test', inMemory: false });
         return captured;
     } finally {
         classicLevelExports.ClassicLevel = RealClassicLevel;

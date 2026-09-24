@@ -17,6 +17,7 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
 const config = require('../../../src/config');
+const { getLogger } = require('../../../src/observability');
 
 const OPEN_FILES_KEY = 'LEVELDB_MAX_OPEN_FILES';
 const FILE_SIZE_KEY = 'LEVELDB_MAX_FILE_SIZE_BYTES';
@@ -38,7 +39,7 @@ describe('config LEVELDB_MAX_OPEN_FILES / LEVELDB_MAX_FILE_SIZE_BYTES', function
     let errorStub;
 
     beforeEach(function () {
-        errorStub = sinon.stub(console, 'error');
+        errorStub = sinon.stub(getLogger(), 'error');
     });
 
     afterEach(function () {
