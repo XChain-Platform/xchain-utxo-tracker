@@ -16,7 +16,7 @@
 
 const assert = require('assert');
 
-const { installUtxoTrackerMetrics } = require('../../../src/server/utxo_tracker_metrics.js');
+const { installUtxoTrackerMetrics } = require('../../src/server/utxo_tracker_metrics.js');
 
 function registerMetricAvailabilityTests({ realObservability, fakeTracker }) {
     it('still registers the series when metrics are off, where only the endpoint is gated', function () {

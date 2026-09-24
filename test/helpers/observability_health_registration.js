@@ -13,10 +13,10 @@
 const { expect } = require('chai');
 const http = require('http');
 
-const { Registry } = require('../../../src/observability/metrics.js');
+const { Registry } = require('../../src/observability/metrics.js');
 const {
     createLogShipper, readLogEnv, redactFields, scrubMessage, REDACTED
-} = require('../../../src/observability/logShipper.js');
+} = require('../../src/observability/logShipper.js');
 
 // A console-shaped sink so tests never write to the mocha output.
 function fakeConsole() {

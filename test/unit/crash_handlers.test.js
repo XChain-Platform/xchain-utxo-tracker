@@ -21,7 +21,7 @@ const crash = require('../../src/server/crash_handlers.js')
 const observability = require('../../src/observability')
 const {
   registerSignalTests, registerCrashRecordTests
-} = require('./crash_handlers.test/01_signal_registration.register.js')
+} = require('../helpers/crash_handler_registration.js')
 
 describe('utxo-tracker crash handlers', function () {
   let sink
