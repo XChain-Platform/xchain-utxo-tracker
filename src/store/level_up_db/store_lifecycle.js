@@ -53,7 +53,9 @@ module.exports = {
                 // process may use; LEVELDB_CACHE_BYTES overrides outright.
                 this.db = new ClassicLevel(dataDir || ("/data/"+this.dbName), { keyEncoding: 'buffer', valueEncoding: 'buffer',
                     cacheSize: memoryBudget.leveldbCacheBytes(),
-                    writeBufferSize: config.LEVELDB_WRITE_BUFFER_BYTES })
+                    writeBufferSize: config.LEVELDB_WRITE_BUFFER_BYTES,
+                    maxOpenFiles: config.LEVELDB_MAX_OPEN_FILES,
+                    maxFileSize: config.LEVELDB_MAX_FILE_SIZE_BYTES })
             }
             // abstract-level opens lazily on first op; open explicitly so any
             // open/create error surfaces here rather than on the first read.
