@@ -52,7 +52,7 @@ function registerFirstSeenRoute(){
         try {
             const firstSeen = await getFirstSeen(address);
             await setFreshnessHeaders(res);
-            res.send(firstSeen);
+            res.json(firstSeen);
         } catch (err) {
             sendAddressError(res, err);
         }
@@ -389,6 +389,9 @@ function registerRoutes(context){
     // it dispatched has finished and the response has been sent. The internal
     // get_sync_status() call above still goes through the bare controller
     // object, so an in-process call never touches gate accounting.
-    app.use(requestGate.hold(jsonRouter({methods: jsonRpcController})))
+    const methods = context.jsonRpcMethods
+        ? Object.assign({}, jsonRpcController, context.jsonRpcMethods)
+        : jsonRpcController
+    app.use(requestGate.hold(jsonRouter({methods})))
 }
 module.exports = { registerRoutes }
