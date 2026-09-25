@@ -127,7 +127,8 @@ const MAX_PAGE_LIMIT = Number(process.env.UTXO_MAX_PAGE_LIMIT) > 0
 // were still on parseInt while this comment asserted otherwise.
 // Number() rather than parseInt() because parseInt happily truncates '10abc' to 10
 // and reads a typo as intent; a knob this pipeline FATALs on deserves the strict
-// read. This wrapper adds only the bulk-sync sentence on the warning line.
+// read. This wrapper adds the bulk-sync sentence on the warning line and can
+// apply a resource ceiling after validation.
 //
 // These values are not just forwarded. BULK_SYNC_TIP_SAFETY also feeds the
 // too-short-chain pre-flight in runBulkSyncIfEmpty, and a raw string ran through
@@ -142,19 +143,18 @@ const MAX_PAGE_LIMIT = Number(process.env.UTXO_MAX_PAGE_LIMIT) > 0
 //
 // Warn-and-default rather than throw: the pre-flight's whole purpose is that a
 // misconfigured tracker still comes up on the incremental path.
-function envInt(name, fallback, min){
-    return sharedEnvInt(name, fallback, min, 'Bulk-sync will run with the default for this knob.')
+function envInt(name, fallback, min, normalize){
+    const value = sharedEnvInt(name, fallback, min, 'Bulk-sync will run with the default for this knob.')
+    return normalize ? normalize(value) : value
 }
 
 // Bulk-sync pre-flight (activates on empty DB). See runBulkSyncIfEmpty below.
 const BULK_SYNC_WORKERS      = envInt('BULK_SYNC_WORKERS',    6,     1)
 const BULK_SYNC_CHUNK_SIZE   = envInt('BULK_SYNC_CHUNK_SIZE', 10000, 1)
-// Default DERIVED from the same cgroup-aware budget as the block cache and the
-// flush threshold, not a flat 4096: the orchestrator is a child process, and a
-// tracker capped at 2 GB was handing its sort twice the whole cgroup and being
-// OOM-killed at the merge, repeatedly, on the recovery path an operator reaches
-// only after something else already went wrong. An explicit env value still wins.
-const BULK_SYNC_RAM_BUDGET   = envInt('BULK_SYNC_RAM_BUDGET', memoryBudget.bulkSyncRamBudgetMB(), 1)
+// Clamp an explicit value as well as the default because parent and child share
+// the same cgroup limit.
+const BULK_SYNC_RAM_BUDGET   = envInt('BULK_SYNC_RAM_BUDGET', memoryBudget.bulkSyncRamBudgetMB(), 1,
+    memoryBudget.clampBulkSyncRamBudgetMB)
 const BULK_SYNC_TIP_SAFETY   = envInt('BULK_SYNC_TIP_SAFETY', 10,    0)
 const BULK_SYNC_BATCH_SIZE   = envInt('BULK_SYNC_BATCH_SIZE', 10000, 1)
 const BULK_SYNC_WORK_DIR     = process.env.BULK_SYNC_WORK_DIR     || path.join('/data', DB_NAME, '_bulk-sync-work')
@@ -266,12 +266,20 @@ function runBulkSyncOrchestrator() {
 
     return new Promise((resolve, reject) => {
         const child = spawn('node', args, { stdio: 'inherit', env: process.env })
-        child.on('exit', (code) => {
+        child.on('exit', (code, signal) => {
             if (code === 0) resolve()
-            else reject(new Error(`orchestrator exited with code ${code}`))
+            else reject(bulkSyncChildExitError(code, signal))
         })
         child.on('error', reject)
     })
+}
+
+function bulkSyncChildExitError(code, signal) {
+    const err = new Error(signal
+        ? `orchestrator killed by ${signal}`
+        : `orchestrator exited with code ${code}`)
+    if (signal === 'SIGKILL') err.crashKind = 'oomKilled'
+    return err
 }
 
 async function runBulkSyncIfEmpty() {
@@ -335,7 +343,8 @@ if (require.main === module) {
             keyEquals, launchTracker, installUnmatchedRouteLabel
         }))
         .catch(err => {
-            noteCrash('bootFailed', err)
+            if (err && err.crashKind === 'oomKilled') noteCrash('oomKilled', err)
+            else noteCrash('bootFailed', err)
             process.exit(1)
         })
 }
@@ -354,6 +363,7 @@ module.exports = {
     listArchiveMembers,
     sha256File,
     envInt,
+    bulkSyncChildExitError,
     installUnmatchedRouteLabel,
     UNMATCHED_ROUTE_LABEL,
     // Exported for the recovery regression test only: the bootstrap task map and
