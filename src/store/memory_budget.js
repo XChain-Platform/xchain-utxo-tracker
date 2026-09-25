@@ -119,12 +119,14 @@ function heapFlushThresholdMB() {
     return Math.floor(clamp(derivedMB, HEAP_FLUSH_MIN_MB, HEAP_FLUSH_MAX_MB))
 }
 
-// MB the bulk-sync orchestrator's external sort may allocate. Read by api.js as
-// the DEFAULT for BULK_SYNC_RAM_BUDGET, so an explicit env value still wins the
-// same way it does for the two knobs above.
+// MB the bulk-sync orchestrator's external sort may allocate.
 function bulkSyncRamBudgetMB() {
     const derivedMB = budgetBytes() / BULK_SYNC_FRACTION / MIB
     return Math.floor(clamp(derivedMB, BULK_SYNC_MIN_MB, BULK_SYNC_MAX_MB))
+}
+
+function clampBulkSyncRamBudgetMB(requestedMB) {
+    return Math.min(requestedMB, bulkSyncRamBudgetMB())
 }
 
 // Logged once at startup: when a tracker is killed for memory, the first
@@ -149,5 +151,6 @@ module.exports = {
     leveldbCacheBytes,
     heapFlushThresholdMB,
     bulkSyncRamBudgetMB,
+    clampBulkSyncRamBudgetMB,
     describe
 }
