@@ -155,7 +155,8 @@ async function main() {
     }))
 
     // Load into DB
-    const res = await loadKeys({ keysDir, dbPath, batchSize: 100 })
+    // Exercise the non-parity T/I/J load on purpose (default is removeSpent=true).
+    const res = await loadKeys({ keysDir, dbPath, batchSize: 100, removeSpent: false })
     assert.strictEqual(res.stats.B, 2)
     assert.strictEqual(res.stats.T, 2)
     assert.strictEqual(res.stats.I, 1)

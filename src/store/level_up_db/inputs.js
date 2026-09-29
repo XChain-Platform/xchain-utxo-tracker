@@ -13,7 +13,7 @@
  **********************************************************************/
 
 const { EMPTY, P_INPUT, P_IN_HINT } = require('./constants')
-const { kInput, kOutHint, kInHint, h2b, pb, idxBuf, rangeEnd } = require('./key_codec')
+const { kInput, kOutHint, kInHint, h2b, pb, rangeEnd } = require('./key_codec')
 const { encodeInputVal } = require('./value_codec')
 
 module.exports = {
@@ -69,11 +69,11 @@ module.exports = {
         for await (const [key] of this.db.iterator(options)) {
             // J key layout: [J(1)][txHash8(8)][prevTxHash8(8)][outputIndex(4)]
             const prevTxHash8Buf = key.slice(9, 17)
-            const idxBuf         = key.slice(17, 21)
+            const idxBytes       = key.slice(17, 21)
 
             await this.addTransaction(
                 "del",
-                Buffer.concat([pb(P_INPUT), prevTxHash8Buf, idxBuf]),
+                Buffer.concat([pb(P_INPUT), prevTxHash8Buf, idxBytes]),
                 null
             )
             await this.addTransaction("del", key, null)

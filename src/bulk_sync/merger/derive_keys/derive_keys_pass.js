@@ -52,7 +52,7 @@ const { deriveSpendKeys }      = require('./derive_keys_pass_spends.js')
  *                                          header's record_size field.
  * @param {number}  opts.ramBudgetBytes    sort RAM cap (default 1 GiB)
  * @param {string}  opts.network           network string e.g. 'dogecoin-mainnet'.
- *                                          Used to resolve per-chain undoBlocks
+ *                                          Resolves per-chain undoBlocks
  *                                          when opts.undoBlocks is not provided.
  * @param {number}  opts.undoBlocks        size of N-prefix window. Should match
  *                                          the live tracker's per-chain undoBlocks
@@ -60,11 +60,14 @@ const { deriveSpendKeys }      = require('./derive_keys_pass_spends.js')
  *                                          reorg recovery window. If omitted,
  *                                          resolved from opts.network and the
  *                                          XCHAIN_UNDO_BLOCKS_<COIN> env var.
- * @param {boolean} opts.removeSpent       skip T/I/J emission. Matches
- *                                          XChainUtxoTracker.REMOVE_SPENT; when
- *                                          true, live code never writes I/J
- *                                          records so bulk-sync shouldn't either.
- *                                          Default false (emit I/J).
+ * @param {boolean} opts.removeSpent       default true, the live-parity seed:
+ *                                          skips I/J (the live confirmed path
+ *                                          never writes them) and T (bulk-sync
+ *                                          cannot yet emit the live 64-byte T
+ *                                          and its X/Y index; README Upgrading).
+ *                                          Explicit false emits 32-byte T plus
+ *                                          I/J, which is NOT a parity seed and
+ *                                          is kept for fixtures and diagnostics.
  * @param {Function} opts.onProgress       callback({phase, ...})
  */
 async function deriveKeys(opts) {
@@ -94,7 +97,7 @@ function resolveDeriveOptions(opts) {
     } = opts
     const ramBudgetBytes = opts.ramBudgetBytes || (1024 * 1024 * 1024)
     const undoBlocks     = resolveUndoBlocks(opts.network, opts.undoBlocks)
-    const removeSpent    = Boolean(opts.removeSpent)
+    const removeSpent    = opts.removeSpent !== false
     const onProgress     = opts.onProgress     || noop
     const outputsRecordSize = opts.outputsRecordSize || OUTPUTS_RECORD_SIZE
     if (outputsRecordSize !== OUTPUTS_RECORD_SIZE && outputsRecordSize !== OUTPUTS_RECORD_SIZE_CB) {
@@ -191,7 +194,8 @@ function scanMetaBlocks(ctx, meta, bRawPath, tRawPath) {
                 blk.previousHash.copy(buf, off + 41, 0, 32)
             })
 
-            // T: one per inlined txHash8 → val = blockHash (32B)
+            // T: one per inlined txHash8 → val = blockHash (32B, the legacy
+            // shape; live is 64B, see SPEC.md "T value shape")
             if (tRaw) {
                 for (let i = 0; i < blk.txHash8List.length; i++) {
                     const th = blk.txHash8List[i]

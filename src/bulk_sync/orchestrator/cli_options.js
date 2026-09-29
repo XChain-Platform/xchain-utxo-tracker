@@ -45,9 +45,9 @@ function defaultArgs() {
         verifyChain: null,
         verifyMerkle: null,    // implies verifyChain; adds tx-body merkle rebuild
         skipParse:   false,
-        // Default matches XChainUtxoTracker.REMOVE_SPENT = true. Skipping
-        // I/J cuts ~130 GB of disk and ~30-60 min on mainnet because the
-        // live tracker never persists those records anyway.
+        // The only supported value (parseArgs rejects --no-remove-spent).
+        // Skipping I/J cuts ~130 GB of disk and ~30-60 min on mainnet, and
+        // the live confirmed path never writes them.
         removeSpent: true,
     }
 }

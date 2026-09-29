@@ -49,7 +49,7 @@ If we cannot meet a timeline, we will tell you why and propose a new one. We wil
 ### In scope
 
 - Correctness of UTXO and balance accounting in `src/` (output indexing, spend tracking, balance aggregation, BigInt arithmetic).
-- Reorg and desync handling: the 10-block undo history, rollback logic, and any path where a chain reorganization can leave the index in an inconsistent state that produces wrong balances.
+- Reorg and desync handling: the undo history (sized per chain and per network by `DEFAULT_UNDO_BLOCKS` in [`src/chain/undo_blocks.js`](./src/chain/undo_blocks.js)), rollback logic, and any path where a chain reorganization can leave the index in an inconsistent state that produces wrong balances.
 - The address and balance query API (REST and JSON-RPC): injection via query parameters, response correctness, and any path that returns wrong balances to the encoder.
 - Denial-of-service or memory exhaustion via crafted queries, large address sets, or abnormal chain data (the service runs with `--max-old-space-size=4096`; unbounded growth is in scope).
 - Mempool tracking correctness: unconfirmed outputs in the in-memory LevelDB and any race between mempool state and confirmed-block state.

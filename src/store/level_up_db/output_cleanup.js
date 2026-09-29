@@ -13,7 +13,7 @@
  **********************************************************************/
 
 const { P_OUTPUT, P_OUT_HINT, P_OUT_DEL, P_HINT_DEL, P_OUT_BLK } = require('./constants')
-const { h2b, pb, rangeEnd, toMapKey, idxBuf } = require('./key_codec')
+const { h2b, pb, rangeEnd, toMapKey } = require('./key_codec')
 
 module.exports = {
     async deleteOutputsByHint(txid){
@@ -127,13 +127,13 @@ module.exports = {
             // W key:   [W(1)][blockHash(32)][txHash8(8)][outputIndex(4)]
             // W value: [scriptPubKey(32)]
             const txHash8Buf = key.slice(33, 41)
-            const idxBuf     = key.slice(41, 45)
+            const idxBytes   = key.slice(41, 45)
             const scriptBuf  = value
 
             // O key: [O(1)][scriptPubKey(32)][txHash8(8)][outputIndex(4)]
-            const oKey = Buffer.concat([pb(P_OUTPUT), scriptBuf, txHash8Buf, idxBuf])
+            const oKey = Buffer.concat([pb(P_OUTPUT), scriptBuf, txHash8Buf, idxBytes])
             // H key: [H(1)][txHash8(8)][outputIndex(4)]
-            const hKey = Buffer.concat([pb(P_OUT_HINT), txHash8Buf, idxBuf])
+            const hKey = Buffer.concat([pb(P_OUT_HINT), txHash8Buf, idxBytes])
 
             await this.addTransaction("del", oKey)
             await this.addTransaction("del", hKey)

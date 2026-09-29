@@ -141,16 +141,25 @@ for that stream:
 | H                    | `(txHash8, vout)`                    | live-utxos      |
 | I                    | `(prevTxHash8, prevVout)`            | spends          |
 | J                    | `(spenderTxHash8, prevTxHash8, v)`   | spends          |
-| S / Z                | `scriptPubKey` then `height`         | outputs (all)   |
-| W                    | `(blockHash, txHash8, vout)`         | outputs (pre-cancel) |
+| S                    | `scriptPubKey` then `height`         | outputs (all)   |
+| Z                    | `scriptPubKey` then `height`         | outputs (all), first-seen blocks in the last undoBlocks only |
+| W                    | `(blockHash, txHash8, vout)`         | outputs (pre-cancel), last undoBlocks blocks only |
 | T                    | `txHash8`                            | meta (tx list)  |
 | B / N                | `blockHash`                          | meta (blocks)   |
 | LAST_BLOCK_{HEIGHT,HASH} | max height                       | meta (blocks)   |
 
 The `K` and `M` reorg-recovery reverse indices are skipped entirely. The `W`
-creation-block reverse index IS seeded (one record per output in the pre-cancellation
-outputs stream, matching where the live path calls `insertOutputBlock`; see the W.dat
-layout in `merger/derive_keys.js` and `validateWRecord` in `loader.js`). The design
+creation-block reverse index IS seeded (one record per pre-cancellation output created
+in the last `resolveUndoBlocks(network)` seeded blocks, i.e. height >= lastHeight -
+undoBlocks + 1, the same block set as the seeded `N` window, matching where the live
+path calls `insertOutputBlock`; outputs in older blocks get no W record; see the W.dat
+layout in `merger/derive_keys.js` and `validateWRecord` in `loader.js`). `Z` is windowed
+the same way (only scripts first seen inside that window get a Z record), while `S` has
+no window because it backs the live first-seen query. The window gives byte parity with
+a live tracker at the same tip: the reorg unwind cannot reach deeper, and the live
+tracker prunes W and Z as blocks age out (`removeCreatedOutputsBlockIndexOnly`,
+`removeOutputScriptsBlockIndexOnly`). A seeded DB's W and Z counts are therefore far
+smaller than the number of outputs ever created; that is expected, not a bug. The design
 relies on bulk-sync stopping at least `UNDO_BLOCKS` before the tip so the regular
 incremental worker builds W/K/M for every block inside the reorg window. The
 orchestrator enforces this: it clamps `--tip-safety` up to `resolveUndoBlocks(network)`
@@ -158,6 +167,19 @@ orchestrator enforces this: it clamps `--tip-safety` up to `resolveUndoBlocks(ne
 fall inside the active reorg window. If this invariant is broken (tip-safety below
 `UNDO_BLOCKS`), a reorg into the bulk range finds no K/M and leaves missing (spent,
 never-restored) UTXOs until a full re-index.
+
+**T value shape.** The live confirmed path writes, per tx, a `T` record whose value is
+`[blockHash(32)][fullTxid(32)]` (64 B) plus an exact-txid `X` (0x58) and a per-block
+recovery `Y` (0x59) record (`insertTransaction`). Bulk-sync writes no `X` or `Y`, and
+writes `T` only with `removeSpent=false` (not a parity seed; the orchestrator rejects
+`--no-remove-spent`), in the legacy `[blockHash(32)]` (32 B) shape, because the meta tx
+list carries only `txHash8`. That shape is safe today: every T reader decodes only the
+first 32 bytes, and a rollback with no `Y` record takes `deleteTxBlockRecord`'s blind
+T-delete fallback (pinned in `test/unit/tx_block_index.test.js`). The one binding rule:
+any change that seeds `Y` must widen `T` to 64 B in the same change, because with a `Y`
+present `deleteTxBlockRecord` clears `T` only when its value is at least 64 B and bytes
+32..64 match the recovered txid. `get_tx_block` therefore returns null for bulk-seeded
+history (README.md, Upgrading).
 
 An explicit `--to` is the one endpoint that clamp cannot cover: the orchestrator has not
 resolved a tip, so it has nothing to compare against. `dump.js` enforces the same

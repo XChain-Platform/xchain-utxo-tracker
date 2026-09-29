@@ -138,6 +138,8 @@ async function main() {
         // "window of 10" expectations independent of the per-chain default.
         network: 'bitcoin',
         undoBlocks: 10,
+        // Exercise the non-parity T/I/J emission on purpose (default is removeSpent=true).
+        removeSpent: false,
     })
 
     // Asserts: counts per prefix

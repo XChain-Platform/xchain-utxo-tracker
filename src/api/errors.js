@@ -10,7 +10,11 @@ const {
     isWrapperArchive,
     parseSha256Sidecar,
     hasRequiredLevelDbMembers,
-    parseDetachedSignature
+    parseDetachedSignature,
+    BOOTSTRAP_META_MEMBER,
+    trackerArchiveIdentity,
+    parseArchiveMeta,
+    compareArchiveIdentity
 } = require('../bootstrap/restore_validation.js')
 
 const logger = getLogger()
@@ -203,7 +207,9 @@ async function unwrapBootstrapArchive(source) {
 // Detached provenance signature published next to the archive, and the public key
 // this repo pins as the trust anchor. Mirrors xchain-node's BootstrapService: the
 // anchor travels with the CODE, not with the data server, so an attacker who controls
-// the bootstrap host still cannot mint an archive this tracker will restore.
+// the bootstrap host still cannot mint an archive this tracker will restore. One key signs
+// every coin/network, so moving a real archive for another combo here is refused by the
+// bootstrap.json identity gate below instead (legacy archives without the member still restore).
 const BOOTSTRAP_SIG_SUFFIX = '.sig'
 const DEFAULT_BOOTSTRAP_PUBKEY_PATH = path.join(__dirname, '..', 'config', 'bootstrap_signing_pubkey.pem')
 
@@ -278,6 +284,37 @@ async function assertLevelDbArchiveOrThrow(archivePath, reportedSource) {
             + `from inside that directory (tar -cf - -C <store> .).`)
 }
 
+// A metadata member bigger than this is not metadata (xchain-node's reader uses the same bound).
+const BOOTSTRAP_META_MAX_BYTES = 64 * 1024
+
+// Read the unwrapped wrapper's bootstrap.json, or null when it is absent, oversized,
+// unreadable, or not format 1 (an archive published before the member existed).
+function readUnwrappedArchiveMeta(tmpDir) {
+    const metaPath = findMemberByBasename(tmpDir, BOOTSTRAP_META_MEMBER)
+    try {
+        return (metaPath && fs.statSync(metaPath).size <= BOOTSTRAP_META_MAX_BYTES)
+            ? parseArchiveMeta(fs.readFileSync(metaPath, 'utf8')) : null
+    } catch (_) { return null }
+}
+
+// Identity gate, after provenance (so the metadata is authenticated) and before the wipe:
+// refuse a wrapper whose bootstrap.json names another module, coin or network, or a real
+// signed archive for another combo passes every gate and installs a foreign chain's store.
+function assertArchiveIdentityOrThrow(tmpDir, source, target) {
+    const identity = compareArchiveIdentity(readUnwrappedArchiveMeta(tmpDir), target)
+    const label = (id) => `${id.module || '?'} ${id.coin || '?'}/${id.network || '?'}`
+    if (identity.status === 'mismatch') {
+        const found = identity.mismatches.map(m => `${m.field} "${m.archive}"`).join(', ')
+        throw new Error(`Refusing to restore "${source}": its bootstrap.json declares ${found}, but this `
+            + `tracker is ${label(target)}. The archive belongs to another tracker; nothing was wiped.`)
+    }
+    // An archive or a target that does not name a field cannot be compared on it: say so, then restore as before.
+    if (identity.status === 'unchecked')
+        logger.warn(`Bootstrap archive identity not checked for ${identity.unchecked.join('/')} `
+            + `(archive or tracker NETWORK does not name it); restore target is ${label(target)}.`)
+    else logger.info(`Restore archive identity matches this tracker (${label(target)})`)
+}
+
 // Post-extraction ground truth: the store must be AT the database root, because that
 // is the only place ClassicLevel("/data/<DB_NAME>") will look for it. The pre-wipe
 // member gate predicts the same layout from the tar listing and refuses a nested store
@@ -307,20 +344,24 @@ function assertExtractedStoreOrThrow(destination) {
 
 // Validate a restore archive BEFORE the destructive /data wipe. Returns the effective
 // source to feed the pigz/tar pipeline plus an optional temp dir the caller must clean
-// up. Three gates, in trust order: provenance (a detached signature over the outer
+// up. Four gates, in trust order: provenance (a detached signature over the outer
 // archive, fail-closed unless BOOTSTRAP_RESTORE_ALLOW_UNSIGNED=1), integrity
 // (the BootstrapService wrapper layout is unwrapped and its inner payload
 // checksum-verified in place rather than refused; a single-layer archive
 // is verified against its published sha256 sidecar, with a missing sidecar
-// failing closed unless BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED=1), and content (the
-// effective archive really is a LevelDB store).
-async function validateBootstrapArchiveOrThrow(source) {
+// failing closed unless BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED=1), identity (a
+// wrapper's bootstrap.json must not name another module, coin or network), and
+// content (the effective archive really is a LevelDB store). `options.identity`
+// overrides the target derived from the configured NETWORK (tests use it).
+async function validateBootstrapArchiveOrThrow(source, options = {}) {
     await verifyBootstrapProvenanceOrThrow(source)
 
     const members = await listArchiveMembers(source, 10)
     if (isWrapperArchive(members)) {
         const unwrapped = await unwrapBootstrapArchive(source)
         try {
+            assertArchiveIdentityOrThrow(unwrapped.tmpDir, source,
+                options.identity || trackerArchiveIdentity(readRestoreOptions().network))
             await assertLevelDbArchiveOrThrow(unwrapped.effectiveSource, source)
         } catch (err) {
             // unwrapBootstrapArchive hands the temp dir to the caller once it returns, so

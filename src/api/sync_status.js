@@ -240,6 +240,20 @@ function addOperationalStatus(result, tracker, nodeHeightStale) {
 // it has shed; a climbing shed count is the only outward sign
 // that a distinct-IP stampede is being refused.
 
+// The gate-refusal keys the `health` answer carries (addOperationalStatus), for the
+// GET /status body. xchain-node's bootstrap gate falls back to /status when its
+// `health` POST is shed and refuses on either key, so a body without them passed a
+// desynced or node-blind tracker. /status makes no node RPC, so a stale node height
+// here is the connector's current outage or the loop's stale tip read. Present only
+// when true, as on `health`; never throws inside a probe.
+function statusRefusalFields(tracker, freshness, nodeRpcStale = false) {
+    const fields = {}
+    if (tracker && tracker.blockFetchDesync) fields.block_fetch_desync = tracker.blockFetchDesync
+    const nodeUnreachable = freshness && freshness.node_unreachable != null
+    if (nodeRpcStale === true || nodeUnreachable) fields.node_height_stale = true
+    return fields
+}
+
 // Lightweight Docker and uptime probe. It uses the cached node tip, so the
 // staleness check adds no node RPC load while still detecting lost progress.
 function registerStatusRoute({ app, tracker, probeGate, requestGate, getFreshnessMeta }) {
@@ -253,17 +267,19 @@ function registerStatusRoute({ app, tracker, probeGate, requestGate, getFreshnes
             // DB unreachable; fall through to 503
         }
         const freshness = await getFreshnessMeta(committedHeight)
+        const nodeRpcStale = isNodeRpcStale({ lastNodeRpcOkAt: tracker.lastNodeRpcOkAt })
+        // Same refusal keys as `health`, on both branches (statusRefusalFields above).
+        const refusal = statusRefusalFields(tracker, freshness, nodeRpcStale)
         if (tracker.halted) {
             res.status(503)
             return res.json({ status: 'halted', halt_reason: tracker.haltReason,
                 halted_at: tracker.haltedAt, halted_height: tracker.haltedHeight,
-                db: dbOk, committed_height: committedHeight, ...freshness })
+                db: dbOk, committed_height: committedHeight, ...freshness, ...refusal })
         }
-        const nodeRpcStale = isNodeRpcStale({ lastNodeRpcOkAt: tracker.lastNodeRpcOkAt })
         const status = !dbOk ? 'degraded' : (nodeRpcStale ? 'stalled' : 'ok')
         if (!dbOk || nodeRpcStale) res.status(503)
         const body = {
-            status, db: dbOk, committed_height: committedHeight, ...freshness,
+            status, db: dbOk, committed_height: committedHeight, ...freshness, ...refusal,
             request_gate: requestGate.getStats(), probe_gate: probeGate.getStats()
         }
         if (nodeRpcStale) {
@@ -282,5 +298,6 @@ module.exports = {
     nodeReachabilityFields,
     NODE_RPC_STALE_MS,
     get_sync_status,
+    statusRefusalFields,
     registerStatusRoute
 }

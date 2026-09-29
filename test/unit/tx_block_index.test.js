@@ -171,6 +171,29 @@ async function rejectsLegacyRecord() {
   expect(await db.getTxBlock(txHash)).to.be.null;
 }
 
+// Pin the no-Y rollback rule a bulk-sync seed relies on (bulk_sync/SPEC.md,
+// "T value shape"): a 32-byte T with no Y record is still cleared on rollback.
+async function deletesLegacyTRecordWithoutRecoveryOnRollback() {
+  const txHash = randHash();
+  const txHash8 = txHash.substring(0, 16);
+  const blockHash = randHash();
+
+  await db.insertBlock({ hash: blockHash, height: 5, timestamp: 1, previousHash: randHash() });
+  // Write only the T and W records a seed carries, never insertTransaction, so no X/Y exists.
+  await db.addTransaction('put', LevelUpStore.kTx(txHash8), LevelUpStore.encodeTx(blockHash));
+  await db.insertOutputBlock({ scriptPubKey: randHash(), txHash: txHash8, outputIndex: 0, blockHash });
+  await db.endTransaction(true);
+
+  expect(await db.getTransactions(txHash8)).to.have.lengthOf(1);
+
+  await db.beginTransaction();
+  const deletedCount = await db.deleteTransactionsInBlock(blockHash);
+  await db.endTransaction(true);
+
+  expect(deletedCount).to.equal(1);
+  expect(await db.getTransactions(txHash8)).to.be.an('array').that.is.empty;
+}
+
 async function reportsCommittedTip() {
   const txHash = randHash();
   const blockHash = randHash();
@@ -211,6 +234,7 @@ function registerTxBlockIndexTests() {
   it('returns null for a txid that was never indexed', rejectsUnknownTxid);
   it('returns null for a malformed txid instead of throwing', rejectsMalformedTxid);
   it('returns null for a legacy pre-migration record with no stored full txid', rejectsLegacyRecord);
+  it('deletes a 32-byte T record that has no Y recovery record on rollback', deletesLegacyTRecordWithoutRecoveryOnRollback);
   it('reports the store\'s own committed tip even when it is stale relative to the found tx', reportsCommittedTip);
   it('returns null when the tx\'s own block record no longer exists', rejectsMissingBlockRecord);
 }

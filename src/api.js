@@ -74,7 +74,9 @@ configureNodeRpcStaleMs(NODE_RPC_STALE_MS)
 configureRestoreOptions(() => ({
     bootstrapPubkey: process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY,
     allowUnsigned: process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED,
-    allowUnverified: process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED
+    allowUnverified: process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED,
+    // The restore identity gate compares a wrapper's bootstrap.json coin/network with this.
+    network: NETWORK
 }))
 
 // API key for admin JSON-RPC methods (DB bootstrap snapshot/restore and raw

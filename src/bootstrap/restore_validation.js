@@ -14,13 +14,17 @@
  *
  * XChain UTXO Tracker - restore archive validation (pure decision logic)
  *
- * The single-layer `restorebootstrap` flow (api.js decompressPigz) wipes /data
- * BEFORE it extracts, so an archive that fails its provenance signature, is the
- * wrong LAYOUT, fails its published checksum, or holds no LevelDB store at all
- * must be rejected up front or the live DB is destroyed and replaced with a
- * corrupt/empty/attacker-chosen store. These helpers are the pure decision core
- * (no fs / child_process) so they are unit-testable; api.js supplies the
- * member list, sidecar text, signature text, and computed digest.
+ * The `restorebootstrap` flow (api/compression.js decompressPigz) wipes /data
+ * BEFORE it extracts, so an archive that fails its provenance signature, fails
+ * its published checksum, names another module, coin or network in its
+ * bootstrap.json, or holds no LevelDB store at the archive root (none at all,
+ * or one nested under a subdirectory) must be rejected up front or the live DB
+ * is destroyed and replaced with a corrupt/empty/foreign/attacker-chosen store.
+ * The BootstrapService wrapper layout is NOT one of those: it is detected so it
+ * can be unwrapped and its inner payload checksum-verified, never refused.
+ * These helpers are the pure decision core (no fs / child_process) so they are
+ * unit-testable; api/errors.js supplies the member list, sidecar text,
+ * signature text, metadata text, and computed digest.
  *
  *********************************************************************/
 
@@ -36,9 +40,10 @@ const path = require('path');
 // genuine single-layer archive.
 const WRAPPER_MEMBER_NAMES = ['data.tar.gz', 'data.sha256'];
 
-// True when the archive's member list is the wrapper layout the single-layer
-// restore cannot unwrap. Basenames are compared so a leading `./` or path prefix
-// does not hide the signal.
+// True when the archive's member list is the BootstrapService wrapper layout, so
+// validateBootstrapArchiveOrThrow unwraps it and verifies the inner data.tar.gz
+// instead of treating the outer archive as a store. Basenames are compared so a
+// leading `./` or path prefix does not hide the signal.
 function isWrapperArchive(memberNames) {
     if (!Array.isArray(memberNames)) return false;
     for (const raw of memberNames) {
@@ -114,9 +119,64 @@ function parseDetachedSignature(text) {
     return sig.length === 64 ? sig : null;
 }
 
+// The identity member the publisher writes first in the wrapper, its only format,
+// and the module name every tracker bootstrap declares in it.
+const BOOTSTRAP_META_MEMBER = 'bootstrap.json';
+const BOOTSTRAP_META_FORMAT = 1;
+const TRACKER_MODULE = 'xchain-utxo-tracker';
+const ARCHIVE_IDENTITY_FIELDS = ['module', 'coin', 'network'];
+
+// Lowercased, trimmed identity value, or null when the field is absent or blank.
+function identityValue(value) {
+    if (typeof value !== 'string') return null;
+    const v = value.trim().toLowerCase();
+    return v === '' ? null : v;
+}
+
+// This tracker's restore target. xchain-node sets NETWORK to `<coin>-<net>` (for
+// example `bitcoin-mainnet`) and no COIN, so split at the LAST '-', which keeps a
+// hyphenated coin name whole; a value that does not split leaves coin/network null.
+function trackerArchiveIdentity(network) {
+    const n = identityValue(network) || '';
+    const i = n.lastIndexOf('-');
+    const splits = i > 0 && i < n.length - 1;
+    return { module: TRACKER_MODULE, coin: splits ? n.slice(0, i) : null, network: splits ? n.slice(i + 1) : null };
+}
+
+// Parse bootstrap.json text into { module, coin, network }. Null when the text is
+// absent, not JSON, or not format 1: an archive published before the member existed
+// reads as "identity unknown", never as an error.
+function parseArchiveMeta(text) {
+    if (typeof text !== 'string') return null;
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (_) { return null; }
+    if (!parsed || typeof parsed !== 'object' || parsed.format !== BOOTSTRAP_META_FORMAT) return null;
+    return { module: identityValue(parsed.module), coin: identityValue(parsed.coin), network: identityValue(parsed.network) };
+}
+
+// Compare an archive's declared identity with the restore target, case-insensitively.
+// Only a field present on BOTH sides that differs is a mismatch; a field either side
+// lacks is unchecked (legacy archives carry no member, converter-built ones null coin).
+function compareArchiveIdentity(meta, target) {
+    const mismatches = [];
+    const unchecked = [];
+    for (const field of ARCHIVE_IDENTITY_FIELDS) {
+        const archive = identityValue(meta && meta[field]);
+        const wanted = identityValue(target && target[field]);
+        if (archive === null || wanted === null) unchecked.push(field);
+        else if (archive !== wanted) mismatches.push({ field, archive, target: wanted });
+    }
+    const status = mismatches.length > 0 ? 'mismatch' : unchecked.length > 0 ? 'unchecked' : 'match';
+    return { status, mismatches, unchecked };
+}
+
 module.exports = {
     isWrapperArchive,
     parseSha256Sidecar,
     hasRequiredLevelDbMembers,
     parseDetachedSignature,
+    BOOTSTRAP_META_MEMBER,
+    trackerArchiveIdentity,
+    parseArchiveMeta,
+    compareArchiveIdentity,
 };

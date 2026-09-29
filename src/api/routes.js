@@ -384,14 +384,15 @@ function registerRoutes(context){
     // that fall through to this root-mounted router get a normal JSON-RPC error
     // response instead of crashing the request.
     app.use((req, res, next) => { if (req.body === undefined) req.body = {}; next(); });
-    // One wrap covers every JSON-RPC method, batches included: the router
-    // returns an async middleware whose promise settles only once every method
-    // it dispatched has finished and the response has been sent. The internal
-    // get_sync_status() call above still goes through the bare controller
-    // object, so an in-process call never touches gate accounting.
+    // One wrap covers every JSON-RPC method, batches included. The router does
+    // NOT await a batch entry without an id (a notification), so its promise can
+    // settle while that entry's read still runs. trackMethods() registers each
+    // method's promise with the gate, and hold() keeps the slot until all of
+    // them settle. The internal get_sync_status() call above still goes through
+    // the bare controller object, so an in-process call never touches gate accounting.
     const methods = context.jsonRpcMethods
         ? Object.assign({}, jsonRpcController, context.jsonRpcMethods)
         : jsonRpcController
-    app.use(requestGate.hold(jsonRouter({methods})))
+    app.use(requestGate.hold(jsonRouter({methods: requestGate.trackMethods(methods)})))
 }
 module.exports = { registerRoutes }

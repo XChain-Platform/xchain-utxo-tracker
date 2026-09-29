@@ -25,6 +25,9 @@
  *
  *   B.dat   33+40 =  73B  (key: 'B'+blockHash32;        val: heightBE(4)+tsBE(4)+prevHash32)
  *   T.dat    9+32 =  41B  (key: 'T'+txHash8(8);         val: blockHash32)
+ *                           Legacy 32B shape (live T is blockHash32+fullTxid32);
+ *                           removeSpent=false only. See SPEC.md "T value shape":
+ *                           T must widen to 64B in any change that seeds Y.
  *   I.dat   13+ 8 =  21B  (key: 'I'+prevTxHash8+voutBE; val: spenderTxHash8)
  *   O.dat   45+45 =  90B  (key: 'O'+script32+txHash8+voutBE;
  *                           val: valueBE(8)+heightBE(4)+fullTxHash32+coinbase(1))

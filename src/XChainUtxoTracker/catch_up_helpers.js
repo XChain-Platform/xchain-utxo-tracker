@@ -33,6 +33,30 @@ function satoshiToDecimalString(satoshis) {
 }
 
 
+// Whether this node's tip is worth parsing. Pure and exported so the policy is
+// testable without a loop or a node.
+
+// bitcoind derives verificationprogress from the WALL-CLOCK AGE of the tip
+// block, so on a chain mined on demand it decays toward 0 while the node stays
+// healthy. On regtest the premise fails, so the gate is dropped, not re-tuned.
+
+// Nothing replaces it there, and specifically not initialblockdownload:
+// nodeStillCatchingUp() reads that flag on the tip-BELOW-ours path, and
+// consuming it here would end the pass first and swallow the catch-up wait.
+
+// A regtest tracker genuinely behind its node is still reported: the synced
+// verdict comes from the two heights, and a node that cannot answer
+// getblockchaininfo at all still leaves lastNodeRpcOkAt unstamped below.
+
+// The `< MIN` comparison keeps its original form so an ABSENT field (an older
+// node, a trimmed proxy) still reads usable instead of inverting to a refusal.
+function nodeTipIsParseable(info, consensusNetwork){
+    if (!info) return false
+    if (consensusNetwork === 'regtest') return true
+    return !(info["verificationprogress"] < MIN_VERIFICATION_PROGRESS_TO_PARSE)
+}
+
+
 // Whether a getblockchaininfo reply says the node is still in initial block
 // download. The 0.99 progress gate above admits a node thousands of blocks
 // short of the tip, and while it is still catching up a node tip BELOW the
@@ -58,4 +82,4 @@ function catchUpWaitState(previous, nodeHeight, storedHeight){
     }
 }
 
-module.exports = { satoshiToDecimalString, nodeStillCatchingUp, catchUpWaitState }
+module.exports = { satoshiToDecimalString, nodeTipIsParseable, nodeStillCatchingUp, catchUpWaitState }

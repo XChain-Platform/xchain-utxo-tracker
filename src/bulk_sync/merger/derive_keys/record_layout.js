@@ -22,16 +22,12 @@ const fs   = require('fs')
 
 const { externalSort }         = require('../external_sort.js')
 
-const P_BLOCK      = 0x42 // 'B'
-const P_TX         = 0x54 // 'T'
-const P_INPUT      = 0x49 // 'I'
-const P_OUTPUT     = 0x4F // 'O'
-const P_OUT_HINT   = 0x48 // 'H'
-const P_IN_HINT    = 0x4A // 'J'
-const P_STORED_BLK = 0x4E // 'N'
-const P_SCRIPT_BLK = 0x53 // 'S'
-const P_OUT_BLK    = 0x57 // 'W' - creation-block reverse index for outputs
-const P_BLK_SCRIPT = 0x5A // 'Z'
+// Take the prefix bytes from the live store so a seeded DB can never carry a
+// prefix the live tracker does not read (LAYOUT is pinned by a parity test).
+const {
+    P_BLOCK, P_TX, P_INPUT, P_OUTPUT, P_OUT_HINT, P_IN_HINT,
+    P_STORED_BLK, P_SCRIPT_BLK, P_OUT_BLK, P_BLK_SCRIPT,
+} = require('../../../store/level_up_db/constants.js')
 
 // Legacy outputs record size. New dumps are 121 bytes (trailing coinbase flag);
 // callers pass opts.outputsRecordSize (read from the dump header) so both
@@ -41,7 +37,9 @@ const OUTPUTS_RECORD_SIZE_CB = 121
 const SPENDS_RECORD_SIZE  = 20
 const OUTPUTS_HEADER_SIZE = 64
 
-// Per-prefix (keySize, valueSize, recordSize).
+// Per-prefix (keySize, valueSize, recordSize). Each width must equal what the
+// live key_codec builder and value_codec encoder produce for that prefix; the
+// bulk-sync layout parity regression test fails when they drift.
 const LAYOUT = {
     B: { keySize: 33, valSize: 40, recordSize:  73 },
     T: { keySize:  9, valSize: 32, recordSize:  41 },

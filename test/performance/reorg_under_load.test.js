@@ -65,7 +65,7 @@ async function closeReorgTracker() {
   }
 }
 
-// Only test depths within UNDO_BLOCKS (10) and within lastBlocks range
+// Only test depths inside the bitcoin-regtest undo window (BTC_REGTEST in src/chain/undo_blocks.js) and lastBlocks range
 const depths = [1, 3, 5, 10];
 
 function addDepthTests(selectedDepths) {
@@ -75,7 +75,7 @@ function addDepthTests(selectedDepths) {
         tracker = await createTestTracker();
 
         // Process blocks individually so lastBlocks is populated correctly.
-        // Use exactly depth+5 blocks so all are within the undo window (max 10).
+        // Use exactly depth+5 blocks; the reorg depth (at most 10) stays inside the BTC_REGTEST undo window.
         const chainLength = depth + 5;
         const chain = buildDenseChain(chainLength, addressPool, Math.min(SCALE.txsPerBlock, 10));
 

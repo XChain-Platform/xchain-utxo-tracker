@@ -40,7 +40,10 @@
  *
  * Value layouts:
  *   B: [height(4)][timestamp(4)][previousHash(32)]                   = 40 B
- *   T: [blockHash(32)]                                                = 32 B
+ *   T: [blockHash(32)][fullTxid(32)]                                  = 64 B
+ *      (legacy and bulk-sync-seeded T values are [blockHash(32)] = 32 B;
+ *      insertTransaction also writes the file-local X/Y records, see
+ *      level_up_db/blocks_and_transactions.js)
  *   I: [txHash8(8)]                                                   =  8 B
  *   O: [value(8)][height(4)][fullTxHash(32)]{[coinbase(1)]}          = 44/45 B
  *   H: [scriptPubKey(32)]                                             = 32 B

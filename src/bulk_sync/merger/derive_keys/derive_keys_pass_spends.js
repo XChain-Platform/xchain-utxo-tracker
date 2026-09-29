@@ -37,10 +37,9 @@ async function deriveSpendKeys(ctx, stats) {
     // spends-by-prevtx.dat has no header, records = 20B, sorted by
     // (prevTxHash8, prevVout): matches I key order exactly.
     //
-    // Skipped entirely when removeSpent=true: the live tracker with
-    // REMOVE_SPENT=true never persists I/J records (spent outputs are
-    // deleted immediately after use), so emitting them here would just
-    // waste disk + time and produce records nobody reads.
+    // Skipped entirely when removeSpent=true (the default and only parity
+    // seed): the live confirmed path never persists I/J records. The explicit
+    // removeSpent=false branch below is NOT a parity seed (fixtures only).
     if (removeSpent) {
         stats.I = 0
         stats.J = 0

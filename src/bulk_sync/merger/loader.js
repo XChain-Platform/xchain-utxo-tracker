@@ -162,17 +162,18 @@ function readLastMarkers(keysDir) {
  * @param {string}  opts.keysDir      directory with B.dat..Z.dat + L.json
  * @param {string}  opts.dbPath       DB directory path (classic-level / LevelDB)
  * @param {number}  opts.batchSize    records per batch (default 10000)
- * @param {boolean} opts.removeSpent  skip T/I/J prefixes. Matches
- *                                     XChainUtxoTracker.REMOVE_SPENT: when
- *                                     true, live code never persists T/I/J so
- *                                     loading them wastes disk for records
- *                                     nobody reads. Default false.
+ * @param {boolean} opts.removeSpent  default true, the live-parity seed: skips
+ *                                     I/J (the live confirmed path never writes
+ *                                     them) and T (bulk-sync cannot yet emit the
+ *                                     live 64-byte T and its X/Y index; README
+ *                                     Upgrading). Explicit false loads 32-byte
+ *                                     T plus I/J, which is NOT a parity seed.
  * @param {Function} opts.onProgress  ({phase, ...})
  */
 async function loadKeys(opts) {
     const { keysDir, dbPath } = opts
     const batchSize   = opts.batchSize  || 10000
-    const removeSpent = Boolean(opts.removeSpent)
+    const removeSpent = opts.removeSpent !== false
     const onProgress  = opts.onProgress || noop
 
     if (!keysDir || !dbPath) {

@@ -85,6 +85,10 @@ function createRoutes(app, gate, probeGate, options){
     // that a request got past the gate instead of never having been dispatched.
     let expensiveEntered = 0;
     let heldEntered      = 0;
+    // Count the socket closes /held sees: the sync point for abort tests. One
+    // 'close' emit runs every listener synchronously, and the gate's was added in
+    // middleware before the abort, so a moved count means the gate has handled it.
+    let heldClosed       = 0;
 
     app.get('/expensive', async (req, res) => {
         expensiveEntered++;
@@ -97,6 +101,7 @@ function createRoutes(app, gate, probeGate, options){
     // held-slot assertions below, not a second flavour of the same route.
     const wrap = options.stubHold ? (fn) => fn : gate.hold;
     app.get('/held', wrap(async (req, res) => {
+        res.on('close', () => { heldClosed++; });
         heldEntered++;
         await held;
         res.json({ ok: true, ip: req.ip });
@@ -116,7 +121,8 @@ function createRoutes(app, gate, probeGate, options){
         release:      () => releaseHeld(),
         releaseProbe: () => releaseProbe(),
         entered:      () => expensiveEntered,
-        enteredHeld:  () => heldEntered
+        enteredHeld:  () => heldEntered,
+        closedHeld:   () => heldClosed
     };
 }
 

@@ -40,7 +40,9 @@ async function getTestBalance(mockTracker, address) {
   return utxos.reduce((total, utxo) => total + utxo.amount, 0);
 }
 
-function createTestApp(mockTracker, adminApiKey = '') {
+// Overrides replace config keys; their jsonRpcMethods add to the stub getbootstrap.
+function createTestApp(mockTracker, adminApiKey = '', overrides = {}) {
+  const { jsonRpcMethods: extraMethods, ...extraConfig } = overrides;
   return createApp({
     tracker: mockTracker,
     UTXO_TRACKER_API_KEY: adminApiKey,
@@ -62,8 +64,10 @@ function createTestApp(mockTracker, adminApiKey = '') {
       async getbootstrap() {
         if (mockTracker.onAdminExecuted) mockTracker.onAdminExecuted();
         return { task_id: 'stub' };
-      }
-    }
+      },
+      ...extraMethods
+    },
+    ...extraConfig
   });
 }
 
