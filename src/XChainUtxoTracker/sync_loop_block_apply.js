@@ -95,7 +95,7 @@ async function rollBackOnPrevHashMismatch(sync){
     // trigger, so leaving it at info is what makes a routine reorg
     // invisible to a warn+ filter.
     logger.warn("A reorg has been detected. Cleaning blocks...")
-    await this.verifyReorg()
+    await verifyReorgHandingBackTipRefusal.call(this, sync)
     sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
     sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
 
@@ -161,8 +161,15 @@ async function parseBlockTransactions(sync, transactions, nextBlockHash, nextBlo
     // order, matching bulk-sync.
     const blockOutputCounts = new Array(transactions.length)
     for (let txIdx = 0; txIdx < transactions.length; txIdx++) {
+        const tx = transactions[txIdx]
+        // parseTxOutputs only writes the T (txid->block) record when
+        // removeSpent is false, and REMOVE_SPENT is true on this path, so the
+        // exact-txid index is written here directly rather than by threading
+        // another flag through parseTxOutputs.
+        const txId = "id" in tx ? tx["id"] : tx.getId()
+        await this.db.insertTransaction({ hash: txId, blockHash: nextBlockHash })
         blockOutputCounts[txIdx] = await this.parseTxOutputs(
-            this.db, transactions[txIdx], nextBlockHash, nextBlockHeight, false, REMOVE_SPENT
+            this.db, tx, nextBlockHash, nextBlockHeight, false, REMOVE_SPENT
         )
     }
     sync._t.parseOut += Date.now() - _tParseOut
@@ -357,4 +364,20 @@ function resetBatchAfterReorg(sync){
     sync.blockTimestamps = []
 }
 
-module.exports = { indexNextBlock, resetBatchAfterReorg }
+// Runs a reorg walk begun without a node tip. The walk re-reads the tip when a
+// hash fetch fails, so it can now refuse a gap deeper than the undo window
+// (tagged tipBelowCommittedTip) before any further delete. That refusal is not
+// a crash: drop the cached tip so the next pass re-reads it and routes the gap
+// through rollBackToNodeTip, which waits on it, logs it once and latches it.
+async function verifyReorgHandingBackTipRefusal(sync){
+    try {
+        await this.verifyReorg()
+    } catch (err){
+        if (!(err && err.tipBelowCommittedTip)) throw err
+        logger.warn("Reorg walk stopped: the node's tip fell below the committed tip mid-walk, deeper than "
+            + "the undo window allows; handing it back to the node tip check.")
+        sync.lastBlockchainInfo = null
+    }
+}
+
+module.exports = { indexNextBlock, resetBatchAfterReorg, verifyReorgHandingBackTipRefusal }

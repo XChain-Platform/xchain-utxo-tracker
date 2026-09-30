@@ -120,7 +120,7 @@ describe('Security: global in-flight concurrency cap', function () {
         // 'close' let a client free its slot while its LevelDB scan was still
         // running: repeat the abort and the cap admits work it already counted
         // out. hold() binds the slot to the handler's promise instead.
-        const { server, gate, release, enteredHeld } = buildServer({ limit: 1 });
+        const { server, gate, release, enteredHeld, closedHeld } = buildServer({ limit: 1 });
         await listen(server);
 
         const controller = new AbortController();
@@ -130,13 +130,13 @@ describe('Security: global in-flight concurrency cap', function () {
 
         controller.abort();
         await aborted.catch(() => {});
-        // Deliberate delay, NOT a synchronization point: do not convert this to
-        // waitFor. The claim is that in_flight STAYS 1 across a window in which
-        // 'close' had every chance to fire and be ignored, so the elapsed time
-        // IS the measurement. A predicate on in_flight === 1 already holds on
-        // entry and would return on its first tick, asserting nothing; without
-        // the wrapper the slot is already back by the end of this window.
-        await new Promise(r => setTimeout(r, 50));
+        // Never poll on in_flight === 1 here: it already holds on entry, so the
+        // wait would return at once and assert nothing. Wait on the server seeing
+        // the socket close instead. That one emit also ran the gate's 'close'
+        // listener, so in_flight is read after the gate has handled the close
+        // and, with hold(), ignored it; without the wrapper the slot is already
+        // back by then (the negative control below proves it).
+        await waitFor(() => closedHeld() >= 1, "the server to see the client's socket close");
 
         expect(gate.getStats().in_flight).to.equal(1);
         // The behavioural half: the next caller is refused because the work the
@@ -160,7 +160,7 @@ describe('Security: global in-flight concurrency cap', function () {
         // The same scenario against a pass-through wrapper, which is exactly the
         // pre-fix gate. If this ever goes green the assertion above has stopped
         // measuring anything.
-        const { server, gate, enteredHeld } = buildServer({ limit: 1, stubHold: true });
+        const { server, gate, enteredHeld, closedHeld } = buildServer({ limit: 1, stubHold: true });
         await listen(server);
 
         const controller = new AbortController();
@@ -170,7 +170,12 @@ describe('Security: global in-flight concurrency cap', function () {
 
         controller.abort();
         await aborted.catch(() => {});
-        await waitFor(() => gate.getStats().in_flight === 0, 'the socket close to free the slot');
+        // Same sync point as the held-slot test above. The slot must already be
+        // free once the handler has seen the close; if not, the sync point no
+        // longer implies the gate handled it and that test has stopped measuring.
+        await waitFor(() => closedHeld() >= 1, "the server to see the client's socket close");
+        expect(gate.getStats().in_flight,
+            'the gate must have handled the close by the time the handler saw it').to.equal(0);
 
         // Over-admission: a second handler is running the same expensive work
         // the cap of 1 was meant to forbid. It is never awaited, because it parks

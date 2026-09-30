@@ -28,10 +28,15 @@
  *   multi-TB intermediate scratch the bulk-sync pipeline needs.
  *
  * Runtime requirements (needs BOTH backends loadable in one process):
- *   read  side : `rocksdb`        (use the pre-migration image's already-built
+ *   read  side : `rocksdb`        NOT a package.json dependency of this repo
+ *                                  (Node 22 has no prebuilt rocksdb binary, so
+ *                                  a plain `npm i rocksdb` here fails to build).
+ *                                  Use the pre-migration image's already-built
  *                                  binary AS-IS (do NOT run npm in that image,
  *                                  it would prune rocksdb and/or try to rebuild
- *                                  the native addon, which fails on Node 22)
+ *                                  the native addon, which fails on Node 22).
+ *                                  Only a pre-Node-22 image still carries a
+ *                                  working `npm i rocksdb` install of it.
  *   write side : `classic-level`  (supply via NODE_PATH pointing at a migrated
  *                                  image's node_modules, copied in, not installed)
  *   Recommended setup (sidecar, no npm in the rocksdb image):
@@ -93,7 +98,15 @@ function log(msg) { console.log(`[${ts()}] ${msg}`) }
 // the pre-migration image needs nothing added. Open read-mostly; we never write
 // to it. keyAsBuffer/valueAsBuffer on the iterator give raw Buffers -> exact bytes.
 function openRocks(dir) {
-    const rocksdb = require('rocksdb')
+    let rocksdb
+    try {
+        rocksdb = require('rocksdb')
+    } catch (err) {
+        fail("'rocksdb' is not installed (it is deliberately not a package.json " +
+            "dependency; Node 22 has no prebuilt binary for it). Run this script " +
+            "inside the pre-migration image's own node_modules, or on a pre-Node-22 " +
+            "image where `npm i rocksdb` still builds. Underlying error: " + (err && err.message))
+    }
     const db = rocksdb(dir)
     return new Promise((res, rej) =>
         db.open({ createIfMissing: false, errorIfExists: false }, e => e ? rej(e) : res(db)))

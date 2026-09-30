@@ -13,7 +13,6 @@
 const assert = require('assert')
 const fs = require('fs')
 const path = require('path')
-const suiteDir = path.dirname(__dirname)
 
 function registerSignalTests ({ crash, observability, lines, crashCount, fakeProc }) {
   it('an uncaught exception emits one CRASH record and exits non-zero', function () {
@@ -59,8 +58,6 @@ function registerSignalTests ({ crash, observability, lines, crashCount, fakePro
 }
 
 function registerCrashRecordTests ({ crash, lines, crashCount }) {
-  const __dirname = suiteDir
-
   // The polling loop and the bulk-sync boot end the process on their own, so
   // they take the same record shape rather than a bare stderr line.
   it('a terminated polling loop takes the CRASH shape, with its own kind', function () {

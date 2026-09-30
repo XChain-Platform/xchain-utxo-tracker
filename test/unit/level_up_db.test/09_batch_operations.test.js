@@ -29,16 +29,28 @@ function registerBatchOperationTests() {
   describe('batch operations', function () {
     it('beginTransaction resets the transaction map', async function () {
       await db.insertOutput({ scriptPubKey: randHash(), txHash: randHash8(), outputIndex: 0, value: BigInt(1), height: 1 });
+      expect(db.transactionArray.size).to.equal(1);
+
       await db.beginTransaction();
-      // After beginTransaction, the pending operations should be a fresh Map
+      expect(db.transactionArray).to.be.instanceOf(Map);
+      expect(db.transactionArray.size).to.equal(0);
+      expect(db.deletedTransactionArray).to.be.instanceOf(Map);
+      expect(db.deletedTransactionArray.size).to.equal(0);
+
       await db.endTransaction(true); // should not fail
+      expect(db.transactionArray).to.be.null;
+      expect(db.deletedTransactionArray).to.be.null;
     });
 
     it('endTransaction with batch=false discards pending writes', async function () {
       const scriptHash = randHash();
       await db.beginTransaction();
       await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash8(), outputIndex: 0, value: BigInt(999), height: 1 });
+      expect(db.transactionArray.size).to.equal(1);
+
       await db.endTransaction(false); // discard
+      expect(db.transactionArray).to.be.null;
+      expect(db.deletedTransactionArray).to.be.null;
 
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
       expect(outputs).to.be.empty;
@@ -46,7 +58,11 @@ function registerBatchOperationTests() {
 
     it('empty batch commits without error', async function () {
       await db.beginTransaction();
+      expect(db.transactionArray.size).to.equal(0);
+
       await db.endTransaction(true);
+      expect(db.transactionArray).to.be.null;
+      expect(db.deletedTransactionArray).to.be.null;
     });
   });
 }

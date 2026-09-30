@@ -16,10 +16,10 @@ const http = require('http');
 
 const {
     Registry, Counter, Gauge, Histogram, collectDefaultMetrics
-} = require('../../../src/observability/metrics.js');
+} = require('../../src/observability/metrics.js');
 const {
     installObservability, readObservabilityEnv, routeLabel
-} = require('../../../src/observability/index.js');
+} = require('../../src/observability/index.js');
 
 // A console-shaped sink so tests never write to the mocha output.
 function fakeConsole() {

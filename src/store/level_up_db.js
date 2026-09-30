@@ -40,7 +40,10 @@
  *
  * Value layouts:
  *   B: [height(4)][timestamp(4)][previousHash(32)]                   = 40 B
- *   T: [blockHash(32)]                                                = 32 B
+ *   T: [blockHash(32)][fullTxid(32)]                                  = 64 B
+ *      (legacy and bulk-sync-seeded T values are [blockHash(32)] = 32 B;
+ *      insertTransaction also writes the file-local X/Y records, see
+ *      level_up_db/blocks_and_transactions.js)
  *   I: [txHash8(8)]                                                   =  8 B
  *   O: [value(8)][height(4)][fullTxHash(32)]{[coinbase(1)]}          = 44/45 B
  *   H: [scriptPubKey(32)]                                             = 32 B
@@ -56,6 +59,29 @@ const loadPart = require
 const { AddressTooLargeError, InvalidCursorError } = require('./level_up_db/store_errors')
 const { encodeOutput, decodeOutput, encodeBlock, encodeTx, encodeInputVal, encodeOutHint } = require('./level_up_db/value_codec')
 const { kOutBlk, kOutputFromBuf, kOutDelFromBuf, kScriptBlkFromBuf, kBlkScriptFromBuf, kBlock, kTx, kScriptBlk, kBlkScript, kInput, kOutput, kOutHint, kInHint, kOutDel, kHintDel, kStoredBlk, rangeEnd } = require('./level_up_db/key_codec')
+
+// A class split into part modules has to put the moved methods back on its
+// prototype. Object.assign would do that as ENUMERABLE own properties, while
+// a method written in the class body is non-enumerable, so the split would
+// change what for...in over an instance, Object.keys of the prototype and a
+// spread of it return. installMethods defines each moved method with the
+// flags class syntax gives (writable, configurable, not enumerable), so a
+// split prototype reads the same as the original class. Byte-identical
+// private copy of the one exported from XChainUtxoTracker.js.
+function installMethods(target, ...sources) {
+    for (const source of sources) {
+        for (const key of Reflect.ownKeys(source)) {
+            if (!Object.prototype.propertyIsEnumerable.call(source, key)) continue
+            Object.defineProperty(target, key, {
+                value: source[key],
+                writable: true,
+                enumerable: false,
+                configurable: true,
+            })
+        }
+    }
+    return target
+}
 
 
 // Whole key of the halt marker: the one record that says this store was declared
@@ -154,7 +180,7 @@ class LevelUpStore {
 
 module.exports = LevelUpStore
 
-Object.assign(LevelUpStore.prototype,
+installMethods(LevelUpStore.prototype,
     loadPart('./level_up_db/store_lifecycle.js'),
     loadPart('./level_up_db/blocks_and_transactions.js'),
     loadPart('./level_up_db/inputs.js'),

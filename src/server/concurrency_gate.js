@@ -77,7 +77,8 @@ function createGateMiddleware(limit, retryAfter, skip, body, state, SLOT){
             released = true;
             state.inFlight--;
         };
-        const slot = { release, claimed: false };
+        // work: promises registered through track() that the slot must outlive.
+        const slot = { release, claimed: false, work: [] };
         req[SLOT] = slot;
 
         // 'finish' fires on a fully-sent response; 'close' on a client abort or
@@ -109,8 +110,12 @@ function createGateMiddleware(limit, retryAfter, skip, body, state, SLOT){
  * by a cap <= 0, or exempted by `skip`) is passed straight through, so
  * wrapping is safe on every route the gate may or may not have admitted.
  *
+ * The slot is also held until every promise registered through track() has
+ * settled, so work the handler started but did not await still counts. The
+ * response can therefore go out before the slot is freed; that is intended.
+ *
  * @param {function} handler Express handler or middleware.
- * @returns {function} The handler, holding its slot until it settles.
+ * @returns {function} The handler, holding its slot until it and its tracked work settle.
  */
 function createHold(handler, SLOT){
     return async function heldHandler(req, res, next){
@@ -120,9 +125,48 @@ function createHold(handler, SLOT){
         try {
             return await handler(req, res, next);
         } finally {
+            // Drain tracked work, including any registered while draining;
+            // allSettled keeps a failed read from escaping the hold.
+            while(slot.work.length) await Promise.allSettled(slot.work.splice(0));
             slot.release();
         }
     };
+}
+
+/**
+ * Register work on the request's slot so hold() keeps the slot until it settles.
+ *
+ * For work a handler starts but never awaits, such as the JSON-RPC router's
+ * id-less batch entries. A request with no slot under this gate passes through.
+ *
+ * @param {object}  req     The Express request the work belongs to.
+ * @param {Promise} promise The work.
+ * @returns {Promise} The same promise, unchanged.
+ */
+function trackWork(req, promise, SLOT){
+    const slot = req && req[SLOT];
+    if(slot) slot.work.push(promise);
+    return promise;
+}
+
+/**
+ * Copy a JSON-RPC method table so every call is tracked on its request's slot.
+ *
+ * Methods are called as fn(params, { req, res }), the express-json-rpc-router
+ * shape. The async wrapper turns a synchronous throw into a rejection, and
+ * `this` stays the original table, as the router would bind it.
+ *
+ * @param {object} methods Method name to handler.
+ * @returns {object} The same keys, each function wrapped.
+ */
+function trackMethodTable(methods, SLOT){
+    const tracked = {};
+    for(const [name, fn] of Object.entries(methods)){
+        tracked[name] = typeof fn === 'function'
+            ? (params, raw) => trackWork(raw && raw.req, (async () => fn.call(methods, params, raw))(), SLOT)
+            : fn;
+    }
+    return tracked;
 }
 
 /**
@@ -133,7 +177,7 @@ function createHold(handler, SLOT){
  * @param {number}   [options.retryAfter=1] Retry-After header value, seconds.
  * @param {function} [options.skip]      (req) => true to exempt a request from the cap.
  * @param {object|function} [options.body] 429 JSON body, or (req) => body.
- * @returns {function} Express middleware, with .getStats(), .limit and .hold() attached.
+ * @returns {function} Express middleware, with .getStats(), .limit, .hold(), .track() and .trackMethods() attached.
  */
 function createConcurrencyGate(options){
     options = options || {};
@@ -152,6 +196,8 @@ function createConcurrencyGate(options){
     const middleware = createGateMiddleware(limit, retryAfter, skip, body, state, SLOT);
 
     middleware.hold = (handler) => createHold(handler, SLOT);
+    middleware.track = (req, promise) => trackWork(req, promise, SLOT);
+    middleware.trackMethods = (methods) => trackMethodTable(methods, SLOT);
 
     middleware.limit    = limit;
     // Operational surface: a climbing `shed` is the signal that a stampede is

@@ -88,7 +88,7 @@ Run the no-external-services tiers before every commit; the README documents the
 - **Never use the em-dash character** in code, comments, or docs. Rewrite the sentence (a comma, colon, or parentheses) instead.
 - **Two trailing spaces** on consecutive bold-label markdown lines so CommonMark renders the line break instead of collapsing them.
 - **Balance correctness matters.** All amount arithmetic uses BigInt via `satoshiToDecimalString()`; never introduce floating-point into balance or UTXO calculations.
-- **Reorg safety matters.** The 10-block undo history and rollback path are load-bearing; changes there need integration test coverage.
+- **Reorg safety matters.** The undo history (sized per chain and per network by `DEFAULT_UNDO_BLOCKS` in [`src/chain/undo_blocks.js`](./src/chain/undo_blocks.js)) and rollback path are load-bearing; changes there need integration test coverage.
 
 ---
 

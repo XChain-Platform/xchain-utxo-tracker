@@ -37,7 +37,8 @@ function decodeBlock(buf) {
     }
 }
 
-// T value: [blockHash(32)] = 32 bytes
+// Encode the 32-byte blockHash that leads the T value (live T is this plus the
+// full txid, 64 bytes; legacy and bulk-seeded T is this alone) and forms the X value.
 function encodeTx(blockHashHex) {
     const hex = blockHashHex || ZERO_HASH
     if (hex.length !== 64) {

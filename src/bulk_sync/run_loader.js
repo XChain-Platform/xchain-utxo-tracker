@@ -35,6 +35,8 @@ if (!keysDir || !dbPath) {
 loadKeys({
     keysDir,
     dbPath,
+    // The orchestrator's default derive writes no T/I/J; loading those needs removeSpent.
+    removeSpent: true,
     onProgress(ev) {
         if (ev.phase === 'prefix-done') {
             console.log(`  ${ev.prefix}: ${ev.count} records (${ev.elapsed_ms}ms)`)

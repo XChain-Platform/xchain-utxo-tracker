@@ -194,3 +194,134 @@ describe('XChainUtxoTracker.verifyReorg node-tip-below-committed', function () {
     expect(queriedHeights.every((h) => h <= nodeTip)).to.equal(true);
   });
 });
+
+// Committed tip `top`; the node has heights <= nodeTip and agrees with us there.
+function buildTipDropTracker({ top = 105, nodeTip = 100, info, undoBlocks = 1000 } = {}) {
+  const tracker = new XChainUtxoTracker(
+    'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
+  );
+  tracker.undoBlocks = undoBlocks;
+  tracker.removeFromLastBlocks = async () => {};
+  tracker.lastBlocks = Array.from({ length: tracker.undoBlocks }, (_, i) => 'w' + i);
+  // A regression would retry forever: fail fast instead of hanging mocha.
+  let sleeps = 0;
+  tracker.sleep = async () => { if (++sleeps > 50) throw new Error('walk spun: sleep budget exhausted'); };
+  const state = { top, nodeTip, deleted: [], queried: [], infoCalls: 0 };
+  const heightOf = (hash) => parseInt(hash.replace('db', ''), 10);
+  tracker.connector = {
+    getBlockHash: async (h) => {
+      state.queried.push(h);
+      if (h > state.nodeTip) throw new Error('Block height out of range');
+      return 'db' + h;
+    },
+    getBlockchainInfo: async () => {
+      state.infoCalls++;
+      if (typeof info === 'function') return info(state);
+      return info || { blocks: state.nodeTip, initialblockdownload: false, verificationprogress: 1 };
+    }
+  };
+  tracker.db = {
+    getLastBlockHeight: async () => state.top,
+    getLastBlockHash: async () => 'db' + state.top,
+    getBlock: async (hash) => { const h = heightOf(hash); return { h, ph: 'db' + (h - 1) }; },
+    getLastBlock: async () => ({ hash: 'db' + state.top, height: state.top }),
+    beginTransaction: async () => {},
+    endTransaction: async () => {},
+    removeOutputScriptsInBlock: async () => {},
+    processDeletedOutputs: async () => {},
+    removeCreatedOutputsInBlock: async () => {},
+    deleteBlock: async (hash) => { const h = heightOf(hash); state.deleted.push(h); state.top = h - 1; },
+    setLastBlockHash: async () => {},
+    setLastBlockHeight: async () => {}
+  };
+  return { tracker, state };
+}
+
+// The node's tip can drop below the walk AFTER verifyReorg starts (node restart onto
+// a shorter chain, a second reorg), and two callers pass no tip at all. A failed hash
+// fetch must re-read the tip, or the walk asks for a height the node lacks forever.
+describe('XChainUtxoTracker.verifyReorg mid-walk tip refresh', function () {
+  this.timeout(0);
+
+  it('re-reads the tip when a no-tip walk cannot fetch a hash, then rolls back the orphaned heights', async function () {
+    const { tracker, state } = buildTipDropTracker();
+    expect(await tracker.verifyReorg()).to.equal(true);
+    expect(state.deleted).to.deep.equal([105, 104, 103, 102, 101]);
+    // Only the first failed fetch asks above the node tip; the rest are rolled back unasked.
+    expect(state.queried.filter((h) => h > 100)).to.deep.equal([105]);
+  });
+
+  it('lowers a tip the caller passed when it drops further mid-walk', async function () {
+    const { tracker, state } = buildTipDropTracker({ top: 105, nodeTip: 100 });
+    expect(await tracker.verifyReorg(103)).to.equal(true);
+    expect(state.deleted).to.deep.equal([105, 104, 103, 102, 101]);
+  });
+
+  it('refuses, tagged and before any delete, when the refreshed gap exceeds the undo window', async function () {
+    const { tracker, state } = buildTipDropTracker({ top: 105, nodeTip: 100, undoBlocks: 3 });
+    let err = null;
+    try { await tracker.verifyReorg(); } catch (e) { err = e; }
+    expect(err, 'expected the above-tip budget refusal').to.be.an('error');
+    expect(err.tipBelowCommittedTip).to.equal(true);
+    expect(state.deleted).to.deep.equal([]);
+  });
+
+  it('does not lower the tip on a node still in initial block download', async function () {
+    // The node reports IBD at 100 for a few reads, then catches up past our tip.
+    const { tracker, state } = buildTipDropTracker({
+      info: (s) => {
+        if (s.infoCalls >= 3) s.nodeTip = 110;
+        return { blocks: s.infoCalls >= 3 ? 110 : 100, initialblockdownload: s.infoCalls < 3, verificationprogress: 1 };
+      }
+    });
+    expect(await tracker.verifyReorg()).to.equal(true);
+    expect(state.deleted).to.deep.equal([]);
+  });
+
+  it('keeps sleeping and retrying when the tip cannot be read, as before', async function () {
+    let fetches = 0;
+    const { tracker, state } = buildTipDropTracker({ top: 105, nodeTip: 105 });
+    tracker.connector.getBlockHash = async (h) => { if (++fetches <= 3) throw new Error('ECONNREFUSED'); return 'db' + h; };
+    tracker.connector.getBlockchainInfo = async () => { throw new Error('ECONNREFUSED'); };
+    expect(await tracker.verifyReorg()).to.equal(true);
+    expect(state.deleted).to.deep.equal([]);
+    delete tracker.connector.getBlockchainInfo;
+    fetches = 0;
+    expect(await tracker.verifyReorg()).to.equal(true);
+  });
+});
+
+// The two callers that pass no tip must not let the walk's tagged refusal escape
+// start(): they hand it back to the sync loop's tip check and reset the batch.
+describe('no-tip reorg callers hand a tip refusal back to the tip check', function () {
+  const { verifyReorgHandingBackTipRefusal } = require('../../src/XChainUtxoTracker/sync_loop_block_apply.js');
+
+  it('swallows a tagged tipBelowCommittedTip and drops the cached tip', async function () {
+    const sync = { lastBlockchainInfo: { blocks: 100 } };
+    const tracker = { verifyReorg: async () => { const e = new Error('below'); e.tipBelowCommittedTip = true; throw e; } };
+    await verifyReorgHandingBackTipRefusal.call(tracker, sync);
+    expect(sync.lastBlockchainInfo).to.equal(null);
+  });
+
+  it('rethrows any other error unchanged', async function () {
+    const sync = { lastBlockchainInfo: { blocks: 100 } };
+    const boom = new Error('unrecoverable');
+    const tracker = { verifyReorg: async () => { throw boom; } };
+    let caught = null;
+    try { await verifyReorgHandingBackTipRefusal.call(tracker, sync); } catch (e) { caught = e; }
+    expect(caught).to.equal(boom);
+    expect(sync.lastBlockchainInfo).to.deep.equal({ blocks: 100 });
+  });
+
+  it('is what both no-tip call sites use', function () {
+    const fs = require('fs');
+    const path = require('path');
+    for (const f of ['sync_loop_block_apply.js', 'sync_loop_node_tip.js']) {
+      const src = fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker', f), 'utf8');
+      expect(src, f).to.match(/await verifyReorgHandingBackTipRefusal\.call\(this, sync\)/);
+      // Only the helper itself may run the bare no-tip walk.
+      const bare = (src.match(/await this\.verifyReorg\(\)/g) || []).length;
+      expect(bare, f).to.equal(f === 'sync_loop_block_apply.js' ? 1 : 0);
+    }
+  });
+});

@@ -19,40 +19,40 @@ only is what guarantees.
 
 FIRST WALK: 7 CANDIDATES, ALL FALSE
 -----------------------------------
-  src/bulk-sync/dump.js
-  src/bulk-sync/migrate_rocksdb_to_classiclevel.js
-  src/bulk-sync/orchestrator.js
-  src/bulk-sync/parse_worker.js
-  src/bulk-sync/run-loader.js
-  src/bulk-sync/spot-check.js
-  src/bulk-sync/validate-db.js
+  src/bulk_sync/dump.js
+  src/bulk_sync/migrate_rocksdb_to_classiclevel.js
+  src/bulk_sync/orchestrator.js
+  src/bulk_sync/parse_worker.js
+  src/bulk_sync/run_loader.js
+  src/bulk_sync/spot_check.js
+  src/bulk_sync/validate_db.js
 
-plus src/bufferutils.js, which read as test-only.
+plus src/chain/bufferutils.js, which read as test-only.
 
 WHY EACH SURVIVED
 -----------------
 The nine bulk-sync programs are the offline bootstrap pipeline, described in
-src/bulk-sync/SPEC.md. They are COMMANDS, not modules: an operator types them,
+src/bulk_sync/SPEC.md. They are COMMANDS, not modules: an operator types them,
 nothing in this repo requires them, and no npm script names them. Reading
 process.argv is what distinguishes them, and it is exact here: all nine read it
 and nothing else under src/ does.
 
 migrate_rocksdb_to_classiclevel.js has a second holder that no require walk
-reaches at all. src/bulk-sync/convert-bootstrap-to-classiclevel.sh runs it
+reaches at all. src/bulk_sync/convert-bootstrap-to-classiclevel.sh runs it
 through a variable whose DEFAULT carries the path:
 
-  MIGRATE_JS="${MIGRATE_JS:-<image path>/src/bulk-sync/migrate_rocksdb_to_classiclevel.js}"
+  MIGRATE_JS="${MIGRATE_JS:-<image path>/src/bulk_sync/migrate_rocksdb_to_classiclevel.js}"
   node "$MIGRATE_JS" --src "$WORK/rocksdb" --dst "$WORK/classic"
 
 so the token after `node` is a variable and the path is a string three lines
 away. It is the storage-engine migration for a live database.
 
-src/bufferutils.js is the sharpest case and the reason this sweep exists. It is
+src/chain/bufferutils.js is the sharpest case and the reason this sweep exists. It is
 required by NOTHING, in this repo or any other, and its own `require('./types')`
 cannot even resolve from where it sits. It is a patch PAYLOAD: the Dockerfile
 copies it over the bitcoinjs-lib module inside the image.
 
-  COPY ./src/bufferutils.js <image path>/node_modules/bitcoinjs-lib/src/bufferutils.js
+  COPY ./src/chain/bufferutils.js <image path>/node_modules/bitcoinjs-lib/src/bufferutils.js
 
 Deleting it would have left every image without the BigInt-safe reader and
 writer, and nothing in this repo would have gone red.
@@ -86,10 +86,10 @@ SIBLINGS THAT PIN A PATH IN THIS REPO
 Not deletions, but the same sweep answers it, and a rename breaks them exactly
 as a deletion would:
 
-  src/XChainUtxoTracker.js   xchain-encoder/src/XChainEncoder.js
-  src/bootstrap-recovery.js  xchain-node/src/services/BootstrapService.js
-  src/memoryBudget.js        xchain-node/src/services/MemoryLimitService.js
-  src/undo-blocks.js         xchain-decoder and xchain-e2e-test suites
-  src/CryptoNetworks.js      resolved by a COMPUTED path from an e2e suite that
-                             walks a list of four sibling repos, so no literal
-                             matcher sees it
+  src/XChainUtxoTracker.js         xchain-encoder/src/XChainEncoder.js
+  src/bootstrap/bootstrap_recovery.js  xchain-node/src/services/BootstrapService.js
+  src/store/memory_budget.js       xchain-node/src/services/MemoryLimitService.js
+  src/chain/undo_blocks.js         xchain-decoder and xchain-e2e-test suites
+  src/chain/crypto_networks.js     resolved by a COMPUTED path from an e2e suite that
+                                    walks a list of four sibling repos, so no literal
+                                    matcher sees it

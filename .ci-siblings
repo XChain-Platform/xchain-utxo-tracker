@@ -5,9 +5,9 @@
 # resolves with existsSync, calls this.skip(), and the gate still prints PASS,
 # so the run reports green having exercised none of them.
 #
-# ci-dispatch.sh ships each of these at its origin/master (falling back to local
-# HEAD) and REFUSES the push if one is not a checkout beside this repo, so a
-# declared sibling can never be silently absent.
+# ci-dispatch.sh ships each of these at its canonical origin head (falling back
+# to local HEAD) and REFUSES the push if one is not a checkout beside this repo,
+# so a declared sibling can never be silently absent.
 
 # Vendored coins-registry byte-identity and consensus-pin conformance
 # (drift-guards job).

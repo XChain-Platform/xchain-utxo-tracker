@@ -268,9 +268,12 @@ function deleteFilesInDirectorySync(directoryPath) {
             }
         }
     } catch (err) {
-        logger.info(err && err.stack ? err.stack : String(err))
-        throw new Error(`Error trying to delete the content of ${directoryPath}:`, err)
+        logger.error(err && err.stack ? err.stack : String(err))
+        // Carry the fs reason (EACCES, EBUSY...) in the message and as cause: Error's
+        // second argument is an options object, so passing err bare dropped it.
+        const reason = err && err.message ? err.message : String(err)
+        throw new Error(`Error trying to delete the content of ${directoryPath}: ${reason}`, { cause: err })
     }
 }
 
-module.exports = { compressDirPigz, decompressPigz, tasks }
+module.exports = { compressDirPigz, decompressPigz, deleteFilesInDirectorySync, tasks }

@@ -117,8 +117,13 @@ function parseArgs(argv) {
             case '--verify-merkle':    args.verifyMerkle = true;  break
             case '--no-verify-merkle': args.verifyMerkle = false; break
             case '--skip-parse':      args.skipParse   = true; break
+            // Accepted as a no-op: removeSpent=true is the only parity seed.
             case '--remove-spent':    args.removeSpent = true; break
-            case '--no-remove-spent': args.removeSpent = false; break
+            // Refuse the non-parity seed (T/I/J the live confirmed store never holds in that shape).
+            case '--no-remove-spent':
+                throw new Error('--no-remove-spent is not supported: it seeds 32-byte T plus I/J records ' +
+                    'the live confirmed store never writes (REMOVE_SPENT is fixed at true and confirmed ' +
+                    'blocks never write J), so the result is not a live-parity seed')
             default:
                 if (arg === '--help' || arg === '-h') {
                     printUsage()
@@ -168,8 +173,8 @@ Options:
                         --no-verify-merkle, since merkle implies chain)
   --no-verify-merkle    opt out of merkle verification
   --skip-parse          skip dump+parse phases (reuse existing .dat files)
-  --no-remove-spent     force emission of I/J prefixes (default: skip them
-                        to match XChainUtxoTracker.REMOVE_SPENT=true)
+  --no-remove-spent     rejected: it would build a non-parity seed (extra
+                        T/I/J records the live confirmed store never writes)
 
 Environment:
   NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD (coin node RPC)

@@ -325,11 +325,8 @@ function listen(app, tracker, trackerExited, config) {
     process.on('SIGINT', () => shutdown('SIGINT'))
 }
 
-async function startApi(config){
-    const tracker = new XChainUtxoTracker(
-        config.NETWORK, config.NODE_URL, config.NODE_PORT, config.NODE_USER,
-        config.NODE_PASSWORD, config.DB_NAME, config.AUX_POW)
-    const trackerExited = config.launchTracker(tracker)
+function createApp(config){
+    const tracker = config.tracker
     const app = express()
     installBaseMiddleware(app, config)
     const { probeGate, requestGate } = installConcurrencyGates(app, config)
@@ -339,15 +336,25 @@ async function startApi(config){
         app, tracker, probeGate, requestGate,
         getUtxos: (address, opts) => getUtxos(tracker, address, opts),
         getFirstSeen: (address) => getFirstSeen(tracker, address),
-        getBalance: (address) => getBalance(tracker, address),
+        getBalance: config.getBalance || ((address) => getBalance(tracker, address)),
         getInfo: (address) => getInfo(tracker, address),
         parsePageOpts: (query) => parsePageOpts(query, config.MAX_PAGE_LIMIT),
         getFreshnessMeta: (height) => getFreshnessMeta(tracker, height),
         setFreshnessHeaders: (res) => setFreshnessHeaders(tracker, res),
         DB_NAME: config.DB_NAME,
-        launchTracker: config.launchTracker
+        launchTracker: config.launchTracker,
+        jsonRpcMethods: config.jsonRpcMethods
     })
+    return app
+}
+
+async function startApi(config){
+    const tracker = new XChainUtxoTracker(
+        config.NETWORK, config.NODE_URL, config.NODE_PORT, config.NODE_USER,
+        config.NODE_PASSWORD, config.DB_NAME, config.AUX_POW)
+    const trackerExited = config.launchTracker(tracker)
+    const app = createApp({ ...config, tracker })
     listen(app, tracker, trackerExited, config)
 }
 
-module.exports = { startApi, resolveRateLimitRpm }
+module.exports = { createApp, startApi, resolveRateLimitRpm }

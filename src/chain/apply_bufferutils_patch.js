@@ -25,7 +25,7 @@
  * behavior as the patched file, making every runtime safe regardless of
  * whether the Dockerfile COPY happened.
  *
- * src/chain/bufferutils.js itself cannot be required here: its require('../types')
+ * src/chain/bufferutils.js itself cannot be required here: its require('./types')
  * only resolves once the file sits inside bitcoinjs-lib/src/. The overrides
  * below mirror that file exactly; change them together.
  *

@@ -37,6 +37,8 @@
 
 'use strict';
 
+const { envInt } = require('./env_int');
+
 // A flag is on for exactly the two spellings the old read sites accepted, so
 // FALSE, 0 and yes all stay off exactly as they did before.
 function flag(raw) {
@@ -77,6 +79,20 @@ module.exports = {
     // a bulk load; the default is eight times the engine's own.
     get LEVELDB_WRITE_BUFFER_BYTES() {
         return parseInt(process.env.LEVELDB_WRITE_BUFFER_BYTES ?? String(64 * 1024 * 1024), 10);
+    },
+
+    // Ceiling on the store's open file descriptors. Defaults match the engine's
+    // own (classic-level README), so an unset knob changes nothing; a working
+    // set larger than maxOpenFiles * maxFileSize churns descriptors instead of
+    // holding them open.
+    get LEVELDB_MAX_OPEN_FILES() {
+        return envInt('LEVELDB_MAX_OPEN_FILES', 1000, 1);
+    },
+
+    // Ceiling on a single on-disk table file's size, in bytes, before the store
+    // rolls to a new one. Defaults match the engine's own.
+    get LEVELDB_MAX_FILE_SIZE_BYTES() {
+        return envInt('LEVELDB_MAX_FILE_SIZE_BYTES', 2 * 1024 * 1024, 1);
     },
 
     // The next three are handed on RAW, as strings, because the module that

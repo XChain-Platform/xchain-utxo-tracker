@@ -19,32 +19,11 @@
 // Node's own util, under a second name: `util` is this repo's helper
 // module, and the logger folds a variadic console line through format().
 const nodeUtil = require('node:util')
-const { CHECK_BLOCK_DELAY_MS, MEMPOOL_INTERVAL, MIN_VERIFICATION_PROGRESS_TO_PARSE, P_PENDING_CLEANUP_KEY, logger } = require('./constants.js')
-const { nodeStillCatchingUp, catchUpWaitState } = require('./catch_up_helpers.js')
-const { indexNextBlock, resetBatchAfterReorg } = require('./sync_loop_block_apply.js')
-
-// Whether this node's tip is worth parsing. Pure and exported so the policy is
-// testable without a loop or a node.
-
-// bitcoind derives verificationprogress from the WALL-CLOCK AGE of the tip
-// block, so on a chain mined on demand it decays toward 0 while the node stays
-// healthy. On regtest the premise fails, so the gate is dropped, not re-tuned.
-
-// Nothing replaces it there, and specifically not initialblockdownload:
-// nodeStillCatchingUp() reads that flag on the tip-BELOW-ours path, and
-// consuming it here would end the pass first and swallow the catch-up wait.
-
-// A regtest tracker genuinely behind its node is still reported: the synced
-// verdict comes from the two heights, and a node that cannot answer
-// getblockchaininfo at all still leaves lastNodeRpcOkAt unstamped below.
-
-// The `< MIN` comparison keeps its original form so an ABSENT field (an older
-// node, a trimmed proxy) still reads usable instead of inverting to a refusal.
-function nodeTipIsParseable(info, consensusNetwork){
-    if (!info) return false
-    if (consensusNetwork === 'regtest') return true
-    return !(info["verificationprogress"] < MIN_VERIFICATION_PROGRESS_TO_PARSE)
-}
+const { CHECK_BLOCK_DELAY_MS, MEMPOOL_INTERVAL, P_PENDING_CLEANUP_KEY, logger } = require('./constants.js')
+// The tip parse gate lives in catch_up_helpers.js (a leaf module) so the reorg
+// walk can apply it without a require cycle; re-exported below for its callers.
+const { nodeStillCatchingUp, catchUpWaitState, nodeTipIsParseable } = require('./catch_up_helpers.js')
+const { indexNextBlock, resetBatchAfterReorg, verifyReorgHandingBackTipRefusal } = require('./sync_loop_block_apply.js')
 
 // Sync loop steps, called with the tracker as `this`; sync_loop.js says how.
 
@@ -305,7 +284,7 @@ async function rollBackSameHeightTipSwap(sync){
             Buffer.from(JSON.stringify(this.pendingKMCleanup)))
     }
     this.lastBlocks = await this.loadLastBlocksSortedByHeight()
-    await this.verifyReorg()
+    await verifyReorgHandingBackTipRefusal.call(this, sync)
     sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
     sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
     // Run the deferred K/M/W cleanup now (cleanupAgedBlocks skips any

@@ -19,6 +19,7 @@
 const nodeUtil = require('node:util')
 const { REMOVE_SPENT, logger } = require('./constants.js')
 const XChainUtxoTracker = require('../XChainUtxoTracker.js')
+const { nodeStillCatchingUp, nodeTipIsParseable } = require('./catch_up_helpers.js')
 
 // Returned by nodeBlockHashOrRetry once a failed hash fetch has been logged
 // and slept on, to send the walk round again.
@@ -31,6 +32,7 @@ module.exports = {
         let retryCount = 0
 
         const undoWindow = rollbackBudget.call(this)
+        const walk = { tip: nodeTipHeight }
 
         while (thereAreDifferences){
             let lastBlockIndex = await this.db.getLastBlockHeight()
@@ -43,18 +45,18 @@ module.exports = {
                 logRepairedPointer(lastBlockDb)
                 continue
             } else {
-                // If the caller passed the node's current tip height and our committed
-                // tip sits above it (node reset / reindex / invalidateblock regression),
-                // those blocks cannot exist on the node's chain. Delete them directly
-                // rather than asking the node for a hash at a height it no longer has
-                // (which would error and spin this loop). Once the walk reaches the node
-                // tip, the normal hash comparison below reconciles the common ancestor.
-                let aboveNodeTip = (nodeTipHeight !== null && lastBlockIndex > nodeTipHeight)
-                refuseAboveTipWalkPastBudget.call(this, aboveNodeTip, nodeTipHeight, lastBlockIndex, blocksDeleted, undoWindow.budget)
+                // If the walk knows the node's tip (walk.tip: the caller's reading, re-read
+                // after any failed hash fetch) and our committed tip sits above it (node reset /
+                // reindex / invalidateblock regression, before or during the walk), those blocks
+                // cannot exist on the node's chain: delete them directly rather than asking the
+                // node for a hash it no longer has (which would error and spin this loop). Once
+                // at the node tip, the normal hash comparison below reconciles the common ancestor.
+                let aboveNodeTip = (walk.tip !== null && lastBlockIndex > walk.tip)
+                refuseAboveTipWalkPastBudget.call(this, aboveNodeTip, walk.tip, lastBlockIndex, blocksDeleted, undoWindow.budget)
 
                 let blockHashFromNode = null
                 if (!aboveNodeTip){
-                    blockHashFromNode = await nodeBlockHashOrRetry.call(this, lastBlockIndex)
+                    blockHashFromNode = await nodeBlockHashOrRetry.call(this, lastBlockIndex, walk)
                     if (blockHashFromNode === RETRY_WALK) continue
                     logger.info("Last block hash from node is "+blockHashFromNode)
                 }
@@ -245,15 +247,40 @@ function refuseAboveTipWalkPastBudget(aboveNodeTip, nodeTipHeight, lastBlockInde
 }
 
 // Fetches the node's hash at the committed height. A failed fetch is logged
-// and slept on, and RETRY_WALK sends the walk round again.
-async function nodeBlockHashOrRetry(lastBlockIndex){
+// and slept on, `walk.tip` is re-read (refreshWalkTip below), and RETRY_WALK
+// sends the walk round again. No retry cap: an unreachable node keeps the walk
+// sleeping and retrying until it answers.
+async function nodeBlockHashOrRetry(lastBlockIndex, walk){
     try {
         return await this.connector.getBlockHash(lastBlockIndex)
     } catch (err){
         logger.error(nodeUtil.format('Error fetching block hash from node: ' + err.message, err))
         await this.sleep(3000)
+        walk.tip = await refreshWalkTip.call(this, walk.tip)
         return RETRY_WALK
     }
+}
+
+// Re-reads the node's tip after a failed hash fetch, the usual cause being a
+// tip that dropped below the walk (node restart onto a shorter chain, a second
+// reorg). Trusts the reading no more than the sync loop's tip check does: a
+// failed read, an unparseable tip or a node still in initial block download
+// keeps the current tip, so a catching-up node is waited on, never rolled back.
+async function refreshWalkTip(currentTip){
+    if (!this.connector || typeof this.connector.getBlockchainInfo !== 'function') return currentTip
+    let info
+    try {
+        info = await this.connector.getBlockchainInfo()
+    } catch (_){
+        return currentTip
+    }
+    if (!info || !Number.isInteger(info["blocks"])) return currentTip
+    if (!nodeTipIsParseable(info, this.consensusNetwork) || nodeStillCatchingUp(info)) return currentTip
+    if (info["blocks"] !== currentTip){
+        logger.warn("verifyReorg: the node's tip moved mid-walk (" + (currentTip === null ? "unknown" : currentTip)
+            + " -> " + info["blocks"] + "); heights above it are rolled back without asking the node.")
+    }
+    return info["blocks"]
 }
 
 function refuseRollbackPastWindow(undoWindow, lastBlockIndex, blocksDeleted){
@@ -297,6 +324,10 @@ async function rollBackTipBlock(lastBlockHash, lastBlock, retryCount){
             // in this block (just re-staged above) is removed, not revived.
             await this.db.removeCreatedOutputsInBlock(lastBlockHash)
         }
+        // deleteBlock also purges the T/X (exact txid->block) records for
+        // every tx created in lastBlockHash, giving insertTransaction's
+        // confirmed-chain writes rollback symmetry even when a tx created in
+        // a later, still-live block shares its 8-byte T prefix.
         await this.db.deleteBlock(lastBlockHash)
         await this.removeFromLastBlocks(lastBlockHash)
         await this.db.setLastBlockHash(lastBlock["ph"])

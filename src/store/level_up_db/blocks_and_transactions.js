@@ -13,9 +13,53 @@
  **********************************************************************/
 
 const bs = require("binary-search")
-const { P_TX } = require('./constants')
+const { P_TX, P_OUT_BLK, ZERO_HASH } = require('./constants')
 const { toMapKey, kBlock, kTx, h2b, b2h, pb, rangeEnd } = require('./key_codec')
 const { encodeBlock, decodeBlock, encodeTx, decodeTx } = require('./value_codec')
+
+const TXID_HEX_RE = /^[0-9a-f]{64}$/
+
+// Two private key families backing the exact full-txid index, kept local to
+// this file (not registered in key_codec.js/constants.js) since the T
+// keyspace's 8-byte prefix is shared by every other T consumer and cannot be
+// widened without touching them. 0x58 ('X') and 0x59 ('Y') are unused by every
+// k* family declared in level_up_db.js's schema doc.
+//
+// X: full-txid -> blockHash. Keyed on the whole 32-byte txid, so two txids
+// that share their 8-byte T-prefix never contend for the same slot the way T
+// itself does; this is what makes coexistence and rollback symmetry possible.
+const P_TX_EXACT = 0x58
+
+function kTxExact(txidHex) {
+    if (txidHex.length !== 64) {
+        throw new Error(`kTxExact expects a 64-hex (32-byte) txid, got ${txidHex.length} chars`)
+    }
+    const buf = Buffer.allocUnsafe(33)
+    buf[0] = P_TX_EXACT
+    buf.write(txidHex, 1, 'hex')
+    return buf
+}
+
+// Y: (blockHash, txHash8) -> full txid. Recovers exactly which txid a given
+// block created under a given 8-byte prefix, so a rollback can target that
+// tx's own X (and, if still current, T) record even after a later colliding
+// tx has overwritten the shared T slot. Scoped per-block (not just per
+// prefix) because the T slot's occupant can change out from under it.
+const P_TX_BLOCK_RECOVERY = 0x59
+
+function kTxBlockRecovery(blockHashHex, txHash8Hex) {
+    if (blockHashHex.length !== 64) {
+        throw new Error(`kTxBlockRecovery expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
+    }
+    if (txHash8Hex.length !== 16) {
+        throw new Error(`kTxBlockRecovery expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+    }
+    const buf = Buffer.allocUnsafe(41)
+    buf[0] = P_TX_BLOCK_RECOVERY
+    buf.write(blockHashHex, 1, 'hex')
+    buf.write(txHash8Hex, 33, 'hex')
+    return buf
+}
 
 module.exports = {
     // Returns the stored value for a key currently pending in transactionArray.
@@ -100,7 +144,12 @@ module.exports = {
         )
     },
 
+    // Also purges the T/X (exact txid->block) records for every tx created in
+    // blockHash: every production caller of deleteBlock is unwinding that
+    // block entirely, so a B deletion with no matching cleanup would leave
+    // getTxBlock resolving txids into a block that no longer exists.
     async deleteBlock(blockHash) {
+        await this.deleteTransactionsInBlock(blockHash)
         return await this.addTransaction("del", kBlock(blockHash), null)
     },
 
@@ -112,16 +161,130 @@ module.exports = {
 
     // Transaction (T prefix)
 
+    // T value: [blockHash(32)][fullTxid(32)] = 64 bytes. Kept for
+    // getTransactions/getTransaction and mempool tracking, which only ever
+    // need the 8-byte prefix; it stays a single slot per prefix and can be
+    // silently overwritten by a later colliding txid, same as before. The
+    // exact-match reader (getTxBlock) does not use it: it reads the X record
+    // below instead, which is collision-free because it is keyed on the full
+    // txid rather than an 8-byte prefix. The Y record lets a later rollback
+    // recover which exact txid this block indexed under a given prefix, even
+    // after a colliding tx has overwritten the T/X slot (see
+    // deleteTransactionsInBlock). Records written before the X/Y fields
+    // existed are the legacy T-only shape; getTxBlock treats those as
+    // unindexed since there is no X record to find (see README.md's
+    // Upgrading section for the re-index path).
     async insertTransaction(tx) {
-        return await this.addTransaction(
+        const txHash8 = tx.hash.substring(0, 16)
+        const blockHash = tx.blockHash || ZERO_HASH
+        await this.addTransaction(
             "put",
-            kTx(tx.hash.substring(0, 16)),
-            encodeTx(tx.blockHash)
+            kTx(txHash8),
+            Buffer.concat([encodeTx(tx.blockHash), h2b(tx.hash)])
         )
+        await this.addTransaction("put", kTxExact(tx.hash), encodeTx(tx.blockHash))
+        return await this.addTransaction("put", kTxBlockRecovery(blockHash, txHash8), h2b(tx.hash))
     },
 
+    // Deletes the T slot for an 8-byte prefix with no per-block context (mempool
+    // cleanup and mempool-eviction diffing, neither of which knows a blockHash).
+    // Best-effort on the X record: only cleaned up here when the caller happens
+    // to pass the full txid (mempool confirmation cleanup does); the ambiguous
+    // 8-byte-only callers leave any X record for a rolled-back or evicted
+    // mempool entry to be masked by getTxBlock's own getBlock() check rather
+    // than actively removed. deleteTransactionsInBlock (the confirmed-chain
+    // rollback path) does not call this: it uses the Y record instead so a
+    // collision cannot make it delete the wrong tx's data.
     async deleteTransaction(txid) {
+        if (typeof txid === 'string' && txid.length === 64) {
+            await this.addTransaction("del", kTxExact(txid.toLowerCase()), null)
+        }
         return await this.addTransaction("del", kTx(txid.substring(0, 16)), null)
+    },
+
+    // Deletes the T (exact txid->block) records for every transaction created
+    // in blockHash, via the W creation-block reverse index (every transaction
+    // has at least one output, so its txHash8 always appears there). Called
+    // from deleteBlock; kept as its own method (mirroring
+    // removeCreatedOutputsInBlock's separate W scan over the O/H records) so
+    // it stays independently testable.
+    async deleteTransactionsInBlock(blockHash) {
+        const prefixBuf = Buffer.concat([pb(P_OUT_BLK), h2b(blockHash)])
+        const options = {
+            gte: prefixBuf,
+            lte: rangeEnd(prefixBuf),
+            keys: true,
+            values: false
+        }
+
+        const seenTxHash8 = new Set()
+        for await (const [key] of this.db.iterator(options)) {
+            // W key: [W(1)][blockHash(32)][txHash8(8)][outputIndex(4)]
+            const txHash8Hex = b2h(key.slice(33, 41))
+            if (seenTxHash8.has(txHash8Hex)) continue
+            seenTxHash8.add(txHash8Hex)
+            await this.deleteTxBlockRecord(txHash8Hex, blockHash)
+        }
+
+        return seenTxHash8.size
+    },
+
+    // Reverses exactly what insertTransaction wrote for this (blockHash,
+    // txHash8) pair. Uses the Y record to recover the txid this block
+    // actually indexed under txHash8Hex, so a collision where a later block's
+    // tx has since taken over the shared T/X slot does not make this delete
+    // that other, still-live tx's data. Falls back to the pre-Y-record blind
+    // T delete for history indexed before this record existed (see README.md's
+    // Upgrading section).
+    async deleteTxBlockRecord(txHash8Hex, blockHash) {
+        const recoveryKey = kTxBlockRecovery(blockHash, txHash8Hex)
+        const recoveredTxid = await this.db.get(recoveryKey)
+
+        if (recoveredTxid === undefined) {
+            return await this.deleteTransaction(txHash8Hex)
+        }
+
+        const fullTxid = b2h(recoveredTxid)
+
+        // Only clear the T slot if it still belongs to this exact tx: a later
+        // colliding tx sharing this 8-byte prefix may have since overwritten
+        // it, and that tx has not itself been rolled back.
+        const tValue = await this.db.get(kTx(txHash8Hex))
+        if (tValue !== undefined && tValue.length >= 64 && b2h(tValue.slice(32, 64)) === fullTxid) {
+            await this.addTransaction("del", kTx(txHash8Hex), null)
+        }
+
+        await this.addTransaction("del", kTxExact(fullTxid), null)
+        return await this.addTransaction("del", recoveryKey, null)
+    },
+
+    // Exact full-txid to block lookup. Returns { block_hash, block_height, sync }
+    // or null: null on no record, on a legacy (pre-X-record) txid that cannot
+    // be found in the exact-match index, or when the record's block was
+    // itself rolled back. `sync` carries the store's own last-committed tip
+    // (independent of whether it agrees with this tx's block) so a caller can
+    // tell a fresh answer from one served while the tracker's own tip
+    // pointer is stale or behind.
+    async getTxBlock(txid) {
+        if (typeof txid !== 'string') return null
+        const txidLower = txid.toLowerCase()
+        if (!TXID_HEX_RE.test(txidLower)) return null
+
+        const buf = await this.db.get(kTxExact(txidLower))
+        if (buf === undefined) return null
+
+        const blockHashHex = decodeTx(buf).bh
+        const block = await this.getBlock(blockHashHex)
+        if (block === null) return null
+
+        return {
+            block_hash: blockHashHex,
+            block_height: block.h,
+            sync: {
+                committed_height: await this.getLastBlockHeight(),
+                committed_hash: await this.getLastBlockHash()
+            }
+        }
     },
 
     // Returns entries as { txid: "T"+txHash8Hex, block_hash: hex }

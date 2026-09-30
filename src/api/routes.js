@@ -52,7 +52,7 @@ function registerFirstSeenRoute(){
         try {
             const firstSeen = await getFirstSeen(address);
             await setFreshnessHeaders(res);
-            res.send(firstSeen);
+            res.json(firstSeen);
         } catch (err) {
             sendAddressError(res, err);
         }
@@ -228,6 +228,17 @@ const jsonRpcController = {
             if (info && typeof info === 'object') info.sync = await getFreshnessMeta()
             return info
         },
+        // Exact full-txid to block lookup, frozen shape: {block_hash, block_height,
+        // sync} or null (never an error object) for a well-formed but unknown/
+        // unindexed/rolled-back txid, matching get_first_seen's bare-value contract.
+        // A malformed txid is the one case that returns {error}, since that is a
+        // caller mistake rather than "not found".
+        async get_tx_block({txid}) {
+            if (typeof txid !== 'string' || !/^[0-9a-fA-F]{64}$/.test(txid)) {
+                return { error: "txid must be a 64-hex-character string" }
+            }
+            return await tracker.db.getTxBlock(txid)
+        },
         async get_input_from_key_pattern({pattern}) {
             if (typeof pattern !== 'string' || pattern.length < 32){
                 return {error: "pattern is too short"}
@@ -373,11 +384,15 @@ function registerRoutes(context){
     // that fall through to this root-mounted router get a normal JSON-RPC error
     // response instead of crashing the request.
     app.use((req, res, next) => { if (req.body === undefined) req.body = {}; next(); });
-    // One wrap covers every JSON-RPC method, batches included: the router
-    // returns an async middleware whose promise settles only once every method
-    // it dispatched has finished and the response has been sent. The internal
-    // get_sync_status() call above still goes through the bare controller
-    // object, so an in-process call never touches gate accounting.
-    app.use(requestGate.hold(jsonRouter({methods: jsonRpcController})))
+    // One wrap covers every JSON-RPC method, batches included. The router does
+    // NOT await a batch entry without an id (a notification), so its promise can
+    // settle while that entry's read still runs. trackMethods() registers each
+    // method's promise with the gate, and hold() keeps the slot until all of
+    // them settle. The internal get_sync_status() call above still goes through
+    // the bare controller object, so an in-process call never touches gate accounting.
+    const methods = context.jsonRpcMethods
+        ? Object.assign({}, jsonRpcController, context.jsonRpcMethods)
+        : jsonRpcController
+    app.use(requestGate.hold(jsonRouter({methods: requestGate.trackMethods(methods)})))
 }
 module.exports = { registerRoutes }

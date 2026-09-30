@@ -37,6 +37,12 @@ describe('coverage ratchet floors', () => {
     );
   });
 
+  it('measures every source file in both coverage scripts', () => {
+    for (const name of ['coverage', 'coverage:check']) {
+      assert.match(pkg.scripts[name], /(?:^|\s)--all(?:\s|$)/);
+    }
+  });
+
   it('enforces every declared floor, at the declared value', () => {
     const script = pkg.scripts['coverage:check'];
     for (const metric of ['lines', 'statements', 'branches', 'functions']) {
