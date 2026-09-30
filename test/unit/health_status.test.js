@@ -197,3 +197,47 @@ describe('sync verdict bounds', function () {
   });
 
 });
+
+// A monitor tells spent rollback depth from a refilling window only by comparing
+// undo_window_remaining against this mark, so it rides get_sync_status and health().
+describe('undo window watermark on get_sync_status', function () {
+  const { get_sync_status } = require('../../src/api/sync_status.js');
+
+  function stubTracker(undo) {
+    return {
+      db: { getLastBlockHeight: async () => 500 },
+      connector: { getBlockchainInfo: async () => ({ blocks: 500 }) },
+      isMempoolReconverged: () => true,
+      reorgCount: 0,
+      lastReorgDepth: 0,
+      ...undo
+    };
+  }
+
+  it('publishes the watermark beside the window it describes', async function () {
+    const res = await get_sync_status(stubTracker({ undoBlocks: 12, lastBlocks: ['a', 'b', 'c', 'd', 'e'], undoWindowWatermark: 7 }));
+    expect(res.undo_window_blocks).to.equal(12);
+    expect(res.undo_window_remaining).to.equal(5);
+    expect(res.undo_window_watermark).to.equal(7);
+  });
+
+  it('clamps a watermark deeper than the live window to undo_window_blocks', async function () {
+    const res = await get_sync_status(stubTracker({ undoBlocks: 12, lastBlocks: [], undoWindowWatermark: 120 }));
+    expect(res.undo_window_watermark).to.equal(12);
+  });
+
+  it('reads an absent or unusable watermark as 0, meaning unknown', async function () {
+    for (const undoWindowWatermark of [undefined, null, NaN, -3, 'deep']) {
+      const res = await get_sync_status(stubTracker({ undoBlocks: 12, lastBlocks: [], undoWindowWatermark }));
+      expect(res.undo_window_watermark, String(undoWindowWatermark)).to.equal(0);
+    }
+  });
+
+  it('never throws or publishes NaN when the undo inputs are missing', async function () {
+    const bare = await get_sync_status(stubTracker({}));
+    expect(bare.undo_window_watermark).to.equal(0);
+    const unclamped = await get_sync_status(stubTracker({ undoWindowWatermark: 9 }));
+    expect(unclamped.undo_window_watermark).to.equal(9);
+  });
+
+});

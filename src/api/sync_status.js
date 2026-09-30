@@ -67,6 +67,15 @@ function nodeReachabilityFields(tracker){
     }
 }
 
+// Publish the undo-window high-water mark clamped to undoBlocks, as boot and reorg math read it.
+// Returns 0 (unknown) for a missing or unusable mark and never throws, since health() spreads this.
+function undoWindowWatermarkField(tracker){
+    const mark = tracker ? tracker.undoWindowWatermark : undefined
+    if (typeof mark !== 'number' || !Number.isFinite(mark) || mark <= 0) return 0
+    const cap = tracker.undoBlocks
+    return (typeof cap === 'number' && Number.isFinite(cap)) ? Math.min(mark, cap) : mark
+}
+
 // Readiness contract: the tracker's height fields all report the LAST
 // COMMITTED state, not in-flight processing, since the tracker buffers up
 // to DB_TRANSACTION_BLOCKS_QUANTITY blocks before flushing via
@@ -130,6 +139,9 @@ function nodeReachabilityFields(tracker){
 // can no longer be walked onto the node's chain. reorg_count and
 // last_reorg_depth are in-memory lifetime counters and read zero after
 // that restart, so they cannot show this on their own.
+
+// Read spent depth as undo_window_remaining < min(undo_window_watermark, undo_window_blocks);
+// remaining == watermark < blocks is a window refilling after a bootstrap or a raise, and 0 is unknown.
 
 // Surface an unrecoverable block-fetch desync so a monitor can
 // name the fault. Set just before the polling loop fails loud on a node
@@ -201,6 +213,7 @@ function addOperationalStatus(result, tracker, nodeHeightStale) {
     result.node_unreachable = reach.node_unreachable
     result.undo_window_blocks = tracker.undoBlocks
     result.undo_window_remaining = Array.isArray(tracker.lastBlocks) ? tracker.lastBlocks.length : 0
+    result.undo_window_watermark = undoWindowWatermarkField(tracker)
     if (tracker.blockFetchDesync) result.block_fetch_desync = tracker.blockFetchDesync
     if (tracker.halted) {
         result.halted = true
@@ -302,6 +315,7 @@ module.exports = {
     isNodeRpcStale,
     deriveSyncedVerdict,
     nodeReachabilityFields,
+    undoWindowWatermarkField,
     NODE_RPC_STALE_MS,
     get_sync_status,
     statusRefusalFields,
