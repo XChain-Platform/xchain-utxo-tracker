@@ -25,11 +25,8 @@ function configureNodeRpcStaleMs(value) {
     NODE_RPC_STALE_MS = value
 }
 
-// True when the tracking loop has not read a usable node tip inside the window.
-// Deliberately NOT folded into deriveHealthStatus: that helper feeds the `health`
-// RPC, whose consumers own their own lag budget, while this gate belongs to the
-// GET /status liveness probe alone. An unset timestamp reads not-stale so a
-// process whose loop has not started yet is not 503ed before its first poll.
+// True when the loop has not read a usable node tip inside the window; an unset stamp reads not-stale.
+// Sets node_height_stale (so synced:false) on `health` and GET /status alike, never the status word.
 function isNodeRpcStale({ lastNodeRpcOkAt, now = Date.now(), windowMs = NODE_RPC_STALE_MS } = {}) {
     if (typeof lastNodeRpcOkAt !== 'number' || !Number.isFinite(lastNodeRpcOkAt)) return false
     return (now - lastNodeRpcOkAt) > windowMs
@@ -170,6 +167,10 @@ async function get_sync_status(tracker) {
         nodeHeightStale = true
     }
 
+    // Also stale when the loop's own tip read aged out: a live answer here cannot vouch for a stuck loop.
+    const loopStale = isNodeRpcStale({ lastNodeRpcOkAt: tracker.lastNodeRpcOkAt })
+    if (loopStale) nodeHeightStale = true
+
     const lag = (nodeHeight >= 0 && committedHeight >= 0) ? (nodeHeight - committedHeight) : null
     const result = {
         committed_height: committedHeight,
@@ -177,6 +178,10 @@ async function get_sync_status(tracker) {
         node_height: nodeHeight,
         lag,
         synced: deriveSyncedVerdict({ lag, nodeHeightStale })
+    }
+    if (loopStale) {
+        result.node_rpc_stale = true
+        result.stale_for_ms = Date.now() - tracker.lastNodeRpcOkAt
     }
     return addOperationalStatus(result, tracker, nodeHeightStale)
 }
@@ -244,8 +249,9 @@ function addOperationalStatus(result, tracker, nodeHeightStale) {
 // GET /status body. xchain-node's bootstrap gate falls back to /status when its
 // `health` POST is shed and refuses on either key, so a body without them passed a
 // desynced or node-blind tracker. /status makes no node RPC, so a stale node height
-// here is the connector's current outage or the loop's stale tip read. Present only
-// when true, as on `health`; never throws inside a probe.
+// here is the connector's current outage or the loop's stale tip read; `health` ORs
+// the same loop staleness with its own failed live read. Present only when true, as
+// on `health`; never throws inside a probe.
 function statusRefusalFields(tracker, freshness, nodeRpcStale = false) {
     const fields = {}
     if (tracker && tracker.blockFetchDesync) fields.block_fetch_desync = tracker.blockFetchDesync

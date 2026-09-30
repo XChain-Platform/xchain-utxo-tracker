@@ -147,6 +147,12 @@ for that stream:
 | T                    | `txHash8`                            | meta (tx list)  |
 | B / N                | `blockHash`                          | meta (blocks)   |
 | LAST_BLOCK_{HEIGHT,HASH} | max height                       | meta (blocks)   |
+| Q (0x51) undo-window watermark | seeded N window depth, decimal string, same batch as LAST_* | meta (blocks) |
+
+`Q` is seeded so a fresh seed carries the watermark a live tracker at the same tip holds;
+without it the first boot cannot tell a refilling window from an interrupted rollback. The
+live-only `P` (0x50) pending-cleanup key is a transient crash-recovery marker a store at
+rest never carries, so it is never seeded.
 
 The `K` and `M` reorg-recovery reverse indices are skipped entirely. The `W`
 creation-block reverse index IS seeded (one record per pre-cancellation output created

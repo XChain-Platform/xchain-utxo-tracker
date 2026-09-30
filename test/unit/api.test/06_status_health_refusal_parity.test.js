@@ -14,7 +14,7 @@ const { expect } = require('chai');
 const sinon = require('sinon');
 const supertest = require('supertest');
 const { createTestApp, createMockTracker } = require('./support/test_app');
-const { statusRefusalFields } = require('../../../src/api/sync_status.js');
+const { statusRefusalFields, NODE_RPC_STALE_MS } = require('../../../src/api/sync_status.js');
 
 // Every refusal key xchain-node's bootstrap gate reads off the JSON-RPC `health`
 // answer must also ride GET /status, because that route is the gate's fallback
@@ -27,11 +27,12 @@ const OUTAGE = { since: '2026-09-29T00:00:00.000Z', last_ok_at: '2026-09-29T00:0
 
 // A tracker the two surfaces read the same way: `nodeDown` fails the live tip
 // read `health` makes and marks the connector's cached reachability failing.
-function trackerIn({ desync = null, nodeDown = false, halted = false } = {}) {
+// `loopOkAt` sets the sync loop's last usable tip read (null: loop not started).
+function trackerIn({ desync = null, nodeDown = false, halted = false, loopOkAt = Date.now() } = {}) {
   const tracker = createMockTracker(sinon);
   Object.assign(tracker, {
     blockFetchDesync: desync,
-    lastNodeRpcOkAt: Date.now(),
+    lastNodeRpcOkAt: loopOkAt,
     reorgCount: 0,
     lastReorgDepth: 0,
     undoBlocks: 100,
@@ -92,6 +93,22 @@ describe('GET /status carries the same gate-refusal keys as health', function ()
       expect(health, `health ${key}`).to.not.have.property(key);
       expect(status, `/status ${key}`).to.not.have.property(key);
     }
+  });
+
+  it('marks health stale with the loop stuck even while its own live read succeeds', async function () {
+    const { health, status, statusCode } = await bothSurfaces(trackerIn({ loopOkAt: Date.now() - NODE_RPC_STALE_MS - 1000 }));
+    expect(statusCode).to.equal(503);
+    expect(status.node_height_stale).to.equal(true);
+    expect(health.node_height_stale).to.equal(true);
+    expect(health.node_rpc_stale).to.equal(true);
+    expect(health.synced).to.equal(false);
+    expect(health.lag).to.be.a('number');
+  });
+
+  it('leaves health unflagged before the loop has read its first tip', async function () {
+    const { health } = await bothSurfaces(trackerIn({ loopOkAt: null }));
+    expect(health).to.not.have.property('node_height_stale');
+    expect(health).to.not.have.property('node_rpc_stale');
   });
 
   it('marks the node height stale once the loop tip read itself has gone stale', function () {
