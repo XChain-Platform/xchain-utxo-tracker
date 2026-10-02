@@ -15,7 +15,7 @@
     "src/coins/index.js": "08b678d934fa647d3c7d14dc5ccdaeb86722ee32a3662de69e4a31cd7b09234c",
     "src/observability/README.md": "4f58f8e59d21121ddd794f68f1fe2a6318484c5c868b158a5b7311c9a0e1166a",
     "src/observability/index.js": "6d29637dc3a815d896076642823393866e4f74a68b59dc363ff1cd828aff422a",
-    "src/observability/logShipper.js": "7ee07789936ff2d769fe417b265007e4c2ea9a5d16b89a5d393cca2767298dd7",
+    "src/observability/logShipper.js": "fbb1e5b3f01229417117c718da24ee2d62fefd9740adbbec2a4e941a67dbd027",
     "src/observability/metrics.js": "b29a0f2855e0dc4d8d97dde22c36daa6ab0408391945eda1b47b47398c0cd261"
   }
 }
