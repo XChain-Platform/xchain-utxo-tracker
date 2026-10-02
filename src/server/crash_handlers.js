@@ -14,12 +14,13 @@
  *
  * XChain UTXO Tracker - process crash visibility
  *
- * The tracker has neither an uncaughtException nor an unhandledRejection
- * handler, so a throw outside the polling promise kills the process with node's
- * default stderr dump: no timestamp, no level, no service tag, nothing a
- * collector can key on. What an operator sees is a container that restarted,
- * which for this service is the shape of the crash loop that ran 5000+ times
- * before the unrecoverable-reorg halt landed.
+ * Without these handlers a throw outside the polling promise kills the process
+ * with node's default stderr dump: no timestamp, no level, no service tag,
+ * nothing a collector can key on, only a container that restarted.
+ *
+ * The two handlers differ on purpose. An uncaught exception logs and exits for
+ * a supervised restart. An unhandled rejection logs and CONTINUES: attaching
+ * the listener turns off node's default exit on an unhandled rejection.
  *
  * noteCrash covers the two paths that end the process on their own: the polling
  * loop's rejection handler and the bulk-sync boot chain. Both take the same
@@ -83,6 +84,9 @@ function installCrashHandlers({ proc = process, exitOnUncaught = true } = {}) {
     if (exitOnUncaught) proc.exit(1)
   })
 
+  // Keep serving after logging: this listener disables node's default exit, and
+  // a stray promise does not by itself corrupt shared state (pinned by
+  // test/helpers/crash_handler_registration.js).
   proc.on('unhandledRejection', (reason) => {
     const err = reason instanceof Error ? reason : new Error(String(reason))
     noteCrash('unhandledRejection', err)
