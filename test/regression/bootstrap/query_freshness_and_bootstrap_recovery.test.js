@@ -93,7 +93,20 @@ describe('computeFreshness', function () {
     expect(behind.synced).to.equal(true);
     expect(behind.mempool_ready).to.equal(true);
   });
+});
 
+describe('computeFreshness', function () {
+  // A node outage freezes the cached tip, so lag reads 0 and the latch stays up; the
+  // stale floor is what keeps this sibling from reading synced beside get_sync_status.
+  it('floors both verdicts when the node tip read has gone stale', function () {
+    const stale = XChainUtxoTracker.computeFreshness(10, 10, true, { mempoolReconverged: true, nodeHeightStale: true });
+    expect(stale).to.include({ lag: 0, synced: false, mempool_ready: false });
+    const fresh = XChainUtxoTracker.computeFreshness(10, 10, true, { mempoolReconverged: true, nodeHeightStale: false });
+    expect(fresh).to.include({ lag: 0, synced: true, mempool_ready: true });
+  });
+});
+
+describe('computeFreshness', function () {
   // The halt marker rides the per-query sibling, so a consumer learns the
   // store is frozen without a second get_sync_status round-trip. Present only when
   // halted, so its presence is itself the signal.
@@ -119,6 +132,7 @@ describe('computeFreshness', function () {
     expect(body).to.match(/mempoolReconverged:\s*tracker\.isMempoolReconverged\(\)/);
     expect(body).to.match(/halted:\s*!!tracker\.halted/);
     expect(body).to.match(/haltReason:\s*tracker\.haltReason/);
+    expect(body).to.match(/nodeHeightStale:\s*isNodeRpcStale\(\{ lastNodeRpcOkAt: tracker\.lastNodeRpcOkAt \}\)/);
   });
 });
 

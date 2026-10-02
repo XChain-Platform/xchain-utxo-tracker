@@ -116,3 +116,31 @@ describe('GET /status carries the same gate-refusal keys as health', function ()
     expect(statusRefusalFields(undefined, undefined)).to.deep.equal({});
   });
 });
+
+// The per-query freshness sibling (get_utxos' sync, GET /status's synced, the REST
+// X-Synced and X-Mempool-Ready headers) floors on the same stale loop tip read health
+// does, so no surface reads synced while health says the node height is stale.
+describe('per-query freshness agrees with health on a stale loop tip read', function () {
+  afterEach(function () { sinon.restore(); });
+
+  async function freshnessSurfaces(tracker) {
+    tracker.getUtxosAddress.resolves([]);
+    const { health, status } = await bothSurfaces(tracker);
+    const rest = await supertest(createTestApp(tracker)).get('/utxos/address').expect(200);
+    return { health, status, rest: rest.headers };
+  }
+
+  it('reads synced on every surface for a healthy tracker', async function () {
+    const { health, status, rest } = await freshnessSurfaces(trackerIn());
+    expect(health.synced).to.equal(true);
+    expect(status).to.include({ synced: true, mempool_ready: true });
+    expect(rest).to.include({ 'x-sync-lag': '0', 'x-synced': 'true', 'x-mempool-ready': 'true' });
+  });
+
+  it('floors synced and mempool_ready on every surface once the loop tip read goes stale', async function () {
+    const { health, status, rest } = await freshnessSurfaces(trackerIn({ loopOkAt: Date.now() - NODE_RPC_STALE_MS - 1000 }));
+    expect(health.synced).to.equal(false);
+    expect(status).to.include({ lag: 0, synced: false, mempool_ready: false });
+    expect(rest).to.include({ 'x-sync-lag': '0', 'x-synced': 'false', 'x-mempool-ready': 'false' });
+  });
+});
