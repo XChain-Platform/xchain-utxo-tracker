@@ -28,6 +28,10 @@
  * bytes), value = hex-string / hash-string bytes. These keys are NOT in any
  * .dat file; they are read from L.json.
  *
+ * The same final batch writes the undo-window watermark Q (0x51) as the
+ * seeded N window depth, the value a live tracker at the same tip holds, so
+ * the first boot reads a refilling window as refilling, not as a rollback.
+ *
  ********************************************************************/
 
 const fs   = require('fs')
@@ -36,6 +40,7 @@ const path = require('path')
 const { LAYOUT }       = require('./derive_keys.js')
 const { RecordReader } = require('./streaming_join.js')
 const { encodeOutput, kOutBlk } = require('../../store/level_up_db.js')
+const { Q_UNDO_WATERMARK_KEY } = require('../../XChainUtxoTracker/constants.js')
 const { ClassicLevel } = require('classic-level')
 
 // The intermediate O.dat value is fixed-width (value8 + height4 + fullTxHash32 +
@@ -157,6 +162,22 @@ function readLastMarkers(keysDir) {
     return L
 }
 
+// Write the LAST_* markers and the Q watermark in one last batch, after every prefix.
+async function writeFinalMarkers(db, keysDir, stats) {
+    const L = readLastMarkers(keysDir)
+    // DB is opened with buffer encodings; store the string metadata keys
+    // and values as their UTF-8 byte Buffers (matches LevelUpDb.js).
+    const finalOps = [
+        { type: 'put', key: Buffer.from('LAST_BLOCK_HEIGHT'), value: Buffer.from(L.LAST_BLOCK_HEIGHT) },
+        { type: 'put', key: Buffer.from('LAST_BLOCK_HASH'),   value: Buffer.from(L.LAST_BLOCK_HASH)   },
+    ]
+    // Write Q only for a non-empty window, as the live tracker does (derive caps N at undoBlocks).
+    if (stats.N > 0) finalOps.push({ type: 'put', key: Q_UNDO_WATERMARK_KEY, value: Buffer.from(String(stats.N)) })
+    await db.batch(finalOps)
+    stats.L = 2
+    stats.Q = stats.N > 0 ? 1 : 0
+}
+
 /**
  * @param {Object}  opts
  * @param {string}  opts.keysDir      directory with B.dat..Z.dat + L.json
@@ -211,14 +232,7 @@ async function loadKeys(opts) {
             recordPrefixLoaded(stats, onProgress, pfx, count, startedAt)
         }
 
-        const L = readLastMarkers(keysDir)
-        // DB is opened with buffer encodings; store the string metadata keys
-        // and values as their UTF-8 byte Buffers (matches LevelUpDb.js).
-        await db.batch([
-            { type: 'put', key: Buffer.from('LAST_BLOCK_HEIGHT'), value: Buffer.from(L.LAST_BLOCK_HEIGHT) },
-            { type: 'put', key: Buffer.from('LAST_BLOCK_HASH'),   value: Buffer.from(L.LAST_BLOCK_HASH)   },
-        ])
-        stats.L = 2
+        await writeFinalMarkers(db, keysDir, stats)
     } finally {
         await db.close()
     }

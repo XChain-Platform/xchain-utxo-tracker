@@ -25,11 +25,8 @@ function configureNodeRpcStaleMs(value) {
     NODE_RPC_STALE_MS = value
 }
 
-// True when the tracking loop has not read a usable node tip inside the window.
-// Deliberately NOT folded into deriveHealthStatus: that helper feeds the `health`
-// RPC, whose consumers own their own lag budget, while this gate belongs to the
-// GET /status liveness probe alone. An unset timestamp reads not-stale so a
-// process whose loop has not started yet is not 503ed before its first poll.
+// True when the loop has not read a usable node tip inside the window; an unset stamp reads not-stale.
+// Sets node_height_stale (so synced:false) on `health` and GET /status alike, never the status word.
 function isNodeRpcStale({ lastNodeRpcOkAt, now = Date.now(), windowMs = NODE_RPC_STALE_MS } = {}) {
     if (typeof lastNodeRpcOkAt !== 'number' || !Number.isFinite(lastNodeRpcOkAt)) return false
     return (now - lastNodeRpcOkAt) > windowMs
@@ -68,6 +65,15 @@ function nodeReachabilityFields(tracker){
     } catch (e) {
         return { node_last_ok_at: null, node_unreachable: null }
     }
+}
+
+// Publish the undo-window high-water mark clamped to undoBlocks, as boot and reorg math read it.
+// Returns 0 (unknown) for a missing or unusable mark and never throws, since health() spreads this.
+function undoWindowWatermarkField(tracker){
+    const mark = tracker ? tracker.undoWindowWatermark : undefined
+    if (typeof mark !== 'number' || !Number.isFinite(mark) || mark <= 0) return 0
+    const cap = tracker.undoBlocks
+    return (typeof cap === 'number' && Number.isFinite(cap)) ? Math.min(mark, cap) : mark
 }
 
 // Readiness contract: the tracker's height fields all report the LAST
@@ -134,6 +140,9 @@ function nodeReachabilityFields(tracker){
 // last_reorg_depth are in-memory lifetime counters and read zero after
 // that restart, so they cannot show this on their own.
 
+// Read spent depth as undo_window_remaining < min(undo_window_watermark, undo_window_blocks);
+// remaining == watermark < blocks is a window refilling after a bootstrap or a raise, and 0 is unknown.
+
 // Surface an unrecoverable block-fetch desync so a monitor can
 // name the fault. Set just before the polling loop fails loud on a node
 // pruned past our cursor; visible in the brief window before exit.
@@ -170,6 +179,10 @@ async function get_sync_status(tracker) {
         nodeHeightStale = true
     }
 
+    // Also stale when the loop's own tip read aged out: a live answer here cannot vouch for a stuck loop.
+    const loopStale = isNodeRpcStale({ lastNodeRpcOkAt: tracker.lastNodeRpcOkAt })
+    if (loopStale) nodeHeightStale = true
+
     const lag = (nodeHeight >= 0 && committedHeight >= 0) ? (nodeHeight - committedHeight) : null
     const result = {
         committed_height: committedHeight,
@@ -177,6 +190,10 @@ async function get_sync_status(tracker) {
         node_height: nodeHeight,
         lag,
         synced: deriveSyncedVerdict({ lag, nodeHeightStale })
+    }
+    if (loopStale) {
+        result.node_rpc_stale = true
+        result.stale_for_ms = Date.now() - tracker.lastNodeRpcOkAt
     }
     return addOperationalStatus(result, tracker, nodeHeightStale)
 }
@@ -196,6 +213,7 @@ function addOperationalStatus(result, tracker, nodeHeightStale) {
     result.node_unreachable = reach.node_unreachable
     result.undo_window_blocks = tracker.undoBlocks
     result.undo_window_remaining = Array.isArray(tracker.lastBlocks) ? tracker.lastBlocks.length : 0
+    result.undo_window_watermark = undoWindowWatermarkField(tracker)
     if (tracker.blockFetchDesync) result.block_fetch_desync = tracker.blockFetchDesync
     if (tracker.halted) {
         result.halted = true
@@ -244,8 +262,9 @@ function addOperationalStatus(result, tracker, nodeHeightStale) {
 // GET /status body. xchain-node's bootstrap gate falls back to /status when its
 // `health` POST is shed and refuses on either key, so a body without them passed a
 // desynced or node-blind tracker. /status makes no node RPC, so a stale node height
-// here is the connector's current outage or the loop's stale tip read. Present only
-// when true, as on `health`; never throws inside a probe.
+// here is the connector's current outage or the loop's stale tip read; `health` ORs
+// the same loop staleness with its own failed live read. Present only when true, as
+// on `health`; never throws inside a probe.
 function statusRefusalFields(tracker, freshness, nodeRpcStale = false) {
     const fields = {}
     if (tracker && tracker.blockFetchDesync) fields.block_fetch_desync = tracker.blockFetchDesync
@@ -296,6 +315,7 @@ module.exports = {
     isNodeRpcStale,
     deriveSyncedVerdict,
     nodeReachabilityFields,
+    undoWindowWatermarkField,
     NODE_RPC_STALE_MS,
     get_sync_status,
     statusRefusalFields,

@@ -13,7 +13,7 @@ const concurrencyGate = require('../server/concurrency_gate.js')
 const { parseCorsOrigin } = require('../server/cors_origin.js')
 const { intKnob } = require('../config/env_int')
 const memoryBudget = require('../store/memory_budget')
-const { nodeReachabilityFields } = require('./sync_status.js')
+const { nodeReachabilityFields, isNodeRpcStale } = require('./sync_status.js')
 const { registerRoutes } = require('./routes.js')
 const logger = getLogger()
 
@@ -123,7 +123,8 @@ async function getFreshnessMeta(tracker, knownCommittedHeight){
         halted: !!tracker.halted,
         haltReason: tracker.haltReason,
         haltedAt: tracker.haltedAt,
-        haltedHeight: tracker.haltedHeight
+        haltedHeight: tracker.haltedHeight,
+        nodeHeightStale: isNodeRpcStale({ lastNodeRpcOkAt: tracker.lastNodeRpcOkAt })
     })
     freshness.node_catching_up = (tracker && tracker.nodeCatchingUp) || null
     const reach = nodeReachabilityFields(tracker)

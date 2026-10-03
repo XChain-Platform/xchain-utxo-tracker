@@ -17,6 +17,82 @@ const { logger } = require('./constants');
 const { nodeReachabilityFrom, sanitizeRpcError } = require('./rpc_helpers');
 const { envInt } = require('../../config/env_int');
 
+// getRawTransaction's fault handling. Keep in sync with getRawTransaction in
+// xchain-decoder/src/chain/blockchain_connector/transaction_queries.js (both feed getBlockReassembled).
+
+// Resolve a 200 answer, rethrowing a coded non -5 body error so both transports classify alike.
+function rawTransactionResponse(response, txid) {
+    const bodyError = response.data?.error
+    if (bodyError && typeof bodyError.code === 'number' && bodyError.code !== -5) {
+        // Build a fresh error per attempt: sanitizeRpcError scrubs error.response in place.
+        const err = new Error(`getRawTransaction: RPC error ${bodyError.code}: ${bodyError.message}`)
+        err.response = { status: response.status, data: { error: { code: bodyError.code, message: bodyError.message } } }
+        throw err
+    }
+    if (response.data.result) return response.data.result
+
+    // Resolve null for a tx the node no longer has (mined or evicted); callers filter nulls.
+    if (bodyError?.code === -5) {
+        logger.warn(`getRawTransaction: node error for txid ${txid}: code ${bodyError.code} ${bodyError.message}`)
+    } else if (bodyError) {
+        logger.error(`getRawTransaction: node error for txid ${txid}: code ${bodyError.code} ${bodyError.message}`)
+    } else {
+        logger.info(`getRawTransaction: no result for txid ${txid} (evicted/confirmed?)`)
+    }
+    return null
+}
+
+// Classify a thrown fault. Read the code and status before sanitizeRpcError scrubs error.response.
+function rawTransactionFailureDetails(error) {
+    const httpStatus = error.response?.status
+    const rpcCode = error.response?.data?.error?.code
+    // Core signals a full work queue as -429; Dogecoin 1.14 drops the socket instead.
+    const isQueueFull = rpcCode === -429 || error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED'
+    const isTimeout = error.code === 'ECONNABORTED'
+    return { httpStatus, rpcCode, isQueueFull, isTimeout, lastErrorSummary: sanitizeRpcError(error) }
+}
+
+// Handle one failed attempt: resolve null on RPC -5, else log a deterministic fault and back off.
+async function handleRawTransactionFailure(connector, error, txid, tries, maxTries) {
+    if (error.response?.data?.error?.code === -5) {
+        logger.info(`getRawTransaction: tx not found (RPC -5) for txid ${txid} (evicted/confirmed?)`)
+        return { resolved: true, value: null }
+    }
+    if (error.code === 'ECONNABORTED') {
+        logger.info("Getting timeout trying to get raw transaction, trying again...")
+    }
+    const details = rawTransactionFailureDetails(error)
+    if (!details.isTimeout && !details.isQueueFull) {
+        const status = details.httpStatus !== undefined ? details.httpStatus : 'n/a'
+        const code = details.rpcCode !== undefined ? details.rpcCode : 'n/a'
+        logger.error(`getRawTransaction: attempt ${tries}/${maxTries} for txid ${txid} failed: HTTP ${status} rpcCode ${code}: ${details.lastErrorSummary}`)
+    }
+    await connector.sleep(details.isQueueFull ? 5000 : 500)
+    return { resolved: false, lastErrorSummary: details.lastErrorSummary }
+}
+
+// Run up to 10 attempts; the tracker keeps no rpcErrors counter, so none is bumped here.
+async function runRawTransactionRetries(connector, txid, resolve, reject) {
+    const maxTries = 10
+    let lastErrorSummary = null
+    for (let tries = 1; tries <= maxTries; tries++){
+        try {
+            const data = { jsonrpc: '2.0', method: 'getrawtransaction', params: [txid], id: 1 }
+            const response = await connector.rpcPost(data)
+            resolve(rawTransactionResponse(response, txid))
+            return
+        } catch (error){
+            const outcome = await handleRawTransactionFailure(connector, error, txid, tries, maxTries)
+            if (outcome.resolved) {
+                resolve(outcome.value)
+                return
+            }
+            lastErrorSummary = outcome.lastErrorSummary
+        }
+    }
+    reject(new Error(`getRawTransaction failed after ${maxTries} attempts for txid ${txid}${lastErrorSummary ? ': ' + lastErrorSummary : ''}`))
+}
+
 module.exports = {
     async sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
@@ -73,38 +149,7 @@ module.exports = {
     },
 
     async getRawTransaction(txid){
-        return new Promise(async (resolve, reject) => {
-            let maxTries = 10
-            let tries = 0
-            while (tries < maxTries){
-                tries++
-                try {
-                    const data = {
-                        jsonrpc: '2.0',
-                        method: 'getrawtransaction',
-                        params: [txid],
-                        id: 1
-                    }
-
-                    const response = await this.rpcPost(data)
-
-                    if (response.data.result) {
-                        resolve(response.data.result);
-                        break
-                    } else {
-                        // Tx no longer in mempool (mined/evicted between getRawMempool and this call): caller filters nulls
-                        resolve(null);
-                        break
-                    }
-                } catch (error){
-                    await this.sleep(500)
-                }
-            }
-
-            if (tries >= maxTries){
-                reject(new Error('getRawTransaction: exhausted retries for ' + txid))
-            }
-        })
+        return new Promise((resolve, reject) => runRawTransactionRetries(this, txid, resolve, reject))
     },
 
     // Fetch raw transactions with bounded concurrency, in order-preserving waves.

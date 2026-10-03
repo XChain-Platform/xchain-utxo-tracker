@@ -89,7 +89,6 @@ function decodeOutput(buf) {
         // ZERO_HASH is the "no full txid" sentinel (see encodeOutput).
         t: fullTxHash === ZERO_HASH ? null : fullTxHash,
         // Optional coinbase flag; legacy 44-byte records read as false.
-        // Optional coinbase flag (L-4); legacy 44-byte records read as false.
         cb: buf.length > 44 && buf[44] === 1
     }
 }

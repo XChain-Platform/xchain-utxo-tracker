@@ -163,22 +163,21 @@ class XChainUtxoTracker {
     //     is itself the signal. halted_at / halted_height ride with them: the time and
     //     committed height the halt was FIRST declared, restored from the store's
     //     marker across restarts, so a monitor can tell an old fault from a new one.
+    //   nodeHeightStale - the loop's last usable node-tip read aged out (isNodeRpcStale).
     static computeFreshness(committedHeight, nodeTip, synced, state = {}){
         const { mempoolReconverged = false, halted = false, haltReason = null,
-                haltedAt = null, haltedHeight = null } = state
+                haltedAt = null, haltedHeight = null, nodeHeightStale = false } = state
         const tracker_height = (typeof committedHeight === 'number') ? committedHeight : -1
         const node_height    = (typeof nodeTip === 'number') ? nodeTip : -1
         const lag = (node_height >= 0 && tracker_height >= 0) ? (node_height - tracker_height) : null
-        // Negative lag floors BOTH verdicts here, not only get_sync_status's. A committed
-        // tip above the node's is the node-reset/reindex regression this class rolls back
-        // from, so the outputs this sibling would authorize sit in blocks the node no
-        // longer recognizes. The raw isSynced() flag is height-catchup state and knows
-        // nothing of that regression, so without the floor get_utxos published
-        // {lag:-100, synced:true, mempool_ready:true} for the same instant get_sync_status
-        // published synced:false, and create_tx gates on THIS sibling.
-        // Same floor deriveSyncedVerdict applies in api.js, so the two cannot disagree.
+        // Floor BOTH verdicts on the two faults the raw isSynced() catch-up latch cannot see,
+        // as deriveSyncedVerdict (src/api/sync_status.js) does for get_sync_status: a negative
+        // lag (committed tip above a reset node's, so these outputs sit in blocks it no longer
+        // recognizes) and a stale node tip (lag measured against a frozen cache during an
+        // outage). create_tx gates on THIS sibling. A null lag and lag over SYNCED_THRESHOLD
+        // stay with the latch and the consumer's own lag budget, so those two can differ.
         const orphaned  = (lag !== null && lag < 0)
-        const isSynced  = (synced === true) && !orphaned
+        const isSynced  = (synced === true) && !orphaned && nodeHeightStale !== true
         const freshness = {
             tracker_height, node_height, lag,
             synced: isSynced,

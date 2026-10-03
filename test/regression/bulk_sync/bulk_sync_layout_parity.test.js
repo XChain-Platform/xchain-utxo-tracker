@@ -40,6 +40,7 @@ const { loadKeys }       = require('../../../src/bulk_sync/merger/loader.js');
 const { readOutputsRecordSize } = require('../../../src/bulk_sync/orchestrator.js');
 const bulkLayout         = require('../../../src/bulk_sync/merger/derive_keys/record_layout.js');
 const liveConstants      = require('../../../src/store/level_up_db/constants.js');
+const { Q_UNDO_WATERMARK_KEY } = require('../../../src/XChainUtxoTracker/constants.js');
 const {
     kBlock, kTx, kInput, kOutputFromBuf, kOutHint, kInHint,
     kStoredBlk, kScriptBlkFromBuf, kOutBlk, kBlkScriptFromBuf,
@@ -156,7 +157,7 @@ function writeInputs(tmp) {
 
 // Run writers -> external sort -> anti-join -> derive-keys -> loader, keeping
 // T/I/J (removeSpent:false) and a window wide enough to hold both blocks.
-async function runMerge(tmp, dbPath) {
+async function runMerge(tmp, dbPath, undoBlocks = 100) {
     const { outputsPath, spendsPath, metaPath } = writeInputs(tmp);
     const rs = readOutputsRecordSize(outputsPath);
 
@@ -172,7 +173,7 @@ async function runMerge(tmp, dbPath) {
     await deriveKeys({
         metaPath, outputsPath, liveUtxosPath: liveUtxos, spendsByPrevPath: spendsSorted,
         outDir: keysDir, tmpDir: path.join(tmp, 'derive'),
-        ramBudgetBytes: 1 << 20, network: 'bitcoin-regtest', undoBlocks: 100, removeSpent: false,
+        ramBudgetBytes: 1 << 20, network: 'bitcoin-regtest', undoBlocks, removeSpent: false,
         outputsRecordSize: rs,
     });
     await loadKeys({ keysDir, dbPath, removeSpent: false });
@@ -250,4 +251,20 @@ describe('Regression (bulk-sync): seeded records match the live builders for eve
             await db.close();
         }
     });
+
+    // The live tracker keeps Q at its undo-window depth, so a seed at the same tip must too.
+    for (const [undoBlocks, depth] of [[100, '2'], [1, '1']]) {
+        it(`seeds the undo-window watermark at the N window depth (undoBlocks ${undoBlocks})`, async function () {
+            const dbPath = path.join(tmp, 'db');
+            await runMerge(tmp, dbPath, undoBlocks);
+            const db = new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' });
+            await db.open();
+            try {
+                expect(await collectPrefix(db, liveConstants.P_STORED_BLK)).to.have.length(Number(depth));
+                expect((await db.get(Q_UNDO_WATERMARK_KEY) || Buffer.alloc(0)).toString()).to.equal(depth);
+            } finally {
+                await db.close();
+            }
+        });
+    }
 });

@@ -14,7 +14,7 @@ const { expect } = require('chai');
 const sinon = require('sinon');
 const supertest = require('supertest');
 const { createTestApp, createMockTracker } = require('./support/test_app');
-const { statusRefusalFields } = require('../../../src/api/sync_status.js');
+const { statusRefusalFields, NODE_RPC_STALE_MS } = require('../../../src/api/sync_status.js');
 
 // Every refusal key xchain-node's bootstrap gate reads off the JSON-RPC `health`
 // answer must also ride GET /status, because that route is the gate's fallback
@@ -27,11 +27,12 @@ const OUTAGE = { since: '2026-09-29T00:00:00.000Z', last_ok_at: '2026-09-29T00:0
 
 // A tracker the two surfaces read the same way: `nodeDown` fails the live tip
 // read `health` makes and marks the connector's cached reachability failing.
-function trackerIn({ desync = null, nodeDown = false, halted = false } = {}) {
+// `loopOkAt` sets the sync loop's last usable tip read (null: loop not started).
+function trackerIn({ desync = null, nodeDown = false, halted = false, loopOkAt = Date.now() } = {}) {
   const tracker = createMockTracker(sinon);
   Object.assign(tracker, {
     blockFetchDesync: desync,
-    lastNodeRpcOkAt: Date.now(),
+    lastNodeRpcOkAt: loopOkAt,
     reorgCount: 0,
     lastReorgDepth: 0,
     undoBlocks: 100,
@@ -94,8 +95,52 @@ describe('GET /status carries the same gate-refusal keys as health', function ()
     }
   });
 
+  it('marks health stale with the loop stuck even while its own live read succeeds', async function () {
+    const { health, status, statusCode } = await bothSurfaces(trackerIn({ loopOkAt: Date.now() - NODE_RPC_STALE_MS - 1000 }));
+    expect(statusCode).to.equal(503);
+    expect(status.node_height_stale).to.equal(true);
+    expect(health.node_height_stale).to.equal(true);
+    expect(health.node_rpc_stale).to.equal(true);
+    expect(health.synced).to.equal(false);
+    expect(health.lag).to.be.a('number');
+  });
+
+  it('leaves health unflagged before the loop has read its first tip', async function () {
+    const { health } = await bothSurfaces(trackerIn({ loopOkAt: null }));
+    expect(health).to.not.have.property('node_height_stale');
+    expect(health).to.not.have.property('node_rpc_stale');
+  });
+
   it('marks the node height stale once the loop tip read itself has gone stale', function () {
     expect(statusRefusalFields({}, { node_unreachable: null }, true)).to.deep.equal({ node_height_stale: true });
     expect(statusRefusalFields(undefined, undefined)).to.deep.equal({});
+  });
+});
+
+// The per-query freshness sibling (get_utxos' sync, GET /status's synced, the REST
+// X-Synced and X-Mempool-Ready headers) floors on the same stale loop tip read health
+// does, so no surface reads synced while health says the node height is stale.
+describe('per-query freshness agrees with health on a stale loop tip read', function () {
+  afterEach(function () { sinon.restore(); });
+
+  async function freshnessSurfaces(tracker) {
+    tracker.getUtxosAddress.resolves([]);
+    const { health, status } = await bothSurfaces(tracker);
+    const rest = await supertest(createTestApp(tracker)).get('/utxos/address').expect(200);
+    return { health, status, rest: rest.headers };
+  }
+
+  it('reads synced on every surface for a healthy tracker', async function () {
+    const { health, status, rest } = await freshnessSurfaces(trackerIn());
+    expect(health.synced).to.equal(true);
+    expect(status).to.include({ synced: true, mempool_ready: true });
+    expect(rest).to.include({ 'x-sync-lag': '0', 'x-synced': 'true', 'x-mempool-ready': 'true' });
+  });
+
+  it('floors synced and mempool_ready on every surface once the loop tip read goes stale', async function () {
+    const { health, status, rest } = await freshnessSurfaces(trackerIn({ loopOkAt: Date.now() - NODE_RPC_STALE_MS - 1000 }));
+    expect(health.synced).to.equal(false);
+    expect(status).to.include({ lag: 0, synced: false, mempool_ready: false });
+    expect(rest).to.include({ 'x-sync-lag': '0', 'x-synced': 'false', 'x-mempool-ready': 'false' });
   });
 });
