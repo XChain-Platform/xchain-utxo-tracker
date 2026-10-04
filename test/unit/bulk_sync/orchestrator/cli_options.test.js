@@ -18,7 +18,7 @@ const {
     resolveVerifyDefaults,
 } = require('../../../../src/bulk_sync/orchestrator/cli_options.js')
 
-describe('bulk-sync orchestrator CLI options @unit', function () {
+function testDefaultArgs() {
     it('returns the complete command-line defaults', function () {
         expect(defaultArgs()).to.deep.equal({
             network: null,
@@ -40,14 +40,18 @@ describe('bulk-sync orchestrator CLI options @unit', function () {
             removeSpent: true,
         })
     })
+}
 
+function testNetworkDetection() {
     it('recognizes only networks with the mainnet suffix', function () {
         expect(isMainnetNetwork('bitcoin-mainnet')).to.equal(true)
         expect(isMainnetNetwork('bitcoin-testnet')).to.equal(false)
         expect(isMainnetNetwork('bitcoin-regtest')).to.equal(false)
         expect(isMainnetNetwork(null)).to.equal(false)
     })
+}
 
+function testVerificationDefaults() {
     it('enables verification defaults on mainnet', function () {
         const args = defaultArgs()
         args.network = 'bitcoin-mainnet'
@@ -83,7 +87,9 @@ describe('bulk-sync orchestrator CLI options @unit', function () {
         expect(merkle.verifyChain).to.equal(true)
         expect(merkle.verifyMerkle).to.equal(true)
     })
+}
 
+function testTipSafety() {
     it('clamps implicit endpoints to each network undo window', function () {
         expect(effectiveTipSafety(10, null, 'bitcoin-mainnet')).to.equal(12)
         expect(effectiveTipSafety(10, null, 'bitcoin-testnet')).to.equal(120)
@@ -94,4 +100,11 @@ describe('bulk-sync orchestrator CLI options @unit', function () {
         expect(effectiveTipSafety(10, 500000, 'bitcoin-mainnet')).to.equal(10)
         expect(effectiveTipSafety(10, 500000, 'bitcoin-testnet')).to.equal(10)
     })
+}
+
+describe('bulk-sync orchestrator CLI options @unit', function () {
+    testDefaultArgs()
+    testNetworkDetection()
+    testVerificationDefaults()
+    testTipSafety()
 })
