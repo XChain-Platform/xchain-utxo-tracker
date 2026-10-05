@@ -41,9 +41,9 @@ async function getTestBalance(mockTracker, address) {
 }
 
 // Overrides replace config keys; their jsonRpcMethods add to the stub getbootstrap.
-function createTestApp(mockTracker, adminApiKey = '', overrides = {}) {
+function createTestConfig(mockTracker, adminApiKey = '', overrides = {}) {
   const { jsonRpcMethods: extraMethods, ...extraConfig } = overrides;
-  return createApp({
+  return {
     tracker: mockTracker,
     UTXO_TRACKER_API_KEY: adminApiKey,
     ADMIN_METHODS,
@@ -68,7 +68,11 @@ function createTestApp(mockTracker, adminApiKey = '', overrides = {}) {
       ...extraMethods
     },
     ...extraConfig
-  });
+  };
+}
+
+function createTestApp(mockTracker, adminApiKey = '', overrides = {}) {
+  return createApp(createTestConfig(mockTracker, adminApiKey, overrides));
 }
 
 function createMockTracker(sinon) {
@@ -97,7 +101,8 @@ if (typeof describe === 'function') {
       const utxos = [{ txid: 'abc', vout: 0 }];
       tracker.getUtxosAddress.resolves(utxos);
 
-      const response = await supertest(createTestApp(tracker)).get('/utxos/address').expect(200);
+      const app = createApp(createTestConfig(tracker));
+      const response = await supertest(app).get('/utxos/address').expect(200);
       assert.deepStrictEqual(response.body, utxos);
       assert.strictEqual(response.headers['x-mempool-ready'], 'true');
     });
