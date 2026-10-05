@@ -100,14 +100,6 @@ if (typeof describe === 'function') {
       const response = await supertest(createTestApp(tracker)).get('/utxos/address').expect(200);
       assert.deepStrictEqual(response.body, utxos);
       assert.strictEqual(response.headers['x-mempool-ready'], 'true');
-
-      const freshness = { mempool_ready: true };
-      const res = {
-        set(name, value) {
-          assert.strictEqual(response.headers[name.toLowerCase()], value);
-        }
-      };
-      res.set('X-Mempool-Ready', String(freshness.mempool_ready));
     });
   });
 }
