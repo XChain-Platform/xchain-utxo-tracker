@@ -16,6 +16,7 @@ const memoryBudget = require('../store/memory_budget')
 const { nodeReachabilityFields, isNodeRpcStale } = require('./sync_status.js')
 const { registerRoutes } = require('./routes.js')
 const logger = getLogger()
+const appTrackers = new WeakMap()
 
 //Start the tracker
 
@@ -327,11 +328,19 @@ function listen(app, tracker, trackerExited, config) {
 }
 
 function createApp(config){
-    if (!config || !config.tracker) {
-        throw new TypeError('createApp requires config.tracker')
+    if (!config) {
+        throw new TypeError('createApp requires config')
     }
-    const tracker = config.tracker
+    const tracker = config.tracker || (config.trackerFactory
+        ? config.trackerFactory(config)
+        : new XChainUtxoTracker(
+            config.NETWORK, config.NODE_URL, config.NODE_PORT, config.NODE_USER,
+            config.NODE_PASSWORD, config.DB_NAME, config.AUX_POW))
+    if (!tracker) {
+        throw new TypeError('createApp requires a tracker')
+    }
     const app = express()
+    appTrackers.set(app, tracker)
     installBaseMiddleware(app, config)
     const { probeGate, requestGate } = installConcurrencyGates(app, config)
     installMetrics(app, tracker, config, { request: requestGate, probe: probeGate })
@@ -354,11 +363,9 @@ function createApp(config){
 }
 
 async function startApi(config){
-    const tracker = new XChainUtxoTracker(
-        config.NETWORK, config.NODE_URL, config.NODE_PORT, config.NODE_USER,
-        config.NODE_PASSWORD, config.DB_NAME, config.AUX_POW)
+    const app = createApp(config)
+    const tracker = appTrackers.get(app)
     const trackerExited = config.launchTracker(tracker)
-    const app = createApp({ ...config, tracker })
     listen(app, tracker, trackerExited, config)
 }
 

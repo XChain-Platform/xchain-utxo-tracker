@@ -102,12 +102,17 @@ if (typeof describe === 'function') {
       const firstUtxos = [{ txid: 'first', vout: 0 }];
       firstTracker.getUtxosAddress.resolves(firstUtxos);
       secondTracker.getUtxosAddress.resolves([{ txid: 'second', vout: 1 }]);
+      const trackerFactory = sinon.stub().returns(firstTracker);
 
-      const firstApp = createApp(createTestConfig(firstTracker));
+      const firstApp = createApp(createTestConfig(firstTracker, '', {
+        tracker: undefined,
+        trackerFactory
+      }));
       createApp(createTestConfig(secondTracker));
       const response = await supertest(firstApp).get('/utxos/address').expect(200);
       assert.deepStrictEqual(response.body, firstUtxos);
       assert.strictEqual(response.headers['x-mempool-ready'], 'true');
+      sinon.assert.calledOnce(trackerFactory);
       sinon.assert.calledOnceWithExactly(firstTracker.getUtxosAddress, 'address', {});
       sinon.assert.notCalled(secondTracker.getUtxosAddress);
     });
