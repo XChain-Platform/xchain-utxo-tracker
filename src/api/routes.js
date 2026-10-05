@@ -7,21 +7,9 @@ const { getLogger } = require('../observability')
 const { compressDirPigz, decompressPigz, tasks } = require('./compression.js')
 const { sendAddressError, safeBootstrapFilename } = require('./errors.js')
 const { deriveHealthStatus, get_sync_status, registerStatusRoute } = require('./sync_status.js')
-let app, tracker, probeGate, requestGate
-let getUtxos, getFirstSeen, getBalance, getInfo
-let parsePageOpts, getFreshnessMeta, setFreshnessHeaders
-let DB_NAME, launchTracker
 const logger = getLogger()
 
-// Serializes bootstrap/restore operations. Both getbootstrap and restorebootstrap
-// stopParsing() then wipe/read /data via pigz+tar; two overlapping calls (a fresh
-// randomUUID task each) would run two `tar` processes into the same directory and
-// corrupt the live LevelDB. stopParsing() is idempotent (guards only on
-// parsingStopped) so it is NOT a mutex. This flag rejects a second op while one is
-// in flight; it is cleared in every completion path (.then success, .catch failure,
-// and the synchronous throw path).
-let bootstrapBusy = false
-function registerUtxoRoute(){
+function registerUtxoRoute({ app, requestGate, getUtxos, parsePageOpts, setFreshnessHeaders }){
     app.get('/utxos/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
@@ -46,7 +34,7 @@ function registerUtxoRoute(){
         }
     }))
 }
-function registerFirstSeenRoute(){
+function registerFirstSeenRoute({ app, requestGate, getFirstSeen, setFreshnessHeaders }){
     app.get('/firstseen/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
@@ -58,7 +46,7 @@ function registerFirstSeenRoute(){
         }
     }))
 }
-function registerBalanceRoute(){
+function registerBalanceRoute({ app, requestGate, getBalance, setFreshnessHeaders }){
     app.get('/balance/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
@@ -73,7 +61,7 @@ function registerBalanceRoute(){
         }
     }))
 }
-function registerInfoRoute(){
+function registerInfoRoute({ app, requestGate, getInfo, setFreshnessHeaders }){
     app.get('/info/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
@@ -96,7 +84,18 @@ function registerInfoRoute(){
         }
     }))
 }
-const jsonRpcController = {
+function createJsonRpcController(context) {
+    const { tracker, getUtxos, getFirstSeen, getBalance, getInfo, parsePageOpts,
+        getFreshnessMeta, DB_NAME, launchTracker } = context
+    // Serializes bootstrap/restore operations. Both getbootstrap and restorebootstrap
+    // stopParsing() then wipe/read /data via pigz+tar; two overlapping calls (a fresh
+    // randomUUID task each) would run two `tar` processes into the same directory and
+    // corrupt the live LevelDB. stopParsing() is idempotent (guards only on
+    // parsingStopped) so it is NOT a mutex. This flag rejects a second op while one is
+    // in flight; it is cleared in every completion path (.then success, .catch failure,
+    // and the synchronous throw path).
+    let bootstrapBusy = false
+    const jsonRpcController = {
         // Function to check if xchain-utxo-tracker is up
         async ping() {
             return {status:"success"};
@@ -368,14 +367,14 @@ const jsonRpcController = {
             }
         }
     }
+    return jsonRpcController
+}
 function registerRoutes(context){
-    ({ app, tracker, probeGate, requestGate, getUtxos, getFirstSeen, getBalance,
-        getInfo, parsePageOpts, getFreshnessMeta, setFreshnessHeaders,
-        DB_NAME, launchTracker } = context)
-    registerUtxoRoute()
-    registerFirstSeenRoute()
-    registerBalanceRoute()
-    registerInfoRoute()
+    const { app, tracker, probeGate, requestGate, getFreshnessMeta } = context
+    registerUtxoRoute(context)
+    registerFirstSeenRoute(context)
+    registerBalanceRoute(context)
+    registerInfoRoute(context)
     registerStatusRoute({ app, tracker, probeGate, requestGate, getFreshnessMeta })
     // Express 5 / body-parser 2.x leaves req.body undefined when a request carries
     // no JSON body (a GET, or a POST without application/json), whereas body-parser
@@ -390,6 +389,7 @@ function registerRoutes(context){
     // method's promise with the gate, and hold() keeps the slot until all of
     // them settle. The internal get_sync_status() call above still goes through
     // the bare controller object, so an in-process call never touches gate accounting.
+    const jsonRpcController = createJsonRpcController(context)
     const methods = context.jsonRpcMethods
         ? Object.assign({}, jsonRpcController, context.jsonRpcMethods)
         : jsonRpcController

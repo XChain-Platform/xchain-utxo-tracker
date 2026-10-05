@@ -336,7 +336,7 @@ function createApp(config){
     const { probeGate, requestGate } = installConcurrencyGates(app, config)
     installMetrics(app, tracker, config, { request: requestGate, probe: probeGate })
     installAdminGuard(app, config)
-    registerRoutes({
+    const routeContext = Object.freeze({
         app, tracker, probeGate, requestGate,
         getUtxos: (address, opts) => getUtxos(tracker, address, opts),
         getFirstSeen: (address) => getFirstSeen(tracker, address),
@@ -349,6 +349,7 @@ function createApp(config){
         launchTracker: config.launchTracker,
         jsonRpcMethods: config.jsonRpcMethods
     })
+    registerRoutes(routeContext)
     return app
 }
 

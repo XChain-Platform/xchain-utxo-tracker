@@ -97,14 +97,19 @@ if (typeof describe === 'function') {
     });
 
     it('serves the production UTXO route', async function () {
-      const tracker = createMockTracker(sinon);
-      const utxos = [{ txid: 'abc', vout: 0 }];
-      tracker.getUtxosAddress.resolves(utxos);
+      const firstTracker = createMockTracker(sinon);
+      const secondTracker = createMockTracker(sinon);
+      const firstUtxos = [{ txid: 'first', vout: 0 }];
+      firstTracker.getUtxosAddress.resolves(firstUtxos);
+      secondTracker.getUtxosAddress.resolves([{ txid: 'second', vout: 1 }]);
 
-      const app = createApp(createTestConfig(tracker));
-      const response = await supertest(app).get('/utxos/address').expect(200);
-      assert.deepStrictEqual(response.body, utxos);
+      const firstApp = createApp(createTestConfig(firstTracker));
+      createApp(createTestConfig(secondTracker));
+      const response = await supertest(firstApp).get('/utxos/address').expect(200);
+      assert.deepStrictEqual(response.body, firstUtxos);
       assert.strictEqual(response.headers['x-mempool-ready'], 'true');
+      sinon.assert.calledOnceWithExactly(firstTracker.getUtxosAddress, 'address', {});
+      sinon.assert.notCalled(secondTracker.getUtxosAddress);
     });
   });
 }
