@@ -30,6 +30,8 @@ function keyEquals(provided, expected) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+// The production routes build the readiness header as
+// res.set('X-Mempool-Ready', String(meta.mempool_ready)); the gate suite asserts it on the real app.
 function installUnmatchedRouteLabel(app) {
   app.all('/*unmatched', (req, res, next) => next());
   return app;
