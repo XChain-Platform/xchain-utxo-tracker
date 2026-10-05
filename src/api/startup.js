@@ -327,6 +327,9 @@ function listen(app, tracker, trackerExited, config) {
 }
 
 function createApp(config){
+    if (!config || !config.tracker) {
+        throw new TypeError('createApp requires config.tracker')
+    }
     const tracker = config.tracker
     const app = express()
     installBaseMiddleware(app, config)
