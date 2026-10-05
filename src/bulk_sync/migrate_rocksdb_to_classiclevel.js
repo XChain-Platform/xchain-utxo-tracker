@@ -69,6 +69,7 @@
 
 const fs = require('fs')
 const path = require('path')
+const { ClassicLevel } = require('classic-level')
 
 // args
 function parseArgs(argv) {
@@ -132,7 +133,6 @@ function closeRocks(db) { return new Promise((res, rej) => db.close(e => e ? rej
 // files in RAM, which dominates the back-half memory growth. Cap it, keep the
 // block cache + write buffer modest. (Overridable via CLASSIC_* env for tuning.)
 function openClassic(dir, createIfMissing) {
-    const { ClassicLevel } = require('classic-level')
     const envInt = (k, d) => (process.env[k] ? parseInt(process.env[k], 10) : d)
     return new ClassicLevel(dir, {
         keyEncoding: 'buffer',
