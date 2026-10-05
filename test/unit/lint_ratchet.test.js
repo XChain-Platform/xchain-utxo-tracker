@@ -18,7 +18,7 @@ function resultsFor(counts) {
     }];
 }
 
-describe('lint ratchet', () => {
+describe('lint ratchet baseline counts', () => {
     it('allows error counts equal to the baseline', () => {
         assert.doesNotThrow(() => checkResults(resultsFor(BASELINE_ERROR_COUNTS)));
     });
@@ -50,6 +50,9 @@ describe('lint ratchet', () => {
         );
     });
 
+});
+
+describe('lint ratchet CLI targets', () => {
     it('runs the CLI against src, test, and bin exactly', () => {
         const fixtureDirectory = mkdtempSync(path.join(tmpdir(), 'lint-ratchet-'));
         const preloadPath = path.join(fixtureDirectory, 'preload.js');
