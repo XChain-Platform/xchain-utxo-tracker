@@ -351,6 +351,7 @@ function patchLevelUpStoreInMemory() {
   const { MemoryLevel } = require('memory-level');
 
   LevelUpStore.prototype.createDatabase = async function () {
+    LevelUpStore.resetCaches();
     try {
       this.db = new MemoryLevel({ keyEncoding: 'buffer', valueEncoding: 'buffer' });
       this.inMemory = true;
