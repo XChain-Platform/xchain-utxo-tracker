@@ -334,6 +334,9 @@ function createE2ETracker() {
   const tracker = new XChainUtxoTracker(
     'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'e2e-test-' + Date.now(), false
   );
+  // The short synthetic chains here treat coinbase outputs as spendable, so the
+  // maturity gate is disabled; maturity policy has its own regression test.
+  tracker.coinbaseMaturity = 0;
   return tracker;
 }
 
