@@ -189,6 +189,47 @@ describe('utxo-tracker memory budget', function () {
     })
 })
 
+// A numeric-prefix read turned a unit suffix into a tiny override: '512MB' sized
+// the block cache at 512 bytes and '2GB' forced an early flush on nearly every
+// block, with nothing logged. A malformed value must keep the derived size.
+describe('utxo-tracker memory budget', function () {
+
+    afterEach(clearOverrides)
+
+    describe('a malformed override keeps the derived size', function () {
+
+        it('refuses a unit suffix on LEVELDB_CACHE_BYTES', function () {
+            process.env.LEVELDB_CACHE_BYTES = '512MB'
+            const { cacheBytes } = loadWith({ hostGiB: 8 })
+            expect(cacheBytes).to.equal(2048 * MIB)
+        })
+
+        it('refuses a unit suffix on HEAP_FLUSH_THRESHOLD_MB', function () {
+            process.env.HEAP_FLUSH_THRESHOLD_MB = '2GB'
+            const { heapFlushMB } = loadWith({ hostGiB: 8 })
+            expect(heapFlushMB).to.equal(1024)
+        })
+
+        it('refuses a fractional HEAP_FLUSH_THRESHOLD_MB', function () {
+            process.env.HEAP_FLUSH_THRESHOLD_MB = '1.5'
+            const { heapFlushMB } = loadWith({ hostGiB: 8 })
+            expect(heapFlushMB).to.equal(1024)
+        })
+
+        it('refuses a zero LEVELDB_CACHE_BYTES', function () {
+            process.env.LEVELDB_CACHE_BYTES = '0'
+            const { cacheBytes } = loadWith({ hostGiB: 8 })
+            expect(cacheBytes).to.equal(2048 * MIB)
+        })
+
+        it('reads exponent notation as the whole number it names', function () {
+            process.env.LEVELDB_CACHE_BYTES = '4e9'
+            const { cacheBytes } = loadWith({ hostGiB: 8 })
+            expect(cacheBytes).to.equal(4000000000)
+        })
+    })
+})
+
 // The budget stopped at the process boundary: bulk-sync runs in a spawned
 // orchestrator whose external sort was handed a flat 4096 MB no matter what
 // the cgroup said, so a 2 GB tracker asked its own child to sort against

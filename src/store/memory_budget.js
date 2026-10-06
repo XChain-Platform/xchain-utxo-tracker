@@ -31,6 +31,7 @@
 const os = require('os')
 const fs = require('fs')
 const config = require('../config')
+const { intKnob } = require('../config/env_int')
 
 const MIB = 1024 * 1024
 
@@ -94,29 +95,23 @@ function budgetBytes() {
     return hostBytes
 }
 
-// Takes the value, not the variable name: a computed process.env[name] read is
-// invisible to the env-var documentation gate, so every variable is read by
-// name at its call site instead.
-function parseEnvInt(raw) {
-    if (raw === undefined || raw === '') return null
-    const value = parseInt(raw, 10)
-    if (!Number.isFinite(value) || value <= 0) return null
-    return value
-}
-
 // An explicit env value always wins: an operator who has measured their own
-// workload knows something this derivation cannot.
+// workload knows something this derivation cannot. A malformed one ('512MB',
+// '2GB', '1.5') warns and keeps the derived size instead of a prefix read.
 function leveldbCacheBytes() {
-    const override = parseEnvInt(config.LEVELDB_CACHE_BYTES)
-    if (override !== null) return override
-    return Math.floor(clamp(budgetBytes() / CACHE_FRACTION, CACHE_MIN_BYTES, CACHE_MAX_BYTES))
+    const derived = Math.floor(clamp(budgetBytes() / CACHE_FRACTION, CACHE_MIN_BYTES, CACHE_MAX_BYTES))
+    // Read the variable by name: a computed process.env[name] read is invisible
+    // to the env-var documentation gate.
+    return intKnob('LEVELDB_CACHE_BYTES', config.LEVELDB_CACHE_BYTES,
+        { fallback: derived, min: 1, warnSuffix: 'Give a plain integer byte count with no unit suffix.' })
 }
 
 function heapFlushThresholdMB() {
-    const override = parseEnvInt(config.HEAP_FLUSH_THRESHOLD_MB)
-    if (override !== null) return override
     const derivedMB = budgetBytes() / HEAP_FLUSH_FRACTION / MIB
-    return Math.floor(clamp(derivedMB, HEAP_FLUSH_MIN_MB, HEAP_FLUSH_MAX_MB))
+    const derived = Math.floor(clamp(derivedMB, HEAP_FLUSH_MIN_MB, HEAP_FLUSH_MAX_MB))
+    // Read the variable by name, for the same documentation-gate reason as above.
+    return intKnob('HEAP_FLUSH_THRESHOLD_MB', config.HEAP_FLUSH_THRESHOLD_MB,
+        { fallback: derived, min: 1, warnSuffix: 'Give a plain integer MB count with no unit suffix.' })
 }
 
 // MB the bulk-sync orchestrator's external sort may allocate.
