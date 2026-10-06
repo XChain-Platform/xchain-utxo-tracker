@@ -97,13 +97,13 @@ const PREFETCH_SIZE = 10 //Number of blocks to pre-fetch concurrently while proc
 
 
 // Single-byte key that persists pendingKMCleanup across restarts.
-// 0x50 ('P') is unused by LevelUpDb's key schema (B/T/I/O/H/J/S/Z/K/M/N/W).
+// 0x50 ('P') is unused by LevelUpDb's key schema (B/T/I/O/H/J/S/Z/K/M/N/W/X/Y/R).
 const P_PENDING_CLEANUP_KEY = Buffer.from([0x50])
 
 
 // Single-byte key holding the deepest undo window this store has actually held
 // (its high-water mark, clamped to the live undoBlocks). 0x51 ('Q') is unused by
-// LevelUpDb's key schema (B/T/I/O/H/J/S/Z/K/M/N/W) and by 'P' above.
+// LevelUpDb's key schema (B/T/I/O/H/J/S/Z/K/M/N/W/X/Y/R) and by 'P' above.
 //
 // Why the mark exists: a window shorter than undoBlocks has TWO causes, and the
 // N records alone cannot tell them apart (both leave a contiguous window ending

@@ -152,7 +152,11 @@ for that stream:
 `Q` is seeded so a fresh seed carries the watermark a live tracker at the same tip holds;
 without it the first boot cannot tell a refilling window from an interrupted rollback. The
 live-only `P` (0x50) pending-cleanup key is a transient crash-recovery marker a store at
-rest never carries, so it is never seeded.
+rest never carries, so it is never seeded. The live-only `R` (0x52) halt marker
+(`setHaltMarker` in `src/store/level_up_db.js`) is written only on a store declared
+unrecoverable, so a healthy store never carries it and it is never seeded either; a
+`validate_db` run against a halted truth DB therefore reports one expected `missing` key
+under 0x52, which is not a seeding defect.
 
 The `K` and `M` reorg-recovery reverse indices are skipped entirely. The `W`
 creation-block reverse index IS seeded (one record per pre-cancellation output created
@@ -176,7 +180,9 @@ never-restored) UTXOs until a full re-index.
 
 **T value shape.** The live confirmed path writes, per tx, a `T` record whose value is
 `[blockHash(32)][fullTxid(32)]` (64 B) plus an exact-txid `X` (0x58) and a per-block
-recovery `Y` (0x59) record (`insertTransaction`). Bulk-sync writes no `X` or `Y`, and
+recovery `Y` (0x59) record (`insertTransaction`); like W and Z, a block's `Y` records are
+pruned once it ages out of the undo window (`removeTxBlockRecoveryIndexOnly`), while `T`
+and `X` are kept. Bulk-sync writes no `X` or `Y`, and
 writes `T` only with `removeSpent=false` (not a parity seed; the orchestrator rejects
 `--no-remove-spent`), in the legacy `[blockHash(32)]` (32 B) shape, because the meta tx
 list carries only `txHash8`. That shape is safe today: every T reader decodes only the
