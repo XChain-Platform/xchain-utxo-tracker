@@ -68,7 +68,7 @@ describe('E2E: API Correctness', function () {
       await seedAndStart();
 
       const utxosRes = await request.get('/utxos/' + TEST_KEYS[0].address).expect(200);
-      await request.get('/balance/' + TEST_KEYS[0].address).expect(200);
+      const balanceRes = await request.get('/balance/' + TEST_KEYS[0].address).expect(200);
       const infoRes = await request.get('/info/' + TEST_KEYS[0].address).expect(200);
       const firstSeenRes = await request.get('/firstseen/' + TEST_KEYS[0].address).expect(200);
 
@@ -78,11 +78,12 @@ describe('E2E: API Correctness', function () {
 
       expect(utxos).to.be.an('array').with.length(3);
 
-      // Balance = sum of UTXO amounts
-      // /utxos documents amount as a decimal string, so sum the exact satoshi
-      // value rather than the string.
-      const utxoSum = utxos.reduce((sum, u) => sum + BigInt(u.value), 0n);
-      expect(utxoSum).to.equal(60n * BigInt(SATOSHI)); // 10 + 20 + 30
+      // /utxos documents amount as a decimal string; /balance is a number.
+      const utxoSum = utxos.reduce((sum, u) => sum + Number(u.amount), 0);
+      expect(utxoSum).to.equal(60); // 10 + 20 + 30
+      const balance = balanceRes.body;
+      expect(balance).to.equal(utxoSum);
+      expect(balance).to.equal(60);
       expect(utxos.map(u => u.amount)).to.have.members(['10.00000000', '20.00000000', '30.00000000']);
 
       // Info confirmed = sum of UTXO amounts
