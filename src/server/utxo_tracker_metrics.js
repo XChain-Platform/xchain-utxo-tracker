@@ -72,6 +72,20 @@ function addTrackerCollector(registry, tracker, metrics){
     });
 }
 
+function registerUndoWindowGauges(registry){
+    const undoWindowBlocks = registry.gauge({
+        name: 'xchain_utxo_tracker_undo_window_blocks',
+        help: 'Configured undo window: how many recent blocks the tracker can roll back'
+    });
+    // Below undo_window_blocks while committed height is past it means the
+    // window is refilling or was truncated, so a deep reorg could not be undone.
+    const undoWindowDepth = registry.gauge({
+        name: 'xchain_utxo_tracker_undo_window_depth',
+        help: 'Blocks currently held in the in-memory undo window'
+    });
+    return { undoWindowBlocks, undoWindowDepth };
+}
+
 /**
  * Register the tracker's sync-freshness gauges and one scrape-time collector.
  *
@@ -130,16 +144,7 @@ function installUtxoTrackerMetrics(observability, tracker, gates){
         help: 'Reorgs the tracker has rolled back since process start'
     });
 
-    const undoWindowBlocks = registry.gauge({
-        name: 'xchain_utxo_tracker_undo_window_blocks',
-        help: 'Configured undo window: how many recent blocks the tracker can roll back'
-    });
-    // Below undo_window_blocks while committed height is past it means the
-    // window is refilling or was truncated, so a deep reorg could not be undone.
-    const undoWindowDepth = registry.gauge({
-        name: 'xchain_utxo_tracker_undo_window_depth',
-        help: 'Blocks currently held in the in-memory undo window'
-    });
+    const { undoWindowBlocks, undoWindowDepth } = registerUndoWindowGauges(registry);
 
     addTrackerCollector(registry, tracker, {
         lastCommitTs,
