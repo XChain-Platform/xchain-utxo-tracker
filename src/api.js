@@ -21,6 +21,7 @@
 // Load required libraries
 const dotenv = require('dotenv')
 dotenv.config()
+const cfg = require('./config');
 
 // Before anything else logs. The UTXO_TRACKER_API_KEY notice immediately below
 // is exactly the line an operator needs levelled and timestamped, and
@@ -29,8 +30,8 @@ const { patchConsole } = require('./observability');
 patchConsole({
     service: 'xchain-utxo-tracker',
     version: require('../package.json').version,
-    coin:    process.env.COIN || '',
-    network: process.env.NETWORK || ''
+    coin:    cfg.COIN || '',
+    network: cfg.NETWORK || ''
 });
 
 const { spawn } = require('child_process');
@@ -59,22 +60,22 @@ const {
 } = apiErrors
 const { compressDirPigz, tasks } = require('./api/compression.js')
 
-const NETWORK = process.env.NETWORK
-const NODE_URL =  process.env.NODE_URL
-const NODE_PORT =  process.env.NODE_PORT
-const NODE_USER =  process.env.NODE_USER
-const NODE_PASSWORD =  process.env.NODE_PASSWORD
-const UTXO_TRACKER_API_PORT = process.env.UTXO_TRACKER_API_PORT
+const NETWORK = cfg.NETWORK
+const NODE_URL =  cfg.NODE_URL
+const NODE_PORT =  cfg.NODE_PORT
+const NODE_USER =  cfg.NODE_USER
+const NODE_PASSWORD =  cfg.NODE_PASSWORD
+const UTXO_TRACKER_API_PORT = cfg.UTXO_TRACKER_API_PORT
 const DB_NAME =  "xchain-utxo-tracker"
-const AUX_POW = process.env.AUX_POW === 'true' || process.env.AUX_POW === '1'
+const AUX_POW = cfg.AUX_POW
 const NODE_RPC_STALE_MS = intKnob('UTXO_TRACKER_NODE_RPC_STALE_MS',
-    process.env.UTXO_TRACKER_NODE_RPC_STALE_MS, { fallback: 150000, min: 1 })
+    cfg.NODE_RPC_STALE_MS_RAW, { fallback: 150000, min: 1 })
 
 configureNodeRpcStaleMs(NODE_RPC_STALE_MS)
 configureRestoreOptions(() => ({
-    bootstrapPubkey: process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY,
-    allowUnsigned: process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED,
-    allowUnverified: process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED,
+    bootstrapPubkey: cfg.BOOTSTRAP_PUBKEY,
+    allowUnsigned: cfg.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED,
+    allowUnverified: cfg.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED,
     // The restore identity gate compares a wrapper's bootstrap.json coin/network with this.
     network: NETWORK
 }))
@@ -82,7 +83,7 @@ configureRestoreOptions(() => ({
 // API key for admin JSON-RPC methods (DB bootstrap snapshot/restore and raw
 // key scans). These methods fail closed (401) when no key is configured;
 // read-only UTXO/balance queries stay open for the encoder/indexer.
-const UTXO_TRACKER_API_KEY = process.env.UTXO_TRACKER_API_KEY || ''
+const UTXO_TRACKER_API_KEY = cfg.UTXO_TRACKER_API_KEY
 
 // Platform-wide no-API-key posture: running keyless is allowed, but the
 // service must say so loudly at boot instead of failing silently open/closed.
@@ -112,15 +113,12 @@ const ADMIN_METHODS = new Set([
 // get_balance can accumulate up to MAX_ADDRESS_OUTPUTS objects; each get_sync_status
 // fires a node RPC), amplifying one request into a heap-exhaustion / backend-load DoS.
 // Mirrors the decoder/encoder batch guard. Tunable via UTXO_MAX_RPC_BATCH.
-const MAX_JSONRPC_BATCH = Number(process.env.UTXO_MAX_RPC_BATCH) > 0
-    ? Number(process.env.UTXO_MAX_RPC_BATCH) : 20
+const MAX_JSONRPC_BATCH = cfg.MAX_JSONRPC_BATCH
 
 // Largest page a single ?limit= request may ask for. Caps page size so a caller
 // can't re-introduce the OOM by requesting one giant page. Independent of the
 // tracker's MAX_ADDRESS_OUTPUTS safety ceiling (which bounds *unbounded* scans).
-const MAX_PAGE_LIMIT = Number(process.env.UTXO_MAX_PAGE_LIMIT) > 0
-    ? Math.floor(Number(process.env.UTXO_MAX_PAGE_LIMIT))
-    : 10000
+const MAX_PAGE_LIMIT = cfg.MAX_PAGE_LIMIT
 
 // Validate-or-fall-back resolver for the bulk-sync numeric env knobs. The reader
 // itself now lives in src/config/env_int.js and is the SAME function resolveUndoBlocks
@@ -159,7 +157,7 @@ const BULK_SYNC_RAM_BUDGET   = envInt('BULK_SYNC_RAM_BUDGET', memoryBudget.bulkS
     memoryBudget.clampBulkSyncRamBudgetMB)
 const BULK_SYNC_TIP_SAFETY   = envInt('BULK_SYNC_TIP_SAFETY', 10,    0)
 const BULK_SYNC_BATCH_SIZE   = envInt('BULK_SYNC_BATCH_SIZE', 10000, 1)
-const BULK_SYNC_WORK_DIR     = process.env.BULK_SYNC_WORK_DIR     || path.join('/data', DB_NAME, '_bulk-sync-work')
+const BULK_SYNC_WORK_DIR     = cfg.BULK_SYNC_WORK_DIR     || path.join('/data', DB_NAME, '_bulk-sync-work')
 const BULK_SYNC_NODE_POLL_MS = 30000
 
 // Launch the tracker polling loop with the top-level guard. start() is intentionally not
@@ -267,7 +265,7 @@ function runBulkSyncOrchestrator() {
     console.log('[bulk-sync] spawning orchestrator:', ['node', ...args].join(' '))
 
     return new Promise((resolve, reject) => {
-        const child = spawn('node', args, { stdio: 'inherit', env: process.env })
+        const child = spawn('node', args, { stdio: 'inherit', env: cfg.CHILD_ENV })
         child.on('exit', (code, signal) => {
             if (code === 0) resolve()
             else reject(bulkSyncChildExitError(code, signal))
@@ -337,11 +335,11 @@ if (require.main === module) {
             NETWORK, NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD, DB_NAME, AUX_POW,
             UTXO_TRACKER_API_PORT, UTXO_TRACKER_API_KEY, ADMIN_METHODS,
             MAX_JSONRPC_BATCH, MAX_PAGE_LIMIT, BULK_SYNC_RAM_BUDGET,
-            CORS_ORIGIN: process.env.CORS_ORIGIN,
-            UTXO_TRACKER_RATE_LIMIT_RPM: process.env.UTXO_TRACKER_RATE_LIMIT_RPM,
-            UTXO_TRACKER_MAX_CONCURRENT_PROBES: process.env.UTXO_TRACKER_MAX_CONCURRENT_PROBES,
-            UTXO_TRACKER_MAX_CONCURRENT_REQUESTS: process.env.UTXO_TRACKER_MAX_CONCURRENT_REQUESTS,
-            COIN: process.env.COIN,
+            CORS_ORIGIN: cfg.CORS_ORIGIN,
+            UTXO_TRACKER_RATE_LIMIT_RPM: cfg.UTXO_TRACKER_RATE_LIMIT_RPM,
+            UTXO_TRACKER_MAX_CONCURRENT_PROBES: cfg.UTXO_TRACKER_MAX_CONCURRENT_PROBES,
+            UTXO_TRACKER_MAX_CONCURRENT_REQUESTS: cfg.UTXO_TRACKER_MAX_CONCURRENT_REQUESTS,
+            COIN: cfg.COIN,
             keyEquals, launchTracker, installUnmatchedRouteLabel
         }))
         .catch(err => {

@@ -108,4 +108,50 @@ module.exports = {
 
     // How long a shutdown may drain before the process exits hard.
     get SHUTDOWN_TIMEOUT_MS() { return process.env.SHUTDOWN_TIMEOUT_MS; },
+    // Identity of the chain this tracker serves, handed on raw.
+    get COIN() { return process.env.COIN; },
+    get NETWORK() { return process.env.NETWORK; },
+
+    // Coin node connection, handed on raw.
+    get NODE_URL() { return process.env.NODE_URL; },
+    get NODE_PORT() { return process.env.NODE_PORT; },
+    get NODE_USER() { return process.env.NODE_USER; },
+    get NODE_PASSWORD() { return process.env.NODE_PASSWORD; },
+
+    get UTXO_TRACKER_API_PORT() { return process.env.UTXO_TRACKER_API_PORT; },
+
+    // Merged-mining chains carry an auxiliary proof of work in the header.
+    get AUX_POW() { return flag(process.env.AUX_POW); },
+
+
+    // Handed on raw: the caller validates it against its own fallback and floor.
+    get NODE_RPC_STALE_MS_RAW() { return process.env.UTXO_TRACKER_NODE_RPC_STALE_MS; },
+
+    get BOOTSTRAP_PUBKEY() { return process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY; },
+    get BOOTSTRAP_RESTORE_ALLOW_UNSIGNED() { return process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED; },
+    get BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED() { return process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED; },
+
+    get UTXO_TRACKER_API_KEY() { return process.env.UTXO_TRACKER_API_KEY || ''; },
+
+    // Largest JSON-RPC batch accepted.
+    get MAX_JSONRPC_BATCH() {
+        const n = Number(process.env.UTXO_MAX_RPC_BATCH);
+        return n > 0 ? n : 20;
+    },
+
+    // Largest page a single limit request may ask for.
+    get MAX_PAGE_LIMIT() {
+        const n = Number(process.env.UTXO_MAX_PAGE_LIMIT);
+        return n > 0 ? Math.floor(n) : 10000;
+    },
+
+    get BULK_SYNC_WORK_DIR() { return process.env.BULK_SYNC_WORK_DIR; },
+
+    get CORS_ORIGIN() { return process.env.CORS_ORIGIN; },
+    get UTXO_TRACKER_RATE_LIMIT_RPM() { return process.env.UTXO_TRACKER_RATE_LIMIT_RPM; },
+    get UTXO_TRACKER_MAX_CONCURRENT_PROBES() { return process.env.UTXO_TRACKER_MAX_CONCURRENT_PROBES; },
+    get UTXO_TRACKER_MAX_CONCURRENT_REQUESTS() { return process.env.UTXO_TRACKER_MAX_CONCURRENT_REQUESTS; },
+
+    // The environment a spawned child inherits, whole and live.
+    get CHILD_ENV() { return process.env; },
 };
