@@ -136,7 +136,7 @@ async function main() {
         // deriveKeys resolves the N-window through the canonical coin registry and
         // refuses an unnamed chain; the explicit window keeps the scenario's
         // "window of 10" expectations independent of the per-chain default.
-        network: 'bitcoin',
+        network: 'bitcoin-regtest',
         undoBlocks: 10,
         // Exercise the non-parity T/I/J emission on purpose (default is removeSpent=true).
         removeSpent: false,
