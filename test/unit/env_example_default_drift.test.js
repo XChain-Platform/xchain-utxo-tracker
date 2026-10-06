@@ -34,7 +34,11 @@ const path = require('path');
 
 const API_SRC = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8');
 const ENV_SRC = fs.readFileSync(path.join(__dirname, '../../.env.example'), 'utf8');
-const API_LINES = API_SRC.split('\n');
+const CFG_SRC = fs.readFileSync(path.join(__dirname, '../../src/config/index.js'), 'utf8');
+const SOURCE_LINES = [
+    { lines: CFG_SRC.split('\n'), marker: (n) => `process.env.${n}` },
+    { lines: API_SRC.split('\n'), marker: (n) => `intKnob('${n}'` },
+];
 
 // Every KNOB=value the template advertises, commented out or not. The value is
 // kept raw: only a BARE INTEGER is a default claim, everything else (an empty
@@ -50,19 +54,25 @@ function advertised() {
 
 const isBareInt = (v) => /^\d+$/.test(v);
 
-// The statement in src/api.js that reads process.env.NAME: from the line naming
-// it up to the next blank line (capped), so a neighbouring declaration's
-// literals can never be mistaken for this knob's default.
+// The statement that reads NAME: a process.env read in src/config/index.js
+// (the live getters) or an intKnob fallback left in src/api.js. It runs from the
+// line naming it up to the next blank line (capped), so a neighbouring
+// declaration's literals can never be mistaken for this knob's default. Both
+// sources contribute, since the getter may hand the raw value on to a fallback.
 function readStatement(name) {
-    const at = API_LINES.findIndex((l) => l.includes(`process.env.${name}`));
-    if (at < 0) return null;
-    const lines = [];
-    for (let i = at; i < API_LINES.length && i < at + 6; i++) {
-        if (i > at && API_LINES[i].trim() === '') break;
-        if (i > at && /^(?:const|let|var)\s+/.test(API_LINES[i])) break;
-        lines.push(API_LINES[i]);
+    const found = [];
+    for (const { lines: src, marker } of SOURCE_LINES) {
+        const at = src.findIndex((l) => l.includes(marker(name)));
+        if (at < 0) continue;
+        const lines = [];
+        for (let i = at; i < src.length && i < at + 6; i++) {
+            if (i > at && src[i].trim() === '') break;
+            if (i > at && /^(?:const|let|var)\s+/.test(src[i])) break;
+            lines.push(src[i]);
+        }
+        found.push(lines.join('\n'));
     }
-    return lines.join('\n');
+    return found.length ? found.join('\n') : null;
 }
 
 // Integer literals sitting in a DEFAULT position within that statement:
@@ -70,7 +80,7 @@ function readStatement(name) {
 // its knob is outside this guard rather than silently passing it.
 function defaultsIn(stmt) {
     const found = new Set();
-    for (const re of [/\|\|\s*(\d+)/g, /,\s*(\d+)\s*\)/g, /:\s*(\d+)\b/g]) {
+    for (const re of [/(?:\|\||\?\?)\s*'?(\d+)/g, /fallback:\s*(\d+)/g, /,\s*(\d+)\s*\)/g, /:\s*(\d+)\b/g]) {
         let m;
         while ((m = re.exec(stmt)) !== null) found.add(m[1]);
     }
@@ -124,7 +134,7 @@ describe('.env.example does not drift from the defaults src/api.js resolves @reg
         // Named rather than discovered: these three are the ones #5813 found
         // missing while every sibling guard on the same path was documented.
         for (const name of ['UTXO_MAX_RPC_BATCH', 'UTXO_MAX_PAGE_LIMIT', 'UTXO_TRACKER_NODE_RPC_STALE_MS']) {
-            expect(readStatement(name), `${name} should still be read by literal name in src/api.js`).to.be.a('string');
+            expect(readStatement(name), `${name} should still be read by literal name in src/config/index.js or src/api.js`).to.be.a('string');
             expect(ENV.has(name), `${name} guards the serving boundary but appears nowhere in .env.example`).to.equal(true);
         }
     });
