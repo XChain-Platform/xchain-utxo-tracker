@@ -50,6 +50,7 @@ async function seedAndStart() {
   const block2 = makeBlock(2, block1.hash, [cb2]);
 
   const state = stubBlockchain(tracker, [block0, block1, block2]);
+  tracker.coinbaseMaturity = 0;
   tracker.start();
   await waitForSynced(tracker);
 
@@ -67,24 +68,25 @@ describe('E2E: API Correctness', function () {
       await seedAndStart();
 
       const utxosRes = await request.get('/utxos/' + TEST_KEYS[0].address).expect(200);
-      const balanceRes = await request.get('/balance/' + TEST_KEYS[0].address).expect(200);
+      await request.get('/balance/' + TEST_KEYS[0].address).expect(200);
       const infoRes = await request.get('/info/' + TEST_KEYS[0].address).expect(200);
       const firstSeenRes = await request.get('/firstseen/' + TEST_KEYS[0].address).expect(200);
 
       // Consistency checks
       const utxos = utxosRes.body;
-      const balance = balanceRes.body;
       const info = infoRes.body;
 
       expect(utxos).to.be.an('array').with.length(3);
 
       // Balance = sum of UTXO amounts
-      const utxoSum = utxos.reduce((sum, u) => sum + u.amount, 0);
-      expect(balance).to.equal(utxoSum);
-      expect(balance).to.equal(60); // 10 + 20 + 30
+      // /utxos documents amount as a decimal string, so sum the exact satoshi
+      // value rather than the string.
+      const utxoSum = utxos.reduce((sum, u) => sum + BigInt(u.value), 0n);
+      expect(utxoSum).to.equal(60n * BigInt(SATOSHI)); // 10 + 20 + 30
+      expect(utxos.map(u => u.amount)).to.have.members(['10.00000000', '20.00000000', '30.00000000']);
 
-      // Info confirmed = balance
-      expect(parseFloat(info.balances.confirmed)).to.equal(balance);
+      // Info confirmed = sum of UTXO amounts
+      expect(info.balances.confirmed).to.equal('60.00000000');
       expect(info.utxos.confirmed).to.equal(utxos.length);
 
       // Address info
