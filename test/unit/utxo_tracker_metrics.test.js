@@ -21,6 +21,7 @@
 
 'use strict';
 
+const { installUtxoTrackerMetrics } = require('../../src/server/utxo_tracker_metrics.js');
 const { installObservability } = require('../../src/observability');
 const {
     registerMetricAvailabilityTests,
@@ -63,4 +64,13 @@ describe('utxo-tracker sync-freshness metrics', function () {
     registerMetricFreshnessTests(helpers);
     registerMetricEdgeTests(helpers);
     registerMetricGateTests(helpers);
+
+    it('exposes the undo window size and its current depth', function () {
+        const obs = realObservability();
+        const tracker = fakeTracker({ undoBlocks: 120, lastBlocks: [{}, {}, {}] });
+        installUtxoTrackerMetrics(obs, tracker);
+        const text = obs.registry.render();
+        if(!/^xchain_utxo_tracker_undo_window_blocks 120$/m.test(text)) throw new Error('undo_window_blocks missing:\n' + text);
+        if(!/^xchain_utxo_tracker_undo_window_depth 3$/m.test(text)) throw new Error('undo_window_depth missing:\n' + text);
+    });
 });
