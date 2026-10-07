@@ -79,11 +79,12 @@ const TX_INDEX_LAYOUT = {
  *                                          32-byte T plus I/J, which is NOT a
  *                                          parity seed and is kept for fixtures
  *                                          and diagnostics.
- * @param {boolean} opts.txIndex           default false. When true, T/X/Y are
- *                                          emitted in the live shape (64-byte T,
- *                                          exact-txid X, window-limited Y) from
- *                                          the full txids in the outputs stream,
- *                                          and the legacy 32-byte T is not.
+ * @param {boolean} opts.txIndex           defaults on for non-Bitcoin networks.
+ *                                          When true, T/X/Y are emitted in the
+ *                                          live shape (64-byte T, exact-txid X,
+ *                                          window-limited Y) from the full txids
+ *                                          in the outputs stream, and the legacy
+ *                                          32-byte T is not.
  * @param {Function} opts.onProgress       callback({phase, ...})
  */
 async function deriveKeys(opts) {
@@ -94,10 +95,11 @@ async function deriveKeys(opts) {
 
     const { lastHeight, lastBlockHash } = await deriveBlockKeys(ctx, stats)
     await deriveOutputKeys(ctx, stats)
-    const { candSortedPath, wMinHeight } = await writeScriptCandidates(ctx, stats, lastHeight)
+    const wMinHeight = Math.max(0, lastHeight - ctx.undoBlocks + 1)
+    if (ctx.txIndex) await deriveTxIndexKeys(ctx, stats, wMinHeight)
+    const { candSortedPath } = await writeScriptCandidates(ctx, stats, lastHeight)
     await deriveScriptKeys(ctx, stats, candSortedPath, wMinHeight)
     await deriveSpendKeys(ctx, stats)
-    if (ctx.txIndex) await deriveTxIndexKeys(ctx, stats, wMinHeight)
     writeLastBlockMarkers(ctx.outDir, stats, lastHeight, lastBlockHash)
 
     onProgress({ phase: 'done', stats })
@@ -115,7 +117,9 @@ function resolveDeriveOptions(opts) {
     const ramBudgetBytes = opts.ramBudgetBytes || (1024 * 1024 * 1024)
     const undoBlocks     = resolveUndoBlocks(opts.network, opts.undoBlocks)
     const removeSpent    = opts.removeSpent !== false
-    const txIndex        = opts.txIndex === true
+    const txIndex        = opts.txIndex === undefined
+        ? !/^bitcoin(?:-|$)/i.test(String(opts.network))
+        : opts.txIndex === true
     const onProgress     = opts.onProgress     || noop
     const outputsRecordSize = opts.outputsRecordSize || OUTPUTS_RECORD_SIZE
     if (outputsRecordSize !== OUTPUTS_RECORD_SIZE && outputsRecordSize !== OUTPUTS_RECORD_SIZE_CB) {

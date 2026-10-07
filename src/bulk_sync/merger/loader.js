@@ -74,6 +74,11 @@ function selectPrefixes(removeSpent, txIndex) {
     return [...base, ...TX_INDEX_FILES].sort()
 }
 
+function resolveTxIndex(keysDir, option) {
+    if (option !== undefined) return option === true
+    return ['X', 'Y'].some(pfx => fs.existsSync(path.join(keysDir, pfx + '.dat')))
+}
+
 // Parity guard for the W (creation-block reverse index) prefix. Byte-exactness
 // across the whole merger pipeline is the hazard: a W key the live unwind can't
 // match silently re-introduces the phantom-UTXO corruption the index exists to
@@ -204,21 +209,20 @@ async function writeFinalMarkers(db, keysDir, stats) {
  *                                     them) and the legacy 32-byte T. Explicit
  *                                     false loads 32-byte T plus I/J, which is
  *                                     NOT a parity seed.
- * @param {boolean} opts.txIndex      default false. When true, loads the 64-byte
- *                                     T and the X and Y files that deriveKeys
- *                                     emitted with the same option.
+ * @param {boolean} opts.txIndex      defaults to detecting derived T/X/Y files.
+ *                                     When true, loads the 64-byte T and the X
+ *                                     and Y files that deriveKeys emitted.
  * @param {Function} opts.onProgress  ({phase, ...})
  */
 async function loadKeys(opts) {
     const { keysDir, dbPath } = opts
-    const batchSize   = opts.batchSize  || 10000
-    const removeSpent = opts.removeSpent !== false
-    const txIndex     = opts.txIndex === true
-    const onProgress  = opts.onProgress || noop
-
     if (!keysDir || !dbPath) {
         throw new Error('loadKeys: keysDir, dbPath are required')
     }
+    const batchSize   = opts.batchSize  || 10000
+    const removeSpent = opts.removeSpent !== false
+    const txIndex     = resolveTxIndex(keysDir, opts.txIndex)
+    const onProgress  = opts.onProgress || noop
 
     const db = openDb(dbPath)
     await db.open()

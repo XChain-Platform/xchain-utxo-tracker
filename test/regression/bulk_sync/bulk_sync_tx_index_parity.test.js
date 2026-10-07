@@ -10,7 +10,7 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// Regression: with txIndex on, the bulk seeder writes the live tx index.
+// Regression: non-Bitcoin bulk seeds write the live tx index.
 //
 // The live confirmed path writes a 64-byte T, an exact-txid X and a per-block Y
 // for every transaction (insertTransaction), and prunes Y past the undo window.
@@ -83,7 +83,7 @@ function writeInputs(tmp) {
     return { outputsPath, spendsPath, metaPath };
 }
 
-async function seed(tmp, deriveOpts) {
+async function seed(tmp, deriveOpts, cleanupOutputs) {
     const { outputsPath, spendsPath, metaPath } = writeInputs(tmp);
     const outputsSorted = path.join(tmp, 'outputs-sorted.dat');
     const spendsSorted  = path.join(tmp, 'spends-sorted.dat');
@@ -97,6 +97,9 @@ async function seed(tmp, deriveOpts) {
         metaPath, outputsPath, liveUtxosPath: liveUtxos, spendsByPrevPath: spendsSorted,
         outDir: keysDir, tmpDir: path.join(tmp, 'derive'),
         ramBudgetBytes: 1 << 20, network: 'dogecoin-regtest', undoBlocks: 2, outputsRecordSize: 121,
+        onProgress(ev) {
+            if (cleanupOutputs && ev.phase === 'script-cand-raw-done') fs.unlinkSync(outputsPath);
+        },
     }, deriveOpts));
     return { keysDir, stats };
 }
@@ -136,11 +139,10 @@ async function seededTxRecords(dbPath) {
     try { return await collectTxRecords(db); } finally { await db.close(); }
 }
 
-// Seeds the fixture with txIndex on and loads it into tmp/db.
 async function seedAndLoad(tmp, deriveOpts, loadOpts) {
-    const { keysDir, stats } = await seed(tmp, Object.assign({ txIndex: true }, deriveOpts));
+    const { keysDir, stats } = await seed(tmp, deriveOpts);
     const dbPath = path.join(tmp, 'db');
-    await loadKeys(Object.assign({ keysDir, dbPath, txIndex: true }, loadOpts));
+    await loadKeys(Object.assign({ keysDir, dbPath }, loadOpts));
     return { keysDir, dbPath, stats };
 }
 
@@ -205,12 +207,20 @@ async function rollsBackSeededTip(tmp) {
     });
 }
 
-async function seedsNothingByDefault(tmp) {
-    const { keysDir } = await seed(tmp, {});
+async function explicitOptOutSeedsNothing(tmp) {
+    const { keysDir } = await seed(tmp, { txIndex: false });
     for (const p of ['T', 'X', 'Y']) expect(fs.existsSync(path.join(keysDir, p + '.dat')), p).to.equal(false);
     const dbPath = path.join(tmp, 'db');
-    await loadKeys({ keysDir, dbPath });
+    await loadKeys({ keysDir, dbPath, txIndex: false });
     expect((await seededTxRecords(dbPath)).size).to.equal(0);
+}
+
+async function survivesOutputsCleanup(tmp) {
+    const { keysDir, stats } = await seed(tmp, {}, true);
+    expect(stats.T).to.equal(4);
+    expect(stats.X).to.equal(4);
+    expect(stats.Y).to.equal(3);
+    expect(fs.existsSync(path.join(keysDir, 'T.dat'))).to.equal(true);
 }
 
 async function replacesLegacyT(tmp) {
@@ -220,7 +230,7 @@ async function replacesLegacyT(tmp) {
     expect(tLens).to.deep.equal([64, 64, 64]);
 }
 
-describe('Regression (bulk-sync): txIndex seeds the live tx index (T 64B, X, Y)', function () {
+describe('Regression (bulk-sync): non-Bitcoin seeds use the live tx index (T 64B, X, Y)', function () {
     this.timeout(30000);
 
     let tmp;
@@ -231,6 +241,7 @@ describe('Regression (bulk-sync): txIndex seeds the live tx index (T 64B, X, Y)'
     it('keeps the later block in a shared T prefix slot and both txids in X', () => laterBlockOwnsSharedSlot(tmp));
     it('answers get_tx_block for seeded history', () => answersGetTxBlock(tmp));
     it('rolls back a seeded tip block without disturbing earlier seeded transactions', () => rollsBackSeededTip(tmp));
-    it('seeds no T, X or Y by default', () => seedsNothingByDefault(tmp));
+    it('survives production cleanup of the consumed outputs stream', () => survivesOutputsCleanup(tmp));
+    it('supports an explicit T, X and Y opt-out', () => explicitOptOutSeedsNothing(tmp));
     it('replaces the legacy 32-byte T when removeSpent is false', () => replacesLegacyT(tmp));
 });

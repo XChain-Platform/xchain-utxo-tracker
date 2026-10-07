@@ -184,12 +184,14 @@ recovery `Y` (0x59) record (`insertTransaction`); like W and Z, a block's `Y` re
 pruned once it ages out of the undo window (`removeTxBlockRecoveryIndexOnly`), while `T`
 and `X` are kept.
 
-The default seed (`removeSpent`, no `txIndex`) writes no `T`, `X` or `Y`, so
-`get_tx_block` returns null for that history. `deriveKeys` and `loadKeys` take
-`txIndex: true` to seed the live shape instead. The meta tx list carries only
-`txHash8`, so the full txids come from the pre-cancellation outputs stream, which
-names every transaction's full txid and block (every transaction has at least one
-output, and a transaction's outputs are adjacent). One pass then emits:
+The non-Bitcoin seed writes the live T/X/Y shape by default; Bitcoin retains the
+legacy default with no T/X/Y. `deriveKeys` also accepts an explicit `txIndex`
+override, and `loadKeys` detects the resulting files unless explicitly overridden.
+The meta tx list carries only `txHash8`, so the full txids come from the
+pre-cancellation outputs stream, which names every transaction's full txid and
+block (every transaction has at least one output, and a transaction's outputs are
+adjacent). This pass runs before the outputs stream becomes eligible for
+disk-pressure cleanup and emits:
 
 - `T.dat`, 77 B: `'T'+txHash8`, then `heightBE(4)+blockHash(32)+fullTxid(32)`. The
   height only orders the sort so that, when two txids share a prefix, the one in the
