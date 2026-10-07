@@ -27,7 +27,8 @@ const {
     registerMetricAvailabilityTests,
     registerMetricFreshnessTests,
     registerMetricEdgeTests,
-    registerMetricGateTests
+    registerMetricGateTests,
+    registerMetricNodeRpcTests
 } = require('../helpers/utxo_tracker_metric_registration.js');
 
 function realObservability(enabled = true){
@@ -64,6 +65,7 @@ describe('utxo-tracker sync-freshness metrics', function () {
     registerMetricFreshnessTests(helpers);
     registerMetricEdgeTests(helpers);
     registerMetricGateTests(helpers);
+    registerMetricNodeRpcTests(helpers);
 
     it('exposes the undo window size and its current depth', function () {
         const obs = realObservability();

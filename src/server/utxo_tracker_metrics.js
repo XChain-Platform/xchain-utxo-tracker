@@ -34,6 +34,8 @@
 
 'use strict';
 
+const { isNodeRpcStale } = require('../api/sync_status.js');
+
 function addTrackerCollector(registry, tracker, metrics){
     const {
         lastCommitTs,
@@ -44,7 +46,9 @@ function addTrackerCollector(registry, tracker, metrics){
         lastReorgDepth,
         reorgs,
         undoWindowBlocks,
-        undoWindowDepth
+        undoWindowDepth,
+        lastNodeRpcOkTs,
+        nodeRpcStale
     } = metrics;
 
     // Gauge#set throws on a non-finite value, and several of these fields are
@@ -69,7 +73,25 @@ function addTrackerCollector(registry, tracker, metrics){
         if(Number.isFinite(tracker.reorgCount)) reorgs.setMonotonic({}, tracker.reorgCount);
         setIf(undoWindowBlocks, tracker.undoBlocks);
         if(Array.isArray(tracker.lastBlocks)) undoWindowDepth.set({}, tracker.lastBlocks.length);
+
+        // Judge staleness against the scrape clock with the same verdict GET /status uses,
+        // so a loop hung inside an await while caught up still flips this to 1.
+        if(Number.isFinite(tracker.lastNodeRpcOkAt) && tracker.lastNodeRpcOkAt > 0)
+            lastNodeRpcOkTs.set({}, tracker.lastNodeRpcOkAt / 1000);
+        nodeRpcStale.set({}, isNodeRpcStale({ lastNodeRpcOkAt: tracker.lastNodeRpcOkAt }) ? 1 : 0);
     });
+}
+
+function registerNodeRpcGauges(registry){
+    const lastNodeRpcOkTs = registry.gauge({
+        name: 'xchain_utxo_tracker_last_node_rpc_ok_timestamp_seconds',
+        help: 'Unix time of the sync loop\'s last usable node-tip read; stops advancing when the loop or the node RPC stalls, even while caught up'
+    });
+    const nodeRpcStale = registry.gauge({
+        name: 'xchain_utxo_tracker_node_rpc_stale',
+        help: '1 when the sync loop has not read a usable node tip inside UTXO_TRACKER_NODE_RPC_STALE_MS (the node_rpc_stale verdict of GET /status)'
+    });
+    return { lastNodeRpcOkTs, nodeRpcStale };
 }
 
 function registerUndoWindowGauges(registry){
@@ -114,9 +136,9 @@ function installUtxoTrackerMetrics(observability, tracker, gates){
         name: 'xchain_utxo_tracker_last_commit_timestamp_seconds',
         help: 'Unix time of the most recent forward block commit; stops advancing when the block poll stalls'
     });
-    // Paired with node_height on purpose: on a quiet chain a legitimately
-    // idle tracker also has an old last-commit time, so the age alone cannot
-    // distinguish "no new blocks" from "wedged". Lag is what separates them.
+    // Pair with node_height: commit age alone cannot tell "no new blocks" from "wedged".
+    // Lag cannot either when the loop hangs at the tip (node_height freezes with it),
+    // which is the case node_rpc_stale and last_node_rpc_ok_timestamp_seconds cover.
     const committedHeight = registry.gauge({
         name: 'xchain_utxo_tracker_committed_height',
         help: 'Height of the block at the most recent forward commit (a rollback is reflected at the next commit)'
@@ -145,6 +167,7 @@ function installUtxoTrackerMetrics(observability, tracker, gates){
     });
 
     const { undoWindowBlocks, undoWindowDepth } = registerUndoWindowGauges(registry);
+    const { lastNodeRpcOkTs, nodeRpcStale } = registerNodeRpcGauges(registry);
 
     addTrackerCollector(registry, tracker, {
         lastCommitTs,
@@ -155,7 +178,9 @@ function installUtxoTrackerMetrics(observability, tracker, gates){
         lastReorgDepth,
         reorgs,
         undoWindowBlocks,
-        undoWindowDepth
+        undoWindowDepth,
+        lastNodeRpcOkTs,
+        nodeRpcStale
     });
     addGateCollector(registry, gates);
 
