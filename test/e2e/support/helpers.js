@@ -12,7 +12,6 @@
 
 const crypto = require('crypto');
 const { createHash } = require('crypto');
-const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const bitcoin = require('bitcoinjs-lib');
@@ -29,6 +28,10 @@ const XChainUtxoTracker = require('../../../src/XChainUtxoTracker');
 const ECPair = ECPairFactory.ECPairFactory(ecc);
 const NETWORK = bitcoin.networks.regtest;
 const SATOSHI = 100000000;
+const E2E_TMP_DIR = path.resolve(__dirname, '../../../tmp');
+
+fs.mkdirSync(E2E_TMP_DIR, { recursive: true });
+process.env.TMPDIR = E2E_TMP_DIR;
 
 // Deterministic test addresses (same as integration helpers).
 const TEST_KEYS = [];
@@ -182,6 +185,9 @@ function buildChainFromSpecs(specs) {
  * Returns the chain state object so tests can modify it.
  */
 function stubBlockchain(tracker, initialBlocks) {
+  const sleep = tracker.sleep.bind(tracker);
+  tracker.sleep = (ms) => sleep(Math.min(ms, 10));
+
   const state = {
     blocks: [...initialBlocks],
     hashToBlock: new Map(),
