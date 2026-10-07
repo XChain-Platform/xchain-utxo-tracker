@@ -167,9 +167,45 @@ function registerMetricGateTests({ realObservability, fakeTracker }) {
     });
 }
 
+function registerMetricNodeRpcTests({ realObservability, fakeTracker }) {
+    it('shows a loop hung at the tip as node_rpc_stale while synced and halted still read healthy', function () {
+        const observability = realObservability();
+        const lastNodeRpcOkAt = Date.now() - 3600000;
+        installUtxoTrackerMetrics(observability, fakeTracker({ lastNodeRpcOkAt }));
+        const out = observability.registry.render();
+        // Lag, synced and halted all freeze with the loop, so only this series tells the stall apart.
+        assert.match(out, /^xchain_utxo_tracker_node_rpc_stale 1$/m);
+        assert.match(out, /^xchain_utxo_tracker_synced 1$/m);
+        assert.match(out, /^xchain_utxo_tracker_halted 0$/m);
+        assert.match(out, new RegExp('^xchain_utxo_tracker_last_node_rpc_ok_timestamp_seconds '
+            + String(lastNodeRpcOkAt / 1000).replace('.', '\\.') + '$', 'm'),
+            'the heartbeat must render epoch seconds, not the raw epoch-ms the tracker stores');
+    });
+
+    it('judges node-RPC staleness at scrape time, not at registration', function () {
+        const observability = realObservability();
+        const tracker = fakeTracker({ lastNodeRpcOkAt: Date.now() });
+        installUtxoTrackerMetrics(observability, tracker);
+        assert.match(observability.registry.render(), /^xchain_utxo_tracker_node_rpc_stale 0$/m);
+        tracker.lastNodeRpcOkAt = Date.now() - 3600000;
+        assert.match(observability.registry.render(), /^xchain_utxo_tracker_node_rpc_stale 1$/m,
+            'a verdict captured at registration would never flip');
+    });
+
+    it('reads not-stale and withholds the heartbeat before the first node-tip read', function () {
+        const observability = realObservability();
+        installUtxoTrackerMetrics(observability, fakeTracker({ lastNodeRpcOkAt: null }));
+        const out = observability.registry.render();
+        assert.match(out, /^xchain_utxo_tracker_node_rpc_stale 0$/m);
+        assert.ok(!/^xchain_utxo_tracker_last_node_rpc_ok_timestamp_seconds \d/m.test(out),
+            'a zero would render as a 1970 timestamp on a tracker that is merely starting');
+    });
+}
+
 module.exports = {
     registerMetricAvailabilityTests,
     registerMetricFreshnessTests,
     registerMetricEdgeTests,
-    registerMetricGateTests
+    registerMetricGateTests,
+    registerMetricNodeRpcTests
 };
