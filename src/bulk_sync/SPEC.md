@@ -283,7 +283,11 @@ Chain specifics: for LTC the decoder's HogEx marker/flag strip means the
 hash of the stripped tx IS the true txid; pure-MWEB txs live outside the
 merkle tree by protocol design, and bulk-sync never reads MWEB payload
 bytes, so they cannot affect the built DB. For DOGE, AuxPoW is stripped at
-dump time, so `.xdmp` blocks are always header + tx section. Regression
+dump time, so `.xdmp` blocks are always header + tx section. A block whose
+AuxPoW section the strip cannot traverse is rebuilt from getblockheader +
+verbose getblock + getrawtransaction, the live tracker's recovery path, so it
+is still header + tx section and the merkle pass checks it like any other
+block. Regression
 coverage: `test/regression/bulk_sync_merkle.test.js`.
 
 ## Endianness rationale

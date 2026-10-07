@@ -40,23 +40,18 @@
 const dotenv = require('dotenv')
 dotenv.config()
 
-const fs   = require('fs')
-const path = require('path')
+const crypto = require('crypto')
+const fs     = require('fs')
+const path   = require('path')
 const BlockchainConnector = require('../chain/blockchain_connector.js')
 const { XdmpReader } = require('./xdmp_reader.js')
+const { CHAIN_CODES, NETWORK_CODES, chunkFileName, writeDumpHeader, writeBlockRecords } = require('./xdmp_writer.js')
 const coins = require('../coins')
 const { resolveUndoBlocks } = require('../chain/undo_blocks.js')
 
-const MAGIC               = Buffer.from('XCHNDMP1', 'ascii')
-const HEADER_SIZE         = 64
-const FILE_VERSION        = 1
 const DEFAULT_CHUNK_SIZE  = 10000
 const DEFAULT_TIP_SAFETY  = 10
 const RPC_BATCH_SIZE      = 25
-const MAX_BLOCK_SIZE      = 32 * 1024 * 1024
-
-const CHAIN_CODES   = { bitcoin: 1, litecoin: 2, dogecoin: 3 }
-const NETWORK_CODES = { mainnet: 1, testnet: 2, regtest: 3 }
 
 function parseArgs(argv) {
     const args = { chunkSize: DEFAULT_CHUNK_SIZE, tipSafety: DEFAULT_TIP_SAFETY }
@@ -130,26 +125,6 @@ function validateArgs(args) {
     if (!(args.netName in NETWORK_CODES)) throw new Error('Unknown network: ' + args.netName)
 }
 
-function makeHeader(chain, netName, firstHeight, lastHeight, chainTipAtDump) {
-    const buf = Buffer.alloc(HEADER_SIZE)
-    MAGIC.copy(buf, 0)
-    buf.writeUInt8(CHAIN_CODES[chain],    8)
-    buf.writeUInt8(NETWORK_CODES[netName], 9)
-    buf.writeUInt16LE(FILE_VERSION,       10)
-    buf.writeUInt32LE(firstHeight,        12)
-    buf.writeUInt32LE(lastHeight,         16)
-    buf.writeUInt32LE(lastHeight - firstHeight + 1, 20)
-    buf.writeUInt32LE(chainTipAtDump,     24)
-    // bytes 28..63 = reserved, already zeroed by Buffer.alloc
-    return buf
-}
-
-function chunkFileName(chain, netName, start, end) {
-    const s = String(start).padStart(8, '0')
-    const e = String(end).padStart(8, '0')
-    return `blocks-${chain}-${netName}-${s}-${e}.xdmp`
-}
-
 function fmtDuration(ms) {
     const s   = Math.floor(ms / 1000)
     const h   = Math.floor(s / 3600)
@@ -183,36 +158,53 @@ async function existingChunkMatchesChain(connector, filePath, chunkStart, chunkE
     }
 }
 
-function writeDumpHeader(fd, args, chunkStart, chunkEnd, chainTipAtDump) {
-    const header = makeHeader(args.chain, args.netName, chunkStart, chunkEnd, chainTipAtDump)
-    fs.writeSync(fd, header, 0, HEADER_SIZE)
-    return HEADER_SIZE
-}
 function batchHeights(cursor, batchEnd) {
     const heights = []
     for (let h = cursor; h <= batchEnd; h++) heights.push(h)
     return heights
 }
-function writeBlockRecords(fd, blocks) {
-    let bytesWritten = 0
-    for (const { height, hash, hex } of blocks) {
-        const blockBytes = Buffer.from(hex, 'hex')
-        if (blockBytes.length === 0 || blockBytes.length > MAX_BLOCK_SIZE) {
-            throw new Error(`block ${height} has invalid size ${blockBytes.length}`)
-        }
-        const hashBytes = Buffer.from(hash, 'hex')
-        if (hashBytes.length !== 32) {
-            throw new Error(`block ${height} has invalid hash length ${hashBytes.length}`)
-        }
-        const record = Buffer.alloc(40)
-        record.writeUInt32LE(blockBytes.length, 0)
-        record.writeUInt32LE(height, 4)
-        hashBytes.copy(record, 8)
-        fs.writeSync(fd, record, 0, 40)
-        fs.writeSync(fd, blockBytes, 0, blockBytes.length)
-        bytesWritten += 40 + blockBytes.length
+
+// Refuse a rebuilt block whose 80-byte header does not hash to the requested hash,
+// so a bad reassembly fails at its own height instead of being written to the dump.
+function assertHeaderMatchesHash(height, hash, hex) {
+    const header = Buffer.from(hex.slice(0, 160), 'hex')
+    const once   = crypto.createHash('sha256').update(header).digest()
+    const actual = Buffer.from(crypto.createHash('sha256').update(once).digest()).reverse().toString('hex')
+    if (header.length !== 80 || actual !== String(hash).toLowerCase()) {
+        throw new Error(`reassembled block ${height} header hashes to ${actual}, expected ${hash}`)
     }
-    return bytesWritten
+}
+
+// Fetch one AuxPoW block for the dump: strip it, or rebuild it from RPC parts when
+// the strip cannot traverse its AuxPoW section (the live tracker's recovery path).
+// Only a tagged strip failure falls back; a transport fault propagates untouched.
+async function fetchAuxPowBlockForDump(connector, height) {
+    const hash = await connector.getBlockHash(height)
+    try {
+        return { height, hash, hex: await connector.getBlockWithoutAuxPow(hash) }
+    } catch (err) {
+        if (!err || !err.auxPowParseFailure) throw err
+        console.log(`[dump] AuxPoW strip failed at height ${height} (${hash}); reassembling from RPC parts`)
+        const hex = await connector.getBlockReassembled(hash)
+        assertHeaderMatchesHash(height, hash, hex)
+        return { height, hash, hex }
+    }
+}
+
+// Fetch one RPC batch of blocks in height order. On an AuxPoW chain a tagged strip
+// failure refetches the batch block by block so only the bad block is reassembled;
+// a confirmed block's bytes fail the same way every time, so no retry streak is kept.
+async function fetchDumpBatch(connector, heights, auxPow) {
+    if (!auxPow) return connector.getBlocksBatch(heights)
+    try {
+        return await connector.getBlocksBatchWithoutAuxPow(heights)
+    } catch (err) {
+        if (!err || !err.auxPowParseFailure) throw err
+        console.log(`[dump] AuxPoW strip failed in batch ${heights[0]}..${heights[heights.length - 1]}; refetching per block`)
+        const blocks = []
+        for (const height of heights) blocks.push(await fetchAuxPowBlockForDump(connector, height))
+        return blocks
+    }
 }
 
 function openDumpFile(tmpPath) {
@@ -255,9 +247,7 @@ async function dumpChunk(connector, args, chunkStart, chunkEnd, chainTipAtDump) 
             // registry (src/coins), matching the live worker and decoder, not a
             // coin-name literal. args.chain is validated in CHAIN_CODES above.
             const auxPow = coins.WIRE_FORMAT[coins.FULL_NAME_TO_TICK[args.chain]] === 'auxpow'
-            const blocks = auxPow
-                ? await connector.getBlocksBatchWithoutAuxPow(heights)
-                : await connector.getBlocksBatch(heights)
+            const blocks = await fetchDumpBatch(connector, heights, auxPow)
 
             bytesWritten += writeBlockRecords(fd, blocks)
 
@@ -389,7 +379,7 @@ async function main() {
     }
 }
 
-module.exports = { existingChunkMatchesChain, parseArgs, assertExplicitToOutsideUndoWindow }
+module.exports = { existingChunkMatchesChain, parseArgs, assertExplicitToOutsideUndoWindow, fetchDumpBatch }
 
 if (require.main === module) {
     main().catch(err => {
