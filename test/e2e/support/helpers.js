@@ -15,7 +15,6 @@ const { createHash } = require('crypto');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
-const sinon = require('sinon');
 const bitcoin = require('bitcoinjs-lib');
 const ECPairFactory = require('ecpair');
 const ecc = require('tiny-secp256k1');
@@ -198,39 +197,39 @@ function stubBlockchain(tracker, initialBlocks) {
   }
 
   // Stub getBlockchainInfo
-  sinon.stub(tracker.connector, 'getBlockchainInfo').callsFake(async () => ({
+  tracker.connector.getBlockchainInfo = async () => ({
     blocks: state.tipHeight(),
     verificationprogress: 1.0,
     headers: state.tipHeight()
-  }));
+  });
 
   // Stub getBlockHash
-  sinon.stub(tracker.connector, 'getBlockHash').callsFake(async (height) => {
+  tracker.connector.getBlockHash = async (height) => {
     if (height >= 0 && height < state.blocks.length) {
       return state.blocks[height].hash;
     }
     throw new Error('Block height out of range: ' + height);
-  });
+  };
 
   // Returns a fake hex string keyed by hash.
   // Stub getBlock: returns a fake hex string keyed by hash
-  sinon.stub(tracker.connector, 'getBlock').callsFake(async (hash) => {
+  tracker.connector.getBlock = async (hash) => {
     return 'fakehex_' + hash;
-  });
+  };
 
   // Used for non-AuxPoW prefetching.
   // Stub getBlocksBatch: used for non-AuxPoW prefetching
-  sinon.stub(tracker.connector, 'getBlocksBatch').callsFake(async (heights) => {
+  tracker.connector.getBlocksBatch = async (heights) => {
     return heights.map(h => {
       const b = state.blocks[h];
       if (!b) throw new Error('Block not found at height ' + h);
       return { height: h, hash: b.hash, hex: 'fakehex_' + b.hash };
     });
-  });
+  };
 
   // Maps our fake hex back to the mock block object.
   // Stub blockFromHex: maps our fake hex back to the mock block object
-  sinon.stub(tracker.xchainBlockDecoder, 'blockFromHex').callsFake((hex) => {
+  tracker.xchainBlockDecoder.blockFromHex = (hex) => {
     // hex is 'fakehex_<hash>'
     const hash = hex.replace('fakehex_', '');
     const block = state.hashToBlock.get(hash);
@@ -242,22 +241,22 @@ function stubBlockchain(tracker, initialBlocks) {
       timestamp: block.timestamp,
       transactions: block.transactions
     };
-  });
+  };
 
   // Stub mempool methods
-  sinon.stub(tracker.connector, 'getRawMempool').callsFake(async () => {
+  tracker.connector.getRawMempool = async () => {
     return [...state.mempool];
-  });
+  };
 
-  sinon.stub(tracker.connector, 'getRawTransactions').callsFake(async (txids) => {
+  tracker.connector.getRawTransactions = async (txids) => {
     return txids.map(txid => state.mempoolTxHex[txid] || null);
-  });
+  };
 
-  sinon.stub(tracker.xchainBlockDecoder, 'txFromHex').callsFake((hex) => {
+  tracker.xchainBlockDecoder.txFromHex = (hex) => {
     // hex is 'fakemptx_<txid>'
     const txid = hex.replace('fakemptx_', '');
     return state.mempoolTxObjects[txid];
-  });
+  };
 
   return state;
 }
