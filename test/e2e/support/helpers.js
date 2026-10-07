@@ -384,7 +384,7 @@ function createApiApp(tracker) {
     try {
       const utxos = await tracker.getUtxosAddress(req.params.address);
       let balance = 0;
-      for (const u of utxos) balance += u.amount;
+      for (const u of utxos) balance += Number(u.amount);
       res.json(balance);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -417,7 +417,7 @@ function createApiApp(tracker) {
     async get_balance({ address }) {
       const utxos = await tracker.getUtxosAddress(address);
       let balance = 0;
-      for (const u of utxos) balance += u.amount;
+      for (const u of utxos) balance += Number(u.amount);
       return { balance };
     },
     async get_first_seen({ address }) {
