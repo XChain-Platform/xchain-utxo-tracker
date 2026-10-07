@@ -28,12 +28,24 @@ const { RecordReader,
 const { resolveUndoBlocks }    = require('../../../chain/undo_blocks.js')
 const {
     P_BLOCK, P_TX, P_OUTPUT, P_OUT_HINT, P_STORED_BLK,
-    OUTPUTS_RECORD_SIZE, OUTPUTS_RECORD_SIZE_CB,
+    OUTPUTS_RECORD_SIZE, OUTPUTS_RECORD_SIZE_CB, OUTPUTS_HEADER_SIZE,
     LAYOUT, noop, ensureDir, FlatWriter, sortByKey,
 } = require('./record_layout.js')
 const { writeScriptCandidates,
         deriveScriptKeys }      = require('./derive_keys_pass_scripts.js')
 const { deriveSpendKeys }      = require('./derive_keys_pass_spends.js')
+
+// X and Y prefix bytes; the live store keeps them private, so a regression test
+// compares every seeded key with what insertTransaction writes. T.dat carries the
+// block height after the key so the sort orders colliding prefixes by block and the
+// loader's later put (the higher block) wins the slot; the loader drops those 4 bytes.
+const P_TX_EXACT          = 0x58
+const P_TX_BLOCK_RECOVERY = 0x59
+const TX_INDEX_LAYOUT = {
+    T: { keySize:  9, valSize: 68, recordSize: 77 },
+    X: { keySize: 33, valSize: 32, recordSize: 65 },
+    Y: { keySize: 41, valSize: 32, recordSize: 73 },
+}
 
 /**
  * @param {Object}  opts
@@ -62,12 +74,16 @@ const { deriveSpendKeys }      = require('./derive_keys_pass_spends.js')
  *                                          XCHAIN_UNDO_BLOCKS_<COIN> env var.
  * @param {boolean} opts.removeSpent       default true, the live-parity seed:
  *                                          skips I/J (the live confirmed path
- *                                          never writes them) and T (bulk-sync
- *                                          cannot yet emit the live 64-byte T
- *                                          and its X/Y index; README Upgrading).
- *                                          Explicit false emits 32-byte T plus
- *                                          I/J, which is NOT a parity seed and
- *                                          is kept for fixtures and diagnostics.
+ *                                          never writes them) and the legacy
+ *                                          32-byte T. Explicit false emits
+ *                                          32-byte T plus I/J, which is NOT a
+ *                                          parity seed and is kept for fixtures
+ *                                          and diagnostics.
+ * @param {boolean} opts.txIndex           default false. When true, T/X/Y are
+ *                                          emitted in the live shape (64-byte T,
+ *                                          exact-txid X, window-limited Y) from
+ *                                          the full txids in the outputs stream,
+ *                                          and the legacy 32-byte T is not.
  * @param {Function} opts.onProgress       callback({phase, ...})
  */
 async function deriveKeys(opts) {
@@ -81,6 +97,7 @@ async function deriveKeys(opts) {
     const { candSortedPath, wMinHeight } = await writeScriptCandidates(ctx, stats, lastHeight)
     await deriveScriptKeys(ctx, stats, candSortedPath, wMinHeight)
     await deriveSpendKeys(ctx, stats)
+    if (ctx.txIndex) await deriveTxIndexKeys(ctx, stats, wMinHeight)
     writeLastBlockMarkers(ctx.outDir, stats, lastHeight, lastBlockHash)
 
     onProgress({ phase: 'done', stats })
@@ -98,6 +115,7 @@ function resolveDeriveOptions(opts) {
     const ramBudgetBytes = opts.ramBudgetBytes || (1024 * 1024 * 1024)
     const undoBlocks     = resolveUndoBlocks(opts.network, opts.undoBlocks)
     const removeSpent    = opts.removeSpent !== false
+    const txIndex        = opts.txIndex === true
     const onProgress     = opts.onProgress     || noop
     const outputsRecordSize = opts.outputsRecordSize || OUTPUTS_RECORD_SIZE
     if (outputsRecordSize !== OUTPUTS_RECORD_SIZE && outputsRecordSize !== OUTPUTS_RECORD_SIZE_CB) {
@@ -117,7 +135,7 @@ function resolveDeriveOptions(opts) {
 
     return {
         metaPath, outputsPath, liveUtxosPath, spendsByPrevPath, outDir, tmpDir,
-        ramBudgetBytes, undoBlocks, removeSpent, onProgress,
+        ramBudgetBytes, undoBlocks, removeSpent, txIndex, onProgress,
         outputsRecordSize, hasCoinbaseByte,
     }
 }
@@ -173,10 +191,10 @@ async function deriveBlockKeys(ctx, stats) {
 // and keeps the last undoBlocks block hashes for N. Closes the reader and both
 // writers.
 function scanMetaBlocks(ctx, meta, bRawPath, tRawPath) {
-    const { removeSpent, undoBlocks } = ctx
+    const { removeSpent, txIndex, undoBlocks } = ctx
 
     const bRaw = new FlatWriter(bRawPath, LAYOUT.B.recordSize)
-    const tRaw = removeSpent ? null : new FlatWriter(tRawPath, LAYOUT.T.recordSize)
+    const tRaw = (removeSpent || txIndex) ? null : new FlatWriter(tRawPath, LAYOUT.T.recordSize)
 
     // Sliding window of the last `undoBlocks` block hashes as Buffers.
     const nWindow = []
@@ -194,8 +212,7 @@ function scanMetaBlocks(ctx, meta, bRawPath, tRawPath) {
                 blk.previousHash.copy(buf, off + 41, 0, 32)
             })
 
-            // T: one per inlined txHash8 → val = blockHash (32B, the legacy
-            // shape; live is 64B, see SPEC.md "T value shape")
+            // Legacy T: val = blockHash (32B); txIndex emits the live 64B T instead
             if (tRaw) {
                 for (let i = 0; i < blk.txHash8List.length; i++) {
                     const th = blk.txHash8List[i]
@@ -220,6 +237,54 @@ function scanMetaBlocks(ctx, meta, bRawPath, tRawPath) {
         if (tRaw) tRaw.close()
     }
     return { bRaw, tRaw, nWindow, lastHeight, lastBlockHash }
+}
+
+// Phase 9: the live-parity tx index. Every transaction has at least one output and
+// a tx's outputs are adjacent, so the pre-cancellation outputs stream names each
+// full txid with its block; X.dat and the window-limited Y.dat follow from it.
+async function deriveTxIndexKeys(ctx, stats, wMinHeight) {
+    const { outputsPath, outputsRecordSize, outDir, tmpDir, ramBudgetBytes, onProgress } = ctx
+    const raw = {}
+    const rawPath = {}
+    for (const k of ['T', 'X', 'Y']) {
+        rawPath[k] = path.join(tmpDir, k + '-tx-raw.dat')
+        raw[k] = new FlatWriter(rawPath[k], TX_INDEX_LAYOUT[k].recordSize)
+    }
+    const reader = new RecordReader(outputsPath, OUTPUTS_HEADER_SIZE, outputsRecordSize)
+    let prev = null
+    try {
+        for (let rec = reader.next(); rec; rec = reader.next()) {
+            const fullTxid = rec.subarray(24, 56)
+            if (prev !== null && prev.equals(fullTxid)) continue
+            prev = Buffer.from(fullTxid)
+            const txHash8 = rec.subarray(0, 8), heightBE = rec.subarray(20, 24), blockHash = rec.subarray(88, 120)
+            raw.T.write((buf, off) => {
+                buf[off] = P_TX
+                txHash8.copy(buf, off + 1); heightBE.copy(buf, off + 9)
+                blockHash.copy(buf, off + 13); fullTxid.copy(buf, off + 45)
+            })
+            raw.X.write((buf, off) => {
+                buf[off] = P_TX_EXACT
+                fullTxid.copy(buf, off + 1); blockHash.copy(buf, off + 33)
+            })
+            if (heightBE.readUInt32BE(0) < wMinHeight) continue
+            raw.Y.write((buf, off) => {
+                buf[off] = P_TX_BLOCK_RECOVERY
+                blockHash.copy(buf, off + 1); txHash8.copy(buf, off + 33); fullTxid.copy(buf, off + 41)
+            })
+        }
+    } finally {
+        reader.close()
+        for (const k of ['T', 'X', 'Y']) raw[k].close()
+    }
+    // T sorts on key plus height (13B) so a shared 8-byte prefix ends in block order.
+    const sortKey = { T: 13, X: 33, Y: 41 }
+    for (const k of ['T', 'X', 'Y']) {
+        await sortByKey(rawPath[k], path.join(outDir, k + '.dat'), TX_INDEX_LAYOUT[k].recordSize, sortKey[k], path.join(tmpDir, 'sort-tx-' + k), ramBudgetBytes)
+        try { fs.unlinkSync(rawPath[k]) } catch (_) {}
+        stats[k] = raw[k].count
+    }
+    onProgress({ phase: 'tx-index-done', T: stats.T, X: stats.X, Y: stats.Y })
 }
 
 // Phases 3 and 4: live-utxos becomes H.dat (already in key order) and O.dat
@@ -323,4 +388,4 @@ function writeLastBlockMarkers(outDir, stats, lastHeight, lastBlockHash) {
     stats.lastHeight = lastHeight
 }
 
-module.exports = { deriveKeys }
+module.exports = { deriveKeys, TX_INDEX_LAYOUT }

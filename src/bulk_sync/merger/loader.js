@@ -38,6 +38,7 @@ const fs   = require('fs')
 const path = require('path')
 
 const { LAYOUT }       = require('./derive_keys.js')
+const { TX_INDEX_LAYOUT } = require('./derive_keys/derive_keys_pass.js')
 const { RecordReader } = require('./streaming_join.js')
 const { encodeOutput, kOutBlk } = require('../../store/level_up_db.js')
 const { Q_UNDO_WATERMARK_KEY } = require('../../XChainUtxoTracker/constants.js')
@@ -62,6 +63,17 @@ function transformOValue(value) {
 // also ascending prefix-byte order.
 const PREFIX_FILES = ['B', 'H', 'I', 'J', 'N', 'O', 'S', 'T', 'W', 'Z']
 
+// The live-parity tx index replaces the legacy 32-byte T and adds X and Y.
+const TX_INDEX_FILES = ['T', 'X', 'Y']
+
+function selectPrefixes(removeSpent, txIndex) {
+    const base = removeSpent
+        ? PREFIX_FILES.filter(p => p !== 'T' && p !== 'I' && p !== 'J')
+        : PREFIX_FILES.filter(p => !(txIndex && p === 'T'))
+    if (!txIndex) return base
+    return [...base, ...TX_INDEX_FILES].sort()
+}
+
 // Parity guard for the W (creation-block reverse index) prefix. Byte-exactness
 // across the whole merger pipeline is the hazard: a W key the live unwind can't
 // match silently re-introduces the phantom-UTXO corruption the index exists to
@@ -85,6 +97,10 @@ function validateWRecord(key, value) {
         throw new Error(`loadKeys: W key mismatch vs live insertOutputBlock encoding at block ${blockHashHex} tx ${txHash8Hex} idx ${idx}`)
     }
 }
+
+// T.dat records carry the block height after the key so the derive sort orders a
+// shared prefix by block; the live T value is the block hash and txid only.
+function dropTHeight(value) { return value.subarray(4) }
 
 function noop() {}
 
@@ -122,8 +138,8 @@ async function loadPrefixFile(db, filePath, keySize, recordSize, batchSize, valu
     return total
 }
 
-function preparePrefixLoad(keysDir, pfx) {
-    const { keySize, recordSize } = LAYOUT[pfx]
+function preparePrefixLoad(keysDir, pfx, txIndex) {
+    const { keySize, recordSize } = (txIndex && TX_INDEX_LAYOUT[pfx]) || LAYOUT[pfx]
     const filePath = path.join(keysDir, pfx + '.dat')
     if (!fs.existsSync(filePath)) {
         // Every selected prefix file is produced by a completed
@@ -138,7 +154,7 @@ function preparePrefixLoad(keysDir, pfx) {
         recordSize,
         filePath,
         startedAt,
-        valueTransform: (pfx === 'O') ? transformOValue : null,
+        valueTransform: (pfx === 'O') ? transformOValue : (txIndex && pfx === 'T') ? dropTHeight : null,
         recordValidator: (pfx === 'W') ? validateWRecord : null,
     }
 }
@@ -185,16 +201,19 @@ async function writeFinalMarkers(db, keysDir, stats) {
  * @param {number}  opts.batchSize    records per batch (default 10000)
  * @param {boolean} opts.removeSpent  default true, the live-parity seed: skips
  *                                     I/J (the live confirmed path never writes
- *                                     them) and T (bulk-sync cannot yet emit the
- *                                     live 64-byte T and its X/Y index; README
- *                                     Upgrading). Explicit false loads 32-byte
- *                                     T plus I/J, which is NOT a parity seed.
+ *                                     them) and the legacy 32-byte T. Explicit
+ *                                     false loads 32-byte T plus I/J, which is
+ *                                     NOT a parity seed.
+ * @param {boolean} opts.txIndex      default false. When true, loads the 64-byte
+ *                                     T and the X and Y files that deriveKeys
+ *                                     emitted with the same option.
  * @param {Function} opts.onProgress  ({phase, ...})
  */
 async function loadKeys(opts) {
     const { keysDir, dbPath } = opts
     const batchSize   = opts.batchSize  || 10000
     const removeSpent = opts.removeSpent !== false
+    const txIndex     = opts.txIndex === true
     const onProgress  = opts.onProgress || noop
 
     if (!keysDir || !dbPath) {
@@ -204,9 +223,7 @@ async function loadKeys(opts) {
     const db = openDb(dbPath)
     await db.open()
 
-    const prefixes = removeSpent
-        ? PREFIX_FILES.filter(p => p !== 'T' && p !== 'I' && p !== 'J')
-        : PREFIX_FILES
+    const prefixes = selectPrefixes(removeSpent, txIndex)
 
     const stats = {}
     const startedAt = Date.now()
@@ -227,7 +244,7 @@ async function loadKeys(opts) {
         }
 
         for (const pfx of prefixes) {
-            const { keySize, recordSize, filePath, startedAt, valueTransform, recordValidator } = preparePrefixLoad(keysDir, pfx)
+            const { keySize, recordSize, filePath, startedAt, valueTransform, recordValidator } = preparePrefixLoad(keysDir, pfx, txIndex)
             const count = await loadPrefixFile(db, filePath, keySize, recordSize, batchSize, valueTransform, recordValidator)
             recordPrefixLoaded(stats, onProgress, pfx, count, startedAt)
         }
