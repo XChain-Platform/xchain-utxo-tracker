@@ -70,7 +70,7 @@ describe('E2E: Mempool Lifecycle', function () {
       // Addr0: confirmed 50, pending includes mempool change
       const info0 = await tracker.getBalanceInfo(TEST_KEYS[0].address);
       expect(info0.balances.confirmed).to.equal('50.00000000');
-      expect(parseFloat(info0.balances.pending)).to.be.greaterThan(0);
+      expect(info0.balances.pending).to.equal('-10.01000000');
     });
   });
 });
