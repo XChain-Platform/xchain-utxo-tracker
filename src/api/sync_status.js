@@ -76,16 +76,6 @@ function undoWindowWatermarkField(tracker){
     return (typeof cap === 'number' && Number.isFinite(cap)) ? Math.min(mark, cap) : mark
 }
 
-// Readiness contract: the tracker's height fields all report the LAST
-// COMMITTED state, not in-flight processing, since the tracker buffers up
-// to DB_TRANSACTION_BLOCKS_QUANTITY blocks before flushing via
-// endTransaction() and getLastBlockHeight() reads from disk. So
-// getLastBlockHeight() returning N guarantees every output in blocks 0..N
-// is queryable via get_utxos / get_balance. is_quiescent() builds on this:
-// it returns ready=true only when the committed height matches the node
-// tip AND the node's mempool is empty, giving callers a barrier they can
-// wait on without needing to know any of the tracker's batching internals.
-
 // Sync-status probe: tracker tip vs node tip. Used by e2e tests and
 // ops tooling to diagnose lag when an address's funding tx looks lost.
 // `tracker_height` and `committed_height` are aliases, both report
@@ -102,68 +92,6 @@ function undoWindowWatermarkField(tracker){
 // committed height matches the node tip AND the node's mempool is
 // empty, giving callers a barrier they can wait on without needing
 // to know any of the tracker's batching internals.
-
-// Authoritative sync verdict computed against the tracker's own
-// SYNCED_THRESHOLD so callers don't replicate the threshold. The policy
-// (null lag, stale node height and negative lag are all not-synced) lives
-// in deriveSyncedVerdict above, where it is unit-testable.
-
-// Spendability is block sync AND a reconverged mempool, the same pair REST
-// gates X-Mempool-Ready on and get_utxos' freshness sibling now carries.
-// Published here too because this method is the ONLY tracker surface the
-// encoder's serve-readiness probe reads: without the field that probe could
-// not mirror create_tx's UTXO_TRACKER_NOT_READY refusal, and /status painted
-// the encoder healthy for the whole restart window in which create_tx refuses
-// every request (the same kind of divergence the lag field already covers).
-
-// Surface mempool RPC health so operators can detect a node that is
-// degraded on mempool fetches without watching the console log.
-
-// Surface reorg counters so operators can detect chains with
-// frequent reorganizations and know the depth of the last one.
-
-// Non-null ({node_height, stored_height, since}) while the sync loop is
-// waiting out a node in initial block download whose tip is below our
-// committed tip: a deliberate wait, not a stall and not a rollback. Always
-// present (null when not waiting) so `xchain-node ps` can read one shape.
-
-// Whether the coin node is answering this tracker at all, and since when it
-// stopped. node_last_ok_at is null until the first successful RPC, and
-// node_unreachable is non-null ({since, last_ok_at, seconds}) only while the
-// latest attempt has failed. Always present so one shape reads everywhere.
-
-// Remaining rollback budget. Every rollback deletes one entry from the
-// persisted undo window and only forward sync puts it back, so a window
-// sitting below undo_window_blocks says a reorg was interrupted (a
-// restart mid-reorg) and names how much depth is left before this index
-// can no longer be walked onto the node's chain. reorg_count and
-// last_reorg_depth are in-memory lifetime counters and read zero after
-// that restart, so they cannot show this on their own.
-
-// Read spent depth as undo_window_remaining < min(undo_window_watermark, undo_window_blocks);
-// remaining == watermark < blocks is a window refilling after a bootstrap or a raise, and 0 is unknown.
-
-// Surface an unrecoverable block-fetch desync so a monitor can
-// name the fault. Set just before the polling loop fails loud on a node
-// pruned past our cursor; visible in the brief window before exit.
-
-// Halted (unrecoverable reorg): persists, since the tracker no longer
-// exits on this fault but halts in place, so a monitor can alert and an
-// operator can resync. /status also returns 503 while halted. halted_at
-// and halted_height come from the store's marker, so after a restart
-// they still name the FIRST halt, not this process's boot.
-
-// Health probe: the richest surface a consumer gates on (lag plus halt
-// markers), matching xchain-decoder's and xchain-indexer's health().
-// Delegates to get_sync_status so the lag math and SYNCED_THRESHOLD stay
-// defined in one place. xchain-node's BootstrapHealthGate probes this
-// method first and falls back to GET /status; before that route carried
-// freshness, a fallback body had no lag field, the gate's lag refusal
-// silently never fired and a badly lagging tracker certified as a
-// bootstrap source.
-
-// Sync-status probe: tracker tip vs node tip. Both height fields report the last
-// committed state, which guarantees outputs through that height are queryable.
 async function get_sync_status(tracker) {
     let committedHeight = -1
     try { committedHeight = await tracker.db.getLastBlockHeight() } catch (e) {}
@@ -189,6 +117,10 @@ async function get_sync_status(tracker) {
         tracker_height: committedHeight,
         node_height: nodeHeight,
         lag,
+        // Authoritative sync verdict computed against the tracker's own
+        // SYNCED_THRESHOLD so callers don't replicate the threshold. The policy
+        // (null lag, stale node height and negative lag are all not-synced) lives
+        // in deriveSyncedVerdict above, where it is unit-testable.
         synced: deriveSyncedVerdict({ lag, nodeHeightStale })
     }
     if (loopStale) {
@@ -199,64 +131,70 @@ async function get_sync_status(tracker) {
 }
 
 function addOperationalStatus(result, tracker, nodeHeightStale) {
+    // Spendability is block sync AND a reconverged mempool, the same pair REST
+    // gates X-Mempool-Ready on and get_utxos' freshness sibling now carries.
+    // Published here too because this method is the ONLY tracker surface the
+    // encoder's serve-readiness probe reads: without the field that probe could
+    // not mirror create_tx's UTXO_TRACKER_NOT_READY refusal, and /status painted
+    // the encoder healthy for the whole restart window in which create_tx refuses
+    // every request (the same kind of divergence the lag field already covers).
     result.mempool_ready = result.synced && tracker.isMempoolReconverged() === true
     if (nodeHeightStale) result.node_height_stale = true
+    // Surface mempool RPC health so operators can detect a node that is
+    // degraded on mempool fetches without watching the console log.
     if (tracker.mempoolRpcFailures > 0) {
         result.mempool_rpc_failures = tracker.mempoolRpcFailures
         result.last_mempool_error_at = tracker.lastMempoolErrorAt
     }
+    // Surface reorg counters so operators can detect chains with
+    // frequent reorganizations and know the depth of the last one.
     result.reorg_count = tracker.reorgCount
     result.last_reorg_depth = tracker.lastReorgDepth
+    // Non-null ({node_height, stored_height, since}) while the sync loop is
+    // waiting out a node in initial block download whose tip is below our
+    // committed tip: a deliberate wait, not a stall and not a rollback. Always
+    // present (null when not waiting) so `xchain-node ps` can read one shape.
     result.node_catching_up = (tracker && tracker.nodeCatchingUp) || null
+    // Whether the coin node is answering this tracker at all, and since when it
+    // stopped. node_last_ok_at is null until the first successful RPC, and
+    // node_unreachable is non-null ({since, last_ok_at, seconds}) only while the
+    // latest attempt has failed. Always present so one shape reads everywhere.
     const reach = nodeReachabilityFields(tracker)
     result.node_last_ok_at = reach.node_last_ok_at
     result.node_unreachable = reach.node_unreachable
     result.undo_window_blocks = tracker.undoBlocks
+    // Remaining rollback budget. Every rollback deletes one entry from the
+    // persisted undo window and only forward sync puts it back, so a window
+    // sitting below undo_window_blocks says a reorg was interrupted (a
+    // restart mid-reorg) and names how much depth is left before this index
+    // can no longer be walked onto the node's chain. reorg_count and
+    // last_reorg_depth are in-memory lifetime counters and read zero after
+    // that restart, so they cannot show this on their own.
     result.undo_window_remaining = Array.isArray(tracker.lastBlocks) ? tracker.lastBlocks.length : 0
+    // Read spent depth as undo_window_remaining < min(undo_window_watermark, undo_window_blocks);
+    // remaining == watermark < blocks is a window refilling after a bootstrap or a raise, and 0 is unknown.
     result.undo_window_watermark = undoWindowWatermarkField(tracker)
+    // Surface an unrecoverable block-fetch desync so a monitor can
+    // name the fault. Set just before the polling loop fails loud on a node
+    // pruned past our cursor; visible in the brief window before exit.
     if (tracker.blockFetchDesync) result.block_fetch_desync = tracker.blockFetchDesync
+    addHaltFields(result, tracker)
+    return result
+}
+
+function addHaltFields(result, tracker) {
+    // Halted (unrecoverable reorg): persists, since the tracker no longer
+    // exits on this fault but halts in place, so a monitor can alert and an
+    // operator can resync. /status also returns 503 while halted. halted_at
+    // and halted_height come from the store's marker, so after a restart
+    // they still name the FIRST halt, not this process's boot.
     if (tracker.halted) {
         result.halted = true
         result.halt_reason = tracker.haltReason
         result.halted_at = tracker.haltedAt
         result.halted_height = tracker.haltedHeight
     }
-    return result
 }
-
-// GET /status: lightweight health probe for Docker HEALTHCHECK and uptime
-// monitors. Runs the same DB read that get_sync_status uses to verify the
-// store is reachable and returns 503 when it is not. The JSON-RPC catch-all
-// would otherwise respond 200 to any GET (serving the method-not-found
-// error body), making a DB-down tracker appear healthy to healthchecks.
-// Held on the PROBE gate, not the main one: /status is exempt from the main
-// cap by `skip`, so its slot lives in probeGate's reserve and only that
-// gate's hold() finds it. `isProbe` / `probePath` in installConcurrencyGates
-// (src/api/startup.js) must keep matching every request this route answers
-// (HEAD, trailing slash, any case), or the admitting gate stops being the
-// holding gate and hold() silently no-ops.
-
-// DB unreachable; fall through to 503
-
-// Halted (unrecoverable reorg): report unhealthy so Docker/monitors see the
-// degradation while the process stays up (no restart thrash; unless-stopped
-// only restarts on exit). Recovery is an operator resync via restorebootstrap.
-// Freshness (tracker_height / node_height / lag / synced) rides on BOTH
-// branches from the poll loop's cached tip, no node RPC: xchain-node's
-// BootstrapHealthGate falls back to this probe whenever its `health` POST
-// is shed by the request gate (this route answers from probe_gate's
-// reserve), and a body with no lag field gave that gate's lag refusal
-// nothing to judge. lag stays null when the tip is unknown, never 0.
-
-// A readable store is not forward progress. The tracking loop retries a
-// failing getBlockchainInfo forever, so a coin node that is down or unsynced
-// freezes block tracking while LevelDB still answers and this probe still
-// said 'ok'. Gate on the loop's own last usable tip read, in
-// memory: no RPC is issued from the probe, so the check adds no node load.
-
-// request_gate exposes the global concurrency cap and how many requests
-// it has shed; a climbing shed count is the only outward sign
-// that a distinct-IP stampede is being refused.
 
 // The gate-refusal keys the `health` answer carries (addOperationalStatus), for the
 // GET /status body. xchain-node's bootstrap gate falls back to /status when its
@@ -273,8 +211,18 @@ function statusRefusalFields(tracker, freshness, nodeRpcStale = false) {
     return fields
 }
 
-// Lightweight Docker and uptime probe. It uses the cached node tip, so the
-// staleness check adds no node RPC load while still detecting lost progress.
+// GET /status: lightweight health probe for Docker HEALTHCHECK and uptime
+// monitors. Runs the same DB read that get_sync_status uses to verify the
+// store is reachable and returns 503 when it is not. The JSON-RPC catch-all
+// would otherwise respond 200 to any GET (serving the method-not-found
+// error body), making a DB-down tracker appear healthy to healthchecks.
+// Held on the PROBE gate, not the main one: /status is exempt from the main
+// cap by `skip`, so its slot lives in probeGate's reserve and only that
+// gate's hold() finds it. `isProbe` / `probePath` in installConcurrencyGates
+// (src/api/startup.js) must keep matching every request this route answers
+// (HEAD, trailing slash, any case), or the admitting gate stops being the
+// holding gate and hold() silently no-ops. The hold() rule for every other
+// route sits on registerRoutes in src/api/routes.js.
 function registerStatusRoute({ app, tracker, probeGate, requestGate, getFreshnessMeta }) {
     app.get('/status', probeGate.hold(async (req, res) => {
         let dbOk = false
@@ -285,10 +233,24 @@ function registerStatusRoute({ app, tracker, probeGate, requestGate, getFreshnes
         } catch (err) {
             // DB unreachable; fall through to 503
         }
+        // Freshness (tracker_height / node_height / lag / synced) rides on BOTH
+        // branches from the poll loop's cached tip, no node RPC: xchain-node's
+        // BootstrapHealthGate falls back to this probe whenever its `health` POST
+        // is shed by the request gate (this route answers from probe_gate's
+        // reserve), and a body with no lag field gave that gate's lag refusal
+        // nothing to judge. lag stays null when the tip is unknown, never 0.
         const freshness = await getFreshnessMeta(committedHeight)
+        // A readable store is not forward progress. The tracking loop retries a
+        // failing getBlockchainInfo forever, so a coin node that is down or unsynced
+        // freezes block tracking while LevelDB still answers and this probe still
+        // said 'ok'. Gate on the loop's own last usable tip read, in
+        // memory: no RPC is issued from the probe, so the check adds no node load.
         const nodeRpcStale = isNodeRpcStale({ lastNodeRpcOkAt: tracker.lastNodeRpcOkAt })
         // Same refusal keys as `health`, on both branches (statusRefusalFields above).
         const refusal = statusRefusalFields(tracker, freshness, nodeRpcStale)
+        // Halted (unrecoverable reorg): report unhealthy so Docker/monitors see the
+        // degradation while the process stays up (no restart thrash; unless-stopped
+        // only restarts on exit). Recovery is an operator resync via restorebootstrap.
         if (tracker.halted) {
             res.status(503)
             return res.json({ status: 'halted', halt_reason: tracker.haltReason,
@@ -299,6 +261,9 @@ function registerStatusRoute({ app, tracker, probeGate, requestGate, getFreshnes
         if (!dbOk || nodeRpcStale) res.status(503)
         const body = {
             status, db: dbOk, committed_height: committedHeight, ...freshness, ...refusal,
+            // request_gate exposes the global concurrency cap and how many requests
+            // it has shed; a climbing shed count is the only outward sign
+            // that a distinct-IP stampede is being refused.
             request_gate: requestGate.getStats(), probe_gate: probeGate.getStats()
         }
         if (nodeRpcStale) {

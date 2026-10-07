@@ -345,6 +345,13 @@ function createJsonRpcController(context) {
     }
     return instance
 }
+// Every route registered here that awaits a LevelDB read is wrapped in the gate's
+// hold(): the slot then spans the read instead of the client's socket, so a
+// client that hangs up mid-scan cannot free capacity for the next request
+// while its own scan is still running. Adding a route here without the
+// wrapper puts it back outside the cap. REST and JSON-RPC routes hold on
+// requestGate; GET /status alone (registerStatusRoute) holds on probeGate, the
+// gate that admitted it, since hold() on any other gate silently does nothing.
 function registerRoutes(context){
     const { app, tracker, probeGate, requestGate, getFreshnessMeta } = context
     registerUtxoRoute(context)
