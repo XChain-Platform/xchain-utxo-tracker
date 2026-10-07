@@ -228,7 +228,7 @@ describe('E2E: Mempool Lifecycle', function () {
       const utxos3 = await tracker.getUtxosAddress(TEST_KEYS[3].address);
       expect(utxos3).to.have.length(1);
       expect(utxos3[0].confirmations).to.equal(0);
-      expect(utxos3[0].amount).to.equal(7);
+      expect(utxos3[0].amount).to.equal('7.00000000');
     });
   });
 });
