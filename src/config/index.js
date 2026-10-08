@@ -27,17 +27,17 @@
  * reset. A getter keeps the old semantics: the value is whatever the
  * environment says at the moment it is asked for.
  *
- * Coercion is carried over verbatim from each old read site, including the
- * inconsistencies. `Number(x) > 0` and `parseInt(x ?? d, 10)` do not agree on
- * what a trailing-garbage string means, and this file is not the place to
- * decide that: changing one would be a behaviour change wearing a refactor's
- * clothes.
+ * Every bounded cap resolves through the strict integer reader in env_int.js,
+ * so Infinity, a fraction or a typo warns and keeps the default instead of
+ * silently lifting or zeroing the cap. The remaining parseInt reads
+ * (NODE_RPC_TIMEOUT_MS, LEVELDB_WRITE_BUFFER_BYTES) are still carried over
+ * verbatim from their old read sites.
  *
  ********************************************************************/
 
 'use strict';
 
-const { envInt } = require('./env_int');
+const { envInt, intKnob } = require('./env_int');
 
 // A flag is on for exactly the two spellings the old read sites accepted, so
 // FALSE, 0 and yes all stay off exactly as they did before.
@@ -59,8 +59,7 @@ module.exports = {
     // Generous by design: at the three-second backoff that is about a minute of
     // retrying, so an ordinary node restart self-heals instead of halting.
     get MAX_BLOCK_FETCH_RETRIES() {
-        const n = Number(process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIES);
-        return n > 0 ? n : 20;
+        return intKnob('XCHAIN_MAX_BLOCK_FETCH_RETRIES', process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIES, { fallback: 20, min: 1 });
     },
 
     // Ceiling on an unpaged address query. A mega payout address can hold
@@ -68,8 +67,7 @@ module.exports = {
     // service down for every caller, so past this the query fails loud and the
     // caller pages instead.
     get MAX_ADDRESS_OUTPUTS() {
-        const n = Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS);
-        return n > 0 ? Math.floor(n) : 500000;
+        return intKnob('UTXO_MAX_ADDRESS_OUTPUTS', process.env.UTXO_MAX_ADDRESS_OUTPUTS, { fallback: 500000, min: 1 });
     },
 
     // Per-request timeout on the coin node's RPC, in milliseconds.
@@ -135,14 +133,12 @@ module.exports = {
 
     // Largest JSON-RPC batch accepted.
     get MAX_JSONRPC_BATCH() {
-        const n = Number(process.env.UTXO_MAX_RPC_BATCH);
-        return n > 0 ? n : 20;
+        return intKnob('UTXO_MAX_RPC_BATCH', process.env.UTXO_MAX_RPC_BATCH, { fallback: 20, min: 1 });
     },
 
     // Largest page a single limit request may ask for.
     get MAX_PAGE_LIMIT() {
-        const n = Number(process.env.UTXO_MAX_PAGE_LIMIT);
-        return n > 0 ? Math.floor(n) : 10000;
+        return intKnob('UTXO_MAX_PAGE_LIMIT', process.env.UTXO_MAX_PAGE_LIMIT, { fallback: 10000, min: 1 });
     },
 
     get BULK_SYNC_WORK_DIR() { return process.env.BULK_SYNC_WORK_DIR; },
