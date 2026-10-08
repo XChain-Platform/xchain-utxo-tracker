@@ -65,10 +65,9 @@ const PREFIX_NAMES = {
 function h32(label) { return crypto.createHash('sha256').update(label).digest(); }
 function hex8(buf)  { return buf.subarray(0, 8).toString('hex'); }
 
-// One live sample per prefix: the key the live builder makes and the value the
-// live write path stores. T is the 32-byte blockHash that live decodeTx reads;
-// the live writer's appended full txid and its exact-txid index are not seeded
-// by bulk sync (README, Upgrading).
+// Build one live sample per prefix: the live builder's key and the stored value.
+// T is the legacy 32-byte blockHash seeded with txIndex off, as for this Bitcoin seed;
+// non-Bitcoin seeds write the live 64-byte T plus X and Y (bulk_sync_tx_index_parity).
 function liveSample(p) {
     const hash = h32('sample-hash').toString('hex');
     const tx8  = hex8(h32('sample-tx'));

@@ -115,7 +115,7 @@ module.exports = {
     // produced. Dogecoin 1.14 has no verbosity-2 getblock, so per-txid fetches
     // are the portable route. Deterministic across instances: the output
     // depends only on chain content.
-    // Keep in sync with xchain-decoder/src/chain/blockchain_connector.js getBlockReassembled.
+    // Keep in sync with xchain-decoder/src/chain/blockchain_connector/block_queries.js getBlockReassembled.
     async getBlockReassembled(blockhash) {
         try {
             // Older daemons append the AuxPoW bytes to getblockheader; the pure
@@ -170,7 +170,7 @@ module.exports = {
     },
 
     // The two RPC fetches are deliberately OUTSIDE the try, matching the decoder twin
-    // (xchain-decoder/src/chain/blockchain_connector.js getBlockWithoutAuxPow). A transport
+    // (xchain-decoder/src/chain/blockchain_connector/block_queries.js getBlockWithoutAuxPow). A transport
     // fault (a Dogecoin 1.14 node dropping the connection when its RPC queue fills, a
     // restart, a network blip) must propagate unwrapped with error.code intact, because
     // the caller's escalation decision turns on cause: only a strip fault is evidence

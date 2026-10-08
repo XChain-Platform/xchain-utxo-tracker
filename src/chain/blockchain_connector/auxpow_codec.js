@@ -13,7 +13,7 @@
  **********************************************************************/
 
 // Encode a Bitcoin-style varint as lowercase hex (inverse of readVarint).
-// Keep in sync with xchain-decoder/src/chain/blockchain_connector.js encodeVarintHex.
+// Keep in sync with xchain-decoder/src/chain/blockchain_connector/auxpow_codec.js encodeVarintHex.
 function encodeVarintHex(value) {
     if (value < 0xFD) {
         return value.toString(16).padStart(2, '0')
@@ -36,7 +36,7 @@ function encodeVarintHex(value) {
 
 // Decode a Bitcoin-style varint from `buf` at `offset`.
 // Returns { value, bytes } where `bytes` is the number of bytes consumed.
-// Keep in sync with xchain-decoder/src/chain/blockchain_connector.js readVarint.
+// Keep in sync with xchain-decoder/src/chain/blockchain_connector/auxpow_codec.js readVarint.
 function readVarint(buf, offset) {
     const first = buf[offset]
     if (first < 0xFD) return { value: first, bytes: 1 }
@@ -115,7 +115,7 @@ function skipCoinbaseOutputs(buf, start, hasSegwit, nIns) {
 //                chain merge-mining branch (same layout) |
 //                parent block header (80 B)
 // Throws if the buffer is too short or structurally invalid.
-// Keep in sync with xchain-decoder/src/chain/blockchain_connector.js skipAuxPow.
+// Keep in sync with xchain-decoder/src/chain/blockchain_connector/auxpow_codec.js skipAuxPow.
 function skipAuxPow(buf, start) {
     const coinbase = skipCoinbaseInputs(buf, start)
     let offset = skipCoinbaseOutputs(buf, coinbase.offset, coinbase.hasSegwit, coinbase.nIns)
@@ -151,7 +151,7 @@ function skipAuxPow(buf, start) {
 // the block hex (skipAuxPow). Non-AuxPoW blocks pass through unchanged. Shared by the
 // single-block (getBlockWithoutAuxPow) and batch (getBlocksBatchWithoutAuxPow) paths
 // so a strip correction can never land in one and silently miss the other.
-// Keep in sync with xchain-decoder/src/chain/blockchain_connector.js stripAuxPowFromBlockHex;
+// Keep in sync with xchain-decoder/src/chain/blockchain_connector/auxpow_codec.js stripAuxPowFromBlockHex;
 // xchain-decoder/test/unit/auxpow_strip_parity.test.js asserts byte identity of the two
 // function bodies, so a strip correction here must land there too.
 function stripAuxPowFromBlockHex(headerHex, blockHex) {
