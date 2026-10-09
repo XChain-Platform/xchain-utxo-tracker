@@ -135,6 +135,22 @@ function createShutdown({ drain, timeoutMs, exit, log } = {}){
     }
 }
 
+// Install named listeners and return a disposer. The bulk-sync boot uses this
+// before an API server or tracker exists, then removes the pair synchronously
+// after startApi has installed the steady-state drain. Named functions matter:
+// anonymous process.on callbacks cannot be removed during that handoff.
+function registerShutdownSignals(shutdown, proc = process){
+    if (typeof shutdown !== 'function') throw new TypeError('shutdown must be a function')
+    const onTerm = () => shutdown('SIGTERM')
+    const onInt = () => shutdown('SIGINT')
+    proc.on('SIGTERM', onTerm)
+    proc.on('SIGINT', onInt)
+    return function removeShutdownSignals(){
+        proc.removeListener('SIGTERM', onTerm)
+        proc.removeListener('SIGINT', onInt)
+    }
+}
+
 /**
  * The tracker's drain, as its own function so the exit path is unit-testable.
  *
@@ -182,5 +198,6 @@ module.exports = {
     closeServer,
     closeStores,
     createShutdown,
+    registerShutdownSignals,
     createTrackerDrain
 }
