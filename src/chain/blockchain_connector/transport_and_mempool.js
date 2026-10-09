@@ -17,6 +17,11 @@ const { logger } = require('./constants');
 const { nodeReachabilityFrom, sanitizeRpcError } = require('./rpc_helpers');
 const { envInt } = require('../../config/env_int');
 
+const CONNECTION_ERROR_CODES = new Set([
+    'ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED', 'ENOTFOUND',
+    'EHOSTUNREACH', 'ENETUNREACH', 'ETIMEDOUT', 'EAI_AGAIN', 'EPIPE'
+])
+
 // getRawTransaction's fault handling. Keep in sync with getRawTransaction in
 // xchain-decoder/src/chain/blockchain_connector/transaction_queries.js (both feed getBlockReassembled).
 
@@ -112,13 +117,13 @@ module.exports = {
         return nodeReachabilityFrom(this.startedAt, this.lastNodeOkAt, this.lastNodeFailAt, now)
     },
 
-    // Single POST path for every RPC method in this class. It exists so reachability
-    // has one choke point instead of six near-identical `this.client.post` call sites;
-    // it adds no retry or classification of its own, leaving each method's ladder
-    // exactly as it was.
+    // Single POST path for every RPC method. It records reachability, resets the
+    // failure streak on a response, and rotates endpoints on transport failures.
+    // Retry policy remains with each caller.
     async rpcPost(data) {
         try {
             const response = await this.client.post(this.url, data)
+            this.connectionFailures = 0
             // The node answered. A JSON-RPC error carried in a 200 body (height out of
             // range, tx not found) still resolves here and still counts as reached:
             // this pair reports whether the node is ANSWERING, not whether the answer
@@ -129,7 +134,22 @@ module.exports = {
             // Timeouts (ECONNABORTED), socket/DNS faults and RPC errors delivered as
             // HTTP 500 all land here, and all mean this attempt got no usable answer.
             this.lastNodeFailAt = Date.now()
+            if (error && error.response) {
+                this.connectionFailures = 0
+            } else if (error && CONNECTION_ERROR_CODES.has(error.code)) {
+                this.noteConnectionFailure(error.code)
+            }
             throw error
+        }
+    },
+
+    noteConnectionFailure(code) {
+        if (this.endpoints.length < 2) return
+        if (++this.connectionFailures >= this.failoverThreshold) {
+            const failing = this.url
+            this.activeEndpointIndex = (this.activeEndpointIndex + 1) % this.endpoints.length
+            this.connectionFailures = 0
+            logger.warn(`RPC endpoint ${failing} unreachable (${code} x${this.failoverThreshold}); failing over to ${this.url}`)
         }
     },
 
