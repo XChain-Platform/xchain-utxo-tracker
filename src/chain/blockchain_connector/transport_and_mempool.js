@@ -20,6 +20,14 @@ const { envInt } = require('../../config/env_int');
 // getRawTransaction's fault handling. Keep in sync with getRawTransaction in
 // xchain-decoder/src/chain/blockchain_connector/transaction_queries.js (both feed getBlockReassembled).
 
+// Return a truthy result only if it is a whole hex string; throw into the retry loop otherwise.
+// (Callers decode outside their tagged try, so a non-hex answer would quarantine as content.)
+function wholeHexResult(result, txid) {
+    if (typeof result === 'string' && result.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(result)) return result
+    const shape = typeof result === 'string' ? `a ${result.length}-char string` : `a ${typeof result}`
+    throw new Error(`getRawTransaction: malformed result for txid ${txid}: expected whole hex, got ${shape}`)
+}
+
 // Resolve a 200 answer, rethrowing a coded non -5 body error so both transports classify alike.
 function rawTransactionResponse(response, txid) {
     const bodyError = response.data?.error
@@ -29,7 +37,7 @@ function rawTransactionResponse(response, txid) {
         err.response = { status: response.status, data: { error: { code: bodyError.code, message: bodyError.message } } }
         throw err
     }
-    if (response.data.result) return response.data.result
+    if (response.data.result) return wholeHexResult(response.data.result, txid)
 
     // Resolve null for a tx the node no longer has (mined or evicted); callers filter nulls.
     if (bodyError?.code === -5) {

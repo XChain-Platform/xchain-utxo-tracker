@@ -1,7 +1,6 @@
 'use strict'
 
 const express = require('express')
-const bodyParser = require('body-parser')
 const helmet = require('helmet')
 const cors = require('cors')
 const rateLimit = require('express-rate-limit')
@@ -138,7 +137,7 @@ function installBaseMiddleware(app, config) {
     // Use Helmet to increase security
     app.use(helmet())
     // Allow JSON requests
-    app.use(bodyParser.json())
+    app.use(express.json())
     // CORS disabled by default. CORS_ORIGIN is a comma-separated ALLOWLIST, not a
     // single origin: handing `cors` the raw string makes it echo that string
     // verbatim to every caller, a multi-value header no browser accepts, so every

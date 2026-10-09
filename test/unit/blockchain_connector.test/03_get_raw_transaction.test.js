@@ -31,9 +31,9 @@ function registerConnectorHooks() {
 function registerRawTransactionTests() {
   describe('getRawTransaction', function () {
     it('returns raw hex on success', async function () {
-      clientStub.resolves({ data: { result: '020000000001...' } });
+      clientStub.resolves({ data: { result: '020000000001' } });
       const hex = await connector.getRawTransaction('txid123');
-      expect(hex).to.equal('020000000001...');
+      expect(hex).to.equal('020000000001');
     });
 
     it('retries on failure up to 10 times', async function () {
@@ -58,10 +58,10 @@ function registerRawTransactionTests() {
       sinon.stub(connector, 'sleep').resolves();
       clientStub.onCall(0).rejects(new Error('timeout'));
       clientStub.onCall(1).rejects(new Error('timeout'));
-      clientStub.onCall(2).resolves({ data: { result: 'hexdata' } });
+      clientStub.onCall(2).resolves({ data: { result: '0200beef' } });
 
       const result = await connector.getRawTransaction('txid');
-      expect(result).to.equal('hexdata');
+      expect(result).to.equal('0200beef');
       expect(clientStub.callCount).to.equal(3);
     });
   });

@@ -66,7 +66,9 @@ function appendSpends(ins, txHash8, writer) {
     let emitted = 0
     for (let k = 0; k < ins.length; k++) {
         const inp = ins[k]
-        if (inp.index === 0xFFFFFFFF) continue
+        // Same spend rule as the live parseTxInputs: skip coinbase and any input with a falsy standard_input.
+        const standardInput = ("standard_input" in inp ? inp["standard_input"] : true)
+        if ((inp.index === 0xFFFFFFFF) || !standardInput) continue
         // inp.hash is 32B LE internal. We need only the first 8 bytes of the
         // display-order hash, so read the last 8 bytes of LE in reverse.
         const prevLE  = inp.hash

@@ -31,10 +31,10 @@ function registerConnectorHooks() {
 function registerRawTransactionsTests() {
   describe('getRawTransactions', function () {
     it('fetches all txids in parallel', async function () {
-      clientStub.resolves({ data: { result: 'hexdata' } });
+      clientStub.resolves({ data: { result: '0200beef' } });
       const results = await connector.getRawTransactions(['tx1', 'tx2', 'tx3']);
       expect(results).to.have.length(3);
-      expect(results.every(r => r === 'hexdata')).to.be.true;
+      expect(results.every(r => r === '0200beef')).to.be.true;
     });
 
     it('returns empty array for empty input', async function () {

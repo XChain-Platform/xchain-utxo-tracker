@@ -12,7 +12,6 @@
 
 const { expect } = require('chai');
 const express = require('express');
-const bodyParser = require('body-parser');
 const cors = require('cors');
 const helmet = require('helmet');
 const supertest = require('supertest');
@@ -161,7 +160,7 @@ async function buildExpressApp() {
   // Build a minimal Express app wired to the real tracker (already has indexed data)
   app = express();
   app.use(helmet());
-  app.use(bodyParser.json());
+  app.use(express.json());
   app.use(cors());
 
   app.get('/utxos/:address', async (req, res) => {

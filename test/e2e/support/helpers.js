@@ -18,7 +18,6 @@ const bitcoin = require('bitcoinjs-lib');
 const ECPairFactory = require('ecpair');
 const ecc = require('tiny-secp256k1');
 const express = require('express');
-const bodyParser = require('body-parser');
 const supertest = require('supertest');
 const jsonRouter = require('express-json-rpc-router');
 
@@ -374,7 +373,7 @@ function patchLevelUpStoreInMemory() {
 
 function createApiApp(tracker) {
   const app = express();
-  app.use(bodyParser.json());
+  app.use(express.json());
 
   app.get('/utxos/:address', async (req, res) => {
     try {

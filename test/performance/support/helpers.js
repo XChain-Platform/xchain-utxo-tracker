@@ -15,7 +15,6 @@ const bitcoin = require('bitcoinjs-lib');
 const ECPairFactory = require('ecpair');
 const ecc = require('tiny-secp256k1');
 const express = require('express');
-const bodyParser = require('body-parser');
 const jsonRouter = require('express-json-rpc-router');
 const http = require('http');
 const path = require('path');
@@ -291,7 +290,7 @@ function pad(str, len) {
 function startHttpServer(tracker) {
   return new Promise((resolve, reject) => {
     const app = express();
-    app.use(bodyParser.json());
+    app.use(express.json());
 
     app.get('/balance/:address', async (req, res) => {
       try {

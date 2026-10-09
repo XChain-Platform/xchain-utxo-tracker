@@ -43,6 +43,9 @@ const SCENARIOS = {
     'backs off 5s on an HTTP-500 -429':  { steps: [rpc500(-429), ok({ result: 'aa' })], kind: 'value', calls: 2, sleeps: [5000] },
     'retries a timeout at 500ms':        { steps: [fault({ code: 'ECONNABORTED' }), ok({ result: 'aa' })], kind: 'value', calls: 2, sleeps: [500] },
     'rejects after 10 plain faults':     { steps: [fault({}, 'getaddrinfo ENOTFOUND node')], kind: 'reject', calls: 10, sleeps: times(10, 500) },
+    'retries a non-string 200 result':   { steps: [ok({ result: { hex: 'aa' } }), ok({ result: 'aa' })], kind: 'value', calls: 2, sleeps: [500] },
+    'retries an odd-length hex result':  { steps: [ok({ result: 'aaa' }), ok({ result: 'aa' })], kind: 'value', calls: 2, sleeps: [500] },
+    'rejects a non-hex result after 10': { steps: [ok({ result: '<html>busy</html>' })], kind: 'reject', calls: 10, sleeps: times(10, 500) },
 };
 
 // Runs one scenario through a getRawTransaction implementation and records what it did.
