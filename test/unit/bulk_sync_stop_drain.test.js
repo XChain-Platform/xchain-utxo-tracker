@@ -14,7 +14,13 @@ const assert = require('assert')
 const { EventEmitter } = require('events')
 const fs = require('fs')
 const path = require('path')
-const { createBulkBoot, defaultSignalChild } = require('../../src/api/bulk_boot')
+const sinon = require('sinon')
+const {
+    createBulkBoot,
+    defaultProcessGroupAlive,
+    defaultSignalChild,
+    waitForProcessGroupExit
+} = require('../../src/api/bulk_boot')
 const { createShutdown, registerShutdownSignals } = require('../../src/server/shutdown')
 
 const API_SRC = fs.readFileSync(path.join(__dirname, '../../src/api.js'), 'utf8')
@@ -44,14 +50,64 @@ describe('bulk-sync boot stop drain', function(){
         assert.deepStrictEqual(calls, [[-4242, 'SIGTERM']])
     })
 
-    it('signals the child tree, waits for its exit, then removes the partial target', async function(){
+    it('treats permission-denied probes as live groups and ESRCH as drained', function(){
+        if (process.platform === 'win32') this.skip()
+        const originalKill = process.kill
+        const results = [null, 'EPERM', 'ESRCH']
+        const calls = []
+        process.kill = (pid, signal) => {
+            calls.push([pid, signal])
+            const code = results.shift()
+            if (code) throw Object.assign(new Error(code), { code })
+        }
+        try {
+            assert.strictEqual(defaultProcessGroupAlive(child(4242)), true)
+            assert.strictEqual(defaultProcessGroupAlive(child(4242)), true)
+            assert.strictEqual(defaultProcessGroupAlive(child(4242)), false)
+        } finally {
+            process.kill = originalKill
+        }
+        assert.deepStrictEqual(calls, [
+            [-4242, 0],
+            [-4242, 0],
+            [-4242, 0]
+        ])
+    })
+})
+
+describe('bulk-sync boot stop drain', function(){
+    it('polls until every process in the detached group has exited', async function(){
+        const states = [true, true, false]
+        const waits = []
+        const proc = child()
+        await waitForProcessGroupExit(proc, {
+            isAlive(target){
+                assert.strictEqual(target, proc)
+                return states.shift()
+            },
+            wait(ms){ waits.push(ms) },
+            pollMs: 7
+        })
+        assert.deepStrictEqual(waits, [7, 7])
+    })
+})
+
+describe('bulk-sync boot stop drain', function(){
+    it('waits for surviving descendants after leader exit before removing the target', async function(){
         const order = []
         const proc = child()
+        let releaseDescendant
+        const descendantExited = new Promise((resolve) => { releaseDescendant = resolve })
         const boot = createBulkBoot({
             dbPath: '/data/xchain-utxo-tracker',
             signalChild(target, signal){
                 assert.strictEqual(target, proc)
                 order.push('signal:' + signal)
+            },
+            waitForProcessGroup(target){
+                assert.strictEqual(target, proc)
+                order.push('wait-for-group')
+                return descendantExited
             },
             removeDb(){ order.push('remove-db') },
             log: silentLog
@@ -65,10 +121,22 @@ describe('bulk-sync boot stop drain', function(){
         assert.deepStrictEqual(order, ['signal:SIGTERM'])
         assert.strictEqual(drained, false, 'the target must not be removed while its writer is alive')
 
-        order.push('child-exit')
+        order.push('leader-exit')
         proc.emit('exit', null, 'SIGTERM')
+        await flush()
+        assert.deepStrictEqual(order, ['signal:SIGTERM', 'leader-exit', 'wait-for-group'])
+        assert.strictEqual(drained, false, 'the target must not be removed while a descendant is alive')
+
+        order.push('descendant-exit')
+        releaseDescendant()
         await Promise.all([running, stopping])
-        assert.deepStrictEqual(order, ['signal:SIGTERM', 'child-exit', 'remove-db'])
+        assert.deepStrictEqual(order, [
+            'signal:SIGTERM',
+            'leader-exit',
+            'wait-for-group',
+            'descendant-exit',
+            'remove-db'
+        ])
     })
 })
 
@@ -106,12 +174,49 @@ describe('bulk-sync boot stop drain', function(){
 })
 
 describe('bulk-sync boot stop drain', function(){
+    it('reports a surviving process group as unclean without removing the target', async function(){
+        const clock = sinon.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+        const proc = child()
+        const exits = []
+        let removals = 0
+        try {
+            const boot = createBulkBoot({
+                dbPath: '/data/xchain-utxo-tracker',
+                signalChild(){ proc.emit('exit', null, 'SIGTERM') },
+                waitForProcessGroup(){ return new Promise(() => {}) },
+                removeDb(){ removals++ },
+                log: silentLog
+            })
+            boot.trackChild(proc).catch(() => {})
+            const shutdown = createShutdown({
+                drain: () => boot.stop(),
+                timeoutMs: 20,
+                exit: (code) => exits.push(code),
+                log: silentLog
+            })
+
+            shutdown('SIGTERM')
+            await clock.tickAsync(0)
+            assert.deepStrictEqual(exits, [])
+            assert.strictEqual(removals, 0)
+
+            await clock.tickAsync(20)
+            assert.deepStrictEqual(exits, [1])
+            assert.strictEqual(removals, 0)
+        } finally {
+            clock.restore()
+        }
+    })
+})
+
+describe('bulk-sync boot stop drain', function(){
     it('reports a failed interrupted-target cleanup as an unclean shutdown', async function(){
         const proc = child()
         const exits = []
         const boot = createBulkBoot({
             dbPath: '/data/xchain-utxo-tracker',
             signalChild(){ setImmediate(() => proc.emit('exit', null, 'SIGTERM')) },
+            waitForProcessGroup(){},
             removeDb(){ throw new Error('permission denied') },
             log: silentLog
         })

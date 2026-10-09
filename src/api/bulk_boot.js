@@ -27,6 +27,8 @@
 const fs = require('fs')
 const path = require('path')
 
+const PROCESS_GROUP_POLL_MS = 25
+
 function assertSafeDbPath(dbPath){
     if (typeof dbPath !== 'string' || !path.isAbsolute(dbPath)
         || path.dirname(dbPath) === dbPath) {
@@ -45,6 +47,31 @@ function defaultSignalChild(child, signal){
         }
     }
     if (typeof child.kill === 'function') child.kill(signal)
+}
+
+function defaultProcessGroupAlive(child){
+    if (process.platform === 'win32' || !child
+        || !Number.isInteger(child.pid) || child.pid <= 0) return false
+    try {
+        process.kill(-child.pid, 0)
+        return true
+    } catch (err) {
+        if (err && err.code === 'ESRCH') return false
+        if (err && err.code === 'EPERM') return true
+        throw err
+    }
+}
+
+function pause(ms){
+    return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitForProcessGroupExit(child, {
+    isAlive = defaultProcessGroupAlive,
+    wait = pause,
+    pollMs = PROCESS_GROUP_POLL_MS
+} = {}){
+    while (isAlive(child)) await wait(pollMs)
 }
 
 function createDelayGate(isStopping){
@@ -114,6 +141,7 @@ function stopBulkBoot(state){
         state.logger.log('[bulk-sync] stop requested; terminating orchestrator process group')
         state.signal(interrupted.child, 'SIGTERM')
         try { await interrupted.promise } catch (_) {}
+        await state.waitForGroup(interrupted.child)
         await state.cleanup()
         state.logger.log(`[bulk-sync] removed interrupted target ${state.dbPath}; resumable work files retained`)
     })()
@@ -126,14 +154,16 @@ function stopBulkBoot(state){
  * @param {object} opts
  * @param {string} opts.dbPath final LevelDB directory
  * @param {function} [opts.signalChild] process-tree signal seam
+ * @param {function} [opts.waitForProcessGroup] process-group drain seam
  * @param {function} [opts.removeDb] interrupted-target cleanup seam
  * @param {object} [opts.log] console-shaped logger
  */
-function createBulkBoot({ dbPath, signalChild, removeDb, log } = {}){
+function createBulkBoot({ dbPath, signalChild, waitForProcessGroup, removeDb, log } = {}){
     assertSafeDbPath(dbPath)
     const state = {
         dbPath,
         signal: signalChild || defaultSignalChild,
+        waitForGroup: waitForProcessGroup || waitForProcessGroupExit,
         cleanup: removeDb || (() => fs.rmSync(dbPath, { recursive: true, force: true })),
         logger: log || console,
         active: null,
@@ -152,4 +182,9 @@ function createBulkBoot({ dbPath, signalChild, removeDb, log } = {}){
     }
 }
 
-module.exports = { createBulkBoot, defaultSignalChild }
+module.exports = {
+    createBulkBoot,
+    defaultProcessGroupAlive,
+    defaultSignalChild,
+    waitForProcessGroupExit
+}
