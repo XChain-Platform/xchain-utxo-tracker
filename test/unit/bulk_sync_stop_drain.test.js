@@ -70,7 +70,9 @@ describe('bulk-sync boot stop drain', function(){
         await Promise.all([running, stopping])
         assert.deepStrictEqual(order, ['signal:SIGTERM', 'child-exit', 'remove-db'])
     })
+})
 
+describe('bulk-sync boot stop drain', function(){
     it('keeps a completed target and makes repeated stop calls idempotent', async function(){
         let signals = 0
         let removals = 0
@@ -101,7 +103,9 @@ describe('bulk-sync boot stop drain', function(){
         assert.strictEqual(await delayed, false)
         assert.strictEqual(await boot.delay(60000), false)
     })
+})
 
+describe('bulk-sync boot stop drain', function(){
     it('reports a failed interrupted-target cleanup as an unclean shutdown', async function(){
         const proc = child()
         const exits = []
