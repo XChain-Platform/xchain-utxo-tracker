@@ -23,6 +23,7 @@ const { getLogger } = require('../../../src/observability');
 const CAPS = [
     { getter: 'MAX_BLOCK_FETCH_RETRIES', key: 'XCHAIN_MAX_BLOCK_FETCH_RETRIES', fallback: 20 },
     { getter: 'MAX_ADDRESS_OUTPUTS', key: 'UTXO_MAX_ADDRESS_OUTPUTS', fallback: 500000 },
+    { getter: 'NODE_RPC_TIMEOUT_MS', key: 'NODE_RPC_TIMEOUT', fallback: 30000 },
     { getter: 'MAX_JSONRPC_BATCH', key: 'UTXO_MAX_RPC_BATCH', fallback: 20 },
     { getter: 'MAX_PAGE_LIMIT', key: 'UTXO_MAX_PAGE_LIMIT', fallback: 10000 },
 ];

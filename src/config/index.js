@@ -27,11 +27,11 @@
  * reset. A getter keeps the old semantics: the value is whatever the
  * environment says at the moment it is asked for.
  *
- * Every bounded cap resolves through the strict integer reader in env_int.js,
+ * Every bounded cap and timeout resolves through the strict integer reader in env_int.js,
  * so Infinity, a fraction or a typo warns and keeps the default instead of
- * silently lifting or zeroing the cap. The remaining parseInt reads
- * (NODE_RPC_TIMEOUT_MS, LEVELDB_WRITE_BUFFER_BYTES) are still carried over
- * verbatim from their old read sites.
+ * silently lifting or zeroing the value. The remaining parseInt read
+ * (LEVELDB_WRITE_BUFFER_BYTES) is still carried over verbatim from its old
+ * read site.
  *
  ********************************************************************/
 
@@ -71,7 +71,9 @@ module.exports = {
     },
 
     // Per-request timeout on the coin node's RPC, in milliseconds.
-    get NODE_RPC_TIMEOUT_MS() { return parseInt(process.env.NODE_RPC_TIMEOUT ?? '30000', 10); },
+    get NODE_RPC_TIMEOUT_MS() {
+        return intKnob('NODE_RPC_TIMEOUT', process.env.NODE_RPC_TIMEOUT, { fallback: 30000, min: 1 });
+    },
 
     // Store write-buffer size. Larger buffers mean fewer, bigger compactions on
     // a bulk load; the default is eight times the engine's own.
