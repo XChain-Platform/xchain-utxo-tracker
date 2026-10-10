@@ -82,6 +82,8 @@ re-parsed by a current worker.
 ## spends-*.dat  (magic `XCHNSPD1`, record_size = 20)
 
 One record per non-coinbase input. Coinbases produce no record.
+Bulk sync records a spend for each non-coinbase input whose `standard_input` field is
+absent or truthy, and skips inputs where it is present and falsy.
 
 ```
 offset   size  field
