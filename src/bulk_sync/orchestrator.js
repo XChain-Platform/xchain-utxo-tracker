@@ -30,6 +30,7 @@
 const fs             = require('fs')
 const path           = require('path')
 const { fork }       = require('child_process')
+const config         = require('../config')
 const { resolveUndoBlocks } = require('./merger/derive_keys.js')
 const { validateChainFiles } = require('./validate_chain.js')
 const { defaultArgs, isMainnetNetwork, resolveVerifyDefaults, effectiveTipSafety } = require('./orchestrator/cli_options.js')
@@ -195,7 +196,7 @@ function runChild(scriptPath, args, env) {
     return new Promise((resolve, reject) => {
         const child = fork(scriptPath, args, {
             stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
-            env: { ...process.env, ...env },
+            env: { ...config.CHILD_ENV, ...env },
         })
         child.on('exit', (code) => {
             if (code === 0) resolve()
