@@ -47,6 +47,7 @@ const BlockchainConnector = require('../chain/blockchain_connector.js')
 const { XdmpReader } = require('./xdmp_reader.js')
 const { CHAIN_CODES, NETWORK_CODES, chunkFileName, writeDumpHeader, writeBlockRecords } = require('./xdmp_writer.js')
 const coins = require('../coins')
+const config = require('../config')
 const { resolveUndoBlocks } = require('../chain/undo_blocks.js')
 
 const DEFAULT_CHUNK_SIZE  = 10000
@@ -332,10 +333,10 @@ async function main() {
     // already constrained args.netName to a real network name.
     coins.verifyConsensusPin(args.netName)
 
-    const nodeUrl      = process.env.NODE_URL
-    const nodePort     = process.env.NODE_PORT
-    const nodeUser     = process.env.NODE_USER
-    const nodePassword = process.env.NODE_PASSWORD
+    const nodeUrl      = config.NODE_URL
+    const nodePort     = config.NODE_PORT
+    const nodeUser     = config.NODE_USER
+    const nodePassword = config.NODE_PASSWORD
     if (!nodeUrl || !nodePort || !nodeUser || !nodePassword) {
         throw new Error('NODE_URL, NODE_PORT, NODE_USER, NODE_PASSWORD must be set in env')
     }
