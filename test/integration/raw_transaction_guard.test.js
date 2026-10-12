@@ -10,9 +10,12 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
+const fs = require('node:fs');
+const path = require('node:path');
 const { expect } = require('chai');
 const BlockchainConnector = require('../../src/chain/blockchain_connector');
 
+const TRANSPORT_SOURCE = path.join(__dirname, '../../src/chain/blockchain_connector/transport_and_mempool.js');
 const TXID = '11'.repeat(32);
 const MALFORMED_RESULTS = [
   { name: 'a non-string result', value: { hex: '00' } },
@@ -21,6 +24,12 @@ const MALFORMED_RESULTS = [
 ];
 
 describe('Integration: raw transaction result guard', function () {
+  it('wires wholeHexResult into the raw transaction response path', function () {
+    const source = fs.readFileSync(TRANSPORT_SOURCE, 'utf8');
+    expect(source).to.match(/function wholeHexResult\(/);
+    expect(source).to.match(/return wholeHexResult\(response\.data\.result, txid\)/);
+  });
+
   it('accepts whole hex from the same rpcPost boundary', async function () {
     const connector = new BlockchainConnector('127.0.0.1', '18443', 'user', 'pass');
     let calls = 0;
@@ -61,6 +70,7 @@ describe('Integration: raw transaction result guard', function () {
       expect(failure).to.be.an.instanceof(Error);
       expect(failure.message).to.include('expected whole hex');
       expect(failure.message).to.include(TXID);
+      expect(failure.message).to.include('malformed result for txid ' + TXID);
       expect(calls).to.equal(10);
     });
   }
