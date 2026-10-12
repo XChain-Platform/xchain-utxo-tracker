@@ -86,7 +86,8 @@ async function parseTransactionOutputs(db, transaction, blockHash, blockHeight, 
 module.exports = {
     async parseTransaction(db, transaction, blockHash, blockHeight = -1, addHints = false, removeSpent = false){
         let nextTxId = null
-        if ("id" in transaction){ //Some transactions are changed for bitcoinjs-lib to parse them. The original hash of the transaction get stored in the "id" property
+        // No decoder sets "id" today; the override must stay in step with bulk_sync/process_block.js.
+        if ("id" in transaction){
             nextTxId = transaction["id"]
         } else {
             nextTxId = transaction.getId()

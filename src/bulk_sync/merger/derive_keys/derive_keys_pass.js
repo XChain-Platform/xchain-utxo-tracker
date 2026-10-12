@@ -29,7 +29,7 @@ const { resolveUndoBlocks }    = require('../../../chain/undo_blocks.js')
 const {
     P_BLOCK, P_TX, P_OUTPUT, P_OUT_HINT, P_STORED_BLK,
     OUTPUTS_RECORD_SIZE, OUTPUTS_RECORD_SIZE_CB, OUTPUTS_HEADER_SIZE,
-    LAYOUT, noop, ensureDir, FlatWriter, sortByKey,
+    LAYOUT, noop, ensureDir, clearPriorDeriveOutputs, FlatWriter, sortByKey,
 } = require('./record_layout.js')
 const { writeScriptCandidates,
         deriveScriptKeys }      = require('./derive_keys_pass_scripts.js')
@@ -53,7 +53,9 @@ const TX_INDEX_LAYOUT = {
  * @param {string}  opts.outputsPath       outputs-*.dat (pre-cancellation)
  * @param {string}  opts.liveUtxosPath     live-utxos.dat
  * @param {string}  opts.spendsByPrevPath  spends-by-prevtx.dat (sorted)
- * @param {string}  opts.outDir            where to write final per-prefix files
+ * @param {string}  opts.outDir            where to write final per-prefix files;
+ *                                          any prefix .dat and L.json already
+ *                                          there are removed first
  * @param {string}  opts.tmpDir            temp scratch
  * @param {number}  opts.outputsRecordSize width of records in outputsPath /
  *                                          liveUtxosPath. 121 for dumps that
@@ -93,6 +95,7 @@ async function deriveKeys(opts) {
 
     const stats = {}
 
+    clearPriorDeriveOutputs(ctx.outDir, [...Object.keys(LAYOUT), ...Object.keys(TX_INDEX_LAYOUT)])
     const { lastHeight, lastBlockHash } = await deriveBlockKeys(ctx, stats)
     await deriveOutputKeys(ctx, stats)
     const wMinHeight = Math.max(0, lastHeight - ctx.undoBlocks + 1)
@@ -100,7 +103,7 @@ async function deriveKeys(opts) {
     const { candSortedPath } = await writeScriptCandidates(ctx, stats, lastHeight)
     await deriveScriptKeys(ctx, stats, candSortedPath, wMinHeight)
     await deriveSpendKeys(ctx, stats)
-    writeLastBlockMarkers(ctx.outDir, stats, lastHeight, lastBlockHash)
+    writeLastBlockMarkers(ctx.outDir, stats, lastHeight, lastBlockHash, ctx.txIndex)
 
     onProgress({ phase: 'done', stats })
     return { stats, layout: LAYOUT }
@@ -378,14 +381,16 @@ function writeLiveOutputRecords(liveReader, hOut, oRaw, hasCoinbaseByte) {
     return liveCount
 }
 
-// Phase 10: L markers (JSON)
-function writeLastBlockMarkers(outDir, stats, lastHeight, lastBlockHash) {
+// Phase 10: L markers (JSON), plus this run's txIndex decision so the loader
+// follows it rather than guessing from the files present.
+function writeLastBlockMarkers(outDir, stats, lastHeight, lastBlockHash, txIndex) {
     if (lastBlockHash == null) {
         throw new Error('deriveKeys: meta file had no blocks; cannot emit LAST_* markers')
     }
     const lJson = {
         LAST_BLOCK_HEIGHT: lastHeight.toString(16),
         LAST_BLOCK_HASH:   lastBlockHash.toString('hex'),
+        txIndex:           txIndex === true,
     }
     fs.writeFileSync(path.join(outDir, 'L.json'), JSON.stringify(lJson, null, 2))
     stats.L = 2

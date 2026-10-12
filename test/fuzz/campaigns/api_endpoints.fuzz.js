@@ -13,7 +13,6 @@
 const { expect } = require('chai');
 const supertest = require('supertest');
 const express = require('express');
-const bodyParser = require('express').json ? null : null; // express 4 has json built-in
 const jsonRouter = require('express-json-rpc-router');
 const {
   fc, FUZZ_RUNS, TEST_KEYS, arbAddress,

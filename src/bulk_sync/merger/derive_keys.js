@@ -60,7 +60,8 @@
  *                           blocks age out (removeOutputScriptsBlockIndexOnly).
  *                           S is NOT windowed: it backs the live first-seen query.
  *
- *   L.json             { LAST_BLOCK_HEIGHT: "<hex>", LAST_BLOCK_HASH: "<hex>" }
+ *   L.json             { LAST_BLOCK_HEIGHT: "<hex>", LAST_BLOCK_HASH: "<hex>",
+ *                        txIndex: <bool> }  (the loader's txIndex default)
  *
  * S/Z semantics (option A): scripts are derived from the FULL outputs
  * stream (pre-cancellation) so scripts that appeared and were fully

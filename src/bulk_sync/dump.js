@@ -49,6 +49,7 @@ const { CHAIN_CODES, NETWORK_CODES, chunkFileName, writeDumpHeader, writeBlockRe
 const coins = require('../coins')
 const config = require('../config')
 const { resolveUndoBlocks } = require('../chain/undo_blocks.js')
+const { warnIfTxIndexMissing } = require('../chain/txindex_check.js')
 
 const DEFAULT_CHUNK_SIZE  = 10000
 const DEFAULT_TIP_SAFETY  = 10
@@ -321,6 +322,13 @@ function resolveDumpEnd(args, chainTipAtDump) {
     return dumpEnd
 }
 
+// Warn when an AuxPoW chain's node lacks txindex=1: the dump's own reassembly fallback
+// needs it, and the dump runs before the tracker's start() and its boot warning.
+async function probeDumpTxIndex(connector, args) {
+    if (coins.WIRE_FORMAT[coins.FULL_NAME_TO_TICK[args.chain]] !== 'auxpow') return null
+    return warnIfTxIndexMissing(connector, { error: console.error, info: console.log })
+}
+
 async function main() {
     const args = parseArgs(process.argv)
     validateArgs(args)
@@ -349,6 +357,7 @@ async function main() {
 
     const info = await connector.getBlockchainInfo()
     const chainTipAtDump = info.blocks
+    await probeDumpTxIndex(connector, args)
     const dumpEnd = resolveDumpEnd(args, chainTipAtDump)
 
     const totalBlocks = dumpEnd - args.from + 1
@@ -380,7 +389,7 @@ async function main() {
     }
 }
 
-module.exports = { existingChunkMatchesChain, parseArgs, assertExplicitToOutsideUndoWindow, fetchDumpBatch }
+module.exports = { existingChunkMatchesChain, parseArgs, assertExplicitToOutsideUndoWindow, fetchDumpBatch, probeDumpTxIndex }
 
 if (require.main === module) {
     main().catch(err => {

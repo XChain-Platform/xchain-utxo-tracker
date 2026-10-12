@@ -19,6 +19,7 @@
 const LevelUpStore = require('../store/level_up_db.js')
 const { BLOCKCHAIN_INFO_REFRESH_MS, P_PENDING_CLEANUP_KEY, logger } = require('./constants.js')
 const { refreshNodeTip, pollAtTipOrIndex } = require('./sync_loop_node_tip.js')
+const { warnIfTxIndexMissing } = require('../chain/txindex_check.js')
 
 module.exports = {
     async start(){
@@ -31,6 +32,11 @@ module.exports = {
         // time and height on /status, and never re-enters the loop: the window it
         // would roll back through is the drained one the marker was written over.
         if (await this.resumeHaltFromMarker()) return
+
+        // Only an AuxPoW chain can reach getBlockReassembled (shouldReassembleBlock), so
+        // unlike the decoder's unconditional probe this one skips Bitcoin and Litecoin,
+        // whose trackers may legitimately run on a node without txindex.
+        if (this.auxPow) await warnIfTxIndexMissing(this.connector, logger)
 
         logger.info("Indexing...")
 

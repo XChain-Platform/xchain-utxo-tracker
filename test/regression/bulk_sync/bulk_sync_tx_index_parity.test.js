@@ -223,6 +223,58 @@ async function survivesOutputsCleanup(tmp) {
     expect(fs.existsSync(path.join(keysDir, 'T.dat'))).to.equal(true);
 }
 
+// A reused keys dir: the second derive writes no T/X/Y, and a load with no txIndex
+// option must follow that decision, not the first run's leftover files.
+async function reusedKeysDirDropsStaleTxIndex(tmp) {
+    await seed(tmp);
+    const { keysDir } = await seed(tmp, { txIndex: false });
+    for (const p of ['T', 'X', 'Y']) expect(fs.existsSync(path.join(keysDir, p + '.dat')), p).to.equal(false);
+    expect(JSON.parse(fs.readFileSync(path.join(keysDir, 'L.json'), 'utf8')).txIndex).to.equal(false);
+    const dbPath = path.join(tmp, 'db');
+    await loadKeys({ keysDir, dbPath });
+    expect((await seededTxRecords(dbPath)).size).to.equal(0);
+}
+
+async function reusedKeysDirLoadsRecordedTxIndex(tmp) {
+    await seed(tmp, { txIndex: false });
+    const { keysDir } = await seed(tmp);
+    expect(JSON.parse(fs.readFileSync(path.join(keysDir, 'L.json'), 'utf8')).txIndex).to.equal(true);
+    const dbPath = path.join(tmp, 'db');
+    await loadKeys({ keysDir, dbPath });
+    const seeded = await seededTxRecords(dbPath);
+    const live   = await liveTxRecords(tmp);
+    expect(Array.from(seeded.entries()).sort()).to.deep.equal(Array.from(live.entries()).sort());
+}
+
+// The loader alone: stray X/Y/T files beside an L.json that recorded txIndex off.
+async function recordedTxIndexBeatsStrayFiles(tmp) {
+    const on = await seed(fs.mkdtempSync(path.join(tmp, 'on-')));
+    const { keysDir } = await seed(tmp, { txIndex: false });
+    for (const p of ['T', 'X', 'Y']) fs.copyFileSync(path.join(on.keysDir, p + '.dat'), path.join(keysDir, p + '.dat'));
+    const dbPath = path.join(tmp, 'db');
+    await loadKeys({ keysDir, dbPath });
+    expect((await seededTxRecords(dbPath)).size).to.equal(0);
+}
+
+async function reusedKeysDirDropsStaleSpends(tmp) {
+    await seed(tmp, { removeSpent: false });
+    const { keysDir } = await seed(tmp);
+    for (const p of ['I', 'J']) expect(fs.existsSync(path.join(keysDir, p + '.dat')), p).to.equal(false);
+}
+
+// An L.json written before the txIndex field existed keeps the file-detection default.
+async function legacyLJsonFallsBackToFiles(tmp) {
+    const { keysDir } = await seed(tmp);
+    const lPath = path.join(keysDir, 'L.json');
+    const L = JSON.parse(fs.readFileSync(lPath, 'utf8'));
+    delete L.txIndex;
+    fs.writeFileSync(lPath, JSON.stringify(L));
+    const dbPath = path.join(tmp, 'db');
+    const { stats } = await loadKeys({ keysDir, dbPath });
+    expect(stats.X).to.equal(4);
+    expect(stats.Y).to.equal(3);
+}
+
 async function replacesLegacyT(tmp) {
     const { dbPath } = await seedAndLoad(tmp, { removeSpent: false }, { removeSpent: false });
     const seeded = await seededTxRecords(dbPath);
@@ -244,4 +296,9 @@ describe('Regression (bulk-sync): non-Bitcoin seeds use the live tx index (T 64B
     it('survives production cleanup of the consumed outputs stream', () => survivesOutputsCleanup(tmp));
     it('supports an explicit T, X and Y opt-out', () => explicitOptOutSeedsNothing(tmp));
     it('replaces the legacy 32-byte T when removeSpent is false', () => replacesLegacyT(tmp));
+    it('a txIndex-off derive into a reused keys dir loads no T, X or Y from the earlier run', () => reusedKeysDirDropsStaleTxIndex(tmp));
+    it('a txIndex-on derive into a reused keys dir loads T, X and Y matching the live path', () => reusedKeysDirLoadsRecordedTxIndex(tmp));
+    it('a removeSpent derive into a reused keys dir leaves no I or J from the earlier run', () => reusedKeysDirDropsStaleSpends(tmp));
+    it('loads by the txIndex recorded in L.json, not by stray X/Y files in the keys dir', () => recordedTxIndexBeatsStrayFiles(tmp));
+    it('falls back to X/Y file detection for an L.json without a txIndex field', () => legacyLJsonFallsBackToFiles(tmp));
 });

@@ -188,7 +188,10 @@ and `X` are kept.
 
 The non-Bitcoin seed writes the live T/X/Y shape by default; Bitcoin retains the
 legacy default with no T/X/Y. `deriveKeys` also accepts an explicit `txIndex`
-override, and `loadKeys` detects the resulting files unless explicitly overridden.
+override and records its decision as `txIndex` in `L.json`; `loadKeys` defaults to that
+recorded value and detects X/Y files only for an `L.json` without the field. `deriveKeys`
+first removes every prefix file and `L.json` an earlier run left in the keys dir, so a
+reused `--out` never loads another run's T/X/Y or I/J.
 The meta tx list carries only `txHash8`, so the full txids come from the
 pre-cancellation outputs stream, which names every transaction's full txid and
 block (every transaction has at least one output, and a transaction's outputs are

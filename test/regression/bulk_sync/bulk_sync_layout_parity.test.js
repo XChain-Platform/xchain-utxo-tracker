@@ -36,7 +36,8 @@ const { OutputsWriter, SpendsWriter, MetaWriter } = require('../../../src/bulk_s
 const { externalSort }   = require('../../../src/bulk_sync/merger/external_sort.js');
 const { leftAntiJoin }   = require('../../../src/bulk_sync/merger/streaming_join.js');
 const { deriveKeys, LAYOUT } = require('../../../src/bulk_sync/merger/derive_keys.js');
-const { loadKeys }       = require('../../../src/bulk_sync/merger/loader.js');
+const { loadKeys, PREFIX_FILES } = require('../../../src/bulk_sync/merger/loader.js');
+const { TX_INDEX_LAYOUT } = require('../../../src/bulk_sync/merger/derive_keys/derive_keys_pass.js');
 const { readOutputsRecordSize } = require('../../../src/bulk_sync/orchestrator.js');
 const bulkLayout         = require('../../../src/bulk_sync/merger/derive_keys/record_layout.js');
 const liveConstants      = require('../../../src/store/level_up_db/constants.js');
@@ -59,6 +60,53 @@ const PREFIX_NAMES = {
     B: 'P_BLOCK', T: 'P_TX', I: 'P_INPUT', O: 'P_OUTPUT', H: 'P_OUT_HINT',
     J: 'P_IN_HINT', N: 'P_STORED_BLK', S: 'P_SCRIPT_BLK', W: 'P_OUT_BLK', Z: 'P_BLK_SCRIPT',
 };
+
+// Live keyspaces a seed deliberately does not write (src/bulk_sync/SPEC.md).
+const UNSEEDED = {
+    K: 'reorg-recovery reverse index for deleted outputs, skipped entirely by the seed',
+    M: 'reorg-recovery reverse index for deleted hints, skipped entirely by the seed',
+    P: 'transient pending-cleanup marker that exists only across a crash',
+    R: 'halt marker that exists only on an unrecoverable store',
+};
+
+// Keyspaces the loader writes outside the prefix files: the LAST_* markers and Q.
+const META_SEEDED = [
+    String.fromCharCode(liveConstants.PREFIX_LAST_BLOCK_HEIGHT[0]),
+    String.fromCharCode(liveConstants.PREFIX_LAST_BLOCK_HASH[0]),
+    String.fromCharCode(Q_UNDO_WATERMARK_KEY[0]),
+];
+
+// Every first-byte keyspace the live store declares, as letter -> where it is
+// declared: the exported constants, plus a scan of the live store sources for
+// the two shapes a private prefix takes (`const P_X = 0x..` and
+// `NAME = Buffer.from([0x..])`), so a prefix kept out of constants.js still counts.
+const LIVE_SOURCES = ['src/store', 'src/XChainUtxoTracker', 'src/XChainUtxoTracker.js'];
+function liveStorePrefixes() {
+    const root = path.join(__dirname, '../../..');
+    const found = new Map();
+    const add = (byte, where) => {
+        const letter = String.fromCharCode(byte);
+        found.set(letter, [...(found.get(letter) || []), where]);
+    };
+    for (const [name, value] of Object.entries(liveConstants)) {
+        if (/^P_/.test(name) && typeof value === 'number') add(value, 'constants.js ' + name);
+    }
+    for (const name of ['PREFIX_LAST_BLOCK_HEIGHT', 'PREFIX_LAST_BLOCK_HASH']) add(liveConstants[name][0], 'constants.js ' + name);
+    const files = [];
+    const walk = (p) => {
+        if (fs.statSync(p).isDirectory()) for (const e of fs.readdirSync(p)) walk(path.join(p, e));
+        else if (p.endsWith('.js')) files.push(p);
+    };
+    for (const rel of LIVE_SOURCES) walk(path.join(root, rel));
+    const shapes = [/\bconst\s+(P_[A-Z0-9_]+)\s*=\s*0x([0-9a-fA-F]{2})\b/g, /\b([A-Z][A-Z0-9_]*)\s*=\s*Buffer\.from\(\[0x([0-9a-fA-F]{2})\]\)/g];
+    for (const file of files) {
+        const src = fs.readFileSync(file, 'utf8');
+        for (const re of shapes) {
+            for (const m of src.matchAll(re)) add(parseInt(m[2], 16), path.relative(root, file) + ' ' + m[1]);
+        }
+    }
+    return found;
+}
 
 // Hash a label to 32 distinct bytes, so a shifted or swapped field never lines
 // up with its neighbour by accident the way a repeated fill byte would.
@@ -99,6 +147,23 @@ describe('Regression (bulk-sync): record layout parity with the live store', fun
             expect(bulkLayout[name], name).to.equal(liveConstants[name]);
             expect(liveConstants[name], name).to.equal(p.charCodeAt(0));
         }
+    });
+
+    it('every live store prefix byte is seeded or deliberately left unseeded', function () {
+        const live = liveStorePrefixes();
+        const seeded = new Set([...PREFIX_FILES, ...Object.keys(TX_INDEX_LAYOUT), ...META_SEEDED]);
+        for (const [letter, where] of live) {
+            const classes = [seeded.has(letter), letter in UNSEEDED].filter(Boolean).length;
+            expect(classes, `prefix ${letter} (${where.join(', ')}) needs a LAYOUT row, a PREFIX_FILES entry ` +
+                'and a regression test, or an UNSEEDED entry with its reason').to.equal(1);
+        }
+        for (const letter of [...seeded, ...Object.keys(UNSEEDED)]) {
+            expect(live.has(letter), `${letter} is classified but no live store source declares it`).to.equal(true);
+        }
+    });
+
+    it('the loader reads exactly the LAYOUT prefix files', function () {
+        expect([...PREFIX_FILES].sort()).to.deep.equal(Object.keys(LAYOUT).sort());
     });
 
     it('every LAYOUT width matches the live key builder and value encoder', function () {
