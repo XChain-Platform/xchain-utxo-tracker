@@ -27,17 +27,17 @@
  * reset. A getter keeps the old semantics: the value is whatever the
  * environment says at the moment it is asked for.
  *
- * Coercion is carried over verbatim from each old read site, including the
- * inconsistencies. `Number(x) > 0` and `parseInt(x ?? d, 10)` do not agree on
- * what a trailing-garbage string means, and this file is not the place to
- * decide that: changing one would be a behaviour change wearing a refactor's
- * clothes.
+ * Every bounded cap and timeout resolves through the strict integer reader in env_int.js,
+ * so Infinity, a fraction or a typo warns and keeps the default instead of
+ * silently lifting or zeroing the value. The remaining parseInt read
+ * (LEVELDB_WRITE_BUFFER_BYTES) is still carried over verbatim from its old
+ * read site.
  *
  ********************************************************************/
 
 'use strict';
 
-const { envInt } = require('./env_int');
+const { envInt, intKnob } = require('./env_int');
 
 // A flag is on for exactly the two spellings the old read sites accepted, so
 // FALSE, 0 and yes all stay off exactly as they did before.
@@ -59,8 +59,7 @@ module.exports = {
     // Generous by design: at the three-second backoff that is about a minute of
     // retrying, so an ordinary node restart self-heals instead of halting.
     get MAX_BLOCK_FETCH_RETRIES() {
-        const n = Number(process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIES);
-        return n > 0 ? n : 20;
+        return intKnob('XCHAIN_MAX_BLOCK_FETCH_RETRIES', process.env.XCHAIN_MAX_BLOCK_FETCH_RETRIES, { fallback: 20, min: 1 });
     },
 
     // Ceiling on an unpaged address query. A mega payout address can hold
@@ -68,12 +67,13 @@ module.exports = {
     // service down for every caller, so past this the query fails loud and the
     // caller pages instead.
     get MAX_ADDRESS_OUTPUTS() {
-        const n = Number(process.env.UTXO_MAX_ADDRESS_OUTPUTS);
-        return n > 0 ? Math.floor(n) : 500000;
+        return intKnob('UTXO_MAX_ADDRESS_OUTPUTS', process.env.UTXO_MAX_ADDRESS_OUTPUTS, { fallback: 500000, min: 1 });
     },
 
     // Per-request timeout on the coin node's RPC, in milliseconds.
-    get NODE_RPC_TIMEOUT_MS() { return parseInt(process.env.NODE_RPC_TIMEOUT ?? '30000', 10); },
+    get NODE_RPC_TIMEOUT_MS() {
+        return intKnob('NODE_RPC_TIMEOUT', process.env.NODE_RPC_TIMEOUT, { fallback: 30000, min: 1 });
+    },
 
     // Store write-buffer size. Larger buffers mean fewer, bigger compactions on
     // a bulk load; the default is eight times the engine's own.
@@ -108,4 +108,48 @@ module.exports = {
 
     // How long a shutdown may drain before the process exits hard.
     get SHUTDOWN_TIMEOUT_MS() { return process.env.SHUTDOWN_TIMEOUT_MS; },
+    // Identity of the chain this tracker serves, handed on raw.
+    get COIN() { return process.env.COIN; },
+    get NETWORK() { return process.env.NETWORK; },
+
+    // Coin node connection, handed on raw.
+    get NODE_URL() { return process.env.NODE_URL; },
+    get NODE_PORT() { return process.env.NODE_PORT; },
+    get NODE_USER() { return process.env.NODE_USER; },
+    get NODE_PASSWORD() { return process.env.NODE_PASSWORD; },
+
+    get UTXO_TRACKER_API_PORT() { return process.env.UTXO_TRACKER_API_PORT; },
+
+    // Merged-mining chains carry an auxiliary proof of work in the header.
+    get AUX_POW() { return flag(process.env.AUX_POW); },
+
+
+    // Handed on raw: the caller validates it against its own fallback and floor.
+    get NODE_RPC_STALE_MS_RAW() { return process.env.UTXO_TRACKER_NODE_RPC_STALE_MS; },
+
+    get BOOTSTRAP_PUBKEY() { return process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY; },
+    get BOOTSTRAP_RESTORE_ALLOW_UNSIGNED() { return process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED; },
+    get BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED() { return process.env.BOOTSTRAP_RESTORE_ALLOW_UNVERIFIED; },
+
+    get UTXO_TRACKER_API_KEY() { return process.env.UTXO_TRACKER_API_KEY || ''; },
+
+    // Largest JSON-RPC batch accepted.
+    get MAX_JSONRPC_BATCH() {
+        return intKnob('UTXO_MAX_RPC_BATCH', process.env.UTXO_MAX_RPC_BATCH, { fallback: 20, min: 1 });
+    },
+
+    // Largest page a single limit request may ask for.
+    get MAX_PAGE_LIMIT() {
+        return intKnob('UTXO_MAX_PAGE_LIMIT', process.env.UTXO_MAX_PAGE_LIMIT, { fallback: 10000, min: 1 });
+    },
+
+    get BULK_SYNC_WORK_DIR() { return process.env.BULK_SYNC_WORK_DIR; },
+
+    get CORS_ORIGIN() { return process.env.CORS_ORIGIN; },
+    get UTXO_TRACKER_RATE_LIMIT_RPM() { return process.env.UTXO_TRACKER_RATE_LIMIT_RPM; },
+    get UTXO_TRACKER_MAX_CONCURRENT_PROBES() { return process.env.UTXO_TRACKER_MAX_CONCURRENT_PROBES; },
+    get UTXO_TRACKER_MAX_CONCURRENT_REQUESTS() { return process.env.UTXO_TRACKER_MAX_CONCURRENT_REQUESTS; },
+
+    // The environment a spawned child inherits, whole and live.
+    get CHILD_ENV() { return process.env; },
 };

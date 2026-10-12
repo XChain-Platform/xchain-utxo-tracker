@@ -24,6 +24,12 @@
 // so the vectors below drive both twins over the whole MWEB strip decision matrix
 // (tx version x marker x flag) plus a plain non-MWEB parse, and compare results.
 //
+// The block-level MWEB path is compared the same way. It is laid out differently in
+// the two repos (named helpers here, one inlined reader there), so byte-identity
+// cannot guard it, and it holds the rules that decide which txs a service sees: the
+// remaining/10 tx-count bound, the HogEx strip on the LAST tx only, the 80-byte
+// header-only return and the witness-commit copy.
+//
 // The name divergence itself is asserted rather than fixed: each class must expose
 // EXACTLY ONE of the two known names, so a third name, or a rename that drops both,
 // fails here instead of at a call site.
@@ -142,6 +148,118 @@ describe('XChainBlockDecoder twin parity with xchain-decoder @regression', funct
             const b = verdict(twin, txParseName(twin, 'xchain-decoder'), LEGACY_TX_HEX);
             expect(a, network + ' must parse, not throw').to.match(/^txid:/);
             expect(a, network + ' verdicts diverged').to.equal(b);
+        }
+    });
+});
+
+// Result of one block parse, comparable across repos: block id, txid list (null for a
+// header-only block) and witness-commit hex, or the fact of a throw. A fresh Buffer per
+// call, so one side can never see bytes the other side's strip rewrote.
+function blockVerdict(instance, hex) {
+    try {
+        const block = instance.blockFromBuffer(Buffer.from(hex, 'hex'));
+        return JSON.stringify({
+            id: block.getId(),
+            txids: block.transactions === undefined ? null : block.transactions.map(t => t.getId()),
+            witnessCommit: block.witnessCommit ? block.witnessCommit.toString('hex') : null,
+        });
+    } catch (_) {
+        return 'throw';
+    }
+}
+
+// An 80-byte header: version 1 and a fixed timestamp, everything else zero.
+const HEADER_HEX = (() => {
+    const header = Buffer.alloc(80);
+    header.writeInt32LE(1, 0);
+    header.writeUInt32LE(1700000000, 68);
+    return header.toString('hex');
+})();
+
+// The legacy tx with a marker+flag spliced in after the version: a HogEx-shaped tx.
+const hogexTx = (flag, version = '01000000') => version + '00' + flag + LEGACY_TX_HEX.slice(8);
+
+// The smallest tx the count bound admits: version, 0 inputs, 0 outputs, locktime.
+const MIN_TX_HEX = '01000000' + '00' + '00' + '00000000';
+
+// A segwit coinbase whose second output is a witness commitment of 0xab x 32.
+const SEGWIT_COINBASE_HEX =
+    '01000000' + '0001' +
+    '01' + '00'.repeat(32) + 'ffffffff' + '04' + '01020304' + 'ffffffff' +
+    '02' + '0100000000000000' + '01' + '51' +
+    '0000000000000000' + '26' + '6a24aa21a9ed' + 'ab'.repeat(32) +
+    '01' + '20' + '00'.repeat(32) +
+    '00000000';
+
+// Each vector pins the TRACKER outcome as well (throw, txs: null for header-only, or a
+// tx count), so the cross-repo comparison cannot pass because every vector threw.
+const BLOCK_VECTORS = [
+    { name: 'header only, exactly 80 bytes', hex: HEADER_HEX, expect: { txs: null } },
+    { name: 'buffer under 80 bytes', hex: HEADER_HEX.slice(0, 80), expect: 'throw' },
+    { name: 'zero transactions', hex: HEADER_HEX + '00', expect: { txs: 0 } },
+    { name: 'one plain tx', hex: HEADER_HEX + '01' + LEGACY_TX_HEX, expect: { txs: 1 } },
+    { name: 'HogEx last, flag 08', hex: HEADER_HEX + '01' + hogexTx('08'), expect: { txs: 1 } },
+    { name: 'HogEx last, flag 09', hex: HEADER_HEX + '01' + hogexTx('09'), expect: { txs: 1 } },
+    { name: 'plain tx then HogEx last', hex: HEADER_HEX + '02' + LEGACY_TX_HEX + hogexTx('08'), expect: { txs: 2 } },
+    { name: 'HogEx-shaped FIRST tx is not stripped', hex: HEADER_HEX + '02' + hogexTx('08') + LEGACY_TX_HEX, expect: 'throw' },
+    { name: 'version 03 HogEx shape is not stripped', hex: HEADER_HEX + '01' + hogexTx('08', '03000000'), expect: 'throw' },
+    { name: 'forged tx count', hex: HEADER_HEX + 'c8' + LEGACY_TX_HEX, expect: 'throw' },
+    { name: 'count bound: N txs in exactly 10*N bytes', hex: HEADER_HEX + '03' + MIN_TX_HEX.repeat(3), expect: { txs: 3 } },
+    { name: 'count bound: N+1 claimed in 10*N bytes', hex: HEADER_HEX + '04' + MIN_TX_HEX.repeat(3), expect: 'throw' },
+    { name: 'truncated tx body', hex: HEADER_HEX + '01' + LEGACY_TX_HEX.slice(0, LEGACY_TX_HEX.length / 2), expect: 'throw' },
+    { name: 'witness commitment', hex: HEADER_HEX + '01' + SEGWIT_COINBASE_HEX, expect: { txs: 1, witnessCommit: 'ab'.repeat(32) } },
+];
+
+// Check one tracker verdict against its pinned kind; returns a message or null.
+function pinnedMismatch(vector, got) {
+    if (vector.expect === 'throw') return got === 'throw' ? null : 'expected a throw, got ' + got;
+    if (got === 'throw') return 'expected a parse, got a throw';
+    const parsed = JSON.parse(got);
+    const count = parsed.txids === null ? null : parsed.txids.length;
+    if (count !== vector.expect.txs) return 'expected ' + vector.expect.txs + ' txs, got ' + count;
+    const commit = vector.expect.witnessCommit || null;
+    if (parsed.witnessCommit !== commit) return 'expected witnessCommit ' + commit + ', got ' + parsed.witnessCommit;
+    return null;
+}
+
+describe('XChainBlockDecoder twin parity with xchain-decoder @regression', function () {
+    before(loadTwinDecoder);
+
+    it('agrees on the block-level MWEB path: count bound, strip-last-only, header-only, witness commit', function () {
+        const local = new LocalDecoder('litecoin-mainnet');
+        const twin = new TwinDecoder('litecoin-mainnet');
+        const mismatches = [];
+        const pinned = [];
+        for (const vector of BLOCK_VECTORS) {
+            const a = blockVerdict(local, vector.hex);
+            const b = blockVerdict(twin, vector.hex);
+            if (a !== b) mismatches.push(`${vector.name}: tracker ${a} vs decoder ${b}`);
+            const off = pinnedMismatch(vector, a);
+            if (off) pinned.push(`${vector.name}: ${off}`);
+        }
+        expect(mismatches, 'MWEB block verdicts diverged').to.deep.equal([]);
+        // Guard the guard: a change made to both twins at once moves these pins.
+        expect(pinned, 'tracker block outcomes moved off their pinned kinds').to.deep.equal([]);
+    });
+
+    it('strips the HogEx marker+flag so the last tx hashes as its plain form', function () {
+        const plainTxid = new LocalDecoder('litecoin-mainnet').txFromHex(LEGACY_TX_HEX).getId();
+        for (const flag of ['08', '09']) {
+            const hex = HEADER_HEX + '01' + hogexTx(flag);
+            const a = JSON.parse(blockVerdict(new LocalDecoder('litecoin-mainnet'), hex));
+            const b = JSON.parse(blockVerdict(new TwinDecoder('litecoin-mainnet'), hex));
+            expect(a.txids, 'tracker flag ' + flag).to.deep.equal([plainTxid]);
+            expect(b.txids, 'decoder flag ' + flag).to.deep.equal([plainTxid]);
+        }
+    });
+
+    it('agrees on a plain block under the non-MWEB wire formats', function () {
+        const hex = HEADER_HEX + '01' + LEGACY_TX_HEX;
+        for (const network of ['bitcoin-mainnet', 'dogecoin-mainnet']) {
+            const a = blockVerdict(new LocalDecoder(network), hex);
+            const b = blockVerdict(new TwinDecoder(network), hex);
+            expect(a, network + ' must parse, not throw').to.not.equal('throw');
+            expect(a, network + ' block verdicts diverged').to.equal(b);
         }
     });
 });

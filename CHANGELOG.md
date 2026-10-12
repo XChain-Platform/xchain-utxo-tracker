@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-11
+
+### Added
+- Seeded the live-shape transaction index in bulk sync and enabled index parity for non-Bitcoin bulk seeds.
+- Exposed undo window size and depth gauges on the tracker scrape.
+
+### Changed
+- Bounded the tracker config caps and read node-height staleness for freshness.
+
+### Fixed
+- Drained interrupted bulk sync boots safely and waited for bulk sync process groups to exit.
+- Compared block-level MWEB verdicts against the decoder twin.
+
 ## [0.21.0] - 2026-09-29
 
 ### Added

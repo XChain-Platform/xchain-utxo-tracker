@@ -43,6 +43,10 @@ async function runVerifyReorg(tracker) {
   await tracker.verifyReorg();
 }
 
+// Timings below this are dominated by scheduler and I/O jitter, so a ratio
+// against them is meaningless; the denominator is clamped to this floor.
+const NOISE_FLOOR_MS = 20;
+
 let tracker;
 let addressPool;
 let metrics;
@@ -120,7 +124,7 @@ function addReorgScalingTest() {
       const depth10 = metrics.summarize('reorg-depth-10');
 
       if (depth1 && depth10 && depth1.avg > 0) {
-        const ratio = depth10.avg / depth1.avg;
+        const ratio = depth10.avg / Math.max(depth1.avg, NOISE_FLOOR_MS);
         console.log(`    Scaling: depth-10 is ${ratio.toFixed(1)}x slower than depth-1`);
         // Linear would be 10x; allow up to 30x for constant overhead at small depths
         expect(ratio).to.be.lessThan(30,
@@ -250,7 +254,9 @@ function addIndexingRecoveryTest() {
 
       const recoveryPerBlock = await indexRecoveryChain(baselineChain, forkPoint);
 
-      const recoveryRatio = baselinePerBlock > 0 ? recoveryPerBlock / baselinePerBlock : 1;
+      const recoveryRatio = baselinePerBlock > 0
+        ? recoveryPerBlock / Math.max(baselinePerBlock, NOISE_FLOOR_MS)
+        : 1;
 
       metrics.record('pre-reorg (per block)', baselinePerBlock);
       metrics.record('reorg-5-blocks', reorgMs);

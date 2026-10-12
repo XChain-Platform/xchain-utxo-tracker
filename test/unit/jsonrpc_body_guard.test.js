@@ -33,7 +33,6 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
-const bodyParser = require('body-parser');
 const jsonRouter = require('express-json-rpc-router');
 
 const GUARD = (req, res, next) => { if (req.body === undefined) req.body = {}; next(); };
@@ -41,7 +40,7 @@ const METHODS = { ping: () => 'pong' };
 
 function buildApp(withGuard) {
     const app = express();
-    app.use(bodyParser.json());
+    app.use(express.json());
     if (withGuard) app.use(GUARD);
     app.use(jsonRouter({ methods: METHODS }));
     // Silence Express's default error-handler stack dump so the control case

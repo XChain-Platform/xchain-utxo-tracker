@@ -29,7 +29,6 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
 const express = require('express');
-const bodyParser = require('body-parser');
 const helmet = require('helmet');
 const cors = require('cors');
 const supertest = require('supertest');
@@ -61,7 +60,7 @@ async function setFreshnessHeaders(res, tracker) {
 function createRealRoutesApp(tracker) {
   const app = express();
   app.use(helmet());
-  app.use(bodyParser.json());
+  app.use(express.json());
   app.use(cors());
 
   app.get('/utxos/:address', async (req, res) => {

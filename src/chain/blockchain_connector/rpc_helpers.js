@@ -18,7 +18,8 @@
 // the tracker logs (util.inspect walks error.config.auth). Scrub the credential
 // fields in place so neither this logger nor any upstream handler leaks them, and
 // return a compact, credential-free string (error.message never carries auth).
-// Kept in sync with xchain-decoder/src/chain/blockchain_connector.js sanitizeRpcError.
+// Twin of xchain-decoder/src/chain/blockchain_connector/rpc_helpers.js sanitizeRpcError, minus
+// the decoder's capture of the JSON-RPC error code and message (rpcCode, rpcMessage).
 function sanitizeRpcError(error){
     try {
         if (error && error.config) {
@@ -69,7 +70,7 @@ function orderBatchResults(responseData, expectedCount, label){
 // Reduce the three timestamps the connector records into the two fields every health
 // surface publishes. Pure and exported so the rule lives in one place: a surface that
 // re-derived "is the node reachable" from a counter would disagree with this one.
-// Byte-for-byte the same rule as xchain-decoder/src/chain/blockchain_connector.js.
+// Byte-for-byte the same rule as xchain-decoder/src/chain/blockchain_connector/rpc_helpers.js.
 //
 // Unreachable means the LATEST attempt failed: either nothing has ever succeeded, or
 // the last failure is newer than the last success. `since` dates the outage from the

@@ -114,21 +114,7 @@ module.exports = {
         await this.db.beginTransaction()
 
         for (let blockHash of toClean){
-            await this.db.processDeletedOutputs(blockHash, false)
-            await this.db.removeLastStoredBlock(blockHash)
-            // Prune the W creation-block reverse-index too. It is only read by the
-            // reorg unwind (removeCreatedOutputsInBlock), which can never reach past
-            // the undoBlocks window, so once a block ages out of that window its W
-            // records are dead weight; without this the W index grows with every
-            // output ever created instead of the live-UTXO set.
-            await this.db.removeCreatedOutputsBlockIndexOnly(blockHash)
-            // Same rationale for the Z block->script reverse-index: its only
-            // reader is the reorg unwind (removeOutputScriptsInBlock), which is
-            // depth-guarded to the undoBlocks window, so an aged-out block's Z
-            // records are unreachable dead weight (one per first-seen script,
-            // growing forever). S (first-seen) is deliberately left intact - it
-            // backs the live getFirstSeen query.
-            await this.db.removeOutputScriptsBlockIndexOnly(blockHash)
+            await pruneAgedBlockRecords.call(this, blockHash)
         }
 
         // Remove the crash-recovery marker atomically with the cleanup writes so
@@ -233,4 +219,27 @@ module.exports = {
         await this.db.setLastBlockHeight(height)
         await this.db.endTransaction()
     }
+}
+
+// Drops one aged-out block's reorg-recovery records into the caller's open batch.
+async function pruneAgedBlockRecords(blockHash){
+    await this.db.processDeletedOutputs(blockHash, false)
+    await this.db.removeLastStoredBlock(blockHash)
+    // Prune the W creation-block reverse-index too. It is only read by the
+    // reorg unwind (removeCreatedOutputsInBlock), which can never reach past
+    // the undoBlocks window, so once a block ages out of that window its W
+    // records are dead weight; without this the W index grows with every
+    // output ever created instead of the live-UTXO set.
+    await this.db.removeCreatedOutputsBlockIndexOnly(blockHash)
+    // Same rationale for the Z block->script reverse-index: its only
+    // reader is the reorg unwind (removeOutputScriptsInBlock), which is
+    // depth-guarded to the undoBlocks window, so an aged-out block's Z
+    // records are unreachable dead weight (one per first-seen script,
+    // growing forever). S (first-seen) is deliberately left intact - it
+    // backs the live getFirstSeen query.
+    await this.db.removeOutputScriptsBlockIndexOnly(blockHash)
+    // Same again for the Y per-block tx recovery records: only the reorg
+    // unwind (deleteTxBlockRecord) reads them. T and X stay, since getTxBlock
+    // and the tx list read those for the life of the store.
+    await this.db.removeTxBlockRecoveryIndexOnly(blockHash)
 }

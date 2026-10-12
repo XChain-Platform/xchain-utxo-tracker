@@ -22,6 +22,7 @@
 const axios = require('axios');
 const http  = require('http');
 const config = require('../config');
+const { envInt } = require('../config/env_int');
 const { encodeVarintHex } = require('./blockchain_connector/auxpow_codec');
 const { nodeReachabilityFrom } = require('./blockchain_connector/rpc_helpers');
 const transportAndMempool = require('./blockchain_connector/transport_and_mempool');
@@ -51,12 +52,26 @@ function installMethods(target, ...sources) {
     return target;
 }
 
+function normalizeEndpoint(entry, defaultPort) {
+    const match = String(entry).trim().match(/^(https?:\/\/)?([^:/]+)(?::(\d+))?$/)
+    if (!match) throw new Error('BlockchainConnector: invalid RPC endpoint: ' + entry)
+    const protocol = match[1] || 'http://'
+    const endpointPort = match[3] || defaultPort
+    return protocol + match[2] + ':' + endpointPort
+}
+
 class BlockchainConnector {
     constructor(url, port, rpcUser, rpcPassword) {
-        this.url = "http://"+url+":"+port
         this.port = port
         this.rpcUser = rpcUser
         this.rpcPassword = rpcPassword
+
+        this.endpoints = [normalizeEndpoint(url, port)]
+        const fallbacks = (config.CHILD_ENV.NODE_URL_FALLBACK || '').split(',').map(s => s.trim()).filter(Boolean)
+        for (const fallback of fallbacks) this.endpoints.push(normalizeEndpoint(fallback, port))
+        this.activeEndpointIndex = 0
+        this.connectionFailures = 0
+        this.failoverThreshold = envInt('NODE_FAILOVER_THRESHOLD', 3, 1)
 
         // Reuse TCP connections across all RPC calls and authenticate once per instance
         this.client = axios.create({
@@ -77,6 +92,10 @@ class BlockchainConnector {
         this.startedAt = Date.now()
         this.lastNodeOkAt = 0
         this.lastNodeFailAt = 0
+    }
+
+    get url() {
+        return this.endpoints[this.activeEndpointIndex]
     }
 }
 

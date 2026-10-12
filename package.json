@@ -1,7 +1,7 @@
 {
   "name": "xchain-utxo-tracker",
   "description": "xchain-utxo-tracker tracks Unspent Transaction Objects (UTXOS) and provides APIs to retrieve UTXO data.",
-  "version": "0.21.0",
+  "version": "0.23.0",
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
@@ -11,6 +11,7 @@
     "axios": "^1.18.1",
     "binary-search": "^1.3.6",
     "bitcoinjs-lib": "6.1.7",
+    "body-parser": "^2.2.1",
     "bs58check": "^3.0.1",
     "classic-level": "^3.0.0",
     "cors": "^2.8.5",
@@ -21,7 +22,8 @@
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
     "memory-level": "^3.0.0",
-    "tiny-secp256k1": "2.2.4"
+    "tiny-secp256k1": "2.2.4",
+    "varuint-bitcoin": "^1.1.2"
   },
   "scripts": {
     "api": "node --max-old-space-size=4096 ./src/api.js",
@@ -30,7 +32,8 @@
     "test": "mocha --timeout 0 --require ./test/helpers/setup.js --recursive 'test/unit/**/*.test.js'",
     "coverage": "c8 --all --reporter=text --reporter=html --include 'src/**/*.js' mocha --timeout 0 --recursive 'test/unit/**/*.test.js' --exit",
     "coverage:check": "c8 --all --check-coverage --lines 70.5 --statements 70.5 --branches 85.6 --functions 65.3 --reporter=text --include 'src/**/*.js' mocha --timeout 0 --recursive 'test/unit/**/*.test.js' --exit",
-    "ci": "npm run lint:ratchet && mocha 'test/unit/**/*.test.js' --timeout 10000 --recursive --forbid-only --exit && npm run ci:security && npm run ci:regression && npm run ci:smoke && npm run ci:conformance && npm run ci:integration && npm run ci:boundary && npm run ci:chaos && npm run test:fuzz:quick",
+    "ci": "npm run lint:ratchet && mocha 'test/unit/**/*.test.js' --timeout 10000 --recursive --forbid-only --exit && npm run ci:guards && npm run ci:security && npm run ci:regression && npm run ci:smoke && npm run ci:conformance && npm run ci:integration && npm run ci:boundary && npm run ci:chaos && npm run test:fuzz:quick && npm run test:integration:ondisk",
+    "ci:guards": "mocha --no-config 'bin/test/**/*.test.js' --timeout 30000 --exit",
     "ci:conformance": "mocha --timeout 60000 --recursive 'test/conformance/**/*.test.js' --forbid-only --exit",
     "ci:security": "mocha --timeout 30000 --recursive 'test/security/**/*.test.js' --forbid-only --exit",
     "ci:regression": "mocha --timeout 30000 --recursive 'test/regression/**/*.test.js' --forbid-only --exit",
@@ -42,10 +45,10 @@
     "test:lint-ratchet": "mocha --timeout 10000 test/unit/lint_ratchet.test.js",
     "test:manual:bulk-sync": "node test/manual/bulk_sync/support/smoke_writers.js && node test/manual/bulk_sync/support/smoke_xdmp_reader.js && node test/manual/bulk_sync/support/smoke_process_block.js && node test/manual/bulk_sync/merger/support/smoke_external_sort.js && node test/manual/bulk_sync/merger/support/smoke_streaming_join.js && node test/manual/bulk_sync/merger/support/smoke_derive_keys.js && node test/manual/bulk_sync/merger/support/smoke_loader.js",
     "test:boundary": "mocha --timeout 30000 --recursive test/boundary/**/*.test.js --exit",
-    "test:security": "mocha --timeout 30000 --recursive test/security/**/*.test.js --exit",
+    "test:security": "mocha --timeout 30000 --recursive 'test/security/**/*.test.js' --exit",
     "test:regression": "mocha --timeout 30000 --recursive 'test/regression/**/*.test.js' --exit",
     "test:unit:ondisk": "mocha 'test/unit/**/*.test.js' --timeout 30000 --recursive --exit --require ./test/helpers/ondisk_classiclevel_hook.js",
-    "test:integration": "mocha --timeout 0 --recursive test/integration/**/*.test.js",
+    "test:integration": "mocha --timeout 0 --recursive 'test/integration/**/*.test.js'",
     "test:integration:ondisk": "mocha --timeout 0 --recursive 'test/integration/**/*.test.js' --exit --require ./test/helpers/ondisk_classiclevel_hook.js",
     "test:e2e": "mocha --timeout 0 --recursive test/e2e/**/*.test.js --exit",
     "test:fuzz": "mocha --timeout 0 --recursive test/fuzz/**/*.fuzz.js",

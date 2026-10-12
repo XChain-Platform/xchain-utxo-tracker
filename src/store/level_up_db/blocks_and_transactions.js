@@ -258,6 +258,23 @@ module.exports = {
         return await this.addTransaction("del", recoveryKey, null)
     },
 
+    // Prunes a block's Y records once it ages out of the undo window, leaving T
+    // and X intact (getTxBlock still reads X). Y's only reader is the reorg
+    // unwind above, which cannot reach past that window, so they are dead weight.
+    async removeTxBlockRecoveryIndexOnly(blockHash) {
+        const prefixBuf = Buffer.concat([pb(P_TX_BLOCK_RECOVERY), h2b(blockHash)])
+        const options = {
+            gte: prefixBuf,
+            lte: rangeEnd(prefixBuf),
+            keys: true,
+            values: false
+        }
+
+        for await (const [key] of this.db.iterator(options)) {
+            await this.addTransaction("del", key)
+        }
+    },
+
     // Exact full-txid to block lookup. Returns { block_hash, block_height, sync }
     // or null: null on no record, on a legacy (pre-X-record) txid that cannot
     // be found in the exact-match index, or when the record's block was
