@@ -80,18 +80,13 @@ class XChainUtxoTracker {
       // object. bitcoinjs-lib silently defaults an undefined network to BTC
       // mainnet at address/script decode time, so either way construction must
       // fail rather than run under the wrong network parameters.
-      // getBitcoinJsNetwork returns undefined for an unrecognized coin/network
-      // name (e.g. a typo in the NETWORK env var). Left unguarded, bitcoinjs-lib
-      // silently defaults an undefined network to BTC mainnet at address/script
-      // decode time, so a misconfiguration would run under the wrong network
-      // parameters instead of failing. Fail loud at construction instead.
       if (!this.network) {
         throw new Error(`XChainUtxoTracker: unknown network "${network}" -- no bitcoinjs network config resolved. Check the configured network name.`)
       }
 
       // Net portion ('mainnet'|'testnet'|'regtest') of the "<fullname>-<network>"
-      // key. The guard above already rejected an unknown key, so the suffix here
-      // is a valid network name.
+      // key. getBitcoinJsNetwork above already threw on an unknown key, so the
+      // suffix here is a valid network name.
       this.consensusNetwork = String(network).slice(String(network).lastIndexOf('-') + 1)
 
       // Verify the bundled canonical coin files against CONSENSUS_CONFIG_PIN before

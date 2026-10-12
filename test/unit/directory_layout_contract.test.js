@@ -91,10 +91,11 @@ describe('directory layout contract', () => {
         assert.equal(exists('src/config/env_int.js'), true);
 
         const config = require('../../src/config');
-        const { readInt, envInt } = require('../../src/config/env_int');
+        const { readInt, envInt, intKnob } = require('../../src/config/env_int');
         assert.equal(Object.prototype.hasOwnProperty.call(config, 'NODE_RPC_TIMEOUT_MS'), true);
         assert.equal(typeof readInt, 'function');
         assert.equal(typeof envInt, 'function');
+        assert.equal(typeof intKnob, 'function');
     });
 
     it('leaves all 22 non-suite support files at their original basename', () => {

@@ -33,15 +33,19 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const LevelUpStore = require('../../src/store/level_up_db')
+const storeLifecycle = require('../../src/store/level_up_db/store_lifecycle')
 
 const tmpDirs = []
-const originalCreateDatabase = LevelUpStore.prototype.createDatabase
+const originalCreateDatabase = storeLifecycle.createDatabase
 
-LevelUpStore.prototype.createDatabase = function (dataDir) {
+function createOnDiskDatabase(dataDir) {
   const dir = dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-ondisk-'))
   tmpDirs.push(dir)
   return originalCreateDatabase.call(this, dir)
 }
+
+storeLifecycle.createDatabase = createOnDiskDatabase
+LevelUpStore.prototype.createDatabase = createOnDiskDatabase
 
 exports.mochaHooks = {
   afterAll() {

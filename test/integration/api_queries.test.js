@@ -12,7 +12,6 @@
 
 const { expect } = require('chai');
 const express = require('express');
-const bodyParser = require('body-parser');
 const supertest = require('supertest');
 const jsonRouter = require('express-json-rpc-router');
 const {
@@ -41,7 +40,7 @@ function useTracker() {
 function buildApp() {
   // Build a minimal Express app wired to the real tracker
   const app = express();
-  app.use(bodyParser.json());
+  app.use(express.json());
 
   app.get('/utxos/:address', async (req, res) => {
     const utxos = await tracker.getUtxosAddress(req.params.address);

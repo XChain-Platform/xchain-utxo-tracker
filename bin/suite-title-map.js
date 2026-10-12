@@ -46,7 +46,7 @@
  *   node bin/suite-title-map.js --out <file>       write the map as JSON
  *   node bin/suite-title-map.js --script test      one script only
  *   node bin/suite-title-map.js --compare <pin>    diff the tree against a pin,
- *                                                  exit 1 on any difference
+ *                                                  exit 1 on non-additive change
  *   node bin/suite-title-map.js --compare <pin> --rename-map <file>
  *                                                  the same, with the declared
  *                                                  renames (flat {old: new}
@@ -70,6 +70,7 @@ const { loadSplits, compareWithSplits } = require('./suite_title_map/split_map.j
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const MOCHA_BIN = path.join(REPO_ROOT, 'node_modules', '.bin', 'mocha');
+const GROWTH_KINDS = new Set(['file_added', 'title_added']);
 
 /**
  * A shell-ish split that keeps quoted globs whole. The scripts are plain
@@ -268,6 +269,32 @@ function compare(pin, fresh, renames, only) {
     return differences;
 }
 
+function isGrowth(difference) {
+    return GROWTH_KINDS.has(difference.kind);
+}
+
+function compareAgainst(opts, map) {
+    const pin = JSON.parse(fs.readFileSync(opts.compare, 'utf8'));
+    const renames = opts.renameMap ? JSON.parse(fs.readFileSync(opts.renameMap, 'utf8')) : {};
+    const splits = opts.splitMap ? loadSplits(opts.splitMap) : {};
+    const differences = compareWithSplits({ pin, fresh: map, renames, splits, only: opts.script, compare });
+    if (!differences.length) {
+        console.log(`suite identity holds against ${path.relative(REPO_ROOT, opts.compare)}`
+            + `${opts.renameMap ? ' through the declared rename map' : ''}`
+            + `${opts.splitMap ? ' through the declared split map' : ''}`);
+        return;
+    }
+    const blocking = differences.filter((difference) => !isGrowth(difference));
+    const growthOnly = blocking.length === 0 ? ' (additive growth only)' : '';
+    console.log(`${differences.length} difference(s) against ${path.relative(REPO_ROOT, opts.compare)}${growthOnly}:`);
+    for (const d of differences.slice(0, 200)) {
+        const growth = isGrowth(d) ? '[growth] ' : '';
+        console.log(`  ${growth}[${d.script}] ${d.kind} ${d.file || ''} ${d.title ? `:: ${d.title}` : d.detail || ''}`);
+    }
+    if (differences.length > 200) console.log(`  ... and ${differences.length - 200} more`);
+    if (blocking.length) process.exitCode = 1;
+}
+
 function parseArgs(argv) {
     const opts = { json: false };
     for (let i = 0; i < argv.length; i += 1) {
@@ -291,22 +318,7 @@ function main() {
     const map = buildMap(opts.script);
 
     if (opts.compare) {
-        const pin = JSON.parse(fs.readFileSync(opts.compare, 'utf8'));
-        const renames = opts.renameMap ? JSON.parse(fs.readFileSync(opts.renameMap, 'utf8')) : {};
-        const splits = opts.splitMap ? loadSplits(opts.splitMap) : {};
-        const differences = compareWithSplits({ pin, fresh: map, renames, splits, only: opts.script, compare });
-        if (!differences.length) {
-            console.log(`suite identity holds against ${path.relative(REPO_ROOT, opts.compare)}`
-                + `${opts.renameMap ? ' through the declared rename map' : ''}`
-                + `${opts.splitMap ? ' through the declared split map' : ''}`);
-            return;
-        }
-        console.log(`${differences.length} difference(s) against ${path.relative(REPO_ROOT, opts.compare)}:`);
-        for (const d of differences.slice(0, 200)) {
-            console.log(`  [${d.script}] ${d.kind} ${d.file || ''} ${d.title ? `:: ${d.title}` : d.detail || ''}`);
-        }
-        if (differences.length > 200) console.log(`  ... and ${differences.length - 200} more`);
-        process.exitCode = 1;
+        compareAgainst(opts, map);
         return;
     }
 

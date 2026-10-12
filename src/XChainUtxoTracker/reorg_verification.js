@@ -52,7 +52,7 @@ module.exports = {
                 // node for a hash it no longer has (which would error and spin this loop). Once
                 // at the node tip, the normal hash comparison below reconciles the common ancestor.
                 let aboveNodeTip = (walk.tip !== null && lastBlockIndex > walk.tip)
-                refuseAboveTipWalkPastBudget.call(this, aboveNodeTip, walk.tip, lastBlockIndex, blocksDeleted, undoWindow.budget)
+                refuseAboveTipWalkPastBudget.call(this, aboveNodeTip, walk.tip, lastBlockIndex, blocksDeleted, undoWindow)
 
                 let blockHashFromNode = null
                 if (!aboveNodeTip){
@@ -151,12 +151,14 @@ function rollbackBudget(){
     // window IS the durable record of what was already spent. undoBlocks stays
     // as the upper cap so lowering the XCHAIN_UNDO_BLOCKS_<COIN> override still
     // tightens the walk rather than being ignored. An empty window at entry
-    // carries no budget to derive: the first DIVERGENCE the walk meets refuses
-    // with the depth guard's message (below), before any delete, while a walk
+    // carries a budget of 0: the first hash DIVERGENCE the walk meets refuses
+    // with the depth guard's message (below), before any delete; a committed
+    // tip merely ABOVE the node's tip parks instead (refuseAboveTipWalkPastBudget),
+    // whatever the gap, since height alone does not prove divergence; and a walk
     // that finds no divergence still returns normally for the call sites that
     // drive verifyReorg without maintaining a window at all.
     const windowAtEntry = this.lastBlocks.length
-    const budget = windowAtEntry > 0 ? Math.min(windowAtEntry, this.undoBlocks) : this.undoBlocks
+    const budget = windowAtEntry > 0 ? Math.min(windowAtEntry, this.undoBlocks) : 0
     // What a previous process already spent out of this chain's window. Only
     // meaningful once the window is being maintained; reported so the halt
     // message states the fork's true depth rather than this pass's share of it.
@@ -221,7 +223,8 @@ function logRepairedPointer(lastBlockDb){
     logger.info("Last block index was fixed!")
 }
 
-function refuseAboveTipWalkPastBudget(aboveNodeTip, nodeTipHeight, lastBlockIndex, blocksDeleted, budget){
+function refuseAboveTipWalkPastBudget(aboveNodeTip, nodeTipHeight, lastBlockIndex, blocksDeleted, undoWindow){
+    const { windowAtEntry, budget } = undoWindow
     // The above-tip walk knows its depth up front: every committed height
     // above the node tip is a rollback. When that alone (on top of what
     // this pass already walked back) would exhaust the budget, refuse NOW,
@@ -232,7 +235,9 @@ function refuseAboveTipWalkPastBudget(aboveNodeTip, nodeTipHeight, lastBlockInde
     // instead of exiting into a restart loop or halting for a rebuild.
     if (aboveNodeTip && blocksDeleted.length + (lastBlockIndex - nodeTipHeight) > budget){
         const aboveTip = lastBlockIndex - nodeTipHeight
-        const msg = "verifyReorg: the node's tip (" + nodeTipHeight + ") is " + aboveTip
+        const msg = windowAtEntry === 0
+            ? aboveTipEmptyWindowMessage.call(this, nodeTipHeight, aboveTip, lastBlockIndex)
+            : "verifyReorg: the node's tip (" + nodeTipHeight + ") is " + aboveTip
             + " blocks below the committed tip (" + lastBlockIndex + "), which"
             + (blocksDeleted.length > 0 ? " with " + blocksDeleted.length + " block(s) already rolled back" : "")
             + " exceeds the recovery window (" + budget + " of UNDO_BLOCKS=" + this.undoBlocks
@@ -244,6 +249,19 @@ function refuseAboveTipWalkPastBudget(aboveNodeTip, nodeTipHeight, lastBlockInde
         err.tipBelowCommittedTip = true
         throw err
     }
+}
+
+// The above-tip refusal on an EMPTY window parks like any other, but never claims a
+// window or an intact index: the hash compare decides once the node reaches this height.
+// Deliberately unlike xchain-decoder, whose matching halt clears in place; ours owes a rebuild.
+function aboveTipEmptyWindowMessage(nodeTipHeight, aboveTip, lastBlockIndex){
+    return "verifyReorg: the node's tip (" + nodeTipHeight + ") is " + aboveTip
+        + " blocks below the committed tip (" + lastBlockIndex + "), and the undo window is EMPTY "
+        + "at entry (0 of UNDO_BLOCKS=" + this.undoBlocks + " available): not even one block can be "
+        + "walked back. Refusing before any rollback; nothing has been deleted. If the node is "
+        + "catching up, syncing resumes once it passes " + lastBlockIndex + " on this chain; if its "
+        + "chain diverges at or below " + lastBlockIndex + ", this index has to be rebuilt, and the "
+        + "depth guard says so as soon as the node reaches this height."
 }
 
 // Fetches the node's hash at the committed height. A failed fetch is logged

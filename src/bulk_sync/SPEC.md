@@ -82,6 +82,8 @@ re-parsed by a current worker.
 ## spends-*.dat  (magic `XCHNSPD1`, record_size = 20)
 
 One record per non-coinbase input. Coinbases produce no record.
+Bulk sync records a spend for each non-coinbase input whose `standard_input` field is
+absent or truthy, and skips inputs where it is present and falsy.
 
 ```
 offset   size  field
@@ -152,7 +154,11 @@ for that stream:
 `Q` is seeded so a fresh seed carries the watermark a live tracker at the same tip holds;
 without it the first boot cannot tell a refilling window from an interrupted rollback. The
 live-only `P` (0x50) pending-cleanup key is a transient crash-recovery marker a store at
-rest never carries, so it is never seeded.
+rest never carries, so it is never seeded. The live-only `R` (0x52) halt marker
+(`setHaltMarker` in `src/store/level_up_db.js`) is written only on a store declared
+unrecoverable, so a healthy store never carries it and it is never seeded either; a
+`validate_db` run against a halted truth DB therefore reports one expected `missing` key
+under 0x52, which is not a seeding defect.
 
 The `K` and `M` reorg-recovery reverse indices are skipped entirely. The `W`
 creation-block reverse index IS seeded (one record per pre-cancellation output created
@@ -176,16 +182,36 @@ never-restored) UTXOs until a full re-index.
 
 **T value shape.** The live confirmed path writes, per tx, a `T` record whose value is
 `[blockHash(32)][fullTxid(32)]` (64 B) plus an exact-txid `X` (0x58) and a per-block
-recovery `Y` (0x59) record (`insertTransaction`). Bulk-sync writes no `X` or `Y`, and
-writes `T` only with `removeSpent=false` (not a parity seed; the orchestrator rejects
-`--no-remove-spent`), in the legacy `[blockHash(32)]` (32 B) shape, because the meta tx
-list carries only `txHash8`. That shape is safe today: every T reader decodes only the
-first 32 bytes, and a rollback with no `Y` record takes `deleteTxBlockRecord`'s blind
-T-delete fallback (pinned in `test/unit/tx_block_index.test.js`). The one binding rule:
-any change that seeds `Y` must widen `T` to 64 B in the same change, because with a `Y`
-present `deleteTxBlockRecord` clears `T` only when its value is at least 64 B and bytes
-32..64 match the recovered txid. `get_tx_block` therefore returns null for bulk-seeded
-history (README.md, Upgrading).
+recovery `Y` (0x59) record (`insertTransaction`); like W and Z, a block's `Y` records are
+pruned once it ages out of the undo window (`removeTxBlockRecoveryIndexOnly`), while `T`
+and `X` are kept.
+
+The non-Bitcoin seed writes the live T/X/Y shape by default; Bitcoin retains the
+legacy default with no T/X/Y. `deriveKeys` also accepts an explicit `txIndex`
+override, and `loadKeys` detects the resulting files unless explicitly overridden.
+The meta tx list carries only `txHash8`, so the full txids come from the
+pre-cancellation outputs stream, which names every transaction's full txid and
+block (every transaction has at least one output, and a transaction's outputs are
+adjacent). This pass runs before the outputs stream becomes eligible for
+disk-pressure cleanup and emits:
+
+- `T.dat`, 77 B: `'T'+txHash8`, then `heightBE(4)+blockHash(32)+fullTxid(32)`. The
+  height only orders the sort so that, when two txids share a prefix, the one in the
+  higher block is loaded last and owns the single slot as the later live write would;
+  the loader drops those 4 bytes, leaving the live 64 B value.
+- `X.dat`, 65 B: `0x58+fullTxid` then `blockHash(32)`, one per transaction.
+- `Y.dat`, 73 B: `0x59+blockHash+txHash8` then `fullTxid(32)`, only for the last
+  `undoBlocks` seeded blocks (the same window as W and Z; the live tracker prunes Y
+  past it).
+
+`txIndex` replaces the legacy 32 B `T` even when `removeSpent` is false. With a `Y` present, `deleteTxBlockRecord` clears `T`
+only when its value is at least 64 B and bytes 32..64 match the recovered txid, so
+`T` is always 64 B whenever `Y` is seeded. Without `txIndex`, `removeSpent: false`
+still writes the legacy 32 B `T` (every T reader decodes only the first 32 bytes, and
+a rollback with no `Y` takes the blind T-delete fallback pinned in
+`test/unit/tx_block_index.test.js`). The parity of all three prefixes with
+`insertTransaction` is pinned in
+`test/regression/bulk_sync/bulk_sync_tx_index_parity.test.js`.
 
 An explicit `--to` is the one endpoint that clamp cannot cover: the orchestrator has not
 resolved a tip, so it has nothing to compare against. `dump.js` enforces the same
@@ -259,7 +285,11 @@ Chain specifics: for LTC the decoder's HogEx marker/flag strip means the
 hash of the stripped tx IS the true txid; pure-MWEB txs live outside the
 merkle tree by protocol design, and bulk-sync never reads MWEB payload
 bytes, so they cannot affect the built DB. For DOGE, AuxPoW is stripped at
-dump time, so `.xdmp` blocks are always header + tx section. Regression
+dump time, so `.xdmp` blocks are always header + tx section. A block whose
+AuxPoW section the strip cannot traverse is rebuilt from getblockheader +
+verbose getblock + getrawtransaction, the live tracker's recovery path, so it
+is still header + tx section and the merkle pass checks it like any other
+block. Regression
 coverage: `test/regression/bulk_sync_merkle.test.js`.
 
 ## Endianness rationale

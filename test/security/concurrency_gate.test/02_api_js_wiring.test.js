@@ -28,15 +28,15 @@ const fs = require('fs');
 const path = require('path');
 const { closeServers } = require('../support/concurrency_gate_harness');
 
+const entrySource = fs.readFileSync(path.join(__dirname, '../../../src/api.js'), 'utf8');
+const startupSource = fs.readFileSync(path.join(__dirname, '../../../src/api/startup.js'), 'utf8');
+const routesSource = fs.readFileSync(path.join(__dirname, '../../../src/api/routes.js'), 'utf8');
+const statusSource = fs.readFileSync(path.join(__dirname, '../../../src/api/sync_status.js'), 'utf8');
+
 describe('Security: global in-flight concurrency cap', function () {
     afterEach(closeServers);
 
     describe('API seam wiring', function () {
-
-        const entrySource = fs.readFileSync(path.join(__dirname, '../../../src/api.js'), 'utf8');
-        const startupSource = fs.readFileSync(path.join(__dirname, '../../../src/api/startup.js'), 'utf8');
-        const routesSource = fs.readFileSync(path.join(__dirname, '../../../src/api/routes.js'), 'utf8');
-        const statusSource = fs.readFileSync(path.join(__dirname, '../../../src/api/sync_status.js'), 'utf8');
 
         it('mounts the gate on the app with an env-overridable cap', function () {
             expect(startupSource).to.include('concurrencyGate.createConcurrencyGate');
@@ -70,6 +70,39 @@ describe('Security: global in-flight concurrency cap', function () {
             expect(statusSource).to.include("app.get('/status', probeGate.hold(");
             // One wrap covers every JSON-RPC method, batches included.
             expect(routesSource).to.match(/app\.use\(requestGate\.hold\(jsonRouter\(/);
+        });
+    });
+});
+
+describe('Security: global in-flight concurrency cap', function () {
+    afterEach(closeServers);
+
+    describe('API seam wiring', function () {
+
+        it('wraps every registered route in a gate hold(), not just the listed ones', function () {
+            // The list above names today's routes, so a new one added without the
+            // wrapper would pass it; scan every registration instead.
+            const code = (src) => src.split('\n').filter((line) => !/^\s*\/\//.test(line)).join('\n');
+            const routeCall = /\bapp\.(get|post|put|patch|delete|all)\(\s*(['"`])([^'"`]+)\2\s*,\s*([^\n]*)/g;
+            const seen = [];
+            for (const [file, src] of [['routes.js', routesSource], ['sync_status.js', statusSource]]) {
+                for (const match of code(src).matchAll(routeCall)) {
+                    const routePath = match[3];
+                    const wrapper = routePath === '/status' ? 'probeGate.hold(' : 'requestGate.hold(';
+                    seen.push(routePath);
+                    expect(match[4].startsWith(wrapper),
+                        `${file}: app.${match[1]}('${routePath}') must wrap its handler in ${wrapper}`).to.equal(true);
+                }
+            }
+            expect(seen).to.include.members(['/utxos/:address', '/status'],
+                'the scan must reach the real registrations, or it checks nothing');
+            const uses = [...code(routesSource).matchAll(/\bapp\.use\(([^\n]*)/g)].map((m) => m[1]);
+            expect(uses.length).to.be.greaterThan(0, 'the scan must reach the JSON-RPC mount');
+            for (const use of uses) {
+                const isBodyShim = /req\.body === undefined/.test(use);
+                expect(isBodyShim || use.startsWith('requestGate.hold('),
+                    `routes.js: app.use(${use.slice(0, 40)}...) must be the body shim or a requestGate.hold() mount`).to.equal(true);
+            }
         });
 
         it('reports the gate stats so a stampede is visible to operators', function () {

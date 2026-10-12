@@ -77,10 +77,6 @@ describe('XChainUtxoTracker (more)', function () {
             // relying on the guard below it; either way an unknown network never
             // gets far enough to decode addresses under bitcoinjs's BTC-mainnet
             // default. The regex spans both messages on purpose.
-            // getBitcoinJsNetwork returns undefined for an unresolvable network name;
-            // the constructor now asserts on that before it would otherwise reach
-            // resolveUndoBlocks' own fallback, so an unknown network never gets far
-            // enough to silently decode addresses under bitcoinjs's BTC-mainnet default.
             expect(() => new XChainUtxoTracker('unknown-mainnet', '127.0.0.1', '1234', 'u', 'p', 'db', false))
                 .to.throw(/[Uu]nknown network/);
         });

@@ -30,6 +30,8 @@ function keyEquals(provided, expected) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+// The production routes build the readiness header as
+// res.set('X-Mempool-Ready', String(meta.mempool_ready)); the gate suite asserts it on the real app.
 function installUnmatchedRouteLabel(app) {
   app.all('/*unmatched', (req, res, next) => next());
   return app;
@@ -41,9 +43,9 @@ async function getTestBalance(mockTracker, address) {
 }
 
 // Overrides replace config keys; their jsonRpcMethods add to the stub getbootstrap.
-function createTestApp(mockTracker, adminApiKey = '', overrides = {}) {
+function createTestConfig(mockTracker, adminApiKey = '', overrides = {}) {
   const { jsonRpcMethods: extraMethods, ...extraConfig } = overrides;
-  return createApp({
+  return {
     tracker: mockTracker,
     UTXO_TRACKER_API_KEY: adminApiKey,
     ADMIN_METHODS,
@@ -68,7 +70,11 @@ function createTestApp(mockTracker, adminApiKey = '', overrides = {}) {
       ...extraMethods
     },
     ...extraConfig
-  });
+  };
+}
+
+function createTestApp(mockTracker, adminApiKey = '', overrides = {}) {
+  return createApp(createTestConfig(mockTracker, adminApiKey, overrides));
 }
 
 function createMockTracker(sinon) {
@@ -93,20 +99,24 @@ if (typeof describe === 'function') {
     });
 
     it('serves the production UTXO route', async function () {
-      const tracker = createMockTracker(sinon);
-      const utxos = [{ txid: 'abc', vout: 0 }];
-      tracker.getUtxosAddress.resolves(utxos);
+      const firstTracker = createMockTracker(sinon);
+      const secondTracker = createMockTracker(sinon);
+      const firstUtxos = [{ txid: 'first', vout: 0 }];
+      firstTracker.getUtxosAddress.resolves(firstUtxos);
+      secondTracker.getUtxosAddress.resolves([{ txid: 'second', vout: 1 }]);
+      const trackerFactory = sinon.stub().returns(firstTracker);
 
-      const response = await supertest(createTestApp(tracker)).get('/utxos/address').expect(200);
-      assert.deepStrictEqual(response.body, utxos);
-
-      const freshness = { mempool_ready: true };
-      const res = {
-        set(name, value) {
-          assert.strictEqual(response.headers[name.toLowerCase()], value);
-        }
-      };
-      res.set('X-Mempool-Ready', String(freshness.mempool_ready));
+      const firstApp = createApp(createTestConfig(firstTracker, '', {
+        tracker: undefined,
+        trackerFactory
+      }));
+      createApp(createTestConfig(secondTracker));
+      const response = await supertest(firstApp).get('/utxos/address').expect(200);
+      assert.deepStrictEqual(response.body, firstUtxos);
+      assert.strictEqual(response.headers['x-mempool-ready'], 'true');
+      sinon.assert.calledOnce(trackerFactory);
+      sinon.assert.calledOnceWithExactly(firstTracker.getUtxosAddress, 'address', {});
+      sinon.assert.notCalled(secondTracker.getUtxosAddress);
     });
   });
 }
