@@ -74,8 +74,12 @@ function selectPrefixes(removeSpent, txIndex) {
     return [...base, ...TX_INDEX_FILES].sort()
 }
 
-function resolveTxIndex(keysDir, option) {
+// An explicit option wins, then the decision deriveKeys recorded in L.json. File
+// detection is only for an L.json from a derive that predates the field: a reused
+// keys dir can hold another run's X/Y files, so their presence proves nothing.
+function resolveTxIndex(keysDir, option, L) {
     if (option !== undefined) return option === true
+    if (L && typeof L.txIndex === 'boolean') return L.txIndex
     return ['X', 'Y'].some(pfx => fs.existsSync(path.join(keysDir, pfx + '.dat')))
 }
 
@@ -183,6 +187,14 @@ function readLastMarkers(keysDir) {
     return L
 }
 
+// L.json for the txIndex default only, or null when absent or unparseable. The
+// strict read stays in writeFinalMarkers, so the empty-DB and missing-prefix
+// refusals keep reporting first.
+function peekLastMarkers(keysDir) {
+    try { return JSON.parse(fs.readFileSync(path.join(keysDir, 'L.json'), 'utf8')) }
+    catch (e) { return null }
+}
+
 // Write the LAST_* markers and the Q watermark in one last batch, after every prefix.
 async function writeFinalMarkers(db, keysDir, stats) {
     const L = readLastMarkers(keysDir)
@@ -209,9 +221,11 @@ async function writeFinalMarkers(db, keysDir, stats) {
  *                                     them) and the legacy 32-byte T. Explicit
  *                                     false loads 32-byte T plus I/J, which is
  *                                     NOT a parity seed.
- * @param {boolean} opts.txIndex      defaults to detecting derived T/X/Y files.
- *                                     When true, loads the 64-byte T and the X
- *                                     and Y files that deriveKeys emitted.
+ * @param {boolean} opts.txIndex      defaults to the txIndex deriveKeys recorded
+ *                                     in L.json, or to detecting X/Y files for
+ *                                     an L.json without that field. When true,
+ *                                     loads the 64-byte T and the X and Y files
+ *                                     that deriveKeys emitted.
  * @param {Function} opts.onProgress  ({phase, ...})
  */
 async function loadKeys(opts) {
@@ -221,7 +235,7 @@ async function loadKeys(opts) {
     }
     const batchSize   = opts.batchSize  || 10000
     const removeSpent = opts.removeSpent !== false
-    const txIndex     = resolveTxIndex(keysDir, opts.txIndex)
+    const txIndex     = resolveTxIndex(keysDir, opts.txIndex, peekLastMarkers(keysDir))
     const onProgress  = opts.onProgress || noop
 
     const db = openDb(dbPath)
@@ -263,4 +277,4 @@ async function loadKeys(opts) {
     return { stats, elapsed_ms: elapsed }
 }
 
-module.exports = { loadKeys }
+module.exports = { loadKeys, PREFIX_FILES }
