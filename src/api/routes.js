@@ -341,9 +341,19 @@ function createJsonRpcController(context) {
     Object.defineProperty(instance, 'context', { value: context })
     Object.defineProperty(instance, 'bootstrapGuard', { value: { busy: false } })
     for (const [name, method] of Object.entries(jsonRpcController)) {
-        instance[name] = method.bind(instance)
+        instance[name] = async (...args) => {
+            try { return await method.apply(instance, args) } catch (err) { throw toJsonRpcError(err) }
+        }
     }
     return instance
+}
+// The router reports Number(err.code), so a string-coded caller mistake (a bad
+// address, limit or cursor) would leave as a null code and an uncoded one as
+// -32603. Re-throw it as -32602 (invalid params) with the string code in
+// data.code, as the store's coded errors carry it; real faults pass unchanged.
+function toJsonRpcError(err){
+    if (!err || (err.code !== 'BAD_REQUEST' && err.code !== 'INVALID_CURSOR')) return err
+    return Object.assign(new Error(err.message), { code: -32602, data: { code: err.code } })
 }
 // Every route registered here that awaits a LevelDB read is wrapped in the gate's
 // hold(): the slot then spans the read instead of the client's socket, so a

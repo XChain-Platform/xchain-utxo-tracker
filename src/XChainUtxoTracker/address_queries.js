@@ -30,17 +30,24 @@ const { MAX_ADDRESS_OUTPUTS } = require('./constants.js')
 const LTC_TEST_BECH32 = new Set(['tltc', 'rltc'])
 const LTC_P2SH_V2_VERSION = 0x3a
 
+// A bad, oversized (bech32 tops out at 90) or wrong-network address is a caller
+// mistake: a BAD_REQUEST error answered 400 / -32602 with no error log. Only
+// input within the bound is decoded, so the message echoes at most 128 chars.
 function addressToScript(address, network){
+    let reason = 'invalid address for this network'
+    try {
+        if (typeof address === 'string' && address.length > 0 && address.length <= 128) return decodeAddressScript(address, network)
+    } catch (err) { reason = String((err && err.message) || reason).slice(0, 256) }
+    throw Object.assign(new Error(reason), { code: 'BAD_REQUEST' })
+}
+
+function decodeAddressScript(address, network){
     try {
         return bitcoin.address.toOutputScript(address, network)
     } catch (err) {
         if (!network || !LTC_TEST_BECH32.has(network.bech32)) throw err
         let decoded
-        try {
-            decoded = bitcoin.address.fromBase58Check(address)
-        } catch (_) {
-            throw err
-        }
+        try { decoded = bitcoin.address.fromBase58Check(address) } catch (_) { throw err }
         if (decoded.version !== LTC_P2SH_V2_VERSION || decoded.hash.length !== 20) throw err
         return bitcoin.address.toOutputScript(bitcoin.address.toBase58Check(decoded.hash, network.scriptHash), network)
     }
