@@ -146,6 +146,11 @@ async function pruneMempoolStore(rawMempool, counts){
         //the transactions that already exist in the database, leaving rawMempool only with the new transactions from the mempool
         let deletedInfo = await this.mempoolDb.deleteAndCompareTxsNotInList(rawMempool)
         await this.mempoolDb.endTransaction()
+        // rawMempool now holds only the txs the store still lacks, so the
+        // store is a partial snapshot until the last batch lands. Withdraw
+        // readiness left over from the previous pass;
+        // markMempoolReconverged re-asserts it after the final batch.
+        if (rawMempool.length) this.mempoolReconverged = false
         counts.deletedTransactionsCount = deletedInfo.transactionsDeleted
         counts.deletedInputsCount = deletedInfo.inputsDeleted
         counts.deletedOutputsCount = deletedInfo.outputsDeleted
