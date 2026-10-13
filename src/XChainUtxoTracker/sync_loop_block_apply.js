@@ -20,6 +20,7 @@ const util = require('../common/util')
 const LevelUpStore = require('../store/level_up_db.js')
 const { DB_TRANSACTION_BLOCKS_QUANTITY, ETA_WINDOW_BLOCKS, HEAP_FLUSH_THRESHOLD_MB, P_PENDING_CLEANUP_KEY, REMOVE_SPENT, SYNCED_THRESHOLD, logger } = require('./constants.js')
 const { fillPrefetchQueue, fetchNextBlock } = require('./sync_loop_block_fetch.js')
+const { withStoreCommit } = require('./address_queries.js')
 const XChainUtxoTracker = require('../XChainUtxoTracker.js')
 
 // Sync loop steps, called with the tracker as `this`; sync_loop.js says how.
@@ -228,47 +229,60 @@ async function flushBatch(sync, flush, nextBlockHash, nextBlockHeight){
             Buffer.from(JSON.stringify(this.pendingKMCleanup)))
     }
 
-    const _tCommit = Date.now()
-    await this.db.endTransaction()
-    sync._t.commit += Date.now() - _tCommit
-
-    // Stamp the forward-progress heartbeat only after the batch is
-    // durable, so a crash mid-flush cannot leave /metrics claiming a
-    // commit the DB never took.
-    this.lastCommitAt = Date.now()
-    this.lastCommittedHeight = nextBlockHeight
-
-    // Flush deferred mempool cleanup AFTER confirmed outputs are committed.
-    // This closes the ordering gap: mined UTXOs are queryable from the
-    // confirmed DB before their mempool records are removed, so no query
-    // window exists where the output appears in neither store.
-    // deleteOutputsByHint/deleteInputsByHint are per-entry read streams that
-    // yield to the event loop, so wrap in a transaction for atomicity and
-    // wait for any in-flight updateMempool() to release the mutex first.
-    if (sync.pendingMempoolTxCleanup.length > 0) {
-        while (this.mempoolBusy) {
-            await this.sleep(50)
-        }
-        this.mempoolBusy = true
-        try {
-            await this.mempoolDb.beginTransaction()
-            for (const txid of sync.pendingMempoolTxCleanup) {
-                await this.mempoolDb.deleteOutputsByHint(txid)
-                await this.mempoolDb.deleteInputsByHint(txid)
-                await this.mempoolDb.deleteTransaction(txid)
-            }
-            await this.mempoolDb.endTransaction()
-        } finally {
-            this.mempoolBusy = false
-        }
-        sync.pendingMempoolTxCleanup = []
-    }
+    await commitWithMempoolCleanup.call(this, sync, nextBlockHeight)
 
     // Clean up K/M entries for aged-out blocks now that the batch is committed
     const _tCleanup = Date.now()
     await this.cleanupAgedBlocks()
     sync._t.cleanup += Date.now() - _tCleanup
     return () => finishFlushedBlock.call(this, sync, flush, nextBlockHash, nextBlockHeight)
+}
+
+// Commits the open batch, then drops the mined txs' mempool records, as ONE
+// exclusive section of the store-commit lock (address_queries.js). Committing
+// first means no single snapshot sees a mined output in neither store, but an
+// address read takes two snapshots (confirmed, then mempool); without the lock
+// a read whose confirmed snapshot predates the commit and whose mempool reads
+// follow the cleanup misses the mined output and serves the outpoint it spent
+// as unspent. The mempool mutex is taken first, outside the section, so
+// readers are never held while an in-flight updateMempool() finishes.
+async function commitWithMempoolCleanup(sync, nextBlockHeight){
+    const cleanupTxids = sync.pendingMempoolTxCleanup
+    const holdMempool = cleanupTxids.length > 0
+    if (holdMempool) {
+        while (this.mempoolBusy) {
+            await this.sleep(50)
+        }
+        this.mempoolBusy = true
+    }
+    try {
+        await withStoreCommit(this, async () => {
+            const _tCommit = Date.now()
+            await this.db.endTransaction()
+            sync._t.commit += Date.now() - _tCommit
+
+            // Stamp the forward-progress heartbeat only after the batch is
+            // durable, so a crash mid-flush cannot leave /metrics claiming a
+            // commit the DB never took.
+            this.lastCommitAt = Date.now()
+            this.lastCommittedHeight = nextBlockHeight
+
+            // deleteOutputsByHint/deleteInputsByHint are per-entry read
+            // streams that yield to the event loop, so the deletions go in
+            // one mempool transaction for atomicity.
+            if (!holdMempool) return
+            await this.mempoolDb.beginTransaction()
+            for (const txid of cleanupTxids) {
+                await this.mempoolDb.deleteOutputsByHint(txid)
+                await this.mempoolDb.deleteInputsByHint(txid)
+                await this.mempoolDb.deleteTransaction(txid)
+            }
+            await this.mempoolDb.endTransaction()
+        })
+    } finally {
+        if (holdMempool) this.mempoolBusy = false
+    }
+    if (holdMempool) sync.pendingMempoolTxCleanup = []
 }
 
 // The flush's bookkeeping once the batch and its cleanups are done: the timing
@@ -380,4 +394,5 @@ async function verifyReorgHandingBackTipRefusal(sync){
     }
 }
 
-module.exports = { indexNextBlock, resetBatchAfterReorg, verifyReorgHandingBackTipRefusal }
+// flushBatch is exported for the store-commit lock regression test.
+module.exports = { indexNextBlock, resetBatchAfterReorg, verifyReorgHandingBackTipRefusal, flushBatch }

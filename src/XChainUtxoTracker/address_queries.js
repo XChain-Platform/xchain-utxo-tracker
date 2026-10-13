@@ -46,126 +46,78 @@ function addressToScript(address, network){
     }
 }
 
+// Store-commit lock: a block flush changes the confirmed store and the mempool
+// store in two steps (commit the confirmed batch, then delete the mined txs'
+// mempool records). An address read also takes two snapshots, the confirmed
+// store first and the mempool store after. Without coordination a read whose
+// confirmed snapshot predates the commit and whose mempool reads follow the
+// cleanup sees a just-mined output in neither store and serves the outpoint
+// that output's tx spent as unspent. So every address read runs as a shared
+// reader and the flush's commit-plus-cleanup runs as the exclusive writer:
+// the writer waits for in-flight reads to drain, and new reads wait while a
+// writer is pending or active (writer preference, so a steady read load cannot
+// starve the flush). Readers hold nothing the writer needs and vice versa, so
+// there is no lock cycle. The state lives on the tracker under a symbol so it
+// stays off the serialized and enumerable surface.
+const STORE_LOCK = Symbol('storeCommitLock')
+
+function storeLock(tracker){
+    if (!tracker[STORE_LOCK]) {
+        Object.defineProperty(tracker, STORE_LOCK, {
+            value: { readers: 0, writing: false, waiters: [] },
+            enumerable: false,
+            writable: false,
+            configurable: true,
+        })
+    }
+    return tracker[STORE_LOCK]
+}
+
+function waitForLockChange(lock){
+    return new Promise(resolve => lock.waiters.push(resolve))
+}
+
+function wakeLockWaiters(lock){
+    const waiters = lock.waiters
+    lock.waiters = []
+    for (const resolve of waiters) resolve()
+}
+
+// Runs one address read as a shared reader of both stores.
+async function withStoreRead(tracker, read){
+    const lock = storeLock(tracker)
+    while (lock.writing) await waitForLockChange(lock)
+    lock.readers++
+    try {
+        return await read()
+    } finally {
+        lock.readers--
+        if (lock.readers === 0) wakeLockWaiters(lock)
+    }
+}
+
+// Runs a flush's confirmed commit and mempool cleanup as the exclusive writer.
+async function withStoreCommit(tracker, commit){
+    const lock = storeLock(tracker)
+    while (lock.writing) await waitForLockChange(lock)
+    lock.writing = true
+    try {
+        while (lock.readers > 0) await waitForLockChange(lock)
+        return await commit()
+    } finally {
+        lock.writing = false
+        wakeLockWaiters(lock)
+    }
+}
+
 module.exports = {
+    // Both store snapshots are taken under the store-commit lock (see above).
     async getBalanceInfo(address){
-        let script = addressToScript(address, this.network)
-        let scriptHash = createHash('sha256').update(script).digest('hex')
-
-        let confirmedBalance = 0n
-        let pendingBalance = 0n
-        let utxosConfirmed = 0
-        let utxosPending = 0
-        let totalReceived = 0n
-
-        let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
-        let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
-
-        // Outpoints already accounted from the confirmed store. A just-mined tx
-        // lives in both stores until the deferred mempool cleanup runs, so the
-        // mempool loop must skip any outpoint already counted here or the same
-        // coin is double-listed (inflating the reported balance).
-        const confirmedKeys = new Set()
-
-        for (let nextOutput of confirmedOutputs) {
-            // Same fail-loud guard as getUtxosAddress: a 16-char fallback means
-            // the O-record predates the fullTxHash field. get_utxos already throws
-            // here; get_info must too, or a pre-format DB silently returns balances
-            // while every spend path errors, masking the need for a re-index.
-            let txid = requireFullTxid(nextOutput)
-
-            confirmedKeys.add(txid + ':' + nextOutput.vout)
-
-            let amount = BigInt(nextOutput.value)
-
-            // Note: with REMOVE_SPENT=true, totalReceived only reflects currently unspent confirmed outputs
-            totalReceived += amount
-
-            // getInput keys on the 8-byte (16-hex) txid prefix, matching insertInput.
-            let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
-            // Confirmed output being spent in the mempool: counts as confirmed but pending out
-            if (mempoolInput != null) pendingBalance -= amount
-            confirmedBalance += amount
-            utxosConfirmed++
-        }
-
-        for (let nextOutput of mempoolOutputs) {
-            // See the confirmed-output loop above: a 16-char fallback means the
-            // O-record predates the fullTxHash field and can never spend validly.
-            let txid = requireFullTxid(nextOutput)
-
-            // Skip an outpoint already counted from the confirmed store (just-mined
-            // tx still present in both stores during the cleanup window).
-            if (confirmedKeys.has(txid + ':' + nextOutput.vout)) continue
-
-            let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
-            if (mempoolInput == null) {
-                pendingBalance += BigInt(nextOutput.value)
-                utxosPending++
-            }
-        }
-
-        return balanceInfoResult.call(this, address, { confirmedBalance, pendingBalance, totalReceived, utxosConfirmed, utxosPending })
+        return withStoreRead(this, () => readBalanceInfo.call(this, address))
     },
 
-    async getUtxosAddress(address, { limit = null, after = null } = {}){
-        const { scriptHash, scriptPubKeyHex, paged, pageLimit } = utxoQueryPlan(address, this.network, limit)
-
-        // Paged mode pulls one bounded page of confirmed outputs (resuming from
-        // `after`); unbounded mode pulls everything but is capped by the
-        // MAX_ADDRESS_OUTPUTS safety ceiling.
-        let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash, paged
-            ? { limit: pageLimit, after }
-            : { maxOutputs: MAX_ADDRESS_OUTPUTS })
-        const nextCursor = nextPageCursor(confirmedOutputs, paged, pageLimit)
-
-        // Mempool outputs are unpaginated (the mempool set is small and bounded).
-        // In paged mode include them only on the first page (after == null) so they
-        // are not duplicated across pages.
-        let mempoolOutputs = (!paged || after == null)
-            ? await this.mempoolDb.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
-            : []
-
-        let results = []
-        // Outpoints emitted from the confirmed store, so the mempool loop can skip
-        // a just-mined tx that still lives in both stores during the deferred
-        // cleanup window (otherwise the same outpoint is returned twice, handing
-        // the encoder a duplicate input).
-        const confirmedKeys = new Set()
-
-        for (let nextOutput of confirmedOutputs) {
-            let txid = claimConfirmedOutpoint(confirmedKeys, nextOutput)
-
-            // Skip confirmed outputs being spent in the mempool. getInput keys on
-            // the 8-byte (16-hex) txid prefix, matching insertInput.
-            let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
-            if (mempoolInput != null) continue
-
-            addServableConfirmedUtxo.call(this, results, nextOutput, txid, scriptPubKeyHex)
-        }
-
-        for (let nextOutput of mempoolOutputs) {
-            // See the confirmed-output loop above: a 16-char fallback means the
-            // O-record predates the fullTxHash field and can never spend validly.
-            let txid = requireFullTxid(nextOutput)
-            // Skip an outpoint already emitted from the confirmed store (just-mined
-            // tx still present in both stores during the cleanup window). confirmedKeys
-            // is a fast path but only holds THIS page's confirmed rows: in paged mode
-            // the confirmed twin of a both-stores outpoint can sit on a later page, so
-            // the page-scoped set misses it and the same outpoint would be returned
-            // twice across pages (handing the encoder a duplicate input). Fall back to
-            // a point-probe of the confirmed store's live H record, which is page
-            // independent, so the outpoint is emitted only from the confirmed store.
-            if (confirmedKeys.has(txid + ':' + nextOutput.vout)) continue
-            // Across pages the page's own list cannot see an outpoint emitted on an
-            // earlier page, so ask the confirmed store directly.
-            if (paged && await this.db.hasOutputForTx(txid.substring(0, 16), nextOutput.vout)) continue
-            // Skip mempool outputs that are also spent by another mempool tx
-            let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
-            if (mempoolInput != null) continue
-            results.push(mempoolUtxo(nextOutput, txid, scriptPubKeyHex))
-        }
-
-        return withNextCursor(results, paged, nextCursor)
+    async getUtxosAddress(address, options){
+        return withStoreRead(this, () => readUtxosAddress.call(this, address, options))
     },
 
     async getFirstSeen(address){
@@ -178,6 +130,129 @@ module.exports = {
 
         return { height: record.h }
     }
+}
+
+// get_info's body: the confirmed snapshot, then the mempool snapshot.
+async function readBalanceInfo(address){
+    let script = addressToScript(address, this.network)
+    let scriptHash = createHash('sha256').update(script).digest('hex')
+
+    let confirmedBalance = 0n
+    let pendingBalance = 0n
+    let utxosConfirmed = 0
+    let utxosPending = 0
+    let totalReceived = 0n
+
+    let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
+    let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
+
+    // Outpoints already accounted from the confirmed store. A just-mined tx
+    // lives in both stores until the deferred mempool cleanup runs, so the
+    // mempool loop must skip any outpoint already counted here or the same
+    // coin is double-listed (inflating the reported balance).
+    const confirmedKeys = new Set()
+
+    for (let nextOutput of confirmedOutputs) {
+        // Same fail-loud guard as getUtxosAddress: a 16-char fallback means
+        // the O-record predates the fullTxHash field. get_utxos already throws
+        // here; get_info must too, or a pre-format DB silently returns balances
+        // while every spend path errors, masking the need for a re-index.
+        let txid = requireFullTxid(nextOutput)
+
+        confirmedKeys.add(txid + ':' + nextOutput.vout)
+
+        let amount = BigInt(nextOutput.value)
+
+        // Note: with REMOVE_SPENT=true, totalReceived only reflects currently unspent confirmed outputs
+        totalReceived += amount
+
+        // getInput keys on the 8-byte (16-hex) txid prefix, matching insertInput.
+        let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+        // Confirmed output being spent in the mempool: counts as confirmed but pending out
+        if (mempoolInput != null) pendingBalance -= amount
+        confirmedBalance += amount
+        utxosConfirmed++
+    }
+
+    for (let nextOutput of mempoolOutputs) {
+        // See the confirmed-output loop above: a 16-char fallback means the
+        // O-record predates the fullTxHash field and can never spend validly.
+        let txid = requireFullTxid(nextOutput)
+
+        // Skip an outpoint already counted from the confirmed store (just-mined
+        // tx still present in both stores during the cleanup window).
+        if (confirmedKeys.has(txid + ':' + nextOutput.vout)) continue
+
+        let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+        if (mempoolInput == null) {
+            pendingBalance += BigInt(nextOutput.value)
+            utxosPending++
+        }
+    }
+
+    return balanceInfoResult.call(this, address, { confirmedBalance, pendingBalance, totalReceived, utxosConfirmed, utxosPending })
+}
+
+// get_utxos's body: the confirmed snapshot, then the mempool snapshot.
+async function readUtxosAddress(address, { limit = null, after = null } = {}){
+    const { scriptHash, scriptPubKeyHex, paged, pageLimit } = utxoQueryPlan(address, this.network, limit)
+
+    // Paged mode pulls one bounded page of confirmed outputs (resuming from
+    // `after`); unbounded mode pulls everything but is capped by the
+    // MAX_ADDRESS_OUTPUTS safety ceiling.
+    let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash, paged
+        ? { limit: pageLimit, after }
+        : { maxOutputs: MAX_ADDRESS_OUTPUTS })
+    const nextCursor = nextPageCursor(confirmedOutputs, paged, pageLimit)
+
+    // Mempool outputs are unpaginated (the mempool set is small and bounded).
+    // In paged mode include them only on the first page (after == null) so they
+    // are not duplicated across pages.
+    let mempoolOutputs = (!paged || after == null)
+        ? await this.mempoolDb.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
+        : []
+
+    let results = []
+    // Outpoints emitted from the confirmed store, so the mempool loop can skip
+    // a just-mined tx that still lives in both stores during the deferred
+    // cleanup window (otherwise the same outpoint is returned twice, handing
+    // the encoder a duplicate input).
+    const confirmedKeys = new Set()
+
+    for (let nextOutput of confirmedOutputs) {
+        let txid = claimConfirmedOutpoint(confirmedKeys, nextOutput)
+
+        // Skip confirmed outputs being spent in the mempool. getInput keys on
+        // the 8-byte (16-hex) txid prefix, matching insertInput.
+        let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+        if (mempoolInput != null) continue
+
+        addServableConfirmedUtxo.call(this, results, nextOutput, txid, scriptPubKeyHex)
+    }
+
+    for (let nextOutput of mempoolOutputs) {
+        // See the confirmed-output loop above: a 16-char fallback means the
+        // O-record predates the fullTxHash field and can never spend validly.
+        let txid = requireFullTxid(nextOutput)
+        // Skip an outpoint already emitted from the confirmed store (just-mined
+        // tx still present in both stores during the cleanup window). confirmedKeys
+        // is a fast path but only holds THIS page's confirmed rows: in paged mode
+        // the confirmed twin of a both-stores outpoint can sit on a later page, so
+        // the page-scoped set misses it and the same outpoint would be returned
+        // twice across pages (handing the encoder a duplicate input). Fall back to
+        // a point-probe of the confirmed store's live H record, which is page
+        // independent, so the outpoint is emitted only from the confirmed store.
+        if (confirmedKeys.has(txid + ':' + nextOutput.vout)) continue
+        // Across pages the page's own list cannot see an outpoint emitted on an
+        // earlier page, so ask the confirmed store directly.
+        if (paged && await this.db.hasOutputForTx(txid.substring(0, 16), nextOutput.vout)) continue
+        // Skip mempool outputs that are also spent by another mempool tx
+        let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+        if (mempoolInput != null) continue
+        results.push(mempoolUtxo(nextOutput, txid, scriptPubKeyHex))
+    }
+
+    return withNextCursor(results, paged, nextCursor)
 }
 
 // The fail-loud txid guard: a stored output must carry its full 64-char txid,
@@ -312,3 +387,7 @@ function balanceInfoResult(address, { confirmedBalance, pendingBalance, totalRec
         }
     }
 }
+
+// The flush takes the writer side of the store-commit lock. Non-enumerable, so
+// the prototype installer (which copies enumerable keys only) skips it.
+Object.defineProperty(module.exports, 'withStoreCommit', { value: withStoreCommit, enumerable: false })
