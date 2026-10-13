@@ -32,7 +32,13 @@ describe('XChainUtxoTracker: tip-below refusal latch ends with the event', funct
     };
     tracker.discardInflightBatchForReorg = async () => false;
     tracker.loadLastBlocksSortedByHeight = async () => [];
-    tracker.db = { getLastBlock: async () => ({ hash: 'h' + COMMITTED, height: COMMITTED }) };
+    // The refusal path re-reads the committed cursor; nothing is deleted here,
+    // so the store still holds the committed tip.
+    tracker.db = {
+      getLastBlock: async () => ({ hash: 'h' + COMMITTED, height: COMMITTED }),
+      getLastBlockHeight: async () => COMMITTED,
+      getLastBlockHash: async () => 'h' + COMMITTED
+    };
     tracker.verifyReorg = async () => {
       const e = new Error('verifyReorg: refused, below the recovery window');
       e.tipBelowCommittedTip = true;
