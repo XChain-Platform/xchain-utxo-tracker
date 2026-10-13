@@ -15,7 +15,6 @@ const lock = require('../../package-lock.json');
 const manifest = require('../../package.json');
 
 const REQUIRED_DEPENDENCIES = {
-  'body-parser': '^2.2.1',
   'varuint-bitcoin': '^1.1.2',
 };
 
