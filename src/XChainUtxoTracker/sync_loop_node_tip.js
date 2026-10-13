@@ -203,6 +203,12 @@ async function rollBackToNodeTip(sync, lastBlockDb){
                 logger.error(err.message)
             }
             sync.tipBelowCommittedTipRefused = true
+            // The walk may have deleted blocks before it refused (the
+            // message carries "already rolled back"). Re-read the cursor
+            // from the store, or a restored node tip equals the stale
+            // cursor and the deleted heights are never re-indexed.
+            sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
+            sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
             await this.sleep(5000)
             return
         }
