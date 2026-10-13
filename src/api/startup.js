@@ -272,6 +272,31 @@ function installAdminGuard(app, config) {
     })
 }
 
+// Last middleware: body-parser failures (bad JSON, oversize body) and router
+// param-decode failures (bad percent-escape) carry a 4xx status and would
+// otherwise reach Express's default handler, which renders an HTML page with the
+// stack and filesystem paths when NODE_ENV is unset. Answer every error with a
+// bounded JSON body instead; client faults are not logged at error level.
+function installErrorHandler(app) {
+    // Express identifies an error handler by its four-argument arity.
+    // eslint-disable-next-line no-unused-vars
+    app.use((err, req, res, next) => {
+        if (res.headersSent) return next(err)
+        const isUriError = err instanceof URIError
+        const status = Number.isInteger(err && err.status) && err.status >= 400 && err.status < 500
+            ? err.status
+            : (isUriError ? 400 : 500)
+        if (status === 500) {
+            logger.error('Unhandled API error: ' + (err && err.stack || err))
+            return res.status(500).json({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Internal error' } })
+        }
+        const message = status === 413 ? 'Request body too large'
+            : (isUriError ? 'Malformed URL parameter' : 'Malformed request')
+        const code = err.type === 'entity.parse.failed' ? -32700 : -32600
+        return res.status(status).json({ jsonrpc: '2.0', id: null, error: { code, message } })
+    })
+}
+
 function listen(app, tracker, trackerExited, config) {
     const server = app.listen(config.UTXO_TRACKER_API_PORT, () => {
         logger.info('API listening on port ' + config.UTXO_TRACKER_API_PORT)
@@ -317,6 +342,7 @@ function createApp(config){
         jsonRpcMethods: config.jsonRpcMethods
     })
     registerRoutes(routeContext)
+    installErrorHandler(app)
     return app
 }
 
