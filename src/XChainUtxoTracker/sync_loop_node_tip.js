@@ -77,6 +77,13 @@ function reconcileRefreshedTip(sync){
     if (this.nodeCatchingUp && lastProcessedBlockIndex <= this.blockchainInfoLastBlock){
         this.nodeCatchingUp = null
     }
+    // A node tip back at or above ours ends the tip-below event. Drop the
+    // refusal latch with it, or the next event (or an ordinary rollback)
+    // would log neither its warn line nor its refusal error: the latch
+    // promises one line per event, not one per process.
+    if (lastProcessedBlockIndex <= this.blockchainInfoLastBlock){
+        sync.tipBelowCommittedTipRefused = false
+    }
 
     if (lastProcessedBlockIndex > this.blockchainInfoLastBlock){
         return recoverFromTipBelowOurs.call(this, sync)
