@@ -15,37 +15,48 @@ const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
 const { refreshNodeTip } = require('../../src/XChainUtxoTracker/sync_loop_node_tip.js');
 const { logger } = require('../../src/XChainUtxoTracker/constants.js');
 
+// The committed tip the fake store holds, and the tip the fake node reports,
+// which each test moves to stage a refusal or a recovery.
+const COMMITTED = 100;
+let nodeTip;
+
+// A tracker whose node, store and reorg walk are fakes: the walk always
+// refuses with the tagged tip-below error, so only the latch logic is real.
+function newTracker() {
+  const tracker = new XChainUtxoTracker('bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false);
+  tracker.sleep = async () => {};
+  tracker.connector = {
+    getBlockchainInfo: async () => ({ blocks: nodeTip }),
+    getBlockHash: async () => 'h' + COMMITTED
+  };
+  tracker.discardInflightBatchForReorg = async () => false;
+  tracker.loadLastBlocksSortedByHeight = async () => [];
+  // The refusal path re-reads the committed cursor; nothing is deleted here,
+  // so the store still holds the committed tip.
+  tracker.db = {
+    getLastBlock: async () => ({ hash: 'h' + COMMITTED, height: COMMITTED }),
+    getLastBlockHeight: async () => COMMITTED,
+    getLastBlockHash: async () => 'h' + COMMITTED
+  };
+  tracker.verifyReorg = async () => {
+    const e = new Error('verifyReorg: refused, below the recovery window');
+    e.tipBelowCommittedTip = true;
+    throw e;
+  };
+  return tracker;
+}
+
+// A sync cursor sitting on the committed tip with no cached node reading.
+function newSync() {
+  return { lastProcessedBlockIndex: COMMITTED, lastProcessedBlockHash: 'h' + COMMITTED, lastBlockchainInfo: null, lastBlockchainInfoRefreshAt: 0 };
+}
+
 // The tip-below refusal is logged once per event. The latch that dedupes it
 // must drop when the node tip recovers by itself, or every later event is
 // silent at warn and error level.
 describe('XChainUtxoTracker: tip-below refusal latch ends with the event', function () {
   this.timeout(0);
-  const COMMITTED = 100;
-  let nodeTip, warns, errors, origWarn, origError, origInfo;
-
-  function newTracker() {
-    const tracker = new XChainUtxoTracker('bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false);
-    tracker.sleep = async () => {};
-    tracker.connector = {
-      getBlockchainInfo: async () => ({ blocks: nodeTip }),
-      getBlockHash: async () => 'h' + COMMITTED
-    };
-    tracker.discardInflightBatchForReorg = async () => false;
-    tracker.loadLastBlocksSortedByHeight = async () => [];
-    // The refusal path re-reads the committed cursor; nothing is deleted here,
-    // so the store still holds the committed tip.
-    tracker.db = {
-      getLastBlock: async () => ({ hash: 'h' + COMMITTED, height: COMMITTED }),
-      getLastBlockHeight: async () => COMMITTED,
-      getLastBlockHash: async () => 'h' + COMMITTED
-    };
-    tracker.verifyReorg = async () => {
-      const e = new Error('verifyReorg: refused, below the recovery window');
-      e.tipBelowCommittedTip = true;
-      throw e;
-    };
-    return tracker;
-  }
+  let warns, errors, origWarn, origError, origInfo;
 
   beforeEach(function () {
     warns = []; errors = [];
@@ -57,10 +68,6 @@ describe('XChainUtxoTracker: tip-below refusal latch ends with the event', funct
   afterEach(function () {
     logger.warn = origWarn; logger.error = origError; logger.info = origInfo;
   });
-
-  function newSync() {
-    return { lastProcessedBlockIndex: COMMITTED, lastProcessedBlockHash: 'h' + COMMITTED, lastBlockchainInfo: null, lastBlockchainInfoRefreshAt: 0 };
-  }
 
   it('logs again on a second event after the node tip recovered by itself', async function () {
     const tracker = newTracker();

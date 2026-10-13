@@ -133,6 +133,15 @@
     "test/unit/utxo_tracker_metrics.test.js": [
       "test/unit/utxo_tracker_metrics.test.js",
       "test/unit/utxo_tracker_metrics.test/01_metric_registration.test.js"
+    ],
+    "test/integration/reorg.test.js": [
+      "test/integration/reorg.test.js",
+      "test/integration/reorg.test/01_depth_guard_and_reindex.test.js",
+      "test/integration/reorg.test/02_mempool_resync_after_reorg.test.js"
+    ],
+    "test/regression/chain/reorg_restart_undo_budget.test.js": [
+      "test/regression/chain/reorg_restart_undo_budget.test.js",
+      "test/regression/chain/reorg_restart_undo_budget.test/01_boot_signal.test.js"
     ]
   }
 }
