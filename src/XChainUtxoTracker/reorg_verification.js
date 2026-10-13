@@ -76,6 +76,9 @@ module.exports = {
                     // block could exhaust the budget and abort, leaving orphan blocks behind.
                     retryCount = 0
                     blocksDeleted.push({"block_index":lastBlockIndex, "block_hash":lastBlockHash})
+                    // In-memory on purpose: it dies with the process, which is what lets the
+                    // halt message tell this process's earlier passes from a prior process.
+                    this.reorgRollbacksThisProcess = (this.reorgRollbacksThisProcess || 0) + 1
                 } else {
                     thereAreDifferences = false
                 }
@@ -100,7 +103,7 @@ module.exports = {
     // the nominal undoBlocks was never available to this pass, the previous
     // process spent all of what the store held, and the true depth is at least
     // that plus one.
-    reorgExceedsWindowMessage({ windowAtEntry, watermarkAtEntry, heldBefore, spentBeforeEntry, lastBlockIndex, deletedThisPass }){
+    reorgExceedsWindowMessage({ windowAtEntry, watermarkAtEntry, heldBefore, spentBeforeEntry, spentByEarlierPassesThisProcess = 0, lastBlockIndex, deletedThisPass }){
         let rolledBack
         if (windowAtEntry === 0 && watermarkAtEntry > 0){
             rolledBack = "The persisted undo window is EMPTY at entry: a previous process already "
@@ -115,8 +118,18 @@ module.exports = {
                 + "count is unknown) before this restart, and the chain still diverges at height "
                 + lastBlockIndex + ", so the fork is deeper than the window; "
         } else if (spentBeforeEntry > 0){
+            // The shortfall is split by origin: earlier passes of this process
+            // versus a process that died before this one started.
+            const fromPriorProcess = Math.max(0, spentBeforeEntry - spentByEarlierPassesThisProcess)
+            const fromThisProcess = spentBeforeEntry - fromPriorProcess
+            const origin = fromPriorProcess === 0
+                ? fromThisProcess + " spent by earlier passes in this process"
+                : fromThisProcess === 0
+                    ? fromPriorProcess + " a previous process spent before this restart"
+                    : fromThisProcess + " spent by earlier passes in this process and "
+                        + fromPriorProcess + " a previous process spent before this restart"
             rolledBack = "Already rolled back " + deletedThisPass + " blocks in this pass, "
-                + "on top of " + spentBeforeEntry + " a previous process spent before this restart "
+                + "on top of " + origin + " "
                 + "(" + (spentBeforeEntry + deletedThisPass) + " of a "
                 + this.undoBlocks + "-block window, now exhausted); "
         } else {
@@ -172,7 +185,10 @@ function rollbackBudget(){
     const watermarkAtEntry = Math.min(this.undoWindowWatermark || 0, this.undoBlocks)
     const heldBefore = watermarkAtEntry > 0 ? watermarkAtEntry : this.undoBlocks
     const spentBeforeEntry = windowAtEntry > 0 ? Math.max(0, heldBefore - windowAtEntry) : 0
-    return { windowAtEntry, budget, watermarkAtEntry, heldBefore, spentBeforeEntry }
+    // Rollbacks this very process already made are counted in memory, so the
+    // shortfall they explain is not blamed on a restart.
+    const spentByEarlierPassesThisProcess = Math.min(spentBeforeEntry, this.reorgRollbacksThisProcess || 0)
+    return { windowAtEntry, budget, watermarkAtEntry, heldBefore, spentBeforeEntry, spentByEarlierPassesThisProcess }
 }
 
 // Logs the committed tip the walk is about to compare against the node.
@@ -302,7 +318,7 @@ async function refreshWalkTip(currentTip){
 }
 
 function refuseRollbackPastWindow(undoWindow, lastBlockIndex, blocksDeleted){
-    const { windowAtEntry, budget, watermarkAtEntry, heldBefore, spentBeforeEntry } = undoWindow
+    const { windowAtEntry, budget, watermarkAtEntry, heldBefore, spentBeforeEntry, spentByEarlierPassesThisProcess } = undoWindow
     // Depth guard: spent-output recovery records (K/M entries) are
     // retained only for the most recent UNDO_BLOCKS blocks;
     // cleanupAgedBlocks() purges them once a block ages out of that
@@ -319,7 +335,7 @@ function refuseRollbackPastWindow(undoWindow, lastBlockIndex, blocksDeleted){
     // empty-list guard, which cannot state how deep the fork was.
     if (windowAtEntry === 0 || blocksDeleted.length >= budget){
         const msg = this.reorgExceedsWindowMessage({
-            windowAtEntry, watermarkAtEntry, heldBefore, spentBeforeEntry, lastBlockIndex,
+            windowAtEntry, watermarkAtEntry, heldBefore, spentBeforeEntry, spentByEarlierPassesThisProcess, lastBlockIndex,
             deletedThisPass: blocksDeleted.length
         })
         logger.error(msg)

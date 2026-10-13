@@ -58,6 +58,7 @@ async function simulateRestart(tracker) {
     tracker.lastBlocks = [];
     tracker.pendingKMCleanup = [];
     tracker.undoWindowWatermark = 0;
+    tracker.reorgRollbacksThisProcess = 0;
     tracker.undoWindowWatermarkPersisted = null;
     tracker.lastBlocks = await tracker.loadLastBlocksSortedByHeight();
     // start() reads the watermark back before it reports on the window, and the
@@ -326,6 +327,33 @@ describe('Regression: the reorg rollback budget survives a restart', function ()
         // It must also account for the rollbacks the previous process already
         // spent, or the depth it reports understates the fork by that much.
         expect(err.message).to.match(/before this restart/i);
+    });
+
+    it('does not blame a restart when an earlier pass in the same process spent the window', async function () {
+        const blocks = await committedChain();
+
+        // Pass one converges, leaving the window short (3 of 6). No restart.
+        tracker.connector = nodeForkedAt(blocks, 8);
+        tracker.lastBlocks = await tracker.loadLastBlocksSortedByHeight();
+        await tracker.verifyReorg();
+        expect(tracker.lastBlocks).to.have.length(3);
+
+        // Pass two, same process, is deeper than the three slots left.
+        tracker.connector = nodeForkedAt(blocks, 4);
+        let err = null;
+        try {
+            await tracker.verifyReorg();
+        } catch (e) {
+            err = e;
+        }
+
+        expect(err).to.be.an('error');
+        expect(XChainUtxoTracker.isUnrecoverableReorg(err)).to.equal(true);
+        expect(err.message).to.not.match(/before this restart/i);
+        expect(err.message).to.not.match(/a previous process/i);
+        expect(err.message).to.match(/earlier passes in this process/i);
+        // Total depth is still stated: 3 earlier plus 3 this pass of a 6-block window.
+        expect(err.message).to.match(/\(6 of a 6-block window/);
     });
 });
 
