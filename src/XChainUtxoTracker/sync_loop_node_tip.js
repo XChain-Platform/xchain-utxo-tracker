@@ -23,7 +23,7 @@ const { CHECK_BLOCK_DELAY_MS, MEMPOOL_INTERVAL, P_PENDING_CLEANUP_KEY, logger } 
 // The tip parse gate lives in catch_up_helpers.js (a leaf module) so the reorg
 // walk can apply it without a require cycle; re-exported below for its callers.
 const { nodeStillCatchingUp, catchUpWaitState, nodeTipIsParseable } = require('./catch_up_helpers.js')
-const { indexNextBlock, resetBatchAfterReorg, verifyReorgHandingBackTipRefusal } = require('./sync_loop_block_apply.js')
+const { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal } = require('./sync_loop_block_apply.js')
 
 // Sync loop steps, called with the tracker as `this`; sync_loop.js says how.
 
@@ -204,6 +204,7 @@ async function rollBackToNodeTip(sync, lastBlockDb){
     sync.tipBelowCommittedTipRefused = false
     sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
     sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
+    resyncMempoolAfterReorg.call(this)
 }
 
 // The node's tip is below our in-memory cursor but not below the committed

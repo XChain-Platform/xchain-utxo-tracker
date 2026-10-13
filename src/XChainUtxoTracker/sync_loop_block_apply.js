@@ -376,6 +376,24 @@ function resetBatchAfterReorg(sync){
     this.pendingKMCleanup = []
     sync.pendingMempoolTxCleanup = []
     sync.blockTimestamps = []
+    resyncMempoolAfterReorg.call(this)
+}
+
+// A reorg returns the orphaned blocks' spends to the node mempool, but the
+// mempool DB only learns that on the next fixed interval tick. Until then
+// get_utxos offers a prevout the node already spends, under mempool_ready true.
+// Drop readiness and run a pass now. Before the poller has started, its
+// first-start pass covers it; a pass already in flight predates the reorg, so
+// wait it out and run a fresh one.
+function resyncMempoolAfterReorg(){
+    if (this.mempoolInterval == null || typeof this.updateMempool !== "function") return
+    this.mempoolReconverged = false
+    const pass = async () => {
+        for (let i = 0; this.mempoolBusy && i < 600; i++) await new Promise(r => setTimeout(r, 100))
+        this.mempoolReconverged = false
+        await this.updateMempool()
+    }
+    pass().catch(err => logger.error("Post-reorg mempool resync failed: " + err.message))
 }
 
 // Runs a reorg walk begun without a node tip. The walk re-reads the tip when a
@@ -395,4 +413,4 @@ async function verifyReorgHandingBackTipRefusal(sync){
 }
 
 // flushBatch is exported for the store-commit lock regression test.
-module.exports = { indexNextBlock, resetBatchAfterReorg, verifyReorgHandingBackTipRefusal, flushBatch }
+module.exports = { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal, flushBatch }
