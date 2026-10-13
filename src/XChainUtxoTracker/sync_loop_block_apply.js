@@ -144,7 +144,7 @@ async function stageBlock(sync, block, nextBlockHash, nextBlockHeight, previousB
     // the mempool store. The cleanup is a no-op for txs the
     // mempool poll never saw (most in regtest).
     for (const tx of transactions) {
-        sync.pendingMempoolTxCleanup.push("id" in tx ? tx["id"] : tx.getId())
+        sync.pendingMempoolTxCleanup.push(tx.getId())
     }
 
     //Add the block to the last blocks
@@ -166,7 +166,7 @@ async function parseBlockTransactions(sync, transactions, nextBlockHash, nextBlo
         // removeSpent is false, and REMOVE_SPENT is true on this path, so the
         // exact-txid index is written here directly rather than by threading
         // another flag through parseTxOutputs.
-        const txId = "id" in tx ? tx["id"] : tx.getId()
+        const txId = tx.getId()
         await this.db.insertTransaction({ hash: txId, blockHash: nextBlockHash })
         blockOutputCounts[txIdx] = await this.parseTxOutputs(
             this.db, tx, nextBlockHash, nextBlockHeight, false, REMOVE_SPENT

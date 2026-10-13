@@ -146,13 +146,10 @@ describe('XChainUtxoTracker (more)', function () {
     registerTrackerHooks();
 
     describe('parseTransaction', function () {
-        it('uses transaction.id when present (AuxPoW renamed id)', async function () {
+        it('keys by getId() and ignores a stray id property', async function () {
             const customId = randHash();
-            const tx = {
-                id: customId,
-                ins: [makeCoinbaseInput()],
-                outs: [makeOutput(1000)]
-            };
+            const tx = makeTx({ txid: customId, ins: [makeCoinbaseInput()], outs: [makeOutput(1000)] });
+            tx.id = randHash();
 
             await db.beginTransaction();
             const info = await tracker.parseTransaction(db, tx, randHash(), 5, false, false);
