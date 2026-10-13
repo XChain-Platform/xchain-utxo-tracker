@@ -131,6 +131,26 @@ function resolveRateLimitRpm(raw) {
     return intKnob('UTXO_TRACKER_RATE_LIMIT_RPM', raw, { fallback: 500, min: 1 })
 }
 
+// A hop count above any real proxy depth would trust X-Forwarded-For entries the
+// client wrote, so a typo like '80' falls back to the safe default instead.
+const MAX_TRUST_PROXY_HOPS = 10
+
+// How many reverse proxies sit in front of the tracker, as handed to Express's
+// `trust proxy`. req.ip is the per-IP limiter's key, and `trust proxy: N` makes
+// req.ip the N-th entry from the right of X-Forwarded-For. The port is normally
+// published directly with no fronting proxy, so any N > 0 lets a direct caller
+// write that entry itself and pick a fresh limiter bucket per request. The
+// default is therefore 0 (trust no X-Forwarded-For; key on the socket peer);
+// a deployment behind N proxies sets UTXO_TRACKER_TRUST_PROXY_HOPS=N.
+function resolveTrustProxyHops(raw) {
+    const hops = intKnob('UTXO_TRACKER_TRUST_PROXY_HOPS', raw, { fallback: 0, min: 0 })
+    if (hops <= MAX_TRUST_PROXY_HOPS) return hops
+    logger.error(
+        "WARNING: UTXO_TRACKER_TRUST_PROXY_HOPS='" + raw + "' exceeds " + MAX_TRUST_PROXY_HOPS +
+        ' hops; falling back to 0.')
+    return 0
+}
+
 function installBaseMiddleware(app, config) {
     // Ahead of every middleware below; rationale at installUnmatchedRouteLabel.
     config.installUnmatchedRouteLabel(app)
@@ -144,10 +164,11 @@ function installBaseMiddleware(app, config) {
     // listed origin is blocked while the header reads as configured. Parsing is
     // what makes the list work; see src/server/cors_origin.js.
     app.use(cors({ origin: parseCorsOrigin(config.CORS_ORIGIN) }))
-    // Trust only the first proxy hop so the rate limiter keys on the real client
-    // IP rather than the fronting proxy (and to satisfy express-rate-limit's
-    // proxy validation).
-    app.set('trust proxy', 1)
+    // Trust exactly as many proxy hops as the deployment declares (default 0),
+    // so the rate limiter keys on an address the caller cannot choose; see
+    // resolveTrustProxyHops.
+    const trustProxyHops = resolveTrustProxyHops(config.UTXO_TRACKER_TRUST_PROXY_HOPS)
+    app.set('trust proxy', trustProxyHops)
     // Per-IP rate limit on every route (REST reads + JSON-RPC). The REST read
     // routes in src/api/routes.js carry no auth of their own, so anything that can reach the
     // port could otherwise drive unbounded backing-DB work. Mirrors the per-IP
@@ -158,6 +179,9 @@ function installBaseMiddleware(app, config) {
         limit: resolveRateLimitRpm(config.UTXO_TRACKER_RATE_LIMIT_RPM),
         standardHeaders: true,
         legacyHeaders: false,
+        // With no trusted hop, an X-Forwarded-For header is caller noise that is
+        // ignored; skip the library's once-per-process warning about it.
+        validate: { xForwardedForHeader: trustProxyHops > 0 },
         message: { error: 'Too many requests', code: 'RATE_LIMITED' }
     }))
 }
@@ -354,4 +378,4 @@ async function startApi(config){
     listen(app, tracker, trackerExited, config)
 }
 
-module.exports = { createApp, startApi, resolveRateLimitRpm }
+module.exports = { createApp, startApi, resolveRateLimitRpm, resolveTrustProxyHops, installBaseMiddleware }

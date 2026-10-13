@@ -147,6 +147,7 @@ module.exports = {
 
     get CORS_ORIGIN() { return process.env.CORS_ORIGIN; },
     get UTXO_TRACKER_RATE_LIMIT_RPM() { return process.env.UTXO_TRACKER_RATE_LIMIT_RPM; },
+    get UTXO_TRACKER_TRUST_PROXY_HOPS() { return process.env.UTXO_TRACKER_TRUST_PROXY_HOPS; },
     get UTXO_TRACKER_MAX_CONCURRENT_PROBES() { return process.env.UTXO_TRACKER_MAX_CONCURRENT_PROBES; },
     get UTXO_TRACKER_MAX_CONCURRENT_REQUESTS() { return process.env.UTXO_TRACKER_MAX_CONCURRENT_REQUESTS; },
 
