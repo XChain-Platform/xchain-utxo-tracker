@@ -22,9 +22,33 @@ const util = require('../common/util')
 const { satoshiToDecimalString } = require('./catch_up_helpers.js')
 const { MAX_ADDRESS_OUTPUTS } = require('./constants.js')
 
+// Litecoin Core on test networks hands out P2SH addresses with SCRIPT_ADDRESS2
+// (0x3a, 'Q...') by default, alongside the legacy 0xc4 form. Both encode the
+// same hash160 and spend the same P2SH script, but the network definition
+// carries only 0xc4, so bitcoinjs-lib rejects the 0x3a form. Mainnet is left
+// strict: its definition and the 0x3a version byte are not tied together here.
+const LTC_TEST_BECH32 = new Set(['tltc', 'rltc'])
+const LTC_P2SH_V2_VERSION = 0x3a
+
+function addressToScript(address, network){
+    try {
+        return bitcoin.address.toOutputScript(address, network)
+    } catch (err) {
+        if (!network || !LTC_TEST_BECH32.has(network.bech32)) throw err
+        let decoded
+        try {
+            decoded = bitcoin.address.fromBase58Check(address)
+        } catch (_) {
+            throw err
+        }
+        if (decoded.version !== LTC_P2SH_V2_VERSION || decoded.hash.length !== 20) throw err
+        return bitcoin.address.toOutputScript(bitcoin.address.toBase58Check(decoded.hash, network.scriptHash), network)
+    }
+}
+
 module.exports = {
     async getBalanceInfo(address){
-        let script = bitcoin.address.toOutputScript(address, this.network)
+        let script = addressToScript(address, this.network)
         let scriptHash = createHash('sha256').update(script).digest('hex')
 
         let confirmedBalance = 0n
@@ -145,7 +169,7 @@ module.exports = {
     },
 
     async getFirstSeen(address){
-        const script = bitcoin.address.toOutputScript(address, this.network)
+        const script = addressToScript(address, this.network)
         const scriptHash = createHash('sha256').update(script).digest('hex')
 
         const record = await this.db.getOutputScriptBlock(scriptHash)
@@ -187,7 +211,7 @@ function claimConfirmedOutpoint(confirmedKeys, nextOutput){
 
 // The address's script keys and the paging plan of one get_utxos call.
 function utxoQueryPlan(address, network, limit){
-    let script = bitcoin.address.toOutputScript(address, network)
+    let script = addressToScript(address, network)
     let scriptHash = createHash('sha256').update(script).digest('hex')
     let scriptPubKeyHex = util.uint8ArrayToHex(script)
 
