@@ -81,11 +81,9 @@ function appendSpends(ins, txHash8, writer) {
 }
 
 function processTransaction(tx, height, blockHash, writers) {
-    // The txid comes from bitcoinjs-lib getHash() (internal LE), reversed. Neither
-    // XChainBlockDecoder twin sets tx.id (the MWEB/HogEx strip keeps the non-witness
-    // bytes the txid hashes), so the tx.id branch is an override no decoder feeds;
-    // the live path reads the same key, and both must change together.
-    const fullTxHash = tx.id ? Buffer.from(tx.id, 'hex') : reverseBytes32(tx.getHash())
+    // The txid comes from bitcoinjs-lib getHash() (internal LE), reversed; the live
+    // path reads tx.getId(), the same bytes in display order.
+    const fullTxHash = reverseBytes32(tx.getHash())
     const txHash8 = fullTxHash.slice(0, 8)
     const outputs = appendOutputs(tx, txHash8, fullTxHash, height, blockHash, writers.outputs)
     const spends = appendSpends(tx.ins, txHash8, writers.spends)

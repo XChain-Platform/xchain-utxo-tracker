@@ -72,13 +72,10 @@ describe('XChainUtxoTracker (more)', function () {
     registerTrackerHooks();
 
     describe('parseTxOutputs (additional)', function () {
-        it('uses tx.id when present', async function () {
+        it('keys by getId() and ignores a stray id property', async function () {
             const customId = randHash();
-            const tx = {
-                id: customId,
-                ins: [],
-                outs: [makeOutput(1000)]
-            };
+            const tx = makeTx({ txid: customId, outs: [makeOutput(1000)] });
+            tx.id = randHash();
 
             await db.beginTransaction();
             const count = await tracker.parseTxOutputs(db, tx, randHash(), 10, false, false);

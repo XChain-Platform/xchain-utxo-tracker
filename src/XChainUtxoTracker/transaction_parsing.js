@@ -85,14 +85,7 @@ async function parseTransactionOutputs(db, transaction, blockHash, blockHeight, 
 
 module.exports = {
     async parseTransaction(db, transaction, blockHash, blockHeight = -1, addHints = false, removeSpent = false){
-        let nextTxId = null
-        // No decoder sets "id" today; the override must stay in step with bulk_sync/process_block.js.
-        if ("id" in transaction){
-            nextTxId = transaction["id"]
-        } else {
-            nextTxId = transaction.getId()
-        }
-
+        const nextTxId = transaction.getId()
         let nextTxId8 = nextTxId.substring(0,16)
 
         let resultInfo = {
@@ -122,7 +115,7 @@ module.exports = {
     // Must complete for ALL transactions before parseTxInputs runs, so that
     // removeOutputWithInput can find same-block outputs in transactionArray.
     async parseTxOutputs(db, transaction, blockHash, blockHeight, addHints, removeSpent){
-        const nextTxId  = "id" in transaction ? transaction["id"] : transaction.getId()
+        const nextTxId  = transaction.getId()
         const nextTxId8 = nextTxId.substring(0, 16)
         const isCoinbase = XChainUtxoTracker.isCoinbaseTransaction(transaction)
         const _tt = XChainUtxoTracker.parseOutBuckets
@@ -168,7 +161,7 @@ module.exports = {
     // By the time this runs, all same-block outputs are already in transactionArray,
     // so removeOutputWithInput will resolve intra-block spends correctly.
     async parseTxInputs(db, transaction, blockHash, addHints, removeSpent){
-        const nextTxId  = "id" in transaction ? transaction["id"] : transaction.getId()
+        const nextTxId  = transaction.getId()
         const nextTxId8 = nextTxId.substring(0, 16)
 
         const inputCounts = await Promise.all(transaction.ins.map(async (nextInput) => {

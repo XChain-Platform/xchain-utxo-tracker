@@ -12,10 +12,9 @@
 
 // Regression: bulk sync and the live output pass key a transaction by one txid.
 //
-// Both paths read an optional tx.id override before falling back to the hash of
-// the parsed bytes, and no decoder sets that override. A one-sided edit (one path
-// starts or stops honouring it) would key the same transaction under two txids
-// with nothing failing, so both cases are pinned against a real transaction.
+// Both paths derive the txid from the parsed bytes (getHash / getId) and neither
+// honours a tx.id property. A one-sided edit would key the same transaction under
+// two txids with nothing failing, so both cases are pinned against a real transaction.
 
 const crypto = require('crypto');
 const { expect } = require('chai');
@@ -62,9 +61,10 @@ describe('Regression (bulk-sync): txid parity with the live output pass', functi
         expect(await liveTxids(tx)).to.deep.equal([tx.getId()]);
     });
 
-    it('treats a tx.id override the same way on both paths', async function () {
+    it('ignores a stray tx.id property on both paths', async function () {
         const tx = realTx();
         tx.id = crypto.randomBytes(32).toString('hex');
-        expect(bulkTxids(tx)).to.deep.equal(await liveTxids(tx));
+        expect(bulkTxids(tx)).to.deep.equal([tx.getId()]);
+        expect(await liveTxids(tx)).to.deep.equal([tx.getId()]);
     });
 });
