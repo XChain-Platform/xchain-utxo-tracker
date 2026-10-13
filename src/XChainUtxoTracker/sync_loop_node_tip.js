@@ -167,9 +167,53 @@ async function recoverFromTipBelowOurs(sync){
     }
 
     if (lastBlockDb.height > this.blockchainInfoLastBlock){
+        // Never walk back on a single tip reading: settle it first.
+        if (!(await settleNodeTipBelow.call(this, sync, lastBlockDb))) return
         return rollBackToNodeTip.call(this, sync, lastBlockDb)
     }
     return repairLastBlockPointer.call(this, sync, lastBlockDb)
+}
+
+// Pause between the tip readings that must agree before a rollback, and how
+// many re-reads a moving tip gets before this pass gives up on it.
+const TIP_SETTLE_DELAY_MS = 2000
+const TIP_SETTLE_MAX_READS = 5
+
+// A node running invalidateblock (or any multi-block disconnect) drops its tip
+// one block at a time, so a poll mid-disconnect reads a transient tip that may
+// sit inside the undo window while the final one is past it. Acting on that
+// first reading deletes up to the whole window, after which the final tip is
+// refused against a window already spent. So a tip below ours is acted on only
+// once two readings TIP_SETTLE_DELAY_MS apart agree; the settled reading
+// replaces the first one. Returns false, ending the pass with nothing deleted,
+// when the tip does not settle, cannot be read, or is no longer below the
+// committed block; the next pass reads it afresh.
+async function settleNodeTipBelow(sync, lastBlockDb){
+    let previous = this.blockchainInfoLastBlock
+    for (let read = 0; read < TIP_SETTLE_MAX_READS; read++){
+        await this.sleep(TIP_SETTLE_DELAY_MS)
+        let info
+        try {
+            info = await this.connector.getBlockchainInfo()
+        } catch (e){
+            logger.error(nodeUtil.format('Error re-reading the node tip before a rollback: ' + e.message, e))
+            return false
+        }
+        if (!nodeTipIsParseable(info, this.consensusNetwork)) return false
+        const tip = info["blocks"]
+        if (tip === previous){
+            sync.lastBlockchainInfo = info
+            this.latestKnownChainTip = tip
+            this.blockchainInfoLastBlock = tip
+            // Back at or above the committed block (a reconsiderblock, or
+            // a node that caught up): no rollback; the next pass reconciles.
+            return tip < lastBlockDb.height
+        }
+        previous = tip
+    }
+    logger.warn("The node tip is still moving after " + TIP_SETTLE_MAX_READS + " readings (last " + previous
+        + ", committed " + lastBlockDb.height + "); not rolling back on a moving tip, re-checking next pass.")
+    return false
 }
 
 // True regression: the node's tip is genuinely below our committed
@@ -210,7 +254,7 @@ async function rollBackToNodeTip(sync, lastBlockDb){
             sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
             sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
             await this.sleep(5000)
-            return
+            return countRefusedWalk.call(this, lastBlockDb.height - sync.lastProcessedBlockIndex)
         }
         throw err
     }
@@ -218,6 +262,16 @@ async function rollBackToNodeTip(sync, lastBlockDb){
     sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
     sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
     resyncMempoolAfterReorg.call(this)
+}
+
+// The walk counts a reorg only when it finishes, so blocks it deleted before
+// refusing would never reach reorg_count: count them from the drop in the
+// committed height across the refused walk.
+function countRefusedWalk(walkedBack){
+    if (walkedBack > 0){
+        this.reorgCount++
+        this.lastReorgDepth = walkedBack
+    }
 }
 
 // The node's tip is below our in-memory cursor but not below the committed
