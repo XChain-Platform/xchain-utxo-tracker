@@ -18,8 +18,11 @@ const { expect } = require('chai');
 const sinon = require('sinon');
 const {
   SATOSHI, makeCoinbaseTx, makeBlock, processBlocksAndCommit,
-  createTestTracker, closeTracker, randHash
+  createTestTracker, closeTracker, randHash, waitUntil
 } = require('../support/helpers');
+
+// Ceiling for the post-rollback mempool pass; the poll returns as soon as it ends
+const PASS_DEADLINE_MS = 2000;
 
 let tracker;
 
@@ -86,14 +89,14 @@ describe('Integration: mempool resync after a tip-replacing reorg', function () 
     const after = await pollAtTipOrIndex.call(tracker, sync);
     if (typeof after === 'function') after();
     expect(tracker.mempoolReconverged).to.equal(false);
-    await new Promise(r => setTimeout(r, 150));
+    await waitUntil(isDone, PASS_DEADLINE_MS, 'the post-reorg mempool pass to finish');
     expect(updateMempool.callCount).to.equal(1);
     expect(isDone()).to.equal(true);
     expect(tracker.mempoolReconverged).to.equal(true);
   });
 
   it('tip-below rollback runs a mempool pass and drops readiness until it ends', async function () {
-    const { sync, updateMempool } = await arrange();
+    const { sync, updateMempool, isDone } = await arrange();
     const tipBelow = sync.lastProcessedBlockIndex - 1;
     sinon.stub(tracker.connector, 'getBlockchainInfo').resolves({ blocks: tipBelow });
     const nodeTipHash = randHash();
@@ -104,7 +107,7 @@ describe('Integration: mempool resync after a tip-replacing reorg', function () 
     sync.lastBlockchainInfo = null;
     await refreshNodeTip.call(tracker, sync);
     expect(tracker.mempoolReconverged).to.equal(false);
-    await new Promise(r => setTimeout(r, 150));
+    await waitUntil(isDone, PASS_DEADLINE_MS, 'the post-rollback mempool pass to finish');
     expect(updateMempool.callCount).to.equal(1);
   });
 });
