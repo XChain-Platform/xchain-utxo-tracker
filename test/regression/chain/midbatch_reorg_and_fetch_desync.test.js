@@ -27,17 +27,24 @@ const P_PENDING_CLEANUP_KEY = Buffer.from([0x50]);
 // verifyReorg nulls transactionArray, routes later writes as unbatched direct
 // puts while the batch counter is still > 0. discardInflightBatchForReorg
 // rolls the batch back and persists the aged-block cleanup list out-of-band.
+// A tracker over a fresh in-memory store, rebuilt for every case.
+function useDiscardFixture() {
+  const fx = {};
+  beforeEach(async function () {
+    fx.tracker = new XChainUtxoTracker('bitcoin-regtest', '127.0.0.1', '18443', 'u', 'p', 'discard-db', false);
+    fx.db = new LevelUpStore('discard-' + Date.now() + '-' + Math.random(), true);
+    await fx.db.createDatabase();
+    fx.tracker.db = fx.db;
+    fx.tracker.pendingKMCleanup = [];
+  });
+  afterEach(async function () { try { await fx.db.close(); } catch (e) {} });
+  return fx;
+}
+
 describe('discardInflightBatchForReorg', function () {
   let tracker, db;
-
-  beforeEach(async function () {
-    tracker = new XChainUtxoTracker('bitcoin-regtest', '127.0.0.1', '18443', 'u', 'p', 'discard-db', false);
-    db = new LevelUpStore('discard-' + Date.now() + '-' + Math.random(), true);
-    await db.createDatabase();
-    tracker.db = db;
-    tracker.pendingKMCleanup = [];
-  });
-  afterEach(async function () { try { await db.close(); } catch (e) {} });
+  const fx = useDiscardFixture();
+  beforeEach(function () { ({ tracker, db } = fx); });
 
   it('is a no-op when no batch is in flight (blocksQuantity <= 0)', async function () {
     const discarded = await tracker.discardInflightBatchForReorg(0);
@@ -63,7 +70,7 @@ describe('discardInflightBatchForReorg', function () {
     expect(outputs).to.have.length(0);
   });
 
-  it('persists the aged-block cleanup list out-of-band and clears it in memory', async function () {
+  it('persists the aged-block cleanup list out-of-band and keeps it in memory', async function () {
     await db.beginTransaction();
     tracker.pendingKMCleanup = ['blockhashA', 'blockhashB'];
 
@@ -74,8 +81,34 @@ describe('discardInflightBatchForReorg', function () {
     const pVal = await db.db.get(P_PENDING_CLEANUP_KEY);
     expect(pVal).to.not.equal(undefined);
     expect(JSON.parse(pVal.toString())).to.deep.equal(['blockhashA', 'blockhashB']);
-    // In-memory list is cleared (the caller then zeroes its batch counters).
-    expect(tracker.pendingKMCleanup).to.deep.equal([]);
+    // The list stays in memory: the next flush re-persists it and its cleanup
+    // runs it. Cleared here, that flush deleted the P key with the list never
+    // run, and those blocks kept their undo records for good.
+    expect(tracker.pendingKMCleanup).to.deep.equal(['blockhashA', 'blockhashB']);
+  });
+});
+
+// The in-memory undo window counted the staged blocks too; left stale after a
+// discard, re-indexing the same heights pushed them in twice and aged committed
+// blocks out (and their undo records pruned) while still inside the window.
+describe('discardInflightBatchForReorg undo window', function () {
+  let tracker, db;
+  const fx = useDiscardFixture();
+  beforeEach(function () { ({ tracker, db } = fx); });
+
+  it('reloads the undo window from the store, dropping the discarded staged blocks', async function () {
+    const committed = 'c'.repeat(64);
+    await db.beginTransaction();
+    await db.insertBlock({ hash: committed, height: 7, timestamp: 1, previousHash: 'b'.repeat(64) });
+    await db.addLastStoredBlock(committed);
+    await db.endTransaction();
+    // The in-memory window also counted two staged blocks that are about to go.
+    tracker.lastBlocks = [committed, 'e'.repeat(64), 'f'.repeat(64)];
+    await db.beginTransaction();
+
+    await tracker.discardInflightBatchForReorg(2);
+
+    expect(tracker.lastBlocks).to.deep.equal([committed]);
   });
 });
 

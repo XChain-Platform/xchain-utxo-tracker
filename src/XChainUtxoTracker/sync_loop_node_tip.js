@@ -135,12 +135,20 @@ async function recoverFromTipBelowOurs(sync){
         this.nodeCatchingUp = null
     }
 
-    // Discard any in-flight batch before recovery runs. A
-    // periodic refresh can reach here mid-batch; leaving the staged
-    // batch open would leak phantom UTXOs or break per-block atomicity
-    // once verifyReorg opens its own transaction. Rationale in full at
-    // discardInflightBatchForReorg(). Zero the batch counters here
-    // since they live in the loop's state, not on the instance.
+    // Never act on a single tip reading: settle it first, against the
+    // in-memory cursor, before anything is discarded. A periodic refresh
+    // can reach here mid-batch on one stale reply; settled first, that
+    // reply ends the pass with the staged batch intact instead of
+    // throwing it away. Settled once, here: below this line every path
+    // re-reads the cursor from the store, so none can leave it on a
+    // discarded batch.
+    if (!(await settleNodeTipBelow.call(this, sync, lastProcessedBlockIndex))) return
+
+    // Discard any in-flight batch before recovery runs; leaving it open
+    // would leak phantom UTXOs or break per-block atomicity once verifyReorg
+    // opens its own transaction. Rationale in full at
+    // discardInflightBatchForReorg(), which also reloads the undo window.
+    // Zero the batch counters here since they live in the loop's state.
     if (await this.discardInflightBatchForReorg(sync.blocksQuantity)){
         sync.blocksQuantity = 0
         sync.blocksCount = 0
@@ -166,11 +174,8 @@ async function recoverFromTipBelowOurs(sync){
             "from a known-good snapshot.")
     }
 
-    if (lastBlockDb.height > this.blockchainInfoLastBlock){
-        // Never walk back on a single tip reading: settle it first.
-        if (!(await settleNodeTipBelow.call(this, sync, lastBlockDb))) return
-        return rollBackToNodeTip.call(this, sync, lastBlockDb)
-    }
+    // The tip was settled above, before the discard.
+    if (lastBlockDb.height > this.blockchainInfoLastBlock) return rollBackToNodeTip.call(this, sync, lastBlockDb)
     return repairLastBlockPointer.call(this, sync, lastBlockDb)
 }
 
@@ -185,10 +190,10 @@ const TIP_SETTLE_MAX_READS = 5
 // first reading deletes up to the whole window, after which the final tip is
 // refused against a window already spent. So a tip below ours is acted on only
 // once two readings TIP_SETTLE_DELAY_MS apart agree; the settled reading
-// replaces the first one. Returns false, ending the pass with nothing deleted,
-// when the tip does not settle, cannot be read, or is no longer below the
-// committed block; the next pass reads it afresh.
-async function settleNodeTipBelow(sync, lastBlockDb){
+// replaces the first one. Returns false, ending the pass with nothing deleted
+// or discarded, when the tip does not settle, cannot be read, or is no longer
+// below `ourHeight` (the in-memory cursor); the next pass reads it afresh.
+async function settleNodeTipBelow(sync, ourHeight){
     let previous = this.blockchainInfoLastBlock
     for (let read = 0; read < TIP_SETTLE_MAX_READS; read++){
         await this.sleep(TIP_SETTLE_DELAY_MS)
@@ -205,14 +210,15 @@ async function settleNodeTipBelow(sync, lastBlockDb){
             sync.lastBlockchainInfo = info
             this.latestKnownChainTip = tip
             this.blockchainInfoLastBlock = tip
-            // Back at or above the committed block (a reconsiderblock, or
-            // a node that caught up): no rollback; the next pass reconciles.
-            return tip < lastBlockDb.height
+            // Back at or above our height (a reconsiderblock, a node that
+            // caught up, or one stale reply): no rollback and no discard;
+            // the next pass reconciles.
+            return tip < ourHeight
         }
         previous = tip
     }
     logger.warn("The node tip is still moving after " + TIP_SETTLE_MAX_READS + " readings (last " + previous
-        + ", committed " + lastBlockDb.height + "); not rolling back on a moving tip, re-checking next pass.")
+        + ", ours " + ourHeight + "); not rolling back on a moving tip, re-checking next pass.")
     return false
 }
 
