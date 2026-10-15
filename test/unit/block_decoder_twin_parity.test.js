@@ -141,10 +141,12 @@ describe('XChainBlockDecoder twin parity with xchain-decoder @regression', funct
         }
         expect(mismatches, 'MWEB strip verdicts diverged').to.deep.equal([]);
         // Guard the guard: if every cell threw, the comparison above would pass over
-        // nothing. Seven cells must parse: versions 01/02 with marker 00 and flag
-        // 08/09 (read as MWEB), the three marker-00 flag-00 cells (already legacy), and
-        // nothing else. That count moves the moment the strip predicate changes.
-        expect(stripped, 'parse-success count moved; the strip predicate changed or the matrix went inert').to.equal(7);
+        // nothing. Four cells must parse: versions 01/02 with marker 00 and flag
+        // 08/09 (read as MWEB), and nothing else. The three marker-00 flag-00 cells read
+        // as a tx with no inputs, no outputs and trailing bytes, which Core refuses
+        // (bad-txns-vin-empty, bad-txns-vout-empty) and both parsers now refuse by exact
+        // consumption. That count moves the moment the strip predicate changes.
+        expect(stripped, 'parse-success count moved; the strip predicate changed or the matrix went inert').to.equal(4);
     });
 });
 

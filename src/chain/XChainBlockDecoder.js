@@ -30,6 +30,19 @@ const coins = require('../coins');
 const LITECOIN_HOGEX_FLAG = 0x08
 const LITECOIN_MWEB_SEGWIT_FLAG = 0x09
 
+class TransactionParseError extends Error {
+    constructor(message, cause) {
+        super(message, cause ? { cause } : undefined)
+        this.name = 'TransactionParseError'
+        this.code = 'ERR_TRANSACTION_PARSE'
+    }
+}
+
+function transactionParseError(message, cause) {
+    if (cause instanceof TransactionParseError) return cause
+    return new TransactionParseError(message, cause)
+}
+
 // Block/tx wire-serialization families this decoder actually implements. The
 // branches below (Litecoin 'mweb' MWEB-flagged tx reading, Dogecoin 'auxpow'
 // stripped upstream in the fetch path, 'default' plain bitcoinjs) are keyed on
@@ -67,7 +80,11 @@ function readMwebCompactSize(buf, offset, what) {
     const end = skipMwebBytes(buf, offset + 1, width, what)
     if (width === 2) return { value: buf.readUInt16LE(offset + 1), end }
     if (width === 4) return { value: buf.readUInt32LE(offset + 1), end }
-    return { value: Number(buf.readBigUInt64LE(offset + 1)), end }
+    const value = buf.readBigUInt64LE(offset + 1)
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new TransactionParseError('MWEB tx parse: ' + what + ' exceeds Number.MAX_SAFE_INTEGER')
+    }
+    return { value: Number(value), end }
 }
 
 function skipMwebVarBytes(buf, offset, what) {
@@ -245,6 +262,10 @@ function readMwebTransactions(bufferReader, block, nTransactions){
 
 class XChainBlockDecoder {
 
+    // Callers tell a wire-parse failure apart by this class, reached through the one
+    // export, so the module keeps a single export shape.
+    static TransactionParseError = TransactionParseError;
+
     constructor(networkName) {
         let networkNameSplit = networkName.split("-")
         this.coin = networkNameSplit[0]
@@ -270,14 +291,28 @@ class XChainBlockDecoder {
     }
     
     txFromHex(hexString){
-        const buffer = Buffer.from(hexString, "hex")
-        if (this.wireFormat === "mweb" && hasMwebFlag(buffer, 0)) {
-            // Litecoin's getrawtransaction answers in the MWEB serialization when the
-            // tx has an MWEB part; bitcoinjs cannot read that flag, so read it here.
-            return readMwebFlaggedTransaction(buffer, 0, true).tx
+        try {
+            if (typeof hexString !== 'string' || hexString.length === 0 || (hexString.length % 2) !== 0 || !/^[0-9a-fA-F]+$/.test(hexString)) {
+                throw new TransactionParseError('Transaction hex must be a non-empty, even-length hexadecimal string')
+            }
+            const buffer = Buffer.from(hexString, "hex")
+            if (this.wireFormat === "mweb" && hasMwebFlag(buffer, 0)) {
+                // Litecoin's getrawtransaction answers in the MWEB serialization when the
+                // tx has an MWEB part; bitcoinjs cannot read that flag, so read it here.
+                const parsed = readMwebFlaggedTransaction(buffer, 0, true)
+                if (parsed.consumed !== buffer.length) {
+                    throw new TransactionParseError('Transaction has ' + (buffer.length - parsed.consumed) + ' trailing byte(s)')
+                }
+                return parsed.tx
+            }
+            const tx = transaction_js_1.Transaction.fromBuffer(buffer, true)
+            if (tx.byteLength() !== buffer.length) {
+                throw new TransactionParseError('Transaction has ' + (buffer.length - tx.byteLength()) + ' trailing byte(s)')
+            }
+            return tx
+        } catch (err) {
+            throw transactionParseError('Transaction parse failed: ' + (err && err.message ? err.message : err), err)
         }
-        // Non-strict mode ignores any bytes after the tx.
-        return transaction_js_1.Transaction.fromBuffer(buffer, true);
     }
     
     blockFromBuffer(buffer){
@@ -287,14 +322,24 @@ class XChainBlockDecoder {
                 if (buffer.length === 80) return block;
                 const nTransactions = bufferReader.readVarInt();
                 validateMwebTransactionCount(bufferReader, nTransactions);
-                const extensionFollows = readMwebTransactions(bufferReader, block, nTransactions);
+                let extensionFollows;
+                try {
+                    extensionFollows = readMwebTransactions(bufferReader, block, nTransactions);
+                } catch (err) {
+                    throw transactionParseError('Block transaction parse failed: ' + (err && err.message ? err.message : err), err)
+                }
                 assertBlockBodyIntact(block, buffer.length, bufferReader.offset, extensionFollows);
                 const witnessCommit = block.getWitnessCommit();
                 // This Block contains a witness commit
                 if (witnessCommit) block.witnessCommit = witnessCommit;
                 return block;
             default: {
-                const plainBlock = bitcoinjs.Block.fromBuffer(buffer)
+                let plainBlock
+                try {
+                    plainBlock = bitcoinjs.Block.fromBuffer(buffer)
+                } catch (err) {
+                    throw transactionParseError('Block transaction parse failed: ' + (err && err.message ? err.message : err), err)
+                }
                 // An 80-byte buffer is a header-only parse, with no body to check.
                 if (buffer.length === 80) return plainBlock
                 assertBlockBodyIntact(plainBlock, buffer.length, plainBlock.byteLength(), false)
