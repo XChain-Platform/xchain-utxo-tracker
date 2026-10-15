@@ -23,7 +23,7 @@ const { CHECK_BLOCK_DELAY_MS, MEMPOOL_INTERVAL, P_PENDING_CLEANUP_KEY, logger } 
 // The tip parse gate lives in catch_up_helpers.js (a leaf module) so the reorg
 // walk can apply it without a require cycle; re-exported below for its callers.
 const { nodeStillCatchingUp, catchUpWaitState, nodeTipIsParseable } = require('./catch_up_helpers.js')
-const { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal } = require('./sync_loop_block_apply.js')
+const { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal, flushPendingAtTip } = require('./sync_loop_block_apply.js')
 
 // Sync loop steps, called with the tracker as `this`; sync_loop.js says how.
 
@@ -267,6 +267,8 @@ async function rollBackToNodeTip(sync, lastBlockDb){
     sync.tipBelowCommittedTipRefused = false
     sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
     sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
+    // Every rollback drops the cached tip, so the next pass reads the node again.
+    sync.lastBlockchainInfo = null
     resyncMempoolAfterReorg.call(this)
 }
 
@@ -297,10 +299,13 @@ async function repairLastBlockPointer(sync, lastBlockDb){
     }
 }
 
-// Synced at the node's tip: re-check the committed tip for a same-height reorg,
-// start the mempool poller once, and wait before asking again.
+// At the node's tip: re-check the committed tip for a same-height reorg, commit
+// any blocks still staged, then report synced, start the mempool poller once,
+// and wait before asking again. Synced and mempool readiness are never reported
+// while staged blocks are unwritten: the store would still serve the older tip.
 async function pollAtChainTip(sync){
-    this.synced = true
+    const pending = sync.blocksQuantity > 0
+    if (!pending) this.synced = true
 
     // Same-height tip reorg detection. While synced we otherwise never
     // re-check the committed tip hash, so a node that replaces its tip at
@@ -319,6 +324,11 @@ async function pollAtChainTip(sync){
             return rollBackSameHeightTipSwap.call(this, sync)
         }
     }
+
+    // The staged batch was checked against the node above (a swapped tip
+    // discards it); commit it now. The next pass, at the same tip with nothing
+    // staged, reports synced.
+    if (pending) return flushPendingAtTip.call(this, sync)
 
     if (this.mempoolInterval == null){
         logger.info("Mempool updates started!")

@@ -301,9 +301,13 @@ function advanceCursor(sync, nextBlockHash, nextBlockHeight){
     sync.lastProcessedBlockHash = nextBlockHash
 }
 
-// After a reorg rolled the open batch back: zero the batch counters and drop the
-// aged-block list, the pending mempool deletions and the ETA window.
+// After a reorg rolled the open batch back: zero the batch counters, drop the
+// aged-block list, the pending mempool deletions and the ETA window, and drop
+// the cached node tip. A reorg onto a shorter branch leaves that cached tip above
+// the node's real one, so the "tip" flush trigger would never fire for the
+// re-staged blocks; with the cache dropped the next pass re-reads the tip first.
 function resetBatchAfterReorg(sync){
+    sync.lastBlockchainInfo = null
     sync.blocksQuantity = 0
     sync.blocksCount = 0
     sync.transactionsCount = 0
@@ -348,5 +352,13 @@ async function verifyReorgHandingBackTipRefusal(sync){
     }
 }
 
+// The node's tip has come down to the in-memory cursor while blocks are still
+// staged: no later block will fire the "tip" trigger, so commit the batch now,
+// with the cursor's block as the tip pointer. Hands back the flush's bookkeeping.
+async function flushPendingAtTip(sync){
+    const flush = { reason: 'tip', heapMB: process.memoryUsage().heapUsed / 1048576 }
+    return flushBatch.call(this, sync, flush, sync.lastProcessedBlockHash, sync.lastProcessedBlockIndex)
+}
+
 // flushBatch is exported for the store-commit lock regression test.
-module.exports = { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal, flushBatch }
+module.exports = { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal, flushBatch, flushPendingAtTip }
