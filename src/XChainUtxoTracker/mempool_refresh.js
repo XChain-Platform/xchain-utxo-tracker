@@ -107,7 +107,7 @@ async function reconvergeMempool(rawMempool, mempoolStartTime){
 
             // Parse + stage this fetched batch inside its own transaction,
             // committed before the inter-batch sleep so readers see it.
-            await stageMempoolBatch.call(this, nextTxsHex, rawMempool, counts)
+            await stageMempoolBatch.call(this, nextTxsHex, nextRawMempoolChunk, rawMempool, counts)
 
             i = i + MEMPOOL_BATCH_SIZE
             // Only throttle between batches: the inter-batch sleep is for
@@ -206,9 +206,24 @@ function noteTxFetchFailure(err, consecutiveTxFetchFailures){
     logger.info(nodeUtil.format("There was an error trying to get raw transactions from the mempool. Trying again...", err))
 }
 
+// Pending outputs are keyed on the txid the node listed, so the parse must hash to
+// it. An MWEB-only tx (no transparent inputs or outputs) has no txid this parse can
+// compute and nothing to stage, so it is skipped. Any other mismatch means the parse
+// read different bytes than the node's, so it throws: the pass fails and readiness
+// is withdrawn, as for a tx that does not parse at all.
+function isStageableMempoolTx(tx, nodeTxid){
+    if (tx.ins.length === 0 && tx.outs.length === 0) return false
+    const computedTxid = tx.getId()
+    if (computedTxid !== nodeTxid) {
+        throw new Error('mempool tx ' + nodeTxid + ' parses to txid ' + computedTxid)
+    }
+    return true
+}
+
 // Parses and stages one fetched batch inside its own transaction, committed
-// before the caller's inter-batch sleep so readers see it.
-async function stageMempoolBatch(nextTxsHex, rawMempool, counts){
+// before the caller's inter-batch sleep so readers see it. nodeTxids is the
+// batch's txid list; getRawTransactions answers in that order.
+async function stageMempoolBatch(nextTxsHex, nodeTxids, rawMempool, counts){
     await this.mempoolDb.beginTransaction()
     try {
         for (let nextTxHexIndex in nextTxsHex){
@@ -216,6 +231,7 @@ async function stageMempoolBatch(nextTxsHex, rawMempool, counts){
 
             if (nextTxHex != null){
                 let nextTx = this.xchainBlockDecoder.txFromHex(nextTxHex)
+                if (!isStageableMempoolTx(nextTx, nodeTxids[nextTxHexIndex])) continue
 
                 let countInfo = await this.parseTransaction(this.mempoolDb, nextTx, null, -1, true)
 

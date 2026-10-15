@@ -13,7 +13,7 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
 const BlockchainConnector = require('../../../src/chain/blockchain_connector');
-const { buildAuxPowBlockHex, buildAuxPowBlockHexEx } = require('./support/auxpow_builders');
+const { buildAuxPowBlockHex, buildAuxPowBlockHexEx, oneTxBlockBody, withMerkleRoot } = require('./support/auxpow_builders');
 
 let connector;
 let clientStub;
@@ -39,26 +39,33 @@ function registerBatchAuxPowSuccessTests() {
 
     it('fetches hash+header+block batches and strips AuxPoW bytes', async function () {
       const heights = [200, 201];
+      // Real one-tx bodies under headers carrying their merkle roots: the strip
+      // refuses a block whose root does not match its transactions.
+      const body0 = oneTxBlockBody('a0');
+      const body1 = oneTxBlockBody('a1');
+      const header0 = withMerkleRoot('a'.repeat(160), body0);
+      // Version 2, AuxPoW bit clear: this block passes through unstripped.
+      const header1 = withMerkleRoot('02000000' + 'b'.repeat(152), body1);
       // call 0: getblockhash batch
       clientStub.onCall(0).resolves({ data: heights.map((h, i) => ({ id: i, result: 'hash' + i })) });
       // call 1: getblockheader batch: index 0 header longer than 160 hex chars (AuxPoW), index 1 exactly 160
       clientStub.onCall(1).resolves({ data: [
-        { id: 0, result: 'a'.repeat(200) },  // 40 extra hex chars of AuxPoW
-        { id: 1, result: 'b'.repeat(160) }   // standard header, nothing to strip
+        { id: 0, result: header0 + 'a'.repeat(40) },  // 40 extra hex chars of AuxPoW
+        { id: 1, result: header1 }   // standard header, nothing to strip
       ]});
       // call 2: getblock batch
       clientStub.onCall(2).resolves({ data: [
-        { id: 0, result: 'h'.repeat(160) + 'x'.repeat(40) + 'TX0' },
-        { id: 1, result: 'h'.repeat(160) + 'TX1' }
+        { id: 0, result: header0 + 'x'.repeat(40) + body0 },
+        { id: 1, result: header1 + body1 }
       ]});
 
       const results = await connector.getBlocksBatchWithoutAuxPow(heights);
       expect(clientStub.callCount).to.equal(3);
       expect(results).to.have.length(2);
-      // index 0: 40 auxpow hex chars removed → header(160) + 'TX0'
-      expect(results[0]).to.deep.equal({ height: 200, hash: 'hash0', hex: 'h'.repeat(160) + 'TX0' });
+      // index 0: 40 auxpow hex chars removed → header(160) + body0
+      expect(results[0]).to.deep.equal({ height: 200, hash: 'hash0', hex: header0 + body0 });
       // index 1: nothing stripped
-      expect(results[1]).to.deep.equal({ height: 201, hash: 'hash1', hex: 'h'.repeat(160) + 'TX1' });
+      expect(results[1]).to.deep.equal({ height: 201, hash: 'hash1', hex: header1 + body1 });
     });
   });
 }
@@ -100,7 +107,7 @@ function registerBatchAuxPowFailureTests() {
 
     it('strips AuxPoW by structural parse when getblockheader returns 160 chars but AuxPoW bit is set (Dogecoin Core 1.14)', async function () {
       // Mirrors the single-block test: header always 160 chars, strip from block hex.
-      const txBodyHex = 'ff'.repeat(8)
+      const txBodyHex = oneTxBlockBody('ff')
       const fullBlockHex = buildAuxPowBlockHex(txBodyHex)
       const pureHeader = '0'.repeat(160)
 

@@ -1,5 +1,7 @@
 'use strict';
 
+const bitcoinjs = require('bitcoinjs-lib');
+
 // Copyright © 2025–2026 Dankest, LLC
 // Based on XChain Platform by Dankest, LLC – https://dankest.llc
 //
@@ -16,6 +18,26 @@
 // AuxPoW layout after the 80-byte header:
 //   coinbase tx (version 4B + nIns varint + input[prevout 36B + script 0B varint + seq 4B] + nOuts varint + output[value 8B + script 0B varint] + locktime 4B)
 //   + parent block hash (32B) + coinbase branch (0 hashes, index 4B) + chain branch (0 hashes, index 4B) + parent header (80B)
+// A real one-tx block body: tx count 1, then a coinbase whose script is one byte,
+// `fillByte`, so each test's body is distinct bytes.
+function oneTxBlockBody(fillByte) {
+  return '01' +
+    '01000000' + '01' + '00'.repeat(32) + 'ffffffff' + '01' + fillByte + 'ffffffff' +
+    '01' + '0000000000000000' + '00' + '00000000'
+}
+
+// The header with its merkle root set to that of the body's transactions, since the
+// AuxPoW strip refuses a block whose root does not match. A body that does not parse
+// as transactions keeps the header unchanged.
+function withMerkleRoot(headerHex, txBodyHex) {
+  let txs
+  try { txs = bitcoinjs.Block.fromHex(headerHex + txBodyHex).transactions } catch (_) { return headerHex }
+  if (!txs || txs.length === 0) return headerHex
+  const header = Buffer.from(headerHex, 'hex')
+  bitcoinjs.Block.calculateMerkleRoot(txs).copy(header, 36)
+  return header.toString('hex')
+}
+
 function buildAuxPowBlockHex(txBodyHex) {
   // 80-byte standard header with AuxPoW version bit (0x100) set.
   // Version bytes in little-endian: 0x00000101 -> 01 01 00 00
@@ -38,7 +60,7 @@ function buildAuxPowBlockHex(txBodyHex) {
   const chainBranch     = '00' + '00000000'  // nHashes=0, index=0
   const parentHeader    = '00'.repeat(80)   // 80 B
   const auxPow = coinbaseTx + parentBlockHash + coinbaseBranch + chainBranch + parentHeader
-  return standardHeader + auxPow + txBodyHex
+  return withMerkleRoot(standardHeader, txBodyHex) + auxPow + txBodyHex
 }
 
 // Parameterized variant that exercises the two AuxPoW branches real mainnet DOGE
@@ -78,8 +100,8 @@ function buildAuxPowBlockHexEx(txBodyHex, { segwit = false, cbBranchHashes = 0, 
   }
   const parentHeader = '00'.repeat(80)
   const auxPow = coinbaseTx + parentBlockHash + branch(cbBranchHashes) + branch(chainBranchHashes) + parentHeader
-  return standardHeader + auxPow + txBodyHex
+  return withMerkleRoot(standardHeader, txBodyHex) + auxPow + txBodyHex
 }
 
-module.exports = { buildAuxPowBlockHex, buildAuxPowBlockHexEx };
+module.exports = { buildAuxPowBlockHex, buildAuxPowBlockHexEx, oneTxBlockBody, withMerkleRoot };
 

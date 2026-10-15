@@ -18,6 +18,7 @@
 // never reading the AuxPoW bytes.
 
 const { expect } = require('chai');
+const crypto = require('crypto');
 const BlockchainConnector = require('../../src/chain/blockchain_connector');
 const { encodeVarintHex } = require('../../src/chain/blockchain_connector');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker');
@@ -33,8 +34,14 @@ const TX_HEX =
     '01' + '0100000000000000' + '00' +
     '00000000';
 const TXID = 'a'.repeat(64);
-// 80-byte header (160 hex chars); content is irrelevant to reassembly.
-const HEADER_HEX = '04016200' + '11'.repeat(76);
+// 80-byte header (160 hex chars). Reassembly copies it as is; its merkle root is
+// that of a block holding TX_HEX twice, so the two-tx reassembled block decodes
+// (the block decoder refuses a root that does not match the transactions).
+const TX_HASH = crypto.createHash('sha256').update(crypto.createHash('sha256')
+    .update(Buffer.from(TX_HEX, 'hex')).digest()).digest();
+const TWO_TX_ROOT = crypto.createHash('sha256').update(crypto.createHash('sha256')
+    .update(Buffer.concat([TX_HASH, TX_HASH])).digest()).digest('hex');
+const HEADER_HEX = '04016200' + '11'.repeat(32) + TWO_TX_ROOT + '11'.repeat(12);
 
 function makeConnector(overrides) {
     const connector = new BlockchainConnector('127.0.0.1', 0, 'user', 'pass');

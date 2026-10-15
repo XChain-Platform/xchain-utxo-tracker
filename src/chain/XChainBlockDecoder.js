@@ -31,7 +31,7 @@ const LITECOIN_HOGEX_FLAG = 0x08
 const LITECOIN_MWEB_SEGWIT_FLAG = 0x09
 
 // Block/tx wire-serialization families this decoder actually implements. The
-// branches below (Litecoin 'mweb' marker/flag stripping, Dogecoin 'auxpow'
+// branches below (Litecoin 'mweb' MWEB-flagged tx reading, Dogecoin 'auxpow'
 // stripped upstream in the fetch path, 'default' plain bitcoinjs) are keyed on
 // the coin's declared wireFormat from the canonical coin registry (src/coins)
 // rather than a hardcoded coin-name list. A coin absent from the registry, or
@@ -41,6 +41,141 @@ const LITECOIN_MWEB_SEGWIT_FLAG = 0x09
 // enforces the same contract, so onboarding a chain cannot leave one side of
 // the seam fail-loud and the other fail-silent.
 const HANDLED_WIRE_FORMATS = new Set(['default', 'mweb', 'auxpow'])
+
+// Litecoin's flagged transaction serialization (litecoin src/primitives/transaction.h
+// SerializeTransaction): version | 0x00 marker | flags | vin | vout | witness when
+// flags & 1 | mweb_tx when flags & 8 | nLockTime. The readers below walk it with
+// bounds checks so a short buffer fails by name instead of over-reading.
+// Keep in sync with xchain-decoder/src/chain/XChainBlockDecoder.js: every function from
+// mwebShortError through assertBlockBodyIntact is byte-identical in both repos, and
+// xchain-utxo-tracker/test/unit/block_decoder_twin_parity.test.js compares verdicts.
+function mwebShortError(what) {
+    return new Error('MWEB tx parse: buffer too short for ' + what)
+}
+
+function skipMwebBytes(buf, offset, count, what) {
+    if (count > buf.length - offset) throw mwebShortError(what)
+    return offset + count
+}
+
+// A CompactSize at offset, as { value, end }.
+function readMwebCompactSize(buf, offset, what) {
+    if (offset >= buf.length) throw mwebShortError(what)
+    const first = buf[offset]
+    if (first < 0xFD) return { value: first, end: offset + 1 }
+    const width = first === 0xFD ? 2 : first === 0xFE ? 4 : 8
+    const end = skipMwebBytes(buf, offset + 1, width, what)
+    if (width === 2) return { value: buf.readUInt16LE(offset + 1), end }
+    if (width === 4) return { value: buf.readUInt32LE(offset + 1), end }
+    return { value: Number(buf.readBigUInt64LE(offset + 1)), end }
+}
+
+function skipMwebVarBytes(buf, offset, what) {
+    const length = readMwebCompactSize(buf, offset, what)
+    return skipMwebBytes(buf, length.end, length.value, what)
+}
+
+// Where vin and vout end, where vout starts, and the input count the witness needs.
+function skipMwebInsAndOuts(buf, offset) {
+    const ins = readMwebCompactSize(buf, offset, 'input count')
+    offset = ins.end
+    for (let i = 0; i < ins.value; i++) {
+        offset = skipMwebBytes(buf, offset, 36, 'input prevout')
+        offset = skipMwebVarBytes(buf, offset, 'input script')
+        offset = skipMwebBytes(buf, offset, 4, 'input sequence')
+    }
+    const outsStart = offset
+    const outs = readMwebCompactSize(buf, offset, 'output count')
+    offset = outs.end
+    for (let i = 0; i < outs.value; i++) {
+        offset = skipMwebBytes(buf, offset, 8, 'output value')
+        offset = skipMwebVarBytes(buf, offset, 'output script')
+    }
+    return { end: offset, outsStart, nIns: ins.value }
+}
+
+function skipMwebWitness(buf, offset, nIns) {
+    for (let i = 0; i < nIns; i++) {
+        const items = readMwebCompactSize(buf, offset, 'witness item count')
+        offset = items.end
+        for (let j = 0; j < items.value; j++) offset = skipMwebVarBytes(buf, offset, 'witness item')
+    }
+    return offset
+}
+
+// True when the tx at buf[offset] is version 1 or 2 with the 0x00 marker and flag
+// 0x08 (MWEB) or 0x09 (witness and MWEB): the forms this decoder reads itself.
+function hasMwebFlag(buf, offset) {
+    if (buf.length - offset < 6) return false
+    const version = buf.readUInt32LE(offset)
+    const flag = buf[offset + 5]
+    return (version === 1 || version === 2) && buf[offset + 4] === 0x00 &&
+        (flag === LITECOIN_HOGEX_FLAG || flag === LITECOIN_MWEB_SEGWIT_FLAG)
+}
+
+// bitcoinjs reads an empty input count followed by 0x01 as the segwit marker, so a
+// tx with no transparent inputs is built field by field rather than re-parsed.
+function buildInputlessTransaction(buf, start, outsStart, lockTimeAt) {
+    const tx = new bitcoinjs.Transaction()
+    tx.version = buf.readInt32LE(start)
+    const outs = readMwebCompactSize(buf, outsStart, 'output count')
+    let offset = outs.end
+    for (let i = 0; i < outs.value; i++) {
+        // The same unsigned BigInt the patched bufferutils reader gives every output value.
+        const value = buf.readBigUInt64LE(offset)
+        const script = readMwebCompactSize(buf, offset + 8, 'output script')
+        offset = script.end + script.value
+        tx.outs.push({ script: Buffer.from(buf.subarray(script.end, offset)), value })
+    }
+    tx.locktime = buf.readUInt32LE(lockTimeAt)
+    return tx
+}
+
+// Read one MWEB-flagged tx at buf[start]. Returns it without its MWEB part, so
+// getId() is Litecoin's ComputeHash (no witness, no MWEB) and the witness, where a
+// P2WSH carrier keeps its payload, survives; plus the bytes consumed. mweb_tx is an
+// OptionalPtr: tag 0x00 means no MWEB part (the HogEx), any other tag starts an
+// MWEB::Tx body this file does not parse. A standalone tx (getrawtransaction) ends
+// with its nLockTime, so the body runs to four bytes before the end; inside a block
+// nothing records the body's length, so a non-null MWEB part there is refused.
+function readMwebFlaggedTransaction(buf, start, standalone) {
+    const withWitness = (buf[start + 5] & 1) === 1
+    const insOuts = skipMwebInsAndOuts(buf, start + 6)
+    const witnessEnd = withWitness ? skipMwebWitness(buf, insOuts.end, insOuts.nIns) : insOuts.end
+    let lockTimeAt = skipMwebBytes(buf, witnessEnd, 1, 'MWEB tag')
+    if (buf[witnessEnd] !== 0x00) {
+        if (!standalone) throw new Error('MWEB tx parse: a non-null MWEB part inside a block has no recorded length')
+        if (buf.length - 4 < lockTimeAt) throw mwebShortError('locktime')
+        lockTimeAt = buf.length - 4
+    }
+    const end = skipMwebBytes(buf, lockTimeAt, 4, 'locktime')
+    if (insOuts.nIns === 0) {
+        return { tx: buildInputlessTransaction(buf, start, insOuts.outsStart, lockTimeAt), consumed: end - start }
+    }
+    const plain = Buffer.concat([
+        buf.subarray(start, start + 4),
+        Buffer.from(withWitness ? [0x00, 0x01] : []),
+        buf.subarray(start + 6, witnessEnd),
+        buf.subarray(lockTimeAt, end),
+    ])
+    return { tx: bitcoinjs.Transaction.fromBuffer(plain), consumed: end - start }
+}
+
+// bitcoinjs Block.fromBuffer checks neither the merkle root nor what follows the
+// last transaction, so a parsed block body is held to three things here: at least
+// one transaction (the coinbase), txids that hash to the header's merkle root, and
+// no bytes after the last transaction except where Litecoin writes the MWEB
+// extension block, after a HogEx in last place.
+function assertBlockBodyIntact(block, bufferLength, bodyEnd, extensionFollows) {
+    const txs = block.transactions || []
+    if (txs.length < 1) throw new Error('Block holds no transactions')
+    if (bodyEnd !== bufferLength && !extensionFollows) {
+        throw new Error('Block has ' + (bufferLength - bodyEnd) + ' bytes after its last transaction')
+    }
+    if (!bitcoinjs.Block.calculateMerkleRoot(txs).equals(block.merkleRoot)) {
+        throw new Error('Block merkle root mismatch: the header root is not the root of its transactions')
+    }
+}
 
 /**
  * Parse an MWEB block header from a buffer: reads the version, prev hash,
@@ -88,38 +223,24 @@ function validateMwebTransactionCount(bufferReader, nTransactions){
     }
 }
 
-function stripMwebMarkerFlag(bufferReader){
-    let nextTxBuffer = bufferReader.buffer.slice(bufferReader.offset);
-    let txVersion = nextTxBuffer.readUInt32LE();
-    let marker = nextTxBuffer.readUInt8(4);
-    let flag = nextTxBuffer.readUInt8(5);
-
-    if ((txVersion == 0x01 || txVersion == 0x02) && (marker == 0x00) && (flag == LITECOIN_HOGEX_FLAG || flag == LITECOIN_MWEB_SEGWIT_FLAG)){
-        const removeOffsetStart = bufferReader.offset + 4 // 4 bytes for txVersion
-        const removeOffsetEnd = removeOffsetStart + 2 // 2 bytes for marker + flag
-
-        // Remove the marker+flag (0x08 pure-MWEB, or 0x09 segwit+MWEB), so bitcoinjs-lib parses this tx as a normal transaction
-        let bufferReaderBeforeFlag = bufferReader.buffer.slice(0, removeOffsetStart);
-        let bufferReaderAfterFlag = bufferReader.buffer.slice(removeOffsetEnd);
-        bufferReader.buffer = Buffer.concat([bufferReaderBeforeFlag, bufferReaderAfterFlag])
-
-    }
-}
-
+// Reads the block's transactions and reports whether the last one is MWEB-flagged,
+// the only place Litecoin writes the MWEB extension block after it.
 function readMwebTransactions(bufferReader, block, nTransactions){
     block.transactions = [];
+    let hogExLast = false
     for (let i = 0; i < nTransactions; ++i) {
-      try {
-        if (i == nTransactions - 1){ // Strip MWEB marker+flag from the final tx before parsing
-            stripMwebMarkerFlag(bufferReader);
+        // Only the last tx can be the HogEx, which Litecoin writes with the MWEB
+        // flag; it is read whole, so its nLockTime and txid are its real ones.
+        if (i == nTransactions - 1 && hasMwebFlag(bufferReader.buffer, bufferReader.offset)) {
+            const read = readMwebFlaggedTransaction(bufferReader.buffer, bufferReader.offset, false)
+            bufferReader.offset += read.consumed
+            block.transactions.push(read.tx)
+            hogExLast = true
+        } else {
+            block.transactions.push(readMwebTransaction(bufferReader))
         }
-
-        let tx = readMwebTransaction(bufferReader);
-        block.transactions.push(tx);
-      } catch (err){
-        throw err
-      }
     }
+    return hogExLast
 }
 
 class XChainBlockDecoder {
@@ -149,35 +270,14 @@ class XChainBlockDecoder {
     }
     
     txFromHex(hexString){
-        // The mweb branch strips, then falls through to the same plain parse every
-        // other wire format uses; the old switch expressed that as a deliberate
-        // case fall-through, which an if/return states without the hazard.
-        if (this.wireFormat === "mweb") {
-            let littleEndianTxVersion = hexString.substr(0, 8)
-            let marker = hexString.substr(8, 2)
-            let flag = hexString.substr(10, 2)
-
-            if (
-                (
-                    (littleEndianTxVersion == "01000000")
-                    ||
-                    (littleEndianTxVersion == "02000000")
-                ) &&
-                (marker == "00") &&
-                (
-                    (flag == "08")
-                    ||
-                    (flag == "09")
-                )
-            ){
-                hexString = hexString.substr(0, 8) + hexString.substr(12)
-            }
+        const buffer = Buffer.from(hexString, "hex")
+        if (this.wireFormat === "mweb" && hasMwebFlag(buffer, 0)) {
+            // Litecoin's getrawtransaction answers in the MWEB serialization when the
+            // tx has an MWEB part; bitcoinjs cannot read that flag, so read it here.
+            return readMwebFlaggedTransaction(buffer, 0, true).tx
         }
-        const tx = transaction_js_1.Transaction.fromBuffer(
-            Buffer.from(hexString,"hex"),
-            true
-        );
-        return tx;
+        // Non-strict mode ignores any bytes after the tx.
+        return transaction_js_1.Transaction.fromBuffer(buffer, true);
     }
     
     blockFromBuffer(buffer){
@@ -187,13 +287,19 @@ class XChainBlockDecoder {
                 if (buffer.length === 80) return block;
                 const nTransactions = bufferReader.readVarInt();
                 validateMwebTransactionCount(bufferReader, nTransactions);
-                readMwebTransactions(bufferReader, block, nTransactions);
+                const extensionFollows = readMwebTransactions(bufferReader, block, nTransactions);
+                assertBlockBodyIntact(block, buffer.length, bufferReader.offset, extensionFollows);
                 const witnessCommit = block.getWitnessCommit();
                 // This Block contains a witness commit
                 if (witnessCommit) block.witnessCommit = witnessCommit;
                 return block;
-            default:
-                return bitcoinjs.Block.fromBuffer(buffer)
+            default: {
+                const plainBlock = bitcoinjs.Block.fromBuffer(buffer)
+                // An 80-byte buffer is a header-only parse, with no body to check.
+                if (buffer.length === 80) return plainBlock
+                assertBlockBodyIntact(plainBlock, buffer.length, plainBlock.byteLength(), false)
+                return plainBlock
+            }
         }
     }
 }

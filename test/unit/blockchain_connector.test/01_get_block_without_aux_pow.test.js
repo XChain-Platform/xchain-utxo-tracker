@@ -13,7 +13,7 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
 const BlockchainConnector = require('../../../src/chain/blockchain_connector');
-const { buildAuxPowBlockHex, buildAuxPowBlockHexEx } = require('./support/auxpow_builders');
+const { buildAuxPowBlockHex, buildAuxPowBlockHexEx, oneTxBlockBody, withMerkleRoot } = require('./support/auxpow_builders');
 
 let connector;
 let clientStub;
@@ -32,12 +32,12 @@ function registerConnectorHooks() {
 function registerBasicAuxPowTests() {
   describe('getBlockWithoutAuxPow', function () {
     it('strips AuxPoW bytes when header is longer than 160 hex chars (legacy daemon path)', async function () {
-      // Standard 80-byte header = 160 hex chars
-      const standardHeader = 'a'.repeat(160);
+      // Standard 80-byte header = 160 hex chars, carrying the body's merkle root
+      const blockBody = oneTxBlockBody('cc');
+      const standardHeader = withMerkleRoot('a'.repeat(160), blockBody);
       const auxPowExtra = 'bb'.repeat(50); // 100 extra hex chars
       const fullHeader = standardHeader + auxPowExtra;
 
-      const blockBody = 'cc'.repeat(20);
       const fullBlock = standardHeader + auxPowExtra + blockBody;
 
       clientStub.onCall(0).resolves({ data: { result: fullHeader } }); // getBlockHeader
@@ -62,7 +62,7 @@ function registerBasicAuxPowTests() {
     it('strips AuxPoW by structural parse when getblockheader returns 160 chars but AuxPoW bit is set (Dogecoin Core 1.14)', async function () {
       // Dogecoin Core 1.14 always returns exactly 160 hex chars from getblockheader.
       // The stripping must be driven by parsing the AuxPoW structure from the block hex.
-      const txBodyHex = 'ee'.repeat(10)  // fake tx-count + txs after AuxPoW
+      const txBodyHex = oneTxBlockBody('ee')  // tx-count + txs after AuxPoW
       const fullBlockHex = buildAuxPowBlockHex(txBodyHex)
       const pureHeader = '0'.repeat(160)  // 160 chars only, no extra AuxPoW
 
@@ -85,7 +85,7 @@ function registerExtendedAuxPowTests() {
       // Mainnet AuxPoW coinbase/chain branches routinely carry several 32-byte hashes;
       // the baseline fixture only covers count = 0. A wrong count*32+4 stride here would
       // leave branch bytes in (or eat header bytes from) the stripped output.
-      const txBodyHex = 'ee'.repeat(10)
+      const txBodyHex = oneTxBlockBody('ee')
       const fullBlockHex = buildAuxPowBlockHexEx(txBodyHex, { cbBranchHashes: 3, chainBranchHashes: 2 })
       const pureHeader = '0'.repeat(160)
 
@@ -101,7 +101,7 @@ function registerExtendedAuxPowTests() {
       // The parent chain is Litecoin, whose coinbase can carry a witness commitment.
       // This drives the hasSegwit branch (skip marker+flag, then walk the per-input
       // witness stack) that the non-segwit baseline fixture never reaches.
-      const txBodyHex = 'cc'.repeat(12)
+      const txBodyHex = oneTxBlockBody('cc')
       const fullBlockHex = buildAuxPowBlockHexEx(txBodyHex, { segwit: true })
       const pureHeader = '0'.repeat(160)
 
@@ -116,7 +116,7 @@ function registerExtendedAuxPowTests() {
     it('strips AuxPoW with a segwit coinbase AND multi-hash branches together', async function () {
       // The realistic mainnet shape: both branches active at once, so a sign/stride
       // error in either the witness walk or the branch arithmetic is caught.
-      const txBodyHex = 'ab'.repeat(15)
+      const txBodyHex = oneTxBlockBody('ab')
       const fullBlockHex = buildAuxPowBlockHexEx(txBodyHex, { segwit: true, cbBranchHashes: 4, chainBranchHashes: 3 })
       const pureHeader = '0'.repeat(160)
 

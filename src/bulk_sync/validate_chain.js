@@ -30,7 +30,7 @@
  * previous height's block hash across the whole contiguous dump.
  *
  * With --merkle the tx bytes are verified too: every tx in each block is
- * parsed (via XChainBlockDecoder, so Litecoin HogEx/MWEB stripping matches
+ * parsed (via XChainBlockDecoder, so Litecoin HogEx/MWEB reading matches
  * the parse phase), its txid recomputed, and the merkle root rebuilt and
  * compared against the header. This closes the body half of the gap: a
  * substituted tx list under a genuine header now fails loudly. The rebuild
@@ -108,8 +108,8 @@ function computeMerkleRoot(txHashes) {
  * Verify a block's tx section against its header merkle root. blockBytes is
  * header + tx data as stored in the .xdmp (AuxPoW already stripped at dump
  * time). Decoding goes through XChainBlockDecoder so Litecoin HogEx/MWEB
- * handling is byte-identical to the parse phase: after its marker/flag strip
- * getHash() yields the true txid (marker/flag and MWEB payload are excluded
+ * handling is byte-identical to the parse phase: it reads a HogEx without its
+ * marker, flag and MWEB tag, so getHash() yields the true txid (those are excluded
  * from txids the same way segwit witnesses are).
  * Returns null on success, an error string on failure.
  */
