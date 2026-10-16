@@ -156,7 +156,7 @@ async function get_sync_status(tracker) {
         // SYNCED_THRESHOLD so callers don't replicate the threshold. The policy
         // (null lag, stale node height and negative lag are all not-synced) lives
         // in deriveSyncedVerdict above, where it is unit-testable.
-        synced: deriveSyncedVerdict({ lag, nodeHeightStale })
+        synced: deriveSyncedVerdict({ lag, nodeHeightStale }) && !tracker.halted
     }
     if (loopStale) {
         result.node_rpc_stale = true
