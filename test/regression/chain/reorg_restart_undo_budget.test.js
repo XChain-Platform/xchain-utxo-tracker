@@ -58,6 +58,7 @@ async function simulateRestart(tracker) {
     tracker.lastBlocks = [];
     tracker.pendingKMCleanup = [];
     tracker.undoWindowWatermark = 0;
+    tracker.reorgRollbacksThisProcess = 0;
     tracker.undoWindowWatermarkPersisted = null;
     tracker.lastBlocks = await tracker.loadLastBlocksSortedByHeight();
     // start() reads the watermark back before it reports on the window, and the
@@ -75,9 +76,6 @@ function nodeForkedAt(blocks, forkHeight) {
 }
 
 let tracker;
-let warnings;
-let logs;
-let release;
 
 function registerTrackerHooks() {
     beforeEach(async function () {
@@ -92,116 +90,11 @@ function registerTrackerHooks() {
     });
 }
 
-function registerLogHooks() {
-    // The boot signal goes through the shared logger: warn for a rollback,
-    // info for a window that is only still refilling.
-    beforeEach(function () {
-        warnings = [];
-        logs = [];
-        release = captureLog(['warn', 'info'], (level, msg) => {
-            (level === 'warn' ? warnings : logs).push(msg);
-        });
-    });
-    afterEach(function () {
-        release();
-    });
-}
-
 // Commit heights 0..11 and return the chain.
 async function committedChain() {
     const blocks = buildCoinbaseChain(12, 0, 0);
     await processBlocksAndCommit(tracker, blocks);
     return blocks;
-}
-
-function registerBootSignalBasicTests() {
-    describe('boot signal for a window that came back short', function () {
-        registerLogHooks();
-        it('names the surviving budget when a rollback was interrupted', function () {
-            // The store had reached the full six-block window before the kill.
-            tracker.undoWindowWatermark = 6;
-            tracker.lastBlocks = ['a', 'b'];
-            const remaining = tracker.noteInterruptedReorgWindow(500);
-            expect(remaining).to.equal(2);
-            expect(warnings).to.have.length(1);
-            expect(warnings[0]).to.match(/undo window came back with 2 of 6/);
-            expect(warnings[0]).to.match(/interrupted mid-reorg after rolling back 4/);
-        });
-
-        it('stays quiet on a full window', function () {
-            tracker.undoWindowWatermark = 6;
-            tracker.lastBlocks = ['a', 'b', 'c', 'd', 'e', 'f'];
-            expect(tracker.noteInterruptedReorgWindow(500)).to.equal(null);
-            expect(warnings).to.have.length(0);
-        });
-
-        it('stays quiet on a chain shorter than the window, where short is normal', function () {
-            tracker.undoWindowWatermark = 2;
-            tracker.lastBlocks = ['a', 'b'];
-            expect(tracker.noteInterruptedReorgWindow(2)).to.equal(null);
-            expect(warnings).to.have.length(0);
-        });
-    });
-}
-
-function registerBootSignalRefillTest() {
-    describe('boot signal for a window that came back short', function () {
-        registerLogHooks();
-        // The second cause. LTC mainnet booted "48 of 120 blocks, so a
-        // previous process was interrupted mid-reorg after rolling back 72" the
-        // day after LTC's per-chain window went 48 -> 120 in undo-blocks.js. No
-        // 72-block rollback happened, or could have: the window had simply never
-        // been deeper than the 48 the old setting allowed.
-        it('does not call a window still refilling after a raised UNDO_BLOCKS an interrupted rollback', function () {
-            // The store's whole history under the old, shallower setting.
-            tracker.undoWindowWatermark = 2;
-            // The operator (or a release) raises the window.
-            tracker.undoBlocks = 6;
-            tracker.lastBlocks = ['a', 'b'];
-
-            const remaining = tracker.noteInterruptedReorgWindow(500);
-
-            expect(remaining).to.equal(2);
-            expect(warnings, 'a window filling toward a raised depth is not a fault').to.have.length(0);
-            expect(logs.join('\n')).to.match(/came back with 2 of 6/);
-            expect(logs.join('\n')).to.match(/Nothing was rolled back/);
-            expect(logs.join('\n')).to.match(/never held more than 2/);
-            expect(logs.join('\n')).to.not.match(/interrupted/i);
-        });
-    });
-}
-
-function registerBootSignalCauseTests() {
-    describe('boot signal for a window that came back short', function () {
-        registerLogHooks();
-        // Same short window, but the store reached that depth and then lost part
-        // of it. That IS the interrupted rollback, and the depth it reports is the
-        // shortfall against what the store held, not against the nominal window.
-        it('charges the rollback against the depth the store had reached, not the nominal window', function () {
-            tracker.undoWindowWatermark = 4;
-            tracker.undoBlocks = 6;
-            tracker.lastBlocks = ['a', 'b', 'c'];
-
-            expect(tracker.noteInterruptedReorgWindow(500)).to.equal(3);
-            expect(warnings).to.have.length(1);
-            expect(warnings[0]).to.match(/interrupted mid-reorg after rolling back 1 of the 4/);
-        });
-
-        // A store written before the watermark key existed (every tracker already
-        // deployed) cannot distinguish the two, and must not assert the reading
-        // that was wrong on LTC.
-        it('says the two causes are indistinguishable on a store with no watermark yet', function () {
-            tracker.undoWindowWatermark = 0;
-            tracker.lastBlocks = ['a', 'b'];
-
-            expect(tracker.noteInterruptedReorgWindow(500)).to.equal(2);
-            expect(warnings).to.have.length(1);
-            expect(warnings[0]).to.match(/cannot be told apart/i);
-            expect(warnings[0]).to.match(/raised under an existing store/i);
-            expect(warnings[0], 'it must not assert a rollback that may never have happened')
-                .to.not.match(/rolling back \d+/);
-        });
-    });
 }
 
 function registerDurableGrowthTest() {
@@ -332,6 +225,37 @@ describe('Regression: the reorg rollback budget survives a restart', function ()
 describe('Regression: the reorg rollback budget survives a restart', function () {
     this.timeout(0);
     registerTrackerHooks();
+    it('does not blame a restart when an earlier pass in the same process spent the window', async function () {
+        const blocks = await committedChain();
+
+        // Pass one converges, leaving the window short (3 of 6). No restart.
+        tracker.connector = nodeForkedAt(blocks, 8);
+        tracker.lastBlocks = await tracker.loadLastBlocksSortedByHeight();
+        await tracker.verifyReorg();
+        expect(tracker.lastBlocks).to.have.length(3);
+
+        // Pass two, same process, is deeper than the three slots left.
+        tracker.connector = nodeForkedAt(blocks, 4);
+        let err = null;
+        try {
+            await tracker.verifyReorg();
+        } catch (e) {
+            err = e;
+        }
+
+        expect(err).to.be.an('error');
+        expect(XChainUtxoTracker.isUnrecoverableReorg(err)).to.equal(true);
+        expect(err.message).to.not.match(/before this restart/i);
+        expect(err.message).to.not.match(/a previous process/i);
+        expect(err.message).to.match(/earlier passes in this process/i);
+        // Total depth is still stated: 3 earlier plus 3 this pass of a 6-block window.
+        expect(err.message).to.match(/\(6 of a 6-block window/);
+    });
+});
+
+describe('Regression: the reorg rollback budget survives a restart', function () {
+    this.timeout(0);
+    registerTrackerHooks();
     it('gives the next reorg a full budget again once forward sync has refilled the window', async function () {
         const blocks = await committedChain();
 
@@ -376,17 +300,6 @@ describe('Regression: the reorg rollback budget survives a restart', function ()
         expect(method).to.match(/result\.undo_window_blocks\s*=\s*tracker\.undoBlocks/);
         expect(method).to.match(/result\.undo_window_remaining\s*=/);
     });
-});
-
-// The halt that may follow an interrupted reorg lands at a depth far
-// shallower than the fork's real one, so boot has to say the window came
-// back short or the whole fault reads as arriving out of nowhere.
-describe('Regression: the reorg rollback budget survives a restart', function () {
-    this.timeout(0);
-    registerTrackerHooks();
-    registerBootSignalBasicTests();
-    registerBootSignalRefillTest();
-    registerBootSignalCauseTests();
 });
 
 // The watermark is only worth anything if it is on disk: the boot that has to

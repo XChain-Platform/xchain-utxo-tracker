@@ -100,14 +100,11 @@ describe('XChainUtxoTracker (more)', function () {
             expect(hintStub.calledOnce).to.be.true;
         });
 
-        it('uses tx.id when present', async function () {
+        it('keys by getId() and ignores a stray id property', async function () {
             const customId = randHash();
             const prevId = randHash();
-            const tx = {
-                id: customId,
-                ins: [makeSpendInput(prevId, 0)],
-                outs: []
-            };
+            const tx = makeTx({ txid: customId, ins: [makeSpendInput(prevId, 0)] });
+            tx.id = randHash();
 
             await db.beginTransaction();
             const count = await tracker.parseTxInputs(db, tx, randHash(), false, false);

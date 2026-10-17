@@ -19,6 +19,13 @@
 const { Q_UNDO_WATERMARK_KEY, P_PENDING_CLEANUP_KEY } = require('./constants.js')
 const XChainUtxoTracker = require('../XChainUtxoTracker.js')
 
+// What an operator does once this index cannot be walked back.
+const REBUILD_REMEDY = "This index cannot be walked back onto the node's chain and has to be rebuilt. Under "
+    + "xchain-node run `xchain-node reset xchain-utxo-tracker <coin> <network>`, which drops the "
+    + "volume and takes the bulk-sync path; standalone, stop the tracker, empty its data "
+    + "directory and restart it. Restoring the same bootstrap again lands back here if its tip "
+    + "is the drifted one."
+
 module.exports = {
     async addToLastBlocks(blockHash){
         this.lastBlocks.push(blockHash)
@@ -135,8 +142,17 @@ module.exports = {
     // batch counter stays > 0, breaking per-block atomicity. Rolling the batch
     // back drops the P-key write that records aged-out blocks awaiting K/M
     // cleanup, so persist that list out-of-band (standalone put, deliberately
-    // outside the rolled-back batch) so restart recovery still runs it. Returns
-    // true when a batch was discarded; the caller then zeroes its batch counters.
+    // outside the rolled-back batch) so restart recovery still runs it, and keep
+    // it in memory so the next flush re-persists it and cleanupAgedBlocks runs
+    // it; clearing it here let that flush delete the P key with the list
+    // unprocessed, stranding those blocks' undo records for good.
+    //
+    // The in-memory window also counted the discarded staged blocks, so reload
+    // it from the store. Left stale, re-indexing the same heights pushes their
+    // hashes in a second time and ages real committed blocks out early, and
+    // cleanupAgedBlocks then prunes undo records still inside the window, so a
+    // later deep reorg meets a hole it cannot walk back through. Returns true
+    // when a batch was discarded; the caller then zeroes its batch counters.
     async discardInflightBatchForReorg(blocksQuantity){
         // No blocks staged means there is no batch to throw away.
         if (blocksQuantity <= 0) return false
@@ -145,7 +161,7 @@ module.exports = {
             await this.db.db.put(P_PENDING_CLEANUP_KEY,
                 Buffer.from(JSON.stringify(this.pendingKMCleanup)))
         }
-        this.pendingKMCleanup = []
+        this.lastBlocks = await this.loadLastBlocksSortedByHeight()
         return true
     },
 
@@ -164,11 +180,19 @@ module.exports = {
             // sent them into a non-destructive recreate that hit the same wall.
             throw XChainUtxoTracker.markUnrecoverableReorg(new Error(
                 "Can't delete a block from 'last blocks': list is empty (reorg exceeds tracked window). "
-                + "This index cannot be walked back onto the node's chain and has to be rebuilt. Under "
-                + "xchain-node run `xchain-node reset xchain-utxo-tracker <coin> <network>`, which drops the "
-                + "volume and takes the bulk-sync path; standalone, stop the tracker, empty its data "
-                + "directory and restart it. Restoring the same bootstrap again lands back here if its tip "
-                + "is the drifted one."))
+                + REBUILD_REMEDY))
+        }
+        // A block absent from the window, on disk as well as in memory, has had
+        // its undo records pruned: rolling it back would restore nothing it
+        // spent. That is permanent, so retrying it ten times and exiting into a
+        // restart loop helps no one; tag it so the tracker halts durably.
+        if (!this.lastBlocks.includes(blockHash)){
+            this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+            if (!this.lastBlocks.includes(blockHash)){
+                throw XChainUtxoTracker.markUnrecoverableReorg(new Error(
+                    "Can't roll back block " + blockHash + ": it is not in the undo window, so its "
+                    + "spent-output recovery records are gone. " + REBUILD_REMEDY))
+            }
         }
         if (this.lastBlocks.indexOf(blockHash) == this.lastBlocks.length-1){
             this.lastBlocks.pop()

@@ -92,6 +92,41 @@ function undoWindowWatermarkField(tracker){
 // committed height matches the node tip AND the node's mempool is
 // empty, giving callers a barrier they can wait on without needing
 // to know any of the tracker's batching internals.
+//
+// The live node read is single-flight per tracker and deadline-bounded. The
+// connector's shared 25-socket agent starts its timeout only once a socket is
+// assigned, so per-call reads against a node that accepts TCP and never answers
+// would queue without bound, each holding a slot of the global request gate until
+// the gate sheds pure LevelDB reads. Sharing one pending read caps the queue at one,
+// and the deadline lets a caller fall back to the cached tip (reported stale)
+// instead of waiting on it.
+let SYNC_STATUS_NODE_DEADLINE_MS = 5000
+
+function configureSyncStatusNodeDeadlineMs(value) {
+    SYNC_STATUS_NODE_DEADLINE_MS = value
+}
+
+const nodeReadInFlight = new WeakMap()
+
+function sharedBlockchainInfo(tracker) {
+    let pending = nodeReadInFlight.get(tracker)
+    if (!pending) {
+        pending = Promise.resolve().then(() => tracker.connector.getBlockchainInfo())
+        nodeReadInFlight.set(tracker, pending)
+        const clear = () => { if (nodeReadInFlight.get(tracker) === pending) nodeReadInFlight.delete(tracker) }
+        pending.then(clear, clear)
+    }
+    return pending
+}
+
+function blockchainInfoWithDeadline(tracker, deadlineMs = SYNC_STATUS_NODE_DEADLINE_MS) {
+    let timer
+    const deadline = new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('node read deadline exceeded')), deadlineMs)
+    })
+    return Promise.race([sharedBlockchainInfo(tracker), deadline]).finally(() => clearTimeout(timer))
+}
+
 async function get_sync_status(tracker) {
     let committedHeight = -1
     try { committedHeight = await tracker.db.getLastBlockHeight() } catch (e) {}
@@ -99,7 +134,7 @@ async function get_sync_status(tracker) {
     let nodeHeight = -1
     let nodeHeightStale = false
     try {
-        const info = await tracker.connector.getBlockchainInfo()
+        const info = await blockchainInfoWithDeadline(tracker)
         nodeHeight = info['blocks']
     } catch (e) {
         const rawTip = tracker.latestKnownChainTip ?? tracker.blockchainInfoLastBlock
@@ -121,7 +156,7 @@ async function get_sync_status(tracker) {
         // SYNCED_THRESHOLD so callers don't replicate the threshold. The policy
         // (null lag, stale node height and negative lag are all not-synced) lives
         // in deriveSyncedVerdict above, where it is unit-testable.
-        synced: deriveSyncedVerdict({ lag, nodeHeightStale })
+        synced: deriveSyncedVerdict({ lag, nodeHeightStale }) && !tracker.halted
     }
     if (loopStale) {
         result.node_rpc_stale = true
@@ -276,6 +311,7 @@ function registerStatusRoute({ app, tracker, probeGate, requestGate, getFreshnes
 
 module.exports = {
     configureNodeRpcStaleMs,
+    configureSyncStatusNodeDeadlineMs,
     deriveHealthStatus,
     isNodeRpcStale,
     deriveSyncedVerdict,

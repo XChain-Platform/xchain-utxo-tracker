@@ -235,6 +235,16 @@ async function closeTracker(tracker) {
   try { await tracker.mempoolDb.close(); } catch (e) {}
 }
 
+// Poll cond until it is truthy; reject naming what never happened past the deadline
+async function waitUntil(cond, timeoutMs, what) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await cond()) return;
+    await new Promise(r => setTimeout(r, 5));
+  }
+  throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
+}
+
 module.exports = {
   NETWORK,
   SATOSHI,
@@ -257,5 +267,6 @@ module.exports = {
   processBlocksAndCommit,
   buildCoinbaseChain,
   createTestTracker,
-  closeTracker
+  closeTracker,
+  waitUntil
 };

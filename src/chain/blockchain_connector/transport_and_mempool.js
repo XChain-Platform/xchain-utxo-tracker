@@ -195,6 +195,23 @@ module.exports = {
         return results
     },
 
+    // Probe whether the node serves getrawtransaction without a blockhash, which the
+    // malformed-AuxPoW recovery path (getBlockReassembled) needs: true when the tip's
+    // coinbase is retrievable, false when the node answers -5 for it, null when
+    // inconclusive (empty chain, or a probe RPC failed). Never throws. Keep in sync
+    // with xchain-decoder/src/chain/blockchain_connector/transaction_queries.js probeTxIndex.
+    async probeTxIndex() {
+        try {
+            const info = await this.getBlockchainInfo()
+            if (!info || !info.bestblockhash || info.blocks === 0) return null
+            const block = await this.getBlockVerbose(info.bestblockhash)
+            if (!block || !Array.isArray(block.tx) || block.tx.length === 0) return null
+            return (await this.getRawTransaction(block.tx[0])) ? true : false
+        } catch (_) {
+            return null
+        }
+    },
+
     // POST a (batched) JSON-RPC payload, retrying on transient connection timeouts.
     // Mirrors the ECONNABORTED retry loop in getBlockHeader: up to 10 attempts with a
     // short backoff. The batch methods route every .post() through here so a single

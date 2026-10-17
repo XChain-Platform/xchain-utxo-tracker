@@ -14,6 +14,7 @@ const { expect } = require('chai');
 const sinon = require('sinon');
 const supertest = require('supertest');
 const { createTestApp, createMockTracker } = require('./api.test/support/test_app');
+const { get_sync_status } = require('../../src/api/sync_status');
 
 let app;
 let mockTracker;
@@ -174,6 +175,29 @@ function registerGetFirstSeenTests() {
   });
 }
 
+function registerSyncStatusTests() {
+  describe('get_sync_status', function () {
+    it('reports a halted tracker at lag 2 as not synced', async function () {
+      mockTracker.db.getLastBlockHeight.resolves(100);
+      mockTracker.connector = {
+        getBlockchainInfo: sinon.stub().resolves({ blocks: 102 })
+      };
+      mockTracker.halted = true;
+      mockTracker.haltReason = 'unrecoverable reorg';
+      mockTracker.haltedAt = '2026-10-15T00:00:00.000Z';
+      mockTracker.haltedHeight = 100;
+
+      const status = await get_sync_status(mockTracker);
+
+      expect(status).to.include({
+        lag: 2,
+        synced: false,
+        halted: true
+      });
+    });
+  });
+}
+
 describe('API', function () {
   registerApiHooks();
   registerGetUtxosTests();
@@ -182,4 +206,5 @@ describe('API', function () {
   registerReadyTests();
   registerReconvergingTests();
   registerGetFirstSeenTests();
+  registerSyncStatusTests();
 });

@@ -81,9 +81,9 @@ function appendSpends(ins, txHash8, writer) {
 }
 
 function processTransaction(tx, height, blockHash, writers) {
-    // Prefer tx.id (populated by decoder for altered txs like Litecoin HogEx).
-    // Otherwise derive from bitcoinjs-lib getHash() (internal LE) and reverse.
-    const fullTxHash = tx.id ? Buffer.from(tx.id, 'hex') : reverseBytes32(tx.getHash())
+    // The txid comes from bitcoinjs-lib getHash() (internal LE), reversed; the live
+    // path reads tx.getId(), the same bytes in display order.
+    const fullTxHash = reverseBytes32(tx.getHash())
     const txHash8 = fullTxHash.slice(0, 8)
     const outputs = appendOutputs(tx, txHash8, fullTxHash, height, blockHash, writers.outputs)
     const spends = appendSpends(tx.ins, txHash8, writers.spends)

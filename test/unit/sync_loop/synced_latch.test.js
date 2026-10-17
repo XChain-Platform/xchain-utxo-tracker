@@ -111,8 +111,8 @@ describe('XChainUtxoTracker sync loop: synced latch through a rollback or a node
                 node.retired = node.chain;
                 node.chain = node.chain.slice(0, 10);
             }
-            if (n === 2) s.afterRollback = gaugeNow(reg());
-            return n >= 3 ? 'stop' : null;
+            if (n === 3) s.afterRollback = gaugeNow(reg());
+            return n >= 4 ? 'stop' : null;
         });
         expect(h.tracker.reorgCount).to.equal(1);
         expect(seen.height).to.equal(9);

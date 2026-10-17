@@ -170,13 +170,9 @@ describe('XChainBlockDecoder', function () {
 });
 
 function buildHogExV1Hex() {
-  // version(01000000) + marker(00) + flag(08); after stripping marker+flag
-  // the remainder must parse as a valid non-witness tx.
-  // version 01000000 + marker 00 + flag 08
-  // After stripping marker+flag → must be a valid non-witness tx
-  // Construct a tx hex with version=1, marker=0x00, flag=0x08
-  // The code should remove the 0008 bytes and parse normally
-  // We need to build a valid tx after stripping
+  // version 01000000 + marker 00 + flag 08, then Litecoin's MWEB-flagged layout:
+  // ins, outs, the MWEB tag 00 (no MWEB part, as in a HogEx), then the locktime.
+  // Flag 08 sets no witness bit, so the reader takes no witness section here.
   const baseTxHex =
     '01000000' +
     '01' +
@@ -189,8 +185,8 @@ function buildHogExV1Hex() {
     '01' + '51' + // OP_1
     '00000000';
 
-  // Insert marker+flag after version
-  const hogexTxHex = '01000000' + '0008' + baseTxHex.substring(8);
+  // Insert marker+flag after version and the null MWEB tag before the locktime.
+  const hogexTxHex = '01000000' + '0008' + baseTxHex.substring(8, baseTxHex.length - 8) + '00' + baseTxHex.slice(-8);
   return hogexTxHex;
 }
 
@@ -237,8 +233,10 @@ function buildMwebV2Hex() {
     '0100000000000000' +
     '01' + '51' +
     '00000000';
-  // version(02000000) + marker(00) + flag(09) + rest-after-version
-  const mwebTxHex = '02000000' + '0009' + baseTxHex.substring(8);
+  // version(02000000) + marker(00) + flag(09) + ins and outs + a one-item witness
+  // + MWEB tag 01 with an (opaque) MWEB body + locktime: getrawtransaction's form.
+  const mwebTxHex = '02000000' + '0009' + baseTxHex.substring(8, baseTxHex.length - 8) +
+    '01' + '01' + 'aa' + '01' + 'ab'.repeat(8) + baseTxHex.slice(-8);
   return mwebTxHex;
 }
 
@@ -298,9 +296,12 @@ describe('XChainBlockDecoder', function () {
       '01' + '51' +                                                       // OP_1
       '00000000';                                                         // locktime
 
+    // The merkle root is the only tx's txid, which hashes its plain form
+    // (version + txAfterVersion): the block decoder refuses a root that does not match.
     function header(){
       const h = Buffer.alloc(80);
       h.writeInt32LE(1, 0);        // version
+      bitcoinjs.Transaction.fromHex('01000000' + txAfterVersion).getHash().copy(h, 36);
       h.writeUInt32LE(12345, 68);  // timestamp
       return h.toString('hex');
     }
@@ -314,8 +315,9 @@ describe('XChainBlockDecoder', function () {
     });
 
     it('strips the HogEx marker+flag from the last tx of a litecoin block', function () {
-      // Last (only) tx carries marker 0x00 + flag 0x08 right after the version.
-      const hogexTx = '01000000' + '0008' + txAfterVersion;
+      // Last (only) tx carries marker 0x00 + flag 0x08 right after the version and
+      // the null MWEB tag before its locktime.
+      const hogexTx = '01000000' + '0008' + txAfterVersion.slice(0, -8) + '00' + txAfterVersion.slice(-8);
       const blockHex = header() + '01' + hogexTx;
       const block = decoder.blockFromHex(blockHex);
       expect(block.transactions).to.have.length(1);

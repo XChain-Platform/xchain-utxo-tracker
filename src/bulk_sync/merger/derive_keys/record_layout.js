@@ -19,6 +19,7 @@
  ********************************************************************/
 
 const fs   = require('fs')
+const path = require('path')
 
 const { externalSort }         = require('../external_sort.js')
 
@@ -57,6 +58,16 @@ function noop() {}
 
 function ensureDir(p) {
     if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true })
+}
+
+// Removes the L.json and every named prefix file an earlier derive left in outDir.
+// The keys dir is reused across runs, and a file this run does not write (T/X/Y with
+// txIndex off, I/J with removeSpent on) would otherwise load as this run's data.
+// L.json goes first, so a derive that stops partway leaves the loader its
+// missing-L.json refusal instead of a mixed set.
+function clearPriorDeriveOutputs(outDir, prefixes) {
+    fs.rmSync(path.join(outDir, 'L.json'), { force: true })
+    for (const pfx of new Set(prefixes)) fs.rmSync(path.join(outDir, pfx + '.dat'), { force: true })
 }
 
 // Fixed-record writer with no header, for (key||value) prefix files and
@@ -106,5 +117,5 @@ module.exports = {
     P_STORED_BLK, P_SCRIPT_BLK, P_OUT_BLK, P_BLK_SCRIPT,
     OUTPUTS_RECORD_SIZE, OUTPUTS_RECORD_SIZE_CB, SPENDS_RECORD_SIZE,
     OUTPUTS_HEADER_SIZE,
-    LAYOUT, noop, ensureDir, FlatWriter, sortByKey,
+    LAYOUT, noop, ensureDir, clearPriorDeriveOutputs, FlatWriter, sortByKey,
 }

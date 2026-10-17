@@ -40,6 +40,7 @@
 // missing sibling hard-fails instead of green-by-skip.
 
 const { expect } = require('chai');
+const bitcoinjs = require('bitcoinjs-lib');
 const fs = require('fs');
 const path = require('path');
 
@@ -70,6 +71,16 @@ const LEGACY_TX_HEX =
     '01' + '07'.repeat(32) + '00000000' + '00' + 'ffffffff' +
     '01' + '3930000000000000' + '19' + '76a914' + '11'.repeat(20) + '88ac' +
     '00000000';
+
+// The legacy tx re-serialized with a marker and flag after the version. Flags 08 and
+// 09 get Litecoin's flagged layout (litecoin src/primitives/transaction.h
+// SerializeTransaction): ins and outs, a witness when flag & 1, the MWEB OptionalPtr
+// tag (0x00, no MWEB part), then nLockTime. Any other flag is spliced in as is.
+function mwebShaped(version, marker, flag) {
+    if (flag !== '08' && flag !== '09') return version + marker + flag + LEGACY_TX_HEX.slice(8);
+    const witness = flag === '09' ? '01' + '01' + 'aa' : '';
+    return version + marker + flag + LEGACY_TX_HEX.slice(8, -8) + witness + '00' + LEGACY_TX_HEX.slice(-8);
+}
 
 // Result of one parse, comparable across repos: the txid on success, or the fact of
 // a throw. Not the message: the two repos may legitimately word an error differently,
@@ -110,15 +121,15 @@ describe('XChainBlockDecoder twin parity with xchain-decoder @regression', funct
         const localName = txParseName(local, 'xchain-utxo-tracker');
         const twinName = txParseName(twin, 'xchain-decoder');
 
-        // Versions 01/02 are the strip-eligible pair, 03 is not; marker must be 00;
-        // flags 08 (MWEB) and 09 (segwit+MWEB) strip, 07 and 00 do not. Every cell is
+        // Versions 01/02 are the MWEB-eligible pair, 03 is not; marker must be 00;
+        // flags 08 (MWEB) and 09 (segwit+MWEB) are read as MWEB, 07 and 00 are not. Every cell is
         // a real parse, so a one-sided change to any arm of that predicate shows up
         // as a different txid or a throw on one side only.
         const cells = [];
         for (const version of ['01000000', '02000000', '03000000'])
             for (const marker of ['00', '01'])
                 for (const flag of ['08', '09', '07', '00'])
-                    cells.push({ version, marker, flag, hex: version + marker + flag + LEGACY_TX_HEX.slice(8) });
+                    cells.push({ version, marker, flag, hex: mwebShaped(version, marker, flag) });
 
         const mismatches = [];
         let stripped = 0;
@@ -130,10 +141,12 @@ describe('XChainBlockDecoder twin parity with xchain-decoder @regression', funct
         }
         expect(mismatches, 'MWEB strip verdicts diverged').to.deep.equal([]);
         // Guard the guard: if every cell threw, the comparison above would pass over
-        // nothing. Seven cells must parse: versions 01/02 with marker 00 and flag
-        // 08/09 (stripped), the three marker-00 flag-00 cells (already legacy), and
-        // nothing else. That count moves the moment the strip predicate changes.
-        expect(stripped, 'parse-success count moved; the strip predicate changed or the matrix went inert').to.equal(7);
+        // nothing. Four cells must parse: versions 01/02 with marker 00 and flag
+        // 08/09 (read as MWEB), and nothing else. The three marker-00 flag-00 cells read
+        // as a tx with no inputs, no outputs and trailing bytes, which Core refuses
+        // (bad-txns-vin-empty, bad-txns-vout-empty) and both parsers now refuse by exact
+        // consumption. That count moves the moment the strip predicate changes.
+        expect(stripped, 'parse-success count moved; the strip predicate changed or the matrix went inert').to.equal(4);
     });
 });
 
@@ -176,8 +189,18 @@ const HEADER_HEX = (() => {
     return header.toString('hex');
 })();
 
-// The legacy tx with a marker+flag spliced in after the version: a HogEx-shaped tx.
-const hogexTx = (flag, version = '01000000') => version + '00' + flag + LEGACY_TX_HEX.slice(8);
+// A HogEx-shaped tx: the legacy tx in Litecoin's MWEB-flagged layout.
+const hogexTx = (flag, version = '01000000') => mwebShaped(version, '00', flag);
+
+// The same header with the merkle root of the given txs, each named by the plain
+// (no witness, no MWEB) hex its Litecoin txid hashes, since the block decoders refuse
+// a body whose txids do not hash to the header's root.
+function headerFor(plainTxHexes) {
+    const txs = plainTxHexes.map(hex => bitcoinjs.Transaction.fromBuffer(Buffer.from(hex, 'hex'), true));
+    const header = Buffer.from(HEADER_HEX, 'hex');
+    bitcoinjs.Block.calculateMerkleRoot(txs).copy(header, 36);
+    return header.toString('hex');
+}
 
 // The smallest tx the count bound admits: version, 0 inputs, 0 outputs, locktime.
 const MIN_TX_HEX = '01000000' + '00' + '00' + '00000000';
@@ -193,21 +216,26 @@ const SEGWIT_COINBASE_HEX =
 
 // Each vector pins the TRACKER outcome as well (throw, txs: null for header-only, or a
 // tx count), so the cross-repo comparison cannot pass because every vector threw.
+const L = LEGACY_TX_HEX;
 const BLOCK_VECTORS = [
     { name: 'header only, exactly 80 bytes', hex: HEADER_HEX, expect: { txs: null } },
     { name: 'buffer under 80 bytes', hex: HEADER_HEX.slice(0, 80), expect: 'throw' },
-    { name: 'zero transactions', hex: HEADER_HEX + '00', expect: { txs: 0 } },
-    { name: 'one plain tx', hex: HEADER_HEX + '01' + LEGACY_TX_HEX, expect: { txs: 1 } },
-    { name: 'HogEx last, flag 08', hex: HEADER_HEX + '01' + hogexTx('08'), expect: { txs: 1 } },
-    { name: 'HogEx last, flag 09', hex: HEADER_HEX + '01' + hogexTx('09'), expect: { txs: 1 } },
-    { name: 'plain tx then HogEx last', hex: HEADER_HEX + '02' + LEGACY_TX_HEX + hogexTx('08'), expect: { txs: 2 } },
+    { name: 'zero transactions', hex: HEADER_HEX + '00', expect: 'throw' },
+    { name: 'one plain tx', hex: headerFor([L]) + '01' + L, expect: { txs: 1 } },
+    { name: 'one plain tx, merkle root mismatch', hex: HEADER_HEX + '01' + L, expect: 'throw' },
+    { name: 'one plain tx, then a trailing byte', hex: headerFor([L]) + '01' + L + '00', expect: 'throw' },
+    { name: 'HogEx last, flag 08', hex: headerFor([L]) + '01' + hogexTx('08'), expect: { txs: 1 } },
+    { name: 'HogEx last, flag 09', hex: headerFor([L]) + '01' + hogexTx('09'), expect: { txs: 1 } },
+    { name: 'plain tx then HogEx last', hex: headerFor([L, L]) + '02' + L + hogexTx('08'), expect: { txs: 2 } },
+    { name: 'HogEx last, then extension-block bytes', hex: headerFor([L]) + '01' + hogexTx('08') + '0102', expect: { txs: 1 } },
+    { name: 'HogEx last with a non-null MWEB tag', hex: headerFor([L]) + '01' + hogexTx('08').slice(0, -10) + '01ab' + L.slice(-8), expect: 'throw' },
     { name: 'HogEx-shaped FIRST tx is not stripped', hex: HEADER_HEX + '02' + hogexTx('08') + LEGACY_TX_HEX, expect: 'throw' },
     { name: 'version 03 HogEx shape is not stripped', hex: HEADER_HEX + '01' + hogexTx('08', '03000000'), expect: 'throw' },
     { name: 'forged tx count', hex: HEADER_HEX + 'c8' + LEGACY_TX_HEX, expect: 'throw' },
-    { name: 'count bound: N txs in exactly 10*N bytes', hex: HEADER_HEX + '03' + MIN_TX_HEX.repeat(3), expect: { txs: 3 } },
+    { name: 'count bound: N txs in exactly 10*N bytes', hex: headerFor([MIN_TX_HEX, MIN_TX_HEX, MIN_TX_HEX]) + '03' + MIN_TX_HEX.repeat(3), expect: { txs: 3 } },
     { name: 'count bound: N+1 claimed in 10*N bytes', hex: HEADER_HEX + '04' + MIN_TX_HEX.repeat(3), expect: 'throw' },
     { name: 'truncated tx body', hex: HEADER_HEX + '01' + LEGACY_TX_HEX.slice(0, LEGACY_TX_HEX.length / 2), expect: 'throw' },
-    { name: 'witness commitment', hex: HEADER_HEX + '01' + SEGWIT_COINBASE_HEX, expect: { txs: 1, witnessCommit: 'ab'.repeat(32) } },
+    { name: 'witness commitment', hex: headerFor([SEGWIT_COINBASE_HEX]) + '01' + SEGWIT_COINBASE_HEX, expect: { txs: 1, witnessCommit: 'ab'.repeat(32) } },
 ];
 
 // Check one tracker verdict against its pinned kind; returns a message or null.
@@ -245,7 +273,7 @@ describe('XChainBlockDecoder twin parity with xchain-decoder @regression', funct
     it('strips the HogEx marker+flag so the last tx hashes as its plain form', function () {
         const plainTxid = new LocalDecoder('litecoin-mainnet').txFromHex(LEGACY_TX_HEX).getId();
         for (const flag of ['08', '09']) {
-            const hex = HEADER_HEX + '01' + hogexTx(flag);
+            const hex = headerFor([LEGACY_TX_HEX]) + '01' + hogexTx(flag);
             const a = JSON.parse(blockVerdict(new LocalDecoder('litecoin-mainnet'), hex));
             const b = JSON.parse(blockVerdict(new TwinDecoder('litecoin-mainnet'), hex));
             expect(a.txids, 'tracker flag ' + flag).to.deep.equal([plainTxid]);
@@ -254,12 +282,34 @@ describe('XChainBlockDecoder twin parity with xchain-decoder @regression', funct
     });
 
     it('agrees on a plain block under the non-MWEB wire formats', function () {
-        const hex = HEADER_HEX + '01' + LEGACY_TX_HEX;
+        const hex = headerFor([LEGACY_TX_HEX]) + '01' + LEGACY_TX_HEX;
         for (const network of ['bitcoin-mainnet', 'dogecoin-mainnet']) {
             const a = blockVerdict(new LocalDecoder(network), hex);
             const b = blockVerdict(new TwinDecoder(network), hex);
             expect(a, network + ' must parse, not throw').to.not.equal('throw');
             expect(a, network + ' block verdicts diverged').to.equal(b);
         }
+    });
+});
+
+// The MWEB transaction readers and the block-body check are top-level functions, so
+// unlike the class methods above they can be held byte-identical: the run from
+// mwebShortError through the closing brace of assertBlockBodyIntact must match.
+function sharedMwebBlock(source) {
+    const lines = source.split('\n');
+    const start = lines.findIndex(line => line.startsWith('function mwebShortError('));
+    const last = lines.findIndex(line => line.startsWith('function assertBlockBodyIntact('));
+    expect(start, 'mwebShortError not found').to.be.at.least(0);
+    expect(last, 'assertBlockBodyIntact not found').to.be.above(start);
+    return lines.slice(start, lines.indexOf('}', last) + 1).join('\n');
+}
+
+describe('XChainBlockDecoder twin parity with xchain-decoder @regression', function () {
+    before(loadTwinDecoder);
+
+    it('the MWEB readers and the block-body check are byte-identical in both repos', function () {
+        const local = fs.readFileSync(path.join(__dirname, '../../src/chain/XChainBlockDecoder.js'), 'utf8');
+        const twin = fs.readFileSync(TWIN_FILE, 'utf8');
+        expect(sharedMwebBlock(local), 'apply the change to both copies').to.equal(sharedMwebBlock(twin));
     });
 });

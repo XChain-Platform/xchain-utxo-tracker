@@ -160,7 +160,9 @@ function trackWork(req, promise, SLOT){
  * @returns {object} The same keys, each function wrapped.
  */
 function trackMethodTable(methods, SLOT){
-    const tracked = {};
+    // No prototype: the router looks methods up without an own-property check,
+    // so inherited names (constructor, toString) would otherwise run untracked.
+    const tracked = Object.create(null);
     for(const [name, fn] of Object.entries(methods)){
         tracked[name] = typeof fn === 'function'
             ? (params, raw) => trackWork(raw && raw.req, (async () => fn.call(methods, params, raw))(), SLOT)

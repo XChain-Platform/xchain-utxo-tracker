@@ -212,3 +212,42 @@ describe('updateMempool readiness after an incomplete pass', function () {
     expect(tracker.mempoolBusy).to.equal(false);
   });
 });
+
+describe("updateMempool readiness during a multi-batch pass", function () {
+
+  beforeEach(async function () {
+    await setUpMempoolFixture("midpass", true);
+  });
+
+  afterEach(closeMempoolFixture);
+
+  it("publishes no readiness while batches are still being staged, then asserts it after the last", async function () {
+    const txids = [];
+    for (let i = 0; i < TXID_COUNT; i++) txids.push(randTxid());
+
+    const samples = [];
+    const sample = (label) => samples.push({
+      label,
+      flag: tracker.mempoolReconverged,
+      published: XChainUtxoTracker.computeFreshness(1000, 1000, true,
+        { mempoolReconverged: tracker.mempoolReconverged }).mempool_ready
+    });
+
+    sinon.stub(tracker.connector, "getRawMempool").resolves(txids.slice());
+    sinon.stub(tracker.connector, "getRawTransactions").callsFake(async (chunk) => {
+      sample("fetch");
+      return chunk.map(() => null);
+    });
+    sinon.stub(tracker, "sleep").callsFake(async () => { sample("sleep"); });
+
+    expect(tracker.mempoolReconverged).to.equal(true);
+    await tracker.updateMempool();
+
+    expect(samples.length, "3 fetches and 2 inter-batch sleeps").to.equal(5);
+    for (const s of samples) {
+      expect(s.flag, "flag during " + s.label).to.equal(false);
+      expect(s.published, "published mempool_ready during " + s.label).to.equal(false);
+    }
+    expect(tracker.mempoolReconverged, "asserted after the last batch").to.equal(true);
+  });
+});

@@ -26,15 +26,22 @@ function spendInput(prevTxidHex, vout, extra = {}) {
     return Object.assign({ hash: Buffer.from(prevTxidHex, 'hex').reverse(), index: vout, script: Buffer.alloc(0) }, extra);
 }
 
+// Minimal tx double: the tracker reads getId() and bulk sync reads getHash().
+function fakeTx(fields) {
+    const hash = rand32();
+    return Object.assign({
+        getHash() { return hash; },
+        getId() { return Buffer.from(hash).reverse().toString('hex'); },
+    }, fields);
+}
+
 function buildBlock() {
     const prev = Array.from({ length: 5 }, () => rand32().toString('hex'));
-    const coinbase = {
-        id: rand32().toString('hex'),
+    const coinbase = fakeTx({
         ins: [{ hash: Buffer.alloc(32), index: 0xFFFFFFFF, script: Buffer.alloc(0) }],
         outs: [],
-    };
-    const spender = {
-        id: rand32().toString('hex'),
+    });
+    const spender = fakeTx({
         ins: [
             spendInput(prev[0], 1),
             spendInput(prev[1], 2, { standard_input: false }),
@@ -43,7 +50,7 @@ function buildBlock() {
             spendInput(prev[4], 5, { standard_input: 0 }),
         ],
         outs: [],
-    };
+    });
     return { prev, block: { prevHash: rand32(), timestamp: 1700000000, transactions: [coinbase, spender] } };
 }
 

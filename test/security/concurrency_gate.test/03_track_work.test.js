@@ -130,4 +130,14 @@ describe('Security: concurrency gate trackMethods()', function () {
         expect(failure.message).to.equal('sync throw');
         expect(gate.getStats().in_flight).to.equal(0);
     });
+
+    it('trackMethods exposes only the registered names, not inherited Object.prototype ones', function () {
+        const gate = createConcurrencyGate({ limit: 1 });
+        const tracked = gate.trackMethods({ foo() { return 1; } });
+        expect(Object.getPrototypeOf(tracked)).to.equal(null);
+        for (const name of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+            expect(tracked[name], name).to.equal(undefined);
+        }
+        expect(tracked.foo).to.be.a('function');
+    });
 });

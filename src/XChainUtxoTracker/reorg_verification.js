@@ -19,11 +19,7 @@
 const nodeUtil = require('node:util')
 const { REMOVE_SPENT, logger } = require('./constants.js')
 const XChainUtxoTracker = require('../XChainUtxoTracker.js')
-const { nodeStillCatchingUp, nodeTipIsParseable } = require('./catch_up_helpers.js')
-
-// Returned by nodeBlockHashOrRetry once a failed hash fetch has been logged
-// and slept on, to send the walk round again.
-const RETRY_WALK = Symbol('retry the reorg walk')
+const { RETRY_WALK, nodeBlockHashOrRetry } = require('./reorg_node_reads.js')
 
 module.exports = {
     async verifyReorg(nodeTipHeight = null){
@@ -67,15 +63,12 @@ module.exports = {
                         retryCount++
                         continue
                     }
-                    logger.info("Removed block "+lastBlockHash+" ("+lastBlock["h"]+")")
-                    logger.info("Rollback to previous block "+lastBlock["ph"]+" ("+(lastBlock["h"]-1)+")")
-
                     // Per-block retry budget: reset after each successful rollback so the
                     // 10-attempt limit applies per block, not cumulatively across the whole
                     // reorg run. Otherwise a multi-block reorg with one transient failure per
                     // block could exhaust the budget and abort, leaving orphan blocks behind.
                     retryCount = 0
-                    blocksDeleted.push({"block_index":lastBlockIndex, "block_hash":lastBlockHash})
+                    recordRolledBackBlock.call(this, blocksDeleted, lastBlockIndex, lastBlockHash, lastBlock)
                 } else {
                     thereAreDifferences = false
                 }
@@ -100,7 +93,7 @@ module.exports = {
     // the nominal undoBlocks was never available to this pass, the previous
     // process spent all of what the store held, and the true depth is at least
     // that plus one.
-    reorgExceedsWindowMessage({ windowAtEntry, watermarkAtEntry, heldBefore, spentBeforeEntry, lastBlockIndex, deletedThisPass }){
+    reorgExceedsWindowMessage({ windowAtEntry, watermarkAtEntry, heldBefore, spentBeforeEntry, spentByEarlierPassesThisProcess = 0, lastBlockIndex, deletedThisPass }){
         let rolledBack
         if (windowAtEntry === 0 && watermarkAtEntry > 0){
             rolledBack = "The persisted undo window is EMPTY at entry: a previous process already "
@@ -115,8 +108,18 @@ module.exports = {
                 + "count is unknown) before this restart, and the chain still diverges at height "
                 + lastBlockIndex + ", so the fork is deeper than the window; "
         } else if (spentBeforeEntry > 0){
+            // The shortfall is split by origin: earlier passes of this process
+            // versus a process that died before this one started.
+            const fromPriorProcess = Math.max(0, spentBeforeEntry - spentByEarlierPassesThisProcess)
+            const fromThisProcess = spentBeforeEntry - fromPriorProcess
+            const origin = fromPriorProcess === 0
+                ? fromThisProcess + " spent by earlier passes in this process"
+                : fromThisProcess === 0
+                    ? fromPriorProcess + " a previous process spent before this restart"
+                    : fromThisProcess + " spent by earlier passes in this process and "
+                        + fromPriorProcess + " a previous process spent before this restart"
             rolledBack = "Already rolled back " + deletedThisPass + " blocks in this pass, "
-                + "on top of " + spentBeforeEntry + " a previous process spent before this restart "
+                + "on top of " + origin + " "
                 + "(" + (spentBeforeEntry + deletedThisPass) + " of a "
                 + this.undoBlocks + "-block window, now exhausted); "
         } else {
@@ -172,7 +175,10 @@ function rollbackBudget(){
     const watermarkAtEntry = Math.min(this.undoWindowWatermark || 0, this.undoBlocks)
     const heldBefore = watermarkAtEntry > 0 ? watermarkAtEntry : this.undoBlocks
     const spentBeforeEntry = windowAtEntry > 0 ? Math.max(0, heldBefore - windowAtEntry) : 0
-    return { windowAtEntry, budget, watermarkAtEntry, heldBefore, spentBeforeEntry }
+    // Rollbacks this very process already made are counted in memory, so the
+    // shortfall they explain is not blamed on a restart.
+    const spentByEarlierPassesThisProcess = Math.min(spentBeforeEntry, this.reorgRollbacksThisProcess || 0)
+    return { windowAtEntry, budget, watermarkAtEntry, heldBefore, spentBeforeEntry, spentByEarlierPassesThisProcess }
 }
 
 // Logs the committed tip the walk is about to compare against the node.
@@ -264,45 +270,8 @@ function aboveTipEmptyWindowMessage(nodeTipHeight, aboveTip, lastBlockIndex){
         + "depth guard says so as soon as the node reaches this height."
 }
 
-// Fetches the node's hash at the committed height. A failed fetch is logged
-// and slept on, `walk.tip` is re-read (refreshWalkTip below), and RETRY_WALK
-// sends the walk round again. No retry cap: an unreachable node keeps the walk
-// sleeping and retrying until it answers.
-async function nodeBlockHashOrRetry(lastBlockIndex, walk){
-    try {
-        return await this.connector.getBlockHash(lastBlockIndex)
-    } catch (err){
-        logger.error(nodeUtil.format('Error fetching block hash from node: ' + err.message, err))
-        await this.sleep(3000)
-        walk.tip = await refreshWalkTip.call(this, walk.tip)
-        return RETRY_WALK
-    }
-}
-
-// Re-reads the node's tip after a failed hash fetch, the usual cause being a
-// tip that dropped below the walk (node restart onto a shorter chain, a second
-// reorg). Trusts the reading no more than the sync loop's tip check does: a
-// failed read, an unparseable tip or a node still in initial block download
-// keeps the current tip, so a catching-up node is waited on, never rolled back.
-async function refreshWalkTip(currentTip){
-    if (!this.connector || typeof this.connector.getBlockchainInfo !== 'function') return currentTip
-    let info
-    try {
-        info = await this.connector.getBlockchainInfo()
-    } catch (_){
-        return currentTip
-    }
-    if (!info || !Number.isInteger(info["blocks"])) return currentTip
-    if (!nodeTipIsParseable(info, this.consensusNetwork) || nodeStillCatchingUp(info)) return currentTip
-    if (info["blocks"] !== currentTip){
-        logger.warn("verifyReorg: the node's tip moved mid-walk (" + (currentTip === null ? "unknown" : currentTip)
-            + " -> " + info["blocks"] + "); heights above it are rolled back without asking the node.")
-    }
-    return info["blocks"]
-}
-
 function refuseRollbackPastWindow(undoWindow, lastBlockIndex, blocksDeleted){
-    const { windowAtEntry, budget, watermarkAtEntry, heldBefore, spentBeforeEntry } = undoWindow
+    const { windowAtEntry, budget, watermarkAtEntry, heldBefore, spentBeforeEntry, spentByEarlierPassesThisProcess } = undoWindow
     // Depth guard: spent-output recovery records (K/M entries) are
     // retained only for the most recent UNDO_BLOCKS blocks;
     // cleanupAgedBlocks() purges them once a block ages out of that
@@ -319,7 +288,7 @@ function refuseRollbackPastWindow(undoWindow, lastBlockIndex, blocksDeleted){
     // empty-list guard, which cannot state how deep the fork was.
     if (windowAtEntry === 0 || blocksDeleted.length >= budget){
         const msg = this.reorgExceedsWindowMessage({
-            windowAtEntry, watermarkAtEntry, heldBefore, spentBeforeEntry, lastBlockIndex,
+            windowAtEntry, watermarkAtEntry, heldBefore, spentBeforeEntry, spentByEarlierPassesThisProcess, lastBlockIndex,
             deletedThisPass: blocksDeleted.length
         })
         logger.error(msg)
@@ -376,6 +345,18 @@ async function rollBackTipBlock(lastBlockHash, lastBlock, retryCount){
         await this.sleep(3000)
         return false
     }
+}
+
+// A block the walk just rolled back: log it, add it to this pass's deleted
+// list and count it against this process.
+function recordRolledBackBlock(blocksDeleted, lastBlockIndex, lastBlockHash, lastBlock){
+    logger.info("Removed block "+lastBlockHash+" ("+lastBlock["h"]+")")
+    logger.info("Rollback to previous block "+lastBlock["ph"]+" ("+(lastBlock["h"]-1)+")")
+
+    blocksDeleted.push({"block_index":lastBlockIndex, "block_hash":lastBlockHash})
+    // In-memory on purpose: it dies with the process, which is what lets the
+    // halt message tell this process's earlier passes from a prior process.
+    this.reorgRollbacksThisProcess = (this.reorgRollbacksThisProcess || 0) + 1
 }
 
 // Counts a finished reorg for get_sync_status: how many, and the last depth.
