@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-17
+
+### Fixed
+- Refused a block whose transactions do not fill it or match its merkle root, and parsed LTC MWEB-form transactions.
+- Settled a falling node tip before rolling back and halted durably on a missing undo entry.
+- Resynced the cursor and mempool after a tip-below refusal or a tip-replacing reorg.
+- Accepted the LTC test-network P2SH version-2 address form.
+
+### Security
+- Stopped trusting X-Forwarded-For by default in the per-IP rate limiter and bounded malformed request answers.
+- Bumped axios, ip-address, fast-uri and proxy-addr to patched versions.
+
 ## [0.23.0] - 2026-10-11
 
 ### Added
