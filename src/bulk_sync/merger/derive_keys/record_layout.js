@@ -28,6 +28,7 @@ const { externalSort }         = require('../external_sort.js')
 const {
     P_BLOCK, P_TX, P_INPUT, P_OUTPUT, P_OUT_HINT, P_IN_HINT,
     P_STORED_BLK, P_SCRIPT_BLK, P_OUT_BLK, P_BLK_SCRIPT,
+    P_TX_EXACT, P_TX_BLOCK_RECOVERY,
 } = require('../../../store/level_up_db/constants.js')
 
 // Legacy outputs record size. New dumps are 121 bytes (trailing coinbase flag);
@@ -115,6 +116,7 @@ async function sortByKey(inputPath, outputPath, recordSize, keySize, tmpDir, ram
 module.exports = {
     P_BLOCK, P_TX, P_INPUT, P_OUTPUT, P_OUT_HINT, P_IN_HINT,
     P_STORED_BLK, P_SCRIPT_BLK, P_OUT_BLK, P_BLK_SCRIPT,
+    P_TX_EXACT, P_TX_BLOCK_RECOVERY,
     OUTPUTS_RECORD_SIZE, OUTPUTS_RECORD_SIZE_CB, SPENDS_RECORD_SIZE,
     OUTPUTS_HEADER_SIZE,
     LAYOUT, noop, ensureDir, clearPriorDeriveOutputs, FlatWriter, sortByKey,

@@ -18,6 +18,7 @@
 
 const { Q_UNDO_WATERMARK_KEY, P_PENDING_CLEANUP_KEY } = require('./constants.js')
 const XChainUtxoTracker = require('../XChainUtxoTracker.js')
+const { withStoreCommit } = require('./store_commit_lock.js')
 
 // What an operator does once this index cannot be walked back.
 const REBUILD_REMEDY = "This index cannot be walked back onto the node's chain and has to be rebuilt. Under "
@@ -241,7 +242,8 @@ module.exports = {
         await this.db.beginTransaction()
         await this.db.setLastBlockHash(hash)
         await this.db.setLastBlockHeight(height)
-        await this.db.endTransaction()
+        // Commit as the store-commit lock's writer: the repair moves the height a page reports.
+        await withStoreCommit(this, () => this.db.endTransaction())
     }
 }
 

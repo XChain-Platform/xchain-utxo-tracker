@@ -28,6 +28,7 @@ const { RecordReader,
 const { resolveUndoBlocks }    = require('../../../chain/undo_blocks.js')
 const {
     P_BLOCK, P_TX, P_OUTPUT, P_OUT_HINT, P_STORED_BLK,
+    P_TX_EXACT, P_TX_BLOCK_RECOVERY,
     OUTPUTS_RECORD_SIZE, OUTPUTS_RECORD_SIZE_CB, OUTPUTS_HEADER_SIZE,
     LAYOUT, noop, ensureDir, clearPriorDeriveOutputs, FlatWriter, sortByKey,
 } = require('./record_layout.js')
@@ -35,12 +36,9 @@ const { writeScriptCandidates,
         deriveScriptKeys }      = require('./derive_keys_pass_scripts.js')
 const { deriveSpendKeys }      = require('./derive_keys_pass_spends.js')
 
-// X and Y prefix bytes; the live store keeps them private, so a regression test
-// compares every seeded key with what insertTransaction writes. T.dat carries the
-// block height after the key so the sort orders colliding prefixes by block and the
-// loader's later put (the higher block) wins the slot; the loader drops those 4 bytes.
-const P_TX_EXACT          = 0x58
-const P_TX_BLOCK_RECOVERY = 0x59
+// T.dat carries the block height after the key so the sort orders colliding
+// prefixes by block and the loader's later put (the higher block) wins the slot;
+// the loader drops those 4 bytes.
 const TX_INDEX_LAYOUT = {
     T: { keySize:  9, valSize: 68, recordSize: 77 },
     X: { keySize: 33, valSize: 32, recordSize: 65 },

@@ -142,6 +142,10 @@ async function readUtxosAddress(address, { limit = null, after = null } = {}){
     const { scriptHash, scriptPubKeyHex, paged, pageLimit } = utxoQueryPlan(address, this.network, limit)
     // Read the committed height inside the read lock, so the reported height is the one these rows came from.
     const committedHeight = await this.db.getLastBlockHeight()
+    // Read the tip hash with it: the same batch commits both, and a same-height reorg changes only the hash.
+    const committedHash = await this.db.getLastBlockHash()
+    // Read the reorg count here too: a same-height reorg moves it before the replacement block commits.
+    const reorgCount = this.reorgCount
 
     // Paged mode pulls one bounded page of confirmed outputs (resuming from
     // `after`); unbounded mode pulls everything but is capped by the
@@ -180,7 +184,7 @@ async function readUtxosAddress(address, { limit = null, after = null } = {}){
         await addServableMempoolUtxo.call(this, results, nextOutput, { confirmedKeys, paged, scriptPubKeyHex })
     }
 
-    return withNextCursor(results, paged, nextCursor, committedHeight)
+    return withNextCursor(results, paged, nextCursor, { committedHeight, committedHash, reorgCount })
 }
 
 // Adds the response entry for one mempool output, unless the confirmed store
@@ -252,7 +256,9 @@ function utxoQueryPlan(address, network, limit){
 // *scanned* confirmed DB key (txHash8:vout), independent of mempool-spend
 // filtering. Only set when a full page was read (more rows may remain). Pages
 // are gap- and repeat-free only at one committed height: a block committed between
-// pages can re-serve page 1's mempool output as confirmed, so a pager restarts when sync.tracker_height moves.
+// pages can re-serve page 1's mempool output as confirmed, so a pager restarts when sync.tracker_height
+// or sync.committed_hash moves (a same-height reorg keeps the height and changes the hash); REST carries
+// them as X-Tracker-Height and X-Tracker-Tip-Hash, beside X-Reorg-Count.
 function nextPageCursor(confirmedOutputs, paged, pageLimit){
     return (paged && confirmedOutputs.length === pageLimit)
         ? confirmedOutputs[confirmedOutputs.length - 1].txid + ':' + confirmedOutputs[confirmedOutputs.length - 1].vout
@@ -318,10 +324,12 @@ function mempoolUtxo(nextOutput, txid, scriptPubKeyHex){
 // Expose the continuation cursor as a non-enumerable property so the array
 // still serializes as a bare UTXO list (preserving the existing API/JSON-RPC
 // contract) while the REST layer can read it for the X-Next-Cursor header.
-function withNextCursor(results, paged, nextCursor, committedHeight){
+function withNextCursor(results, paged, nextCursor, { committedHeight, committedHash, reorgCount }){
     if (paged) Object.defineProperty(results, 'nextCursor', { value: nextCursor, enumerable: false })
-    // Carry the height read under the lock, for the response's freshness fields.
+    // Carry the height, tip hash and reorg count read under the lock, for the response's freshness fields.
     Object.defineProperty(results, 'committedHeight', { value: committedHeight, enumerable: false })
+    if (typeof committedHash === 'string') Object.defineProperty(results, 'committedHash', { value: committedHash, enumerable: false })
+    if (typeof reorgCount === 'number') Object.defineProperty(results, 'reorgCount', { value: reorgCount, enumerable: false })
 
     return results
 }

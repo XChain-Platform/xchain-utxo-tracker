@@ -22,8 +22,11 @@
 // store, then probes the mempool per output. A commit landing mid-read shows it a
 // mix: a just-mined output in neither store (its spent outpoint served unspent),
 // or a mempool refresh's spends without its outputs or vice versa. So every
-// address read is a shared reader, and the flush's commit-plus-cleanup and each
-// mempool refresh commit (mempool_refresh.js) are the exclusive writer:
+// address read is a shared reader, and the flush's commit-plus-cleanup, each
+// mempool refresh commit (mempool_refresh.js), each reorg rollback commit
+// (reorg_verification.js) and the tip-pointer repair commit
+// (last_blocks_window.js) are the exclusive writer, since a page reports the
+// committed height it read its rows at:
 // the writer waits for in-flight reads to drain, and new reads wait while a
 // writer is pending or active (writer preference, so a steady read load cannot
 // starve the flush). Readers hold nothing the writer needs and vice versa, so
@@ -80,5 +83,5 @@ async function withStoreCommit(tracker, commit){
     }
 }
 
-// Address reads take the reader side; the block flush and the mempool refresh take the writer side.
+// Address reads take the reader side; every commit that changes what they read takes the writer side.
 module.exports = { withStoreRead, withStoreCommit }

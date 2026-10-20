@@ -193,6 +193,41 @@ describe('XChainUtxoTracker sync loop: synced latch through a same-height tip sw
     });
 });
 
+// A node that moves onto a branch one block longer than ours keeps the lag under
+// SYNCED_THRESHOLD, so only the prev-hash rollback can drop the latch before the
+// walk serves the orphaned tip.
+describe('XChainUtxoTracker sync loop: synced latch through a prev-hash reorg', function () {
+    const h = useSyncLoopHarness();
+    const metrics = useMetrics(h);
+    const install = () => metrics.install();
+    const reg = () => metrics.registry;
+
+    it('drops the latch for the walk of a prev-hash reorg one block ahead and raises it at the new tip', async function () {
+        const node = makeNode(buildChain(13));
+        const full = node.chain;
+        const seen = await h.run(node, async (n, s) => {
+            if (n === 1) {
+                install();
+                s.atTip = await sample(h.tracker, reg());
+                node.retired = full;
+                node.chain = buildChain(full.length + 1, 1, full, full.length - 1);
+                const verifyReorg = h.tracker.verifyReorg;
+                h.tracker.verifyReorg = function (...args) {
+                    s.duringWalk = { gauge: gaugeNow(reg()), synced: h.tracker.isSynced() };
+                    return verifyReorg.apply(this, args);
+                };
+            }
+            if (n >= 4) { s.back = await sample(h.tracker, reg()); return 'stop'; }
+            return null;
+        });
+        expect(seen.atTip).to.include({ gauge: 1, status: true });
+        expect(h.tracker.reorgCount).to.equal(1);
+        expect(seen.duringWalk, 'the orphaned tip is served under synced').to.deep.equal({ gauge: '0', synced: false });
+        expect(seen.back).to.include({ gauge: 1, status: true, committed: 13 });
+        expect(seen.hash).to.equal(node.chain[13].hash);
+    });
+});
+
 // The latches belong to the loop run that earned them: a stopped loop closes
 // its store, and a relaunched one (getbootstrap, restorebootstrap) opens a store
 // no pass has checked yet, so neither may report synced or mempool ready.

@@ -68,8 +68,9 @@ function parsePageOpts(query, maxPageLimit){
 // pair REST gates X-Mempool-Ready on) and, while halted, the halt marker, so
 // an RPC caller gates on the same facts a REST caller can. A caller that has
 // already read the committed height (GET /status) passes it in to skip the
-// second LevelDB read.
-async function getFreshnessMeta(tracker, knownCommittedHeight){
+// second LevelDB read. A get_utxos page also passes readAt, the tip hash and
+// reorg count read under the store lock with its rows.
+async function getFreshnessMeta(tracker, knownCommittedHeight, readAt){
     let committedHeight = -1
     if (typeof knownCommittedHeight === 'number') committedHeight = knownCommittedHeight
     else { try { committedHeight = await tracker.db.getLastBlockHeight() } catch (e) {} }
@@ -108,7 +109,13 @@ async function getFreshnessMeta(tracker, knownCommittedHeight){
     // tracker rather than as a moved counter.
     freshness.reorg_count = (tracker && typeof tracker.reorgCount === 'number')
         ? tracker.reorgCount : undefined
+    const page = readAt || {}
+    // A page's own count, read with its rows, wins over the live one a later rollback could move.
+    if (typeof page.reorgCount === 'number') freshness.reorg_count = page.reorgCount
     if (freshness.reorg_count === undefined) delete freshness.reorg_count
+    // Name the chain a page was read on: a same-height reorg keeps tracker_height and changes this
+    // hash, and unlike reorg_count it survives a restart. Sent only when read with the rows.
+    if (typeof page.committedHash === 'string') freshness.committed_hash = page.committedHash
     return freshness
 }
 
@@ -116,12 +123,17 @@ async function getFreshnessMeta(tracker, knownCommittedHeight){
 // existing body shape untouched (additive, backward-compatible). X-Sync-Lag
 // is omitted entirely when lag is unknown (null) rather than sent as a
 // misleading 0.
-async function setFreshnessHeaders(tracker, res, knownCommittedHeight){
-    const f = await getFreshnessMeta(tracker, knownCommittedHeight)
+async function setFreshnessHeaders(tracker, res, knownCommittedHeight, readAt){
+    const f = await getFreshnessMeta(tracker, knownCommittedHeight, readAt)
     res.set('X-Tracker-Height', String(f.tracker_height))
     res.set('X-Node-Height', String(f.node_height))
     if (f.lag !== null) res.set('X-Sync-Lag', String(f.lag))
     res.set('X-Synced', String(f.synced))
+    // The REST twin of sync.reorg_count: a same-height reorg between two pages
+    // leaves X-Tracker-Height unchanged, and this count is what moves.
+    if (typeof f.reorg_count === 'number') res.set('X-Reorg-Count', String(f.reorg_count))
+    // The REST twin of sync.committed_hash: the chain a page's rows were read on.
+    if (typeof f.committed_hash === 'string') res.set('X-Tracker-Tip-Hash', f.committed_hash)
     return f
 }
 
@@ -359,8 +371,8 @@ function createApp(config){
         getBalance: config.getBalance || ((address) => getBalance(tracker, address)),
         getInfo: (address) => getInfo(tracker, address),
         parsePageOpts: (query) => parsePageOpts(query, config.MAX_PAGE_LIMIT),
-        getFreshnessMeta: (height) => getFreshnessMeta(tracker, height),
-        setFreshnessHeaders: (res, height) => setFreshnessHeaders(tracker, res, height),
+        getFreshnessMeta: (height, readAt) => getFreshnessMeta(tracker, height, readAt),
+        setFreshnessHeaders: (res, height, readAt) => setFreshnessHeaders(tracker, res, height, readAt),
         DB_NAME: config.DB_NAME,
         launchTracker: config.launchTracker,
         jsonRpcMethods: config.jsonRpcMethods

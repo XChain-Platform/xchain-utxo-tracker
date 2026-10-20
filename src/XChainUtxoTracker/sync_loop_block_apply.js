@@ -73,6 +73,10 @@ async function indexNextBlock(sync){
 // discard the open batch and roll back to the common ancestor. Hands back the
 // batch reset.
 async function rollBackOnPrevHashMismatch(sync){
+    // Drop the latch for the walk, as rollBackSameHeightTipSwap does: a lag
+    // within SYNCED_THRESHOLD leaves it up while the store serves the orphaned
+    // tip. The next pass at the tip sets it.
+    this.synced = false
     sync.prefetchQueue = []
     await this.db.endTransaction(false)
     // The rolled-back batch discarded the P-key write that

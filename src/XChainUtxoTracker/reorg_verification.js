@@ -20,6 +20,7 @@ const nodeUtil = require('node:util')
 const { REMOVE_SPENT, logger } = require('./constants.js')
 const XChainUtxoTracker = require('../XChainUtxoTracker.js')
 const { RETRY_WALK, nodeBlockHashOrRetry } = require('./reorg_node_reads.js')
+const { withStoreCommit } = require('./store_commit_lock.js')
 
 module.exports = {
     async verifyReorg(nodeTipHeight = null){
@@ -319,7 +320,8 @@ async function rollBackTipBlock(lastBlockHash, lastBlock, retryCount){
         await this.removeFromLastBlocks(lastBlockHash)
         await this.db.setLastBlockHash(lastBlock["ph"])
         await this.db.setLastBlockHeight(lastBlock["h"]-1)
-        await this.db.endTransaction()
+        // Commit as the store-commit lock's writer: the rollback moves the height a page reports.
+        await withStoreCommit(this, () => this.db.endTransaction())
         return true
     } catch (err){
         try { await this.db.endTransaction(false) } catch (_) {}
