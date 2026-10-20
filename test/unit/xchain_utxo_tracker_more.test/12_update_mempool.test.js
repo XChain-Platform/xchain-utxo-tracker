@@ -66,6 +66,8 @@ let tracker, db, mempoolDb;
 function registerTrackerHooks() {
     beforeEach(async function () {
         ({ tracker, db, mempoolDb } = await makeTracker());
+        // No node in unit tests: the prune's tip read fails closed unless a test stubs a tip.
+        sinon.stub(tracker.connector, 'getBlockchainInfo').rejects(new Error('no node in unit tests'));
     });
 
     afterEach(async function () {
@@ -207,6 +209,7 @@ describe('XChainUtxoTracker (more)', function () {
             await tracker.updateMempool();
 
             expect(delStub.calledOnce).to.be.true;
+            expect(delStub.firstCall.args[1]).to.deep.equal({ keepOnly: true }, 'no tip read: keep every tx');
             expect(tracker.mempoolBusy).to.be.false;
         });
 
@@ -249,6 +252,23 @@ describe('XChainUtxoTracker (more)', function () {
             expect(tracker.mempoolBusy).to.be.false;
             // The inter-batch sleep should have been called at least once (between batch 1 and 2)
             expect(tracker.sleep.callCount).to.be.at.least(1);
+        });
+
+        it('lets the prune delete only when the node tip is the committed tip', async function () {
+            sinon.stub(tracker.connector, 'getRawMempool').resolves([]);
+            const delStub = sinon.stub(mempoolDb, 'deleteAndCompareTxsNotInList').resolves({
+                transactionsDeleted: 0, inputsDeleted: 0, outputsDeleted: 0
+            });
+            const tipHash = randHash();
+            sinon.stub(db, 'getLastBlockHeight').resolves(7);
+            sinon.stub(db, 'getLastBlockHash').resolves(tipHash);
+            tracker.connector.getBlockchainInfo.resolves({ blocks: 7, bestblockhash: tipHash });
+            await tracker.updateMempool();
+            tracker.connector.getBlockchainInfo.resolves({ blocks: 8, bestblockhash: randHash() });
+            await tracker.updateMempool();
+
+            expect(delStub.firstCall.args[1]).to.deep.equal({ keepOnly: false }, 'at tip: deletions allowed');
+            expect(delStub.secondCall.args[1]).to.deep.equal({ keepOnly: true }, 'node ahead: keep every tx');
         });
     });
 });

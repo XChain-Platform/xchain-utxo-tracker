@@ -32,6 +32,8 @@
  *   M: [0x4D][blockHash(32)][txHash8(8)][outputIndex(4)]             = 45 B
  *   N: [0x4E][blockHash(32)]                                          = 33 B
  *   W: [0x57][blockHash(32)][txHash8(8)][outputIndex(4)]             = 45 B
+ *   X: [0x58][fullTxid(32)]                                           = 33 B
+ *   Y: [0x59][blockHash(32)][txHash8(8)]                              = 41 B
  *   R: [0x52]                                                         =  1 B
  *
  * Single-byte diagnostic records (no suffix; at most one of each per store):
@@ -42,13 +44,14 @@
  *   B: [height(4)][timestamp(4)][previousHash(32)]                   = 40 B
  *   T: [blockHash(32)][fullTxid(32)]                                  = 64 B
  *      (legacy and bulk-sync-seeded T values are [blockHash(32)] = 32 B;
- *      insertTransaction also writes the file-local X/Y records, see
- *      level_up_db/blocks_and_transactions.js)
+ *      insertTransaction also writes the X/Y records below)
  *   I: [txHash8(8)]                                                   =  8 B
  *   O: [value(8)][height(4)][fullTxHash(32)]{[coinbase(1)]}          = 44/45 B
  *   H: [scriptPubKey(32)]                                             = 32 B
  *   S: [height(4)]                                                    =  4 B
  *   W: [scriptPubKey(32)]                                             = 32 B
+ *   X: [blockHash(32)]                                                = 32 B
+ *   Y: [fullTxid(32)]                                                 = 32 B
  *   R: UTF-8 JSON {"reason","height","at"}                            = variable
  *
  ********************************************************************/
@@ -58,7 +61,7 @@ const util = require('../common/util')
 const loadPart = require
 const { AddressTooLargeError, InvalidCursorError } = require('./level_up_db/store_errors')
 const { encodeOutput, decodeOutput, encodeBlock, encodeTx, encodeInputVal, encodeOutHint } = require('./level_up_db/value_codec')
-const { kOutBlk, kOutputFromBuf, kOutDelFromBuf, kScriptBlkFromBuf, kBlkScriptFromBuf, kBlock, kTx, kScriptBlk, kBlkScript, kInput, kOutput, kOutHint, kInHint, kOutDel, kHintDel, kStoredBlk, rangeEnd } = require('./level_up_db/key_codec')
+const { kOutBlk, kOutputFromBuf, kOutDelFromBuf, kScriptBlkFromBuf, kBlkScriptFromBuf, kBlock, kTx, kScriptBlk, kBlkScript, kInput, kOutput, kOutHint, kInHint, kOutDel, kHintDel, kStoredBlk, kTxExact, kTxBlockRecovery, rangeEnd } = require('./level_up_db/key_codec')
 
 // A class split into part modules has to put the moved methods back on its
 // prototype. Object.assign would do that as ENUMERABLE own properties, while
@@ -234,6 +237,8 @@ Object.assign(module.exports, {
     kOutDel,
     kHintDel,
     kStoredBlk,
+    kTxExact,
+    kTxBlockRecovery,
     rangeEnd,
     // Exported so the halt-marker tests can assert the record sits under the one
     // reserved byte and collides with no k* builder.

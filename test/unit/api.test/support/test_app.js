@@ -11,9 +11,6 @@
 // contact legal@dankest.llc.
 
 const { timingSafeEqual } = require('crypto');
-const assert = require('assert');
-const sinon = require('sinon');
-const supertest = require('supertest');
 const { createApp } = require('../../../../src/api/startup.js');
 
 const ADMIN_METHODS = new Set([
@@ -31,7 +28,7 @@ function keyEquals(provided, expected) {
 }
 
 // The production routes build the readiness header as
-// res.set('X-Mempool-Ready', String(meta.mempool_ready)); the gate suite asserts it on the real app.
+// res.set('X-Mempool-Ready', String(meta.mempool_ready)); the gate suite in api.test.js asserts it on the real app.
 function installUnmatchedRouteLabel(app) {
   app.all('/*unmatched', (req, res, next) => next());
   return app;
@@ -92,33 +89,4 @@ function createMockTracker(sinon) {
   };
 }
 
-if (typeof describe === 'function') {
-  describe('production app gate', function () {
-    afterEach(function () {
-      sinon.restore();
-    });
-
-    it('serves the production UTXO route', async function () {
-      const firstTracker = createMockTracker(sinon);
-      const secondTracker = createMockTracker(sinon);
-      const firstUtxos = [{ txid: 'first', vout: 0 }];
-      firstTracker.getUtxosAddress.resolves(firstUtxos);
-      secondTracker.getUtxosAddress.resolves([{ txid: 'second', vout: 1 }]);
-      const trackerFactory = sinon.stub().returns(firstTracker);
-
-      const firstApp = createApp(createTestConfig(firstTracker, '', {
-        tracker: undefined,
-        trackerFactory
-      }));
-      createApp(createTestConfig(secondTracker));
-      const response = await supertest(firstApp).get('/utxos/address').expect(200);
-      assert.deepStrictEqual(response.body, firstUtxos);
-      assert.strictEqual(response.headers['x-mempool-ready'], 'true');
-      sinon.assert.calledOnce(trackerFactory);
-      sinon.assert.calledOnceWithExactly(firstTracker.getUtxosAddress, 'address', {});
-      sinon.assert.notCalled(secondTracker.getUtxosAddress);
-    });
-  });
-}
-
-module.exports = { createTestApp, createMockTracker, MAX_JSONRPC_BATCH };
+module.exports = { createTestApp, createTestConfig, createMockTracker, MAX_JSONRPC_BATCH };

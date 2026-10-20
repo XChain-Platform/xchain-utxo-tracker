@@ -12,7 +12,7 @@
  *
  **********************************************************************/
 
-const { P_OUT_BLK, P_BLOCK, P_TX, P_INPUT, P_OUTPUT, P_OUT_HINT, P_IN_HINT, P_SCRIPT_BLK, P_BLK_SCRIPT, P_OUT_DEL, P_HINT_DEL, P_STORED_BLK } = require('./constants')
+const { P_OUT_BLK, P_BLOCK, P_TX, P_INPUT, P_OUTPUT, P_OUT_HINT, P_IN_HINT, P_SCRIPT_BLK, P_BLK_SCRIPT, P_OUT_DEL, P_HINT_DEL, P_STORED_BLK, P_TX_EXACT, P_TX_BLOCK_RECOVERY } = require('./constants')
 
 // Binary helpers
 
@@ -297,6 +297,36 @@ function kOutBlk(blockHashHex, txHash8Hex, idx) {
     return buf
 }
 
+// X key: full txid -> blockHash. Keyed on the whole 32-byte txid, so two txids
+// that share their 8-byte T prefix never contend for one slot the way T does;
+// that is what makes coexistence and rollback symmetry possible.
+function kTxExact(txidHex) {
+    if (txidHex.length !== 64) {
+        throw new Error(`kTxExact expects a 64-hex (32-byte) txid, got ${txidHex.length} chars`)
+    }
+    const buf = Buffer.allocUnsafe(33)
+    buf[0] = P_TX_EXACT
+    buf.write(txidHex, 1, 'hex')
+    return buf
+}
+
+// Y key: (blockHash, txHash8) -> full txid. Recovers which txid a block created
+// under an 8-byte prefix, so a rollback targets that tx's own X (and current T)
+// record even after a later colliding tx overwrote the shared T slot.
+function kTxBlockRecovery(blockHashHex, txHash8Hex) {
+    if (blockHashHex.length !== 64) {
+        throw new Error(`kTxBlockRecovery expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
+    }
+    if (txHash8Hex.length !== 16) {
+        throw new Error(`kTxBlockRecovery expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+    }
+    const buf = Buffer.allocUnsafe(41)
+    buf[0] = P_TX_BLOCK_RECOVERY
+    buf.write(blockHashHex, 1, 'hex')
+    buf.write(txHash8Hex, 33, 'hex')
+    return buf
+}
+
 // Build an O-prefixed output key from an already-binary scriptPubKey buffer
 // (used in the input-removal path where the script is fetched from the H index).
 function kOutputFromBuf(scriptPubKeyBuf, txHash8Hex, idx) {
@@ -340,4 +370,4 @@ function kOutDelFromBuf(blockHashHex, scriptPubKeyBuf, txHash8Hex, idx) {
     return buf
 }
 
-module.exports = { h2b, b2h, pb, idxBuf, parseOutputCursor, rangeEnd, toMapKey, kBlock, kTx, kInput, kOutput, kOutHint, kInHint, kScriptBlk, kScriptBlkFromBuf, kBlkScript, kBlkScriptFromBuf, kOutDel, kHintDel, kStoredBlk, kOutBlk, kOutputFromBuf, kOutDelFromBuf }
+module.exports = { h2b, b2h, pb, idxBuf, parseOutputCursor, rangeEnd, toMapKey, kBlock, kTx, kInput, kOutput, kOutHint, kInHint, kScriptBlk, kScriptBlkFromBuf, kBlkScript, kBlkScriptFromBuf, kOutDel, kHintDel, kStoredBlk, kOutBlk, kTxExact, kTxBlockRecovery, kOutputFromBuf, kOutDelFromBuf }

@@ -146,7 +146,34 @@ describe('LevelUpDb', function () {
   registerDeleteComparisonTests();
   registerLexSmallerDeletionTests();
   registerLexLargerDeletionTests();
+  registerKeepOnlyTests();
 });
+
+// keepOnly: the dedup still splices stored txids out of the list, and nothing is deleted.
+function registerKeepOnlyTests() {
+  describe('deleteAndCompareTxsNotInList keepOnly', function () {
+    it('dedups the list but keeps a stored tx the list no longer names', async function () {
+      const gone = randHash();
+      const kept = randHash();
+      const fresh = randHash();
+      const scriptHash = randHash();
+      await db.insertTransaction({ hash: gone, blockHash: randHash() });
+      await db.insertTransaction({ hash: kept, blockHash: randHash() });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: gone.substring(0, 16), outputIndex: 0, value: BigInt(1), height: -1 });
+      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: gone.substring(0, 16), outputIndex: 0 });
+      await db.endTransaction(true);
+
+      await db.beginTransaction();
+      const list = [kept, fresh].sort();
+      const result = await db.deleteAndCompareTxsNotInList(list, { keepOnly: true });
+      await db.endTransaction(true);
+
+      expect(result.transactionsDeleted).to.equal(0);
+      expect(list).to.deep.equal([fresh]);
+      expect(await db.getOutputsScriptPubKey(scriptHash)).to.have.length(1);
+    });
+  });
+}
 
   // recoverDeletedOutputsHints() removed 2026-07-10: dead code with zero
   // src/ callers, byte-for-byte identical to the processOutputHints=true

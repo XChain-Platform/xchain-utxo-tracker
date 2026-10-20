@@ -34,7 +34,7 @@ async function runPastStaleWindow(h, node, network, script) {
     const seen = await h.run(node, (n, s) => {
         if (script) script(n, s);
         return (h.clock - start) > NODE_RPC_STALE_MS ? 'stop' : null;
-    }, { network });
+    }, { network, inspect: (s) => { s.synced = h.tracker.synced; } });
     seen.nodeRpcStale = isNodeRpcStale({ lastNodeRpcOkAt: h.tracker.lastNodeRpcOkAt });
     // The two words GET /status puts on the wire for a reachable store.
     seen.status = seen.nodeRpcStale ? 'stalled' : 'ok';
@@ -55,7 +55,8 @@ describe('XChainUtxoTracker sync loop: node tip parse gate', function () {
         expect(seen.nodeRpcStale).to.equal(false);
         // The contradiction the rail showed: the tracker's own verdict never
         // wavered, so a probe that disagreed with it was reporting the clock.
-        expect(h.tracker.synced).to.equal(true);
+        // Read at the stop, before the loop drops the latch with its store.
+        expect(seen.synced).to.equal(true);
         expect(seen.height).to.equal(5);
         expect(h.tracker.latestKnownChainTip).to.equal(5);
     });

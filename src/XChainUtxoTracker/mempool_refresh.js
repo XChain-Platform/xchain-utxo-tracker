@@ -20,6 +20,7 @@ const nodeUtil = require('node:util')
 const bs = require('binary-search')
 const XChainBlockDecoder = require('../chain/XChainBlockDecoder')
 const { MEMPOOL_BATCH_SIZE, MEMPOOL_INTER_BATCH_SLEEP, MEMPOOL_MAX_TX_FETCH_RETRIES, logger } = require('./constants.js')
+const { withStoreCommit } = require('./store_commit_lock.js')
 
 module.exports = {
     async updateMempool(){
@@ -40,7 +41,9 @@ module.exports = {
                 return
             }
 
-            await reconvergeMempool.call(this, rawMempool, mempoolStartTime)
+            // Read the tips after the listing, so a block mined since it shows as a mismatch.
+            const mayDelete = await committedTipIsNodeTip.call(this)
+            await reconvergeMempool.call(this, rawMempool, mempoolStartTime, mayDelete)
         } else {
             logger.info("Mempool is still busy")
         }
@@ -67,25 +70,42 @@ function insertSortedTxids(rawMempool, rawMempoolUnordered){
     }
 }
 
+// Allow the prune to delete only when the node's tip is the block this tracker
+// committed: a tx missing from the listing may sit in a block not yet committed
+// here, and deleting it early serves its spent outpoint as unspent. A failed read keeps every tx.
+async function committedTipIsNodeTip(){
+    try {
+        const info = await this.connector.getBlockchainInfo()
+        const height = await this.db.getLastBlockHeight()
+        const hash = await this.db.getLastBlockHash()
+        return Boolean(info) && Number(info.blocks) === height
+            && typeof hash === 'string' && info.bestblockhash === hash
+    } catch (err){
+        logger.warn(nodeUtil.format('Mempool prune keeps every tx this pass: tip read failed: ' + (err && err.message)))
+        return false
+    }
+}
+
 // Phase 1 prunes the store to the node mempool, then phase 2 fetches and
 // stages what is new one committed batch at a time. Readiness is asserted
 // once every batch has landed and withdrawn on any fault; the pass always
 // releases the busy flag.
-async function reconvergeMempool(rawMempool, mempoolStartTime){
+async function reconvergeMempool(rawMempool, mempoolStartTime, mayDelete){
     const counts = { transactionsCount: 0, inputsCount: 0, outputsCount: 0,
         deletedTransactionsCount: 0, deletedInputsCount: 0, deletedOutputsCount: 0 }
 
     try {
-        await pruneMempoolStore.call(this, rawMempool, counts)
+        await pruneMempoolStore.call(this, rawMempool, counts, mayDelete)
         logBatchEstimate(rawMempool)
 
         // Phase 2: fetch each batch's raw txs (RPC) and the inter-batch
         // sleep OUTSIDE any open write transaction; only the parse/stage of
         // the already-fetched batch runs inside its own short-lived
-        // begin/endTransaction. The write path is released between batches,
-        // so mid-pass pending-balance reads and block-confirmation cleanup
-        // see each batch as soon as it commits instead of waiting for the
-        // whole reconvergence.
+        // begin/endTransaction. Mid-pass pending-balance reads see each batch
+        // as soon as it commits. Block flushes do not: mempoolBusy is held for
+        // the WHOLE pass (cleared only in the finally below), so a flush and the
+        // post-reorg resync wait for every batch and inter-batch sleep, and the
+        // store-commit lock around each batch commit does not shorten that wait.
         let i = 0
         let consecutiveTxFetchFailures = 0
         while(i<rawMempool.length){
@@ -128,7 +148,7 @@ async function reconvergeMempool(rawMempool, mempoolStartTime){
     }
 }
 
-async function pruneMempoolStore(rawMempool, counts){
+async function pruneMempoolStore(rawMempool, counts, mayDelete){
     // Phase 1: prune txs no longer in the node mempool and dedup
     // rawMempool down to only-new txids. This is a DB-only step
     // (no RPC, no sleep), so its write transaction opens and commits
@@ -144,8 +164,10 @@ async function pruneMempoolStore(rawMempool, counts){
     try {
         //This deletes the txs that are in the database but not longer in the mempool. Also, it removes
         //the transactions that already exist in the database, leaving rawMempool only with the new transactions from the mempool
-        let deletedInfo = await this.mempoolDb.deleteAndCompareTxsNotInList(rawMempool)
-        await this.mempoolDb.endTransaction()
+        // Off tip, dedup only: the block flush's cleanup removes mined txs, the next pass at tip evicted ones.
+        let deletedInfo = await this.mempoolDb.deleteAndCompareTxsNotInList(rawMempool, { keepOnly: mayDelete !== true })
+        // Commit as the store-commit lock's writer so no address read sees half of it.
+        await withStoreCommit(this, () => this.mempoolDb.endTransaction())
         // rawMempool now holds only the txs the store still lacks, so the
         // store is a partial snapshot until the last batch lands. Withdraw
         // readiness left over from the previous pass;
@@ -244,7 +266,8 @@ async function stageMempoolBatch(nextTxsHex, nodeTxids, rawMempool, counts){
                 counts.outputsCount = counts.outputsCount + countInfo["outputsCount"]
             }
         }
-        await this.mempoolDb.endTransaction()
+        // Commit as the store-commit lock's writer so no address read sees half of it.
+        await withStoreCommit(this, () => this.mempoolDb.endTransaction())
     } catch (err){
         // Discard this batch's staged writes and rethrow to the
         // outer handler; mempoolBusy is cleared in finally.

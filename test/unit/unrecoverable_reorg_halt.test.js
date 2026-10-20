@@ -353,3 +353,37 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
     });
   });
 });
+
+// A halt ends the loop that earned the readiness latches, so both halt entry
+// points must drop them; otherwise isSynced() and the synced gauge keep saying
+// synced beside get_sync_status, which floors on the halt.
+describe('XChainUtxoTracker halt drops the readiness latches', function () {
+  this.timeout(0);
+
+  it('haltForResync clears synced and mempoolReconverged', function () {
+    const tracker = newTracker();
+    tracker.db = { closes: 0, close: async function () { this.closes++; } };
+    tracker.synced = true;
+    tracker.mempoolReconverged = true;
+
+    tracker.haltForResync('deep reorg');
+
+    expect(tracker.isSynced()).to.equal(false);
+    expect(tracker.isMempoolReconverged()).to.equal(false);
+  });
+
+  it('resumeHaltFromMarker clears synced and mempoolReconverged', async function () {
+    const tracker = newTracker();
+    tracker.db = {
+      getHaltMarker: async () => ({ reason: 'r', at: '2026-09-15T00:00:00.000Z', height: 9 })
+    };
+    tracker.synced = true;
+    tracker.mempoolReconverged = true;
+
+    expect(await tracker.resumeHaltFromMarker()).to.equal(true);
+
+    expect(tracker.halted).to.equal(true);
+    expect(tracker.isSynced()).to.equal(false);
+    expect(tracker.isMempoolReconverged()).to.equal(false);
+  });
+});

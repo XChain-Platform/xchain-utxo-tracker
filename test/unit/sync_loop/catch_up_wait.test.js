@@ -49,3 +49,41 @@ describe('XChainUtxoTracker sync loop: catch-up wait', function () {
         expect(seen.height).to.equal(14);
     });
 });
+
+// Console lines (the harness stubs every console method) that contain `text`.
+function linesWith(method, text) {
+    return console[method].getCalls().filter((c) => c.args.join(' ').includes(text)).length;
+}
+
+// The wait's warn line is latched per event: a wait that ends because the node's
+// tip reached ours must drop the latch, or the next event is silent and a later
+// real rollback is announced as the end of an initial block download.
+describe('XChainUtxoTracker sync loop: catch-up wait log latch', function () {
+    const h = useSyncLoopHarness();
+
+    it('logs the wait warn line again for a second wait after the first ended at our tip', async function () {
+        const node = makeNode(buildChain(13));
+        const full = node.chain;
+        await h.run(node, (n) => {
+            if (n === 1) { node.chain = full.slice(0, 10); node.ibd = true; }
+            if (n === 3) { node.ibd = false; node.chain = buildChain(15, 0, full, 13); }
+            if (n === 5) { node.chain = full.slice(0, 10); node.ibd = true; }
+            return n >= 7 ? 'stop' : null;
+        });
+        expect(linesWith('warn', 'initialblockdownload=true'), 'one warn line per wait').to.equal(2);
+    });
+
+    it('announces no end of initial block download before a later real rollback', async function () {
+        const node = makeNode(buildChain(13));
+        const full = node.chain;
+        let longer = null;
+        await h.run(node, (n) => {
+            if (n === 1) { node.chain = full.slice(0, 10); node.ibd = true; }
+            if (n === 3) { node.ibd = false; longer = buildChain(15, 0, full, 13); node.chain = longer; }
+            if (n === 5) { node.retired = longer; node.chain = longer.slice(0, 12); }
+            return n >= 9 ? 'stop' : null;
+        });
+        expect(h.tracker.reorgCount, 'the later tip drop must roll back').to.equal(1);
+        expect(linesWith('log', 'left initial block download')).to.equal(0);
+    });
+});

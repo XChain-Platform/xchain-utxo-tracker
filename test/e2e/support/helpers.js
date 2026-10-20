@@ -204,6 +204,8 @@ function stubBlockchain(tracker, initialBlocks) {
   // Stub getBlockchainInfo
   tracker.connector.getBlockchainInfo = async () => ({
     blocks: state.tipHeight(),
+    // A real node names its tip hash too; the mempool prune compares it to the committed tip.
+    bestblockhash: state.blocks.length ? state.blocks[state.tipHeight()].hash : undefined,
     verificationprogress: 1.0,
     headers: state.tipHeight()
   });

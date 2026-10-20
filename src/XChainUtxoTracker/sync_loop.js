@@ -63,6 +63,10 @@ module.exports = {
                     clearInterval(this.mempoolInterval)
                     this.mempoolInterval = null
                 }
+                // Drop the readiness latches with the store: a closed (or soon wiped
+                // and restored) store is neither synced nor mempool ready.
+                this.synced = false
+                this.mempoolReconverged = false
                 await this.db.close()
                 this.parsingStopped = true
                 break
@@ -129,6 +133,10 @@ function newSyncLoopState({ lastProcessedBlockIndex, lastProcessedBlockHash }){
     // rather than in the constructor so the window starts when tracking starts.
     this.lastNodeRpcOkAt = Date.now()
     this.blockchainInfoLastBlock = -1
+    // A relaunched loop re-earns readiness against the store it just opened:
+    // only pollAtChainTip and the mempool poller may raise these again.
+    this.synced = false
+    this.mempoolReconverged = false
     return Object.assign(sync, {
         blocksQuantity: 0,
         // Transactions confirmed in this batch that need their mempool records

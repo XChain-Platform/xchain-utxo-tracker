@@ -2175,6 +2175,11 @@
       "Chaos: State Corruption Exp 6: Chain Reorganization During Uncommitted Batch replacement blocks can be processed after reorg discards batch",
       "Chaos: State Corruption Exp 6: Chain Reorganization During Uncommitted Batch uncommitted batch blocks are discarded on reorg"
     ],
+    "f8876b619227750e": [
+      "Regression: get_utxos reads its height under the store lock keeps the pre-commit height when a block commits while the page is being read",
+      "Regression: get_utxos reports the height its rows were read at JSON-RPC sync.tracker_height is the read height, not a height committed after it",
+      "Regression: get_utxos reports the height its rows were read at REST X-Tracker-Height is the read height, not a height committed after it"
+    ],
     "fb74bdf0ee81efe7": [
       "E2E: Mempool Lifecycle C1: mempool detection shows pending balance after updateMempool() processes a new tx",
       "E2E: Mempool Lifecycle C2: mempool to confirmed transition moves balance from pending to confirmed when tx is mined",
@@ -2410,8 +2415,8 @@
       }
     },
     "test:all": {
-      "fileCount": 212,
-      "titleCount": 1610,
+      "fileCount": 213,
+      "titleCount": 1613,
       "files": {
         "test/boundary/confirmations.test.js": "1435998dbed674e5",
         "test/boundary/key_range_scan.test.js": "6f265b450aa35233",
@@ -2460,6 +2465,7 @@
         "test/regression/reorg_window/empty_window_entry.test.js": "c9250290ae18e038",
         "test/regression/server/first_seen_freshness_sibling.test.js": "f2dd8c82bede1593",
         "test/regression/server/satoshi_float_precision.test.js": "800d95f7185ea26e",
+        "test/regression/server/utxo_page_sync_height_under_lock.test.js": "f8876b619227750e",
         "test/regression/store/reorg_batch_discard_and_cache_consistency.test.js": "79e7da96a404f3ae",
         "test/regression/store/store_replacement_cache_reset.test.js": "4b4ef70708f0f725",
         "test/regression/store/tip_nwindow_atomicity_recovery.test.js": "575ab638d4894873",
@@ -2794,8 +2800,8 @@
       "skipped": "not a mocha command (runs node)"
     },
     "test:regression": {
-      "fileCount": 31,
-      "titleCount": 203,
+      "fileCount": 32,
+      "titleCount": 206,
       "files": {
         "test/regression/bootstrap/bootstrap_invalid_size_keeps_task.test.js": "dbfd454d56a43e97",
         "test/regression/bootstrap/bootstrap_snapshot_digest_flush.test.js": "bf3e0358e24c0283",
@@ -2823,6 +2829,7 @@
         "test/regression/reorg_window/empty_window_entry.test.js": "c9250290ae18e038",
         "test/regression/server/first_seen_freshness_sibling.test.js": "f2dd8c82bede1593",
         "test/regression/server/satoshi_float_precision.test.js": "800d95f7185ea26e",
+        "test/regression/server/utxo_page_sync_height_under_lock.test.js": "f8876b619227750e",
         "test/regression/store/reorg_batch_discard_and_cache_consistency.test.js": "79e7da96a404f3ae",
         "test/regression/store/store_replacement_cache_reset.test.js": "4b4ef70708f0f725",
         "test/regression/store/tip_nwindow_atomicity_recovery.test.js": "575ab638d4894873",

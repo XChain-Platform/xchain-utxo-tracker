@@ -48,6 +48,8 @@ const REGISTRY = [
     { name: 'kHintDel',   len: 45, key: () => LevelUpStore.kHintDel(HASH64, HASH16, IDX) },
     { name: 'kStoredBlk', len: 33, key: () => LevelUpStore.kStoredBlk(HASH64) },
     { name: 'kOutBlk',    len: 45, key: () => LevelUpStore.kOutBlk(HASH64, HASH16, IDX) },
+    { name: 'kTxExact',   len: 33, key: () => LevelUpStore.kTxExact(HASH64) },
+    { name: 'kTxBlockRecovery', len: 41, key: () => LevelUpStore.kTxBlockRecovery(HASH64, HASH16) },
 ];
 
 // Buffer-variant builders mirror a hex builder's bytes, not a new family.
@@ -137,5 +139,14 @@ describe('LevelUpDb key-schema invariants', function () {
         it(`${name}: hex and Buffer builders are byte-identical`, function () {
             expect(buf().equals(hex()), 'builder pair diverged').to.equal(true);
         });
+    });
+
+    // removeTxBlockRecoveryIndexOnly prunes an aged-out block's Y records with a
+    // [Y][blockHash] prefix scan, so every txHash8 under that block must sort in range.
+    it('kTxBlockRecovery: a [Y][blockHash] prefix scan reaches every key of that block', function () {
+        const key = LevelUpStore.kTxBlockRecovery(HASH64, 'ff'.repeat(8));
+        const prefix = key.slice(0, 33);
+        expect(Buffer.compare(key, LevelUpStore.rangeEnd(prefix))).to.be.at.most(0);
+        expect(Buffer.compare(key, prefix)).to.be.above(0);
     });
 });

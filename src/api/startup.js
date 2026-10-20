@@ -116,8 +116,8 @@ async function getFreshnessMeta(tracker, knownCommittedHeight){
 // existing body shape untouched (additive, backward-compatible). X-Sync-Lag
 // is omitted entirely when lag is unknown (null) rather than sent as a
 // misleading 0.
-async function setFreshnessHeaders(tracker, res){
-    const f = await getFreshnessMeta(tracker)
+async function setFreshnessHeaders(tracker, res, knownCommittedHeight){
+    const f = await getFreshnessMeta(tracker, knownCommittedHeight)
     res.set('X-Tracker-Height', String(f.tracker_height))
     res.set('X-Node-Height', String(f.node_height))
     if (f.lag !== null) res.set('X-Sync-Lag', String(f.lag))
@@ -360,7 +360,7 @@ function createApp(config){
         getInfo: (address) => getInfo(tracker, address),
         parsePageOpts: (query) => parsePageOpts(query, config.MAX_PAGE_LIMIT),
         getFreshnessMeta: (height) => getFreshnessMeta(tracker, height),
-        setFreshnessHeaders: (res) => setFreshnessHeaders(tracker, res),
+        setFreshnessHeaders: (res, height) => setFreshnessHeaders(tracker, res, height),
         DB_NAME: config.DB_NAME,
         launchTracker: config.launchTracker,
         jsonRpcMethods: config.jsonRpcMethods

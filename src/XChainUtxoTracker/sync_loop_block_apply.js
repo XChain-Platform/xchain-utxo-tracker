@@ -19,7 +19,7 @@
 const util = require('../common/util')
 const { DB_TRANSACTION_BLOCKS_QUANTITY, HEAP_FLUSH_THRESHOLD_MB, P_PENDING_CLEANUP_KEY, REMOVE_SPENT, SYNCED_THRESHOLD, logger } = require('./constants.js')
 const { fillPrefetchQueue, fetchNextBlock } = require('./sync_loop_block_fetch.js')
-const { withStoreCommit } = require('./address_queries.js')
+const { withStoreCommit } = require('./store_commit_lock.js')
 const { logBatchTiming, recordSyncProgress, logSyncEta } = require('./sync_loop_progress.js')
 
 // Sync loop steps, called with the tracker as `this`; sync_loop.js says how.
@@ -238,7 +238,7 @@ async function flushBatch(sync, flush, nextBlockHash, nextBlockHeight){
 }
 
 // Commits the open batch, then drops the mined txs' mempool records, as ONE
-// exclusive section of the store-commit lock (address_queries.js). Committing
+// exclusive section of the store-commit lock (store_commit_lock.js). Committing
 // first means no single snapshot sees a mined output in neither store, but an
 // address read takes two snapshots (confirmed, then mempool); without the lock
 // a read whose confirmed snapshot predates the commit and whose mempool reads

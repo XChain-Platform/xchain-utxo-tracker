@@ -74,3 +74,45 @@ describe('halt marker: status surfaces', function () {
         expect(halted.halted_height).to.equal(9);
     });
 });
+
+// A halt freezes the store, so the per-response sibling (get_utxos `sync`, REST
+// X-Synced and X-Mempool-Ready) must floor it exactly as get_sync_status does,
+// even while the raw latches still read true.
+describe('Halt marker wiring: halt floors both freshness surfaces alike', function () {
+    const { get_sync_status } = require('../../../src/api/sync_status.js');
+
+    function haltedTrackerWithLiveLatches() {
+        return {
+            db: { getLastBlockHeight: async () => 10 },
+            connector: { getBlockchainInfo: async () => ({ blocks: 10 }) },
+            latestKnownChainTip: 10,
+            lastNodeRpcOkAt: Date.now(),
+            isSynced: () => true,
+            isMempoolReconverged: () => true,
+            halted: true, haltReason: 'r', haltedAt: '2026-09-15T00:00:00.000Z', haltedHeight: 9,
+            reorgCount: 0, lastReorgDepth: 0
+        };
+    }
+
+    it('reports a halted tracker unsynced and not mempool ready on the per-response sibling', function () {
+        const halted = XChainUtxoTracker.computeFreshness(10, 10, true, {
+            mempoolReconverged: true, halted: true, haltReason: 'r'
+        });
+        expect(halted).to.include({ synced: false, mempool_ready: false, halted: true, halt_reason: 'r' });
+        const running = XChainUtxoTracker.computeFreshness(10, 10, true, { mempoolReconverged: true });
+        expect(running).to.include({ synced: true, mempool_ready: true });
+    });
+
+    it('agrees with get_sync_status on synced and mempool_ready for the same halted tracker', async function () {
+        const tracker = haltedTrackerWithLiveLatches();
+        const status = await get_sync_status(tracker);
+        // The arguments getFreshnessMeta (src/api/startup.js) passes.
+        const sibling = XChainUtxoTracker.computeFreshness(10, tracker.latestKnownChainTip, tracker.isSynced(), {
+            mempoolReconverged: tracker.isMempoolReconverged(), halted: !!tracker.halted,
+            haltReason: tracker.haltReason, haltedAt: tracker.haltedAt, haltedHeight: tracker.haltedHeight
+        });
+        expect(status).to.include({ synced: false, mempool_ready: false });
+        expect({ synced: sibling.synced, mempool_ready: sibling.mempool_ready })
+            .to.deep.equal({ synced: status.synced, mempool_ready: status.mempool_ready });
+    });
+});
