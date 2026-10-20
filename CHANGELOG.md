@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-20
+
+### Fixed
+- Kept reorg walks and page consistency inside the store commit.
+- Reset sync latches on halt and serialized mempool commits with address reads.
+
 ## [0.25.0] - 2026-10-18
 
 ### Changed

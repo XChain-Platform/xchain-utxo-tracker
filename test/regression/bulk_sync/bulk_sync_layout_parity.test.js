@@ -61,6 +61,30 @@ const PREFIX_NAMES = {
     J: 'P_IN_HINT', N: 'P_STORED_BLK', S: 'P_SCRIPT_BLK', W: 'P_OUT_BLK', Z: 'P_BLK_SCRIPT',
 };
 
+// The tx-index prefixes a non-Bitcoin seed adds beside T, keyed by letter. They
+// have no LAYOUT row, so they stay out of PREFIX_NAMES.
+const TX_INDEX_NAMES = { X: 'P_TX_EXACT', Y: 'P_TX_BLOCK_RECOVERY' };
+
+// Prefix bytes the bulk seeder declares itself, in the two shapes a private
+// prefix takes; every one belongs in the live constants instead.
+function bulkDeclaredPrefixes() {
+    const root = path.join(__dirname, '../../..');
+    const found = [];
+    const walk = (p) => {
+        if (fs.statSync(p).isDirectory()) for (const e of fs.readdirSync(p)) walk(path.join(p, e));
+        else if (p.endsWith('.js')) found.push(...declaredIn(p, root));
+    };
+    walk(path.join(root, 'src/bulk_sync'));
+    return found;
+}
+
+// The private prefix declarations in one source file, as 'file NAME'.
+function declaredIn(file, root) {
+    const src = fs.readFileSync(file, 'utf8');
+    const shapes = [/\bconst\s+(P_[A-Z0-9_]+)\s*=\s*0x([0-9a-fA-F]{2})\b/g, /\b([A-Z][A-Z0-9_]*)\s*=\s*Buffer\.from\(\[0x([0-9a-fA-F]{2})\]\)/g];
+    return shapes.flatMap((re) => [...src.matchAll(re)].map((m) => path.relative(root, file) + ' ' + m[1]));
+}
+
 // Live keyspaces a seed deliberately does not write (src/bulk_sync/SPEC.md).
 const UNSEEDED = {
     K: 'reorg-recovery reverse index for deleted outputs, skipped entirely by the seed',
@@ -147,6 +171,20 @@ describe('Regression (bulk-sync): record layout parity with the live store', fun
             expect(bulkLayout[name], name).to.equal(liveConstants[name]);
             expect(liveConstants[name], name).to.equal(p.charCodeAt(0));
         }
+    });
+
+    it('bulk tx-index prefix bytes are the live store constants', function () {
+        expect(Object.keys(TX_INDEX_LAYOUT).sort()).to.deep.equal(['T', ...Object.keys(TX_INDEX_NAMES)].sort());
+        for (const [p, name] of Object.entries(TX_INDEX_NAMES)) {
+            expect(bulkLayout[name], name).to.be.a('number');
+            expect(bulkLayout[name], name).to.equal(liveConstants[name]);
+            expect(liveConstants[name], name).to.equal(p.charCodeAt(0));
+        }
+    });
+
+    it('the bulk seeder declares no prefix byte of its own', function () {
+        expect(bulkDeclaredPrefixes(), 'take the byte from record_layout.js, which reads the live constants')
+            .to.deep.equal([]);
     });
 
     it('every live store prefix byte is seeded or deliberately left unseeded', function () {

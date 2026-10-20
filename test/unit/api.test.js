@@ -10,14 +10,43 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
+const assert = require('assert');
 const { expect } = require('chai');
 const sinon = require('sinon');
 const supertest = require('supertest');
-const { createTestApp, createMockTracker } = require('./api.test/support/test_app');
+const { createTestApp, createTestConfig, createMockTracker } = require('./api.test/support/test_app');
+const { createApp } = require('../../src/api/startup.js');
 const { get_sync_status } = require('../../src/api/sync_status');
 
 let app;
 let mockTracker;
+
+describe('production app gate', function () {
+  afterEach(function () {
+    sinon.restore();
+  });
+
+  it('serves the production UTXO route', async function () {
+    const firstTracker = createMockTracker(sinon);
+    const secondTracker = createMockTracker(sinon);
+    const firstUtxos = [{ txid: 'first', vout: 0 }];
+    firstTracker.getUtxosAddress.resolves(firstUtxos);
+    secondTracker.getUtxosAddress.resolves([{ txid: 'second', vout: 1 }]);
+    const trackerFactory = sinon.stub().returns(firstTracker);
+
+    const firstApp = createApp(createTestConfig(firstTracker, '', {
+      tracker: undefined,
+      trackerFactory
+    }));
+    createApp(createTestConfig(secondTracker));
+    const response = await supertest(firstApp).get('/utxos/address').expect(200);
+    assert.deepStrictEqual(response.body, firstUtxos);
+    assert.strictEqual(response.headers['x-mempool-ready'], 'true');
+    sinon.assert.calledOnce(trackerFactory);
+    sinon.assert.calledOnceWithExactly(firstTracker.getUtxosAddress, 'address', {});
+    sinon.assert.notCalled(secondTracker.getUtxosAddress);
+  });
+});
 
 function registerApiHooks() {
   beforeEach(function () {

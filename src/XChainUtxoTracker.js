@@ -165,14 +165,13 @@ class XChainUtxoTracker {
         const tracker_height = (typeof committedHeight === 'number') ? committedHeight : -1
         const node_height    = (typeof nodeTip === 'number') ? nodeTip : -1
         const lag = (node_height >= 0 && tracker_height >= 0) ? (node_height - tracker_height) : null
-        // Floor BOTH verdicts on the two faults the raw isSynced() catch-up latch cannot see,
-        // as deriveSyncedVerdict (src/api/sync_status.js) does for get_sync_status: a negative
-        // lag (committed tip above a reset node's, so these outputs sit in blocks it no longer
-        // recognizes) and a stale node tip (lag measured against a frozen cache during an
-        // outage). create_tx gates on THIS sibling. A null lag and lag over SYNCED_THRESHOLD
-        // stay with the latch and the consumer's own lag budget, so those two can differ.
+        // Floor BOTH verdicts, as get_sync_status (src/api/sync_status.js) does, on the faults
+        // the raw latch cannot see: a negative lag (outputs in blocks a reset node no longer
+        // recognizes), a stale node tip (lag against a frozen cache) and a halt (frozen store,
+        // stopped mempool poller). create_tx gates on THIS sibling. A null lag and lag over
+        // SYNCED_THRESHOLD stay with the latch and the consumer's lag budget, so those can differ.
         const orphaned  = (lag !== null && lag < 0)
-        const isSynced  = (synced === true) && !orphaned && nodeHeightStale !== true
+        const isSynced  = (synced === true) && !orphaned && nodeHeightStale !== true && halted !== true
         const freshness = {
             tracker_height, node_height, lag,
             synced: isSynced,

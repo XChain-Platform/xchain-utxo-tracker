@@ -21,6 +21,7 @@ const bitcoin = require('bitcoinjs-lib')
 const util = require('../common/util')
 const { satoshiToDecimalString } = require('./catch_up_helpers.js')
 const { MAX_ADDRESS_OUTPUTS } = require('./constants.js')
+const { withStoreRead } = require('./store_commit_lock.js')
 
 // Litecoin Core on test networks hands out P2SH addresses with SCRIPT_ADDRESS2
 // (0x3a, 'Q...') by default, alongside the legacy 0xc4 form. Both encode the
@@ -53,72 +54,8 @@ function decodeAddressScript(address, network){
     }
 }
 
-// Store-commit lock: a block flush changes the confirmed store and the mempool
-// store in two steps (commit the confirmed batch, then delete the mined txs'
-// mempool records). An address read also takes two snapshots, the confirmed
-// store first and the mempool store after. Without coordination a read whose
-// confirmed snapshot predates the commit and whose mempool reads follow the
-// cleanup sees a just-mined output in neither store and serves the outpoint
-// that output's tx spent as unspent. So every address read runs as a shared
-// reader and the flush's commit-plus-cleanup runs as the exclusive writer:
-// the writer waits for in-flight reads to drain, and new reads wait while a
-// writer is pending or active (writer preference, so a steady read load cannot
-// starve the flush). Readers hold nothing the writer needs and vice versa, so
-// there is no lock cycle. The state lives on the tracker under a symbol so it
-// stays off the serialized and enumerable surface.
-const STORE_LOCK = Symbol('storeCommitLock')
-
-function storeLock(tracker){
-    if (!tracker[STORE_LOCK]) {
-        Object.defineProperty(tracker, STORE_LOCK, {
-            value: { readers: 0, writing: false, waiters: [] },
-            enumerable: false,
-            writable: false,
-            configurable: true,
-        })
-    }
-    return tracker[STORE_LOCK]
-}
-
-function waitForLockChange(lock){
-    return new Promise(resolve => lock.waiters.push(resolve))
-}
-
-function wakeLockWaiters(lock){
-    const waiters = lock.waiters
-    lock.waiters = []
-    for (const resolve of waiters) resolve()
-}
-
-// Runs one address read as a shared reader of both stores.
-async function withStoreRead(tracker, read){
-    const lock = storeLock(tracker)
-    while (lock.writing) await waitForLockChange(lock)
-    lock.readers++
-    try {
-        return await read()
-    } finally {
-        lock.readers--
-        if (lock.readers === 0) wakeLockWaiters(lock)
-    }
-}
-
-// Runs a flush's confirmed commit and mempool cleanup as the exclusive writer.
-async function withStoreCommit(tracker, commit){
-    const lock = storeLock(tracker)
-    while (lock.writing) await waitForLockChange(lock)
-    lock.writing = true
-    try {
-        while (lock.readers > 0) await waitForLockChange(lock)
-        return await commit()
-    } finally {
-        lock.writing = false
-        wakeLockWaiters(lock)
-    }
-}
-
 module.exports = {
-    // Both store snapshots are taken under the store-commit lock (see above).
+    // Both store snapshots are taken under the store-commit lock (store_commit_lock.js).
     async getBalanceInfo(address){
         return withStoreRead(this, () => readBalanceInfo.call(this, address))
     },
@@ -203,6 +140,12 @@ async function readBalanceInfo(address){
 // get_utxos's body: the confirmed snapshot, then the mempool snapshot.
 async function readUtxosAddress(address, { limit = null, after = null } = {}){
     const { scriptHash, scriptPubKeyHex, paged, pageLimit } = utxoQueryPlan(address, this.network, limit)
+    // Read the committed height inside the read lock, so the reported height is the one these rows came from.
+    const committedHeight = await this.db.getLastBlockHeight()
+    // Read the tip hash with it: the same batch commits both, and a same-height reorg changes only the hash.
+    const committedHash = await this.db.getLastBlockHash()
+    // Read the reorg count here too: a same-height reorg moves it before the replacement block commits.
+    const reorgCount = this.reorgCount
 
     // Paged mode pulls one bounded page of confirmed outputs (resuming from
     // `after`); unbounded mode pulls everything but is capped by the
@@ -214,7 +157,7 @@ async function readUtxosAddress(address, { limit = null, after = null } = {}){
 
     // Mempool outputs are unpaginated (the mempool set is small and bounded).
     // In paged mode include them only on the first page (after == null) so they
-    // are not duplicated across pages.
+    // are not duplicated across pages read from one committed height.
     let mempoolOutputs = (!paged || after == null)
         ? await this.mempoolDb.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
         : []
@@ -238,28 +181,34 @@ async function readUtxosAddress(address, { limit = null, after = null } = {}){
     }
 
     for (let nextOutput of mempoolOutputs) {
-        // See the confirmed-output loop above: a 16-char fallback means the
-        // O-record predates the fullTxHash field and can never spend validly.
-        let txid = requireFullTxid(nextOutput)
-        // Skip an outpoint already emitted from the confirmed store (just-mined
-        // tx still present in both stores during the cleanup window). confirmedKeys
-        // is a fast path but only holds THIS page's confirmed rows: in paged mode
-        // the confirmed twin of a both-stores outpoint can sit on a later page, so
-        // the page-scoped set misses it and the same outpoint would be returned
-        // twice across pages (handing the encoder a duplicate input). Fall back to
-        // a point-probe of the confirmed store's live H record, which is page
-        // independent, so the outpoint is emitted only from the confirmed store.
-        if (confirmedKeys.has(txid + ':' + nextOutput.vout)) continue
-        // Across pages the page's own list cannot see an outpoint emitted on an
-        // earlier page, so ask the confirmed store directly.
-        if (paged && await this.db.hasOutputForTx(txid.substring(0, 16), nextOutput.vout)) continue
-        // Skip mempool outputs that are also spent by another mempool tx
-        let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
-        if (mempoolInput != null) continue
-        results.push(mempoolUtxo(nextOutput, txid, scriptPubKeyHex))
+        await addServableMempoolUtxo.call(this, results, nextOutput, { confirmedKeys, paged, scriptPubKeyHex })
     }
 
-    return withNextCursor(results, paged, nextCursor)
+    return withNextCursor(results, paged, nextCursor, { committedHeight, committedHash, reorgCount })
+}
+
+// Adds the response entry for one mempool output, unless the confirmed store
+// already serves that outpoint or another mempool tx spends it.
+async function addServableMempoolUtxo(results, nextOutput, { confirmedKeys, paged, scriptPubKeyHex }){
+    // See the confirmed-output loop above: a 16-char fallback means the
+    // O-record predates the fullTxHash field and can never spend validly.
+    let txid = requireFullTxid(nextOutput)
+    // Skip an outpoint already emitted from the confirmed store (just-mined
+    // tx still present in both stores during the cleanup window). confirmedKeys
+    // is a fast path but only holds THIS page's confirmed rows: in paged mode
+    // the confirmed twin of a both-stores outpoint can sit on a later page, so
+    // the page-scoped set misses it and the same outpoint would be returned
+    // twice across pages (handing the encoder a duplicate input). Fall back to
+    // a point-probe of the confirmed store's live H record, which is page
+    // independent, so the outpoint is emitted only from the confirmed store.
+    if (confirmedKeys.has(txid + ':' + nextOutput.vout)) return
+    // Across pages the page's own list cannot see an outpoint emitted on an
+    // earlier page, so ask the confirmed store directly.
+    if (paged && await this.db.hasOutputForTx(txid.substring(0, 16), nextOutput.vout)) return
+    // Skip mempool outputs that are also spent by another mempool tx
+    let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+    if (mempoolInput != null) return
+    results.push(mempoolUtxo(nextOutput, txid, scriptPubKeyHex))
 }
 
 // The fail-loud txid guard: a stored output must carry its full 64-char txid,
@@ -305,8 +254,11 @@ function utxoQueryPlan(address, network, limit){
 // Continuation cursor for the next page, captured BEFORE the loop below
 // rewrites each output's `txid` to the full hash. The cursor is the last
 // *scanned* confirmed DB key (txHash8:vout), independent of mempool-spend
-// filtering, so the next page resumes with no gaps or repeats. Only set
-// when a full page was read (more rows may remain).
+// filtering. Only set when a full page was read (more rows may remain). Pages
+// are gap- and repeat-free only at one committed height: a block committed between
+// pages can re-serve page 1's mempool output as confirmed, so a pager restarts when sync.tracker_height
+// or sync.committed_hash moves (a same-height reorg keeps the height and changes the hash); REST carries
+// them as X-Tracker-Height and X-Tracker-Tip-Hash, beside X-Reorg-Count.
 function nextPageCursor(confirmedOutputs, paged, pageLimit){
     return (paged && confirmedOutputs.length === pageLimit)
         ? confirmedOutputs[confirmedOutputs.length - 1].txid + ':' + confirmedOutputs[confirmedOutputs.length - 1].vout
@@ -372,8 +324,12 @@ function mempoolUtxo(nextOutput, txid, scriptPubKeyHex){
 // Expose the continuation cursor as a non-enumerable property so the array
 // still serializes as a bare UTXO list (preserving the existing API/JSON-RPC
 // contract) while the REST layer can read it for the X-Next-Cursor header.
-function withNextCursor(results, paged, nextCursor){
+function withNextCursor(results, paged, nextCursor, { committedHeight, committedHash, reorgCount }){
     if (paged) Object.defineProperty(results, 'nextCursor', { value: nextCursor, enumerable: false })
+    // Carry the height, tip hash and reorg count read under the lock, for the response's freshness fields.
+    Object.defineProperty(results, 'committedHeight', { value: committedHeight, enumerable: false })
+    if (typeof committedHash === 'string') Object.defineProperty(results, 'committedHash', { value: committedHash, enumerable: false })
+    if (typeof reorgCount === 'number') Object.defineProperty(results, 'reorgCount', { value: reorgCount, enumerable: false })
 
     return results
 }
@@ -394,7 +350,3 @@ function balanceInfoResult(address, { confirmedBalance, pendingBalance, totalRec
         }
     }
 }
-
-// The flush takes the writer side of the store-commit lock. Non-enumerable, so
-// the prototype installer (which copies enumerable keys only) skips it.
-Object.defineProperty(module.exports, 'withStoreCommit', { value: withStoreCommit, enumerable: false })

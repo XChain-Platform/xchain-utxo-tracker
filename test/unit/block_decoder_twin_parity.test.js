@@ -166,8 +166,9 @@ describe('XChainBlockDecoder twin parity with xchain-decoder @regression', funct
 });
 
 // Result of one block parse, comparable across repos: block id, txid list (null for a
-// header-only block) and witness-commit hex, or the fact of a throw. A fresh Buffer per
-// call, so one side can never see bytes the other side's strip rewrote.
+// header-only block) and witness-commit hex, or a throw with its error class and code
+// (callers tell a wire-parse failure apart by class, so it must agree; the message
+// need not). A fresh Buffer per call, so one side never sees the other side's strip.
 function blockVerdict(instance, hex) {
     try {
         const block = instance.blockFromBuffer(Buffer.from(hex, 'hex'));
@@ -176,8 +177,8 @@ function blockVerdict(instance, hex) {
             txids: block.transactions === undefined ? null : block.transactions.map(t => t.getId()),
             witnessCommit: block.witnessCommit ? block.witnessCommit.toString('hex') : null,
         });
-    } catch (_) {
-        return 'throw';
+    } catch (err) {
+        return 'throw:' + (err && err.name) + ':' + (err && err.code);
     }
 }
 
@@ -232,6 +233,7 @@ const BLOCK_VECTORS = [
     { name: 'HogEx-shaped FIRST tx is not stripped', hex: HEADER_HEX + '02' + hogexTx('08') + LEGACY_TX_HEX, expect: 'throw' },
     { name: 'version 03 HogEx shape is not stripped', hex: HEADER_HEX + '01' + hogexTx('08', '03000000'), expect: 'throw' },
     { name: 'forged tx count', hex: HEADER_HEX + 'c8' + LEGACY_TX_HEX, expect: 'throw' },
+    { name: 'truncated tx-count varint', hex: HEADER_HEX + 'fd01', expect: 'throw' },
     { name: 'count bound: N txs in exactly 10*N bytes', hex: headerFor([MIN_TX_HEX, MIN_TX_HEX, MIN_TX_HEX]) + '03' + MIN_TX_HEX.repeat(3), expect: { txs: 3 } },
     { name: 'count bound: N+1 claimed in 10*N bytes', hex: HEADER_HEX + '04' + MIN_TX_HEX.repeat(3), expect: 'throw' },
     { name: 'truncated tx body', hex: HEADER_HEX + '01' + LEGACY_TX_HEX.slice(0, LEGACY_TX_HEX.length / 2), expect: 'throw' },
@@ -240,8 +242,9 @@ const BLOCK_VECTORS = [
 
 // Check one tracker verdict against its pinned kind; returns a message or null.
 function pinnedMismatch(vector, got) {
-    if (vector.expect === 'throw') return got === 'throw' ? null : 'expected a throw, got ' + got;
-    if (got === 'throw') return 'expected a parse, got a throw';
+    const threw = got.startsWith('throw:');
+    if (vector.expect === 'throw') return threw ? null : 'expected a throw, got ' + got;
+    if (threw) return 'expected a parse, got ' + got;
     const parsed = JSON.parse(got);
     const count = parsed.txids === null ? null : parsed.txids.length;
     if (count !== vector.expect.txs) return 'expected ' + vector.expect.txs + ' txs, got ' + count;

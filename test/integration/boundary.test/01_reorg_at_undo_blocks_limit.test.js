@@ -11,52 +11,93 @@
 // contact legal@dankest.llc.
 
 const { expect } = require('chai');
+const sinon = require('sinon');
 const {
   SATOSHI, TEST_KEYS, makeOutput, makeSpendInput, makeTx, makeCoinbaseTx, makeBlock,
   processAndCommit, processBlocksAndCommit, buildCoinbaseChain,
-  createTestTracker, closeTracker, coinAmount
+  createTestTracker, closeTracker, coinAmount, randHash
 } = require('../support/helpers');
+
+// Address roles in the fork below.
+const OWNER = 0;
+const PAYEE = 1;
+const KEPT_MINER = 2;
+const ORPHAN_MINER = 3;
+
+// Commits each block in its own batch, so every spend resolves through the stored
+// outputs and writes the recovery records a rollback reads.
+async function commitChain(tracker, blocks) {
+  for (const block of blocks) await processAndCommit(tracker, block);
+}
+
+// A chain whose last `depth` blocks are orphaned: two outputs owned before the fork,
+// one spent by the deepest orphan and one by the orphaned tip.
+function buildForkAtDepth(depth) {
+  const ownedA = makeCoinbaseTx(OWNER, 50 * SATOSHI);
+  const ownedB = makeCoinbaseTx(OWNER, 50 * SATOSHI);
+  const kept = [makeBlock(0, '0'.repeat(64), [ownedA])];
+  kept.push(makeBlock(1, kept[0].hash, [ownedB]));
+  kept.push(makeBlock(2, kept[1].hash, [makeCoinbaseTx(KEPT_MINER)]));
+  const spends = [ownedA, ownedB].map((owned) => makeTx({
+    ins: [makeSpendInput(owned._txid, 0)], outs: [makeOutput(PAYEE, 50 * SATOSHI)]
+  }));
+  const orphans = [];
+  for (let i = 0; i < depth; i++) {
+    const txs = [makeCoinbaseTx(ORPHAN_MINER)];
+    if (i === 0) txs.push(spends[0]);
+    if (i === depth - 1) txs.push(spends[1]);
+    const prev = (orphans[i - 1] || kept[kept.length - 1]).hash;
+    orphans.push(makeBlock(kept.length + i, prev, txs));
+  }
+  return { kept, orphans };
+}
+
+// The node agrees on every kept height and reports a different hash above them.
+function stubNodeChain(tracker, kept, tipHeight) {
+  const getBlockHash = sinon.stub(tracker.connector, 'getBlockHash');
+  kept.forEach((block) => getBlockHash.withArgs(block.height).resolves(block.hash));
+  for (let h = kept.length; h <= tipHeight; h++) getBlockHash.withArgs(h).resolves(randHash());
+}
+
+// verifyReorg runs outside a batch in production, so the harness drops any open one first.
+async function runVerifyReorg(tracker) {
+  if (tracker.db.transactionArray) await tracker.db.endTransaction(false);
+  tracker.db.transactionArray = null;
+  tracker.db.deletedTransactionArray = null;
+  await tracker.verifyReorg();
+}
+
+async function confirmedFor(tracker, index) {
+  return (await tracker.getBalanceInfo(TEST_KEYS[index].address)).utxos.confirmed;
+}
 
 // 6. Reorg at UNDO_BLOCKS boundary
 describe('Boundary: Reorg at UNDO_BLOCKS limit', function () {
   let tracker;
 
   beforeEach(async function () { tracker = await createTestTracker(); });
-  afterEach(async function () { await closeTracker(tracker); });
+  afterEach(async function () { sinon.restore(); await closeTracker(tracker); });
 
   it('recovers spent outputs during reorg within the UNDO_BLOCKS window', async function () {
-    // Block 0: coinbase to address 0 (50 BTC)
-    const coinbase = makeCoinbaseTx(0, 50 * SATOSHI);
-    const block0 = makeBlock(0, '0'.repeat(64), [coinbase]);
+    // A fork exactly as deep as the window: its deepest orphan is the oldest block whose recovery records the cleanup keeps.
+    tracker.undoBlocks = 3;
+    const { kept, orphans } = buildForkAtDepth(tracker.undoBlocks);
+    await commitChain(tracker, kept.concat(orphans));
+    tracker.lastBlocks = await tracker.loadLastBlocksSortedByHeight();
+    expect(tracker.lastBlocks).to.deep.equal(orphans.map((b) => b.hash));
+    expect(await confirmedFor(tracker, OWNER)).to.equal(0);
 
-    // Block 1: spend coinbase to address 1
-    const spendTx = makeTx({
-      ins: [makeSpendInput(coinbase._txid, 0)],
-      outs: [makeOutput(1, 50 * SATOSHI)]
-    });
-    const block1 = makeBlock(1, block0.hash, [makeCoinbaseTx(2), spendTx]);
+    stubNodeChain(tracker, kept, orphans[orphans.length - 1].height);
+    await runVerifyReorg(tracker);
 
-    await processAndCommit(tracker, block0);
-    await processAndCommit(tracker, block1);
-
-    // Address 0 should have 0 UTXOs (spent)
-    let utxos0 = await tracker.getUtxosAddress(TEST_KEYS[0].address);
-    expect(utxos0).to.have.length(0);
-
-    // Simulate a reorg by undoing block1's writes directly against the db layer.
-    // Simulate reorg: remove block 1's outputs and recover deletions
-    await tracker.db.beginTransaction();
-    await tracker.db.removeOutputScriptsInBlock(block1.hash);
-    await tracker.db.processDeletedOutputs(block1.hash, true);
-    await tracker.db.deleteBlock(block1.hash);
-    await tracker.db.setLastBlockHeight(0);
-    await tracker.db.setLastBlockHash(block0.hash);
-    await tracker.db.endTransaction();
-
-    // Address 0 should have its UTXO back
-    utxos0 = await tracker.getUtxosAddress(TEST_KEYS[0].address);
-    expect(utxos0).to.have.length(1);
-    expect(utxos0[0].amount).to.equal(coinAmount(50));
+    expect(await tracker.db.getLastBlockHeight()).to.equal(kept.length - 1);
+    expect(await tracker.db.getLastBlockHash()).to.equal(kept[kept.length - 1].hash);
+    expect(tracker.lastBlocks).to.deep.equal([]);
+    const owned = await tracker.getUtxosAddress(TEST_KEYS[OWNER].address);
+    expect(owned.map((u) => u.amount)).to.deep.equal([coinAmount(50), coinAmount(50)]);
+    expect(await confirmedFor(tracker, PAYEE)).to.equal(0);
+    expect(await confirmedFor(tracker, ORPHAN_MINER)).to.equal(0);
+    expect(await confirmedFor(tracker, KEPT_MINER)).to.equal(1);
   });
 });
 

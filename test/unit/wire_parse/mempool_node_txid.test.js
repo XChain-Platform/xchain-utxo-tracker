@@ -45,6 +45,8 @@ async function trackerServing(listing) {
     await tracker.mempoolDb.createDatabase()
     tracker.sleep = async () => {}
     tracker.connector.getRawMempool = async () => listing.map(x => x.txid)
+    // No node here: the prune's tip read fails closed instead of opening a socket.
+    tracker.connector.getBlockchainInfo = async () => { throw new Error('no node in unit tests') }
     tracker.connector.getRawTransactions = async (ids) => ids.map(id => listing.find(x => x.txid === id).hex)
     return tracker
 }

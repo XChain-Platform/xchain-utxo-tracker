@@ -13,53 +13,15 @@
  **********************************************************************/
 
 const bs = require("binary-search")
-const { P_TX, P_OUT_BLK } = require('./constants')
-const { toMapKey, kBlock, kTx, h2b, b2h, pb, rangeEnd } = require('./key_codec')
+const { P_TX, P_OUT_BLK, P_TX_BLOCK_RECOVERY } = require('./constants')
+const { toMapKey, kBlock, kTx, kTxExact, kTxBlockRecovery, h2b, b2h, pb, rangeEnd } = require('./key_codec')
 const { encodeBlock, decodeBlock, encodeTx, decodeTx } = require('./value_codec')
 
 const TXID_HEX_RE = /^[0-9a-f]{64}$/
 
-// Two private key families backing the exact full-txid index, kept local to
-// this file (not registered in key_codec.js/constants.js) since the T
-// keyspace's 8-byte prefix is shared by every other T consumer and cannot be
-// widened without touching them. 0x58 ('X') and 0x59 ('Y') are unused by every
-// k* family declared in level_up_db.js's schema doc.
-//
-// X: full-txid -> blockHash. Keyed on the whole 32-byte txid, so two txids
-// that share their 8-byte T-prefix never contend for the same slot the way T
-// itself does; this is what makes coexistence and rollback symmetry possible.
-const P_TX_EXACT = 0x58
-
-function kTxExact(txidHex) {
-    if (txidHex.length !== 64) {
-        throw new Error(`kTxExact expects a 64-hex (32-byte) txid, got ${txidHex.length} chars`)
-    }
-    const buf = Buffer.allocUnsafe(33)
-    buf[0] = P_TX_EXACT
-    buf.write(txidHex, 1, 'hex')
-    return buf
-}
-
-// Y: (blockHash, txHash8) -> full txid. Recovers exactly which txid a given
-// block created under a given 8-byte prefix, so a rollback can target that
-// tx's own X (and, if still current, T) record even after a later colliding
-// tx has overwritten the shared T slot. Scoped per-block (not just per
-// prefix) because the T slot's occupant can change out from under it.
-const P_TX_BLOCK_RECOVERY = 0x59
-
-function kTxBlockRecovery(blockHashHex, txHash8Hex) {
-    if (blockHashHex.length !== 64) {
-        throw new Error(`kTxBlockRecovery expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
-    }
-    if (txHash8Hex.length !== 16) {
-        throw new Error(`kTxBlockRecovery expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
-    }
-    const buf = Buffer.allocUnsafe(41)
-    buf[0] = P_TX_BLOCK_RECOVERY
-    buf.write(blockHashHex, 1, 'hex')
-    buf.write(txHash8Hex, 33, 'hex')
-    return buf
-}
+// The exact full-txid index lives in its own X and Y families (key_codec.js)
+// beside T, whose 8-byte prefix every other T consumer shares and which so
+// cannot be widened in place.
 
 module.exports = {
     // Returns the stored value for a key currently pending in transactionArray.
@@ -338,7 +300,9 @@ module.exports = {
 
     // Mempool helpers
 
-    async deleteAndCompareTxsNotInList(txidList){
+    // Deletes stored txs missing from the sorted txidList and splices the stored ones out of it.
+    // keepOnly runs the splice alone and deletes nothing.
+    async deleteAndCompareTxsNotInList(txidList, { keepOnly = false } = {}){
         const deletedTxs = []
         const options = {
             gte: pb(P_TX),
@@ -362,6 +326,8 @@ module.exports = {
             })
 
             if (txidIndex < 0) {
+                // Keep a stored tx the node no longer lists when told to keep.
+                if (keepOnly) continue
                 await this.deleteTransaction(txid)
                 deletedTxs.push(txid)
             } else {

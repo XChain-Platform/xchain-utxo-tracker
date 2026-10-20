@@ -24,11 +24,14 @@ describe('XChainUtxoTracker sync loop: forward sync and boot', function () {
 
     it('indexes from genesis to the node tip, starts the mempool poller once and stops cleanly', async function () {
         const node = makeNode(buildChain(13));
-        const seen = await h.run(node, (n) => (n >= 2 ? 'stop' : null));
+        // Read the latch while the loop still runs: the stop drops it with the store.
+        const seen = await h.run(node, (n) => (n >= 2 ? 'stop' : null),
+            { inspect: (s) => { s.synced = h.tracker.synced; } });
         expect(seen.height).to.equal(12);
         expect(seen.hash).to.equal(node.chain[12].hash);
         expect(h.tracker.lastCommittedHeight).to.equal(12);
-        expect(h.tracker.synced).to.equal(true);
+        expect(seen.synced).to.equal(true);
+        expect(h.tracker.synced).to.equal(false);
         expect(h.tracker.mempoolPolls).to.equal(1);
         expect(h.tracker.mempoolInterval).to.equal(null);
         expect(h.tracker.parsingStopped).to.equal(true);

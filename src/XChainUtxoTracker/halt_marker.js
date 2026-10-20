@@ -34,6 +34,10 @@ module.exports = {
         this.parsingAborted = true
         this.parsingStopped = false
         if (this.mempoolInterval){ clearInterval(this.mempoolInterval); this.mempoolInterval = null }
+        // Drop the readiness latches: with the loop gone and the mempool timer
+        // stopped, neither claim holds, and get_sync_status already says unsynced.
+        this.synced = false
+        this.mempoolReconverged = false
     },
 
     // Write the R marker so the NEXT process boots straight into the halted state

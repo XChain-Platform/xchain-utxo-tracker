@@ -24,6 +24,9 @@ const { CHECK_BLOCK_DELAY_MS, MEMPOOL_INTERVAL, P_PENDING_CLEANUP_KEY, logger } 
 // walk can apply it without a require cycle; re-exported below for its callers.
 const { nodeStillCatchingUp, catchUpWaitState, nodeTipIsParseable } = require('./catch_up_helpers.js')
 const { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal, flushPendingAtTip } = require('./sync_loop_block_apply.js')
+// The pause and re-read budget for settling a tip below ours, shared with the
+// reorg walk's mid-walk refresh so both apply one rule.
+const { TIP_SETTLE_DELAY_MS, TIP_SETTLE_MAX_READS } = require('./reorg_node_reads.js')
 
 // Sync loop steps, called with the tracker as `this`; sync_loop.js says how.
 
@@ -72,17 +75,17 @@ function reconcileRefreshedTip(sync){
     // The usual way a catch-up wait ends: the node's tip reached ours,
     // so the branch below is not entered at all and the published wait
     // would otherwise stay on the health surfaces for the rest of the
-    // process. Only the state is cleared here; the latched log lines are
-    // left to their own transition below.
+    // process.
     if (this.nodeCatchingUp && lastProcessedBlockIndex <= this.blockchainInfoLastBlock){
         this.nodeCatchingUp = null
     }
     // A node tip back at or above ours ends the tip-below event. Drop the
-    // refusal latch with it, or the next event (or an ordinary rollback)
-    // would log neither its warn line nor its refusal error: the latch
-    // promises one line per event, not one per process.
+    // refusal and catch-up log latches with it, or the next event would log
+    // no warn line and a later rollback would claim the node just left
+    // initial block download: each latch promises one line per event.
     if (lastProcessedBlockIndex <= this.blockchainInfoLastBlock){
         sync.tipBelowCommittedTipRefused = false
+        sync.nodeCatchingUpProblem = false
     }
 
     if (lastProcessedBlockIndex > this.blockchainInfoLastBlock){
@@ -178,11 +181,6 @@ async function recoverFromTipBelowOurs(sync){
     if (lastBlockDb.height > this.blockchainInfoLastBlock) return rollBackToNodeTip.call(this, sync, lastBlockDb)
     return repairLastBlockPointer.call(this, sync, lastBlockDb)
 }
-
-// Pause between the tip readings that must agree before a rollback, and how
-// many re-reads a moving tip gets before this pass gives up on it.
-const TIP_SETTLE_DELAY_MS = 2000
-const TIP_SETTLE_MAX_READS = 5
 
 // A node running invalidateblock (or any multi-block disconnect) drops its tip
 // one block at a time, so a poll mid-disconnect reads a transient tip that may
@@ -301,11 +299,10 @@ async function repairLastBlockPointer(sync, lastBlockDb){
 
 // At the node's tip: re-check the committed tip for a same-height reorg, commit
 // any blocks still staged, then report synced, start the mempool poller once,
-// and wait before asking again. Synced and mempool readiness are never reported
-// while staged blocks are unwritten: the store would still serve the older tip.
+// and wait before asking again. Synced is reported only past both: a staged
+// batch or a swapped tip means the store still serves blocks the node lacks.
 async function pollAtChainTip(sync){
     const pending = sync.blocksQuantity > 0
-    if (!pending) this.synced = true
 
     // Same-height tip reorg detection. While synced we otherwise never
     // re-check the committed tip hash, so a node that replaces its tip at
@@ -330,6 +327,10 @@ async function pollAtChainTip(sync){
     // staged, reports synced.
     if (pending) return flushPendingAtTip.call(this, sync)
 
+    // The committed tip is the node's (or the re-check could not ask) and
+    // nothing is staged: the one place the latch rises.
+    this.synced = true
+
     if (this.mempoolInterval == null){
         logger.info("Mempool updates started!")
         this.updateMempool()
@@ -346,6 +347,9 @@ async function rollBackSameHeightTipSwap(sync){
     // must leave a warn-level record even if verifyReorg then wedges
     // before reorgCount/last_reorg_depth advance.
     logger.warn("A same-height tip reorg has been detected. Cleaning blocks...")
+    // Drop the latch for the walk, as recoverFromTipBelowOurs does: the store
+    // serves the orphaned tip until it ends. The next pass at the tip sets it.
+    this.synced = false
     sync.prefetchQueue = []
     // Discard any in-flight batch before recovery, exactly as the
     // prev-hash-mismatch and true-regression reorg paths do. This

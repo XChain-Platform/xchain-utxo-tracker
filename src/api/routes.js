@@ -15,8 +15,9 @@ function registerUtxoRoute({ app, requestGate, getUtxos, parsePageOpts, setFresh
         try {
             const utxos = await getUtxos(address, parsePageOpts(req.query));
             // Freshness surface: tip height / sync lag so callers can gate on
-            // how stale this committed view is (see setFreshnessHeaders).
-            const freshness = await setFreshnessHeaders(res);
+            // how stale this committed view is (see setFreshnessHeaders), at the height, tip hash and reorg
+            // count the rows were read at (the page carries them as non-enumerable fields).
+            const freshness = await setFreshnessHeaders(res, utxos ? utxos.committedHeight : undefined, utxos);
             // Signal mempool readiness so callers can distinguish a genuinely empty
             // result from one served before the in-memory mempool has reconverged
             // after a restart. Body shape (a bare array) is left unchanged.
@@ -194,7 +195,8 @@ const jsonRpcController = {
             let utxos = await getUtxos(address, parsePageOpts({ limit, after }))
             const result = { utxos: utxos }
             if (utxos && utxos.nextCursor) result.nextCursor = utxos.nextCursor
-            result.sync = await getFreshnessMeta()
+            // Report the height, tip hash and reorg count the rows were read at, not ones a commit after the read moved.
+            result.sync = await getFreshnessMeta(utxos ? utxos.committedHeight : undefined, utxos)
             return result
         },
         // Frozen shape: bare {height} or null. xchain-indexer's UtxoTracker client

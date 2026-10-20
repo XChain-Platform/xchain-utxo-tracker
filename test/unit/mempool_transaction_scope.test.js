@@ -51,6 +51,8 @@ async function setUpMempoolFixture(prefix, ready) {
   tracker.db = db;
   tracker.mempoolDb = mempoolDb;
   tracker.blockchainInfoLastBlock = 1000;
+  // No node in unit tests: the prune's tip read fails closed instead of opening a socket.
+  sinon.stub(tracker.connector, 'getBlockchainInfo').rejects(new Error('no node in unit tests'));
   // Start from a previously-good pass: leaving that stale true asserted is the bug.
   if (ready) tracker.mempoolReconverged = true;
 }

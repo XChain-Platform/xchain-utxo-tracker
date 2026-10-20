@@ -291,6 +291,33 @@ describe('XChainUtxoTracker.verifyReorg mid-walk tip refresh', function () {
   });
 });
 
+// A lower mid-walk tip is the height every committed block above it is deleted
+// against, so it is taken only once two readings agree, as at walk entry; a
+// passing reading must not spend the undo window on blocks the node still has.
+describe('XChainUtxoTracker.verifyReorg mid-walk tip refresh settles a lower reading', function () {
+  this.timeout(0);
+
+  it('ignores one transient lower reading and deletes only above the settled tip', async function () {
+    // The node is at 100 throughout; its first answer is a passing 95.
+    const readings = [95];
+    const { tracker, state } = buildTipDropTracker({
+      info: (s) => ({ blocks: readings.length ? readings.shift() : s.nodeTip, initialblockdownload: false, verificationprogress: 1 })
+    });
+    expect(await tracker.verifyReorg()).to.equal(true);
+    expect(state.deleted).to.deep.equal([105, 104, 103, 102, 101]);
+  });
+
+  it('keeps the walk tip while the reading is still moving, then acts on the settled one', async function () {
+    // Five falling readings never settle; the walk keeps 103 and retries.
+    const readings = [99, 98, 97, 96, 95, 94];
+    const { tracker, state } = buildTipDropTracker({
+      info: (s) => ({ blocks: readings.length ? readings.shift() : s.nodeTip, initialblockdownload: false, verificationprogress: 1 })
+    });
+    expect(await tracker.verifyReorg(103)).to.equal(true);
+    expect(state.deleted).to.deep.equal([105, 104, 103, 102, 101]);
+  });
+});
+
 // The two callers that pass no tip must not let the walk's tagged refusal escape
 // start(): they hand it back to the sync loop's tip check and reset the batch.
 describe('no-tip reorg callers hand a tip refusal back to the tip check', function () {

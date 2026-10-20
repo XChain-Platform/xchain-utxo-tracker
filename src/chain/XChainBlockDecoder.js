@@ -320,10 +320,12 @@ class XChainBlockDecoder {
             case "mweb":
                 const { bufferReader, block } = readMwebBlockHeader(buffer);
                 if (buffer.length === 80) return block;
-                const nTransactions = bufferReader.readVarInt();
-                validateMwebTransactionCount(bufferReader, nTransactions);
                 let extensionFollows;
+                // The count read and its bound fail as a TransactionParseError too, as
+                // in the decoder twin, so callers that branch on the class agree.
                 try {
+                    const nTransactions = bufferReader.readVarInt();
+                    validateMwebTransactionCount(bufferReader, nTransactions);
                     extensionFollows = readMwebTransactions(bufferReader, block, nTransactions);
                 } catch (err) {
                     throw transactionParseError('Block transaction parse failed: ' + (err && err.message ? err.message : err), err)
