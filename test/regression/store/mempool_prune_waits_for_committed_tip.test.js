@@ -52,45 +52,49 @@ function holdBlocksFrom(tracker, state, height) {
 
 const outpoints = (utxos) => utxos.map(u => u.txid + ':' + u.vout);
 
+// Builds a fresh in-memory tracker into the suite fixture.
+function setUp(fx) {
+  fx.restoreLevelUp = patchLevelUpStoreInMemory();
+  fx.tracker = createE2ETracker();
+  fx.release = null;
+}
+
+// Releases any held block fetch, then stops the tracker and restores the store.
+async function tearDown(fx) {
+  if (fx.release) fx.release();
+  sinon.restore();
+  await fx.tracker.stopParsing();
+  fx.restoreLevelUp();
+}
+
+// Synced at block 0 holding X, with T (spends X) in both mempools.
+async function syncedWithMempoolSpend(tracker) {
+  const cb = makeCoinbaseTx(0, 50 * SATOSHI);
+  const block0 = makeBlock(0, '0'.repeat(64), [cb]);
+  const state = stubBlockchain(tracker, [block0]);
+  tracker.start();
+  await waitForSynced(tracker);
+  const spend = makeTx({ ins: [makeSpendInput(cb.getId(), 0)], outs: [makeOutput(1, 10 * SATOSHI)] });
+  addMempoolTx(state, spend);
+  await tracker.updateMempool();
+  return { state, cb, block0, spend };
+}
+
 describe('Regression: mempool prune waits for the committed tip', function () {
   this.timeout(30000);
-  let tracker;
-  let restoreLevelUp;
-  let release;
+  const fx = {};
 
-  beforeEach(function () {
-    restoreLevelUp = patchLevelUpStoreInMemory();
-    tracker = createE2ETracker();
-    release = null;
-  });
-
-  afterEach(async function () {
-    if (release) release();
-    sinon.restore();
-    await tracker.stopParsing();
-    restoreLevelUp();
-  });
-
-  // Synced at block 0 holding X, with T (spends X) in both mempools.
-  async function syncedWithMempoolSpend() {
-    const cb = makeCoinbaseTx(0, 50 * SATOSHI);
-    const block0 = makeBlock(0, '0'.repeat(64), [cb]);
-    const state = stubBlockchain(tracker, [block0]);
-    tracker.start();
-    await waitForSynced(tracker);
-    const spend = makeTx({ ins: [makeSpendInput(cb.getId(), 0)], outs: [makeOutput(1, 10 * SATOSHI)] });
-    addMempoolTx(state, spend);
-    await tracker.updateMempool();
-    return { state, cb, block0, spend };
-  }
+  beforeEach(function () { setUp(fx); });
+  afterEach(function () { return tearDown(fx); });
 
   it('does not serve the spent coin while the block that mined its spend is still being fetched', async function () {
-    const { state, cb, block0, spend } = await syncedWithMempoolSpend();
+    const { tracker } = fx;
+    const { state, cb, block0, spend } = await syncedWithMempoolSpend(tracker);
     const x = cb.getId() + ':0';
     expect(outpoints(await tracker.getUtxosAddress(TEST_KEYS[0].address))).to.not.include(x);
 
     // The node mines T: its tip moves to block 1 and its mempool drops T.
-    release = holdBlocksFrom(tracker, state, 1);
+    fx.release = holdBlocksFrom(tracker, state, 1);
     addBlockToState(state, makeBlock(1, block0.hash, [makeCoinbaseTx(2, 50 * SATOSHI), spend]));
     removeMempoolTx(state, spend.getId());
     await tracker.updateMempool();
@@ -100,20 +104,22 @@ describe('Regression: mempool prune waits for the committed tip', function () {
     expect(await tracker.mempoolDb.getTransaction('54' + spend.getId().substring(0, 16)), 'T kept').to.not.equal(null);
 
     // Once the block commits, its own cleanup removes T and X is spent on the confirmed side.
-    release();
+    fx.release();
     await waitForHeight(tracker, 1);
     expect(outpoints(await tracker.getUtxosAddress(TEST_KEYS[0].address))).to.not.include(x);
   });
 
   it('deletes an evicted tx once the committed tip is the node tip', async function () {
-    const { state, cb } = await syncedWithMempoolSpend();
+    const { tracker } = fx;
+    const { state, cb } = await syncedWithMempoolSpend(tracker);
     clearMempool(state);
     await tracker.updateMempool();
     expect(outpoints(await tracker.getUtxosAddress(TEST_KEYS[0].address))).to.include(cb.getId() + ':0');
   });
 
   it('keeps every tx when the node reports the same height under a different hash', async function () {
-    const { state, cb } = await syncedWithMempoolSpend();
+    const { tracker } = fx;
+    const { state, cb } = await syncedWithMempoolSpend(tracker);
     const info = tracker.connector.getBlockchainInfo;
     tracker.connector.getBlockchainInfo = async () => ({ ...(await info()), bestblockhash: 'f'.repeat(64) });
     clearMempool(state);
@@ -122,7 +128,8 @@ describe('Regression: mempool prune waits for the committed tip', function () {
   });
 
   it('keeps every tx and frees the mempool mutex when the tip read fails', async function () {
-    const { state, cb } = await syncedWithMempoolSpend();
+    const { tracker } = fx;
+    const { state, cb } = await syncedWithMempoolSpend(tracker);
     const info = tracker.connector.getBlockchainInfo;
     tracker.connector.getBlockchainInfo = async () => { throw new Error('rpc down'); };
     clearMempool(state);
