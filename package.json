@@ -54,7 +54,7 @@
     "test:fuzz:quick": "FUZZ_RUNS=100 mocha --timeout 0 --recursive 'test/fuzz/**/*.fuzz.js' --exit",
     "test:fuzz:deep": "FUZZ_RUNS=10000 mocha --timeout 0 --recursive test/fuzz/**/*.fuzz.js",
     "test:perf": "mocha --timeout 0 --recursive test/performance/**/*.test.js --exit",
-    "test:perf:quick": "PERF_SCALE=small mocha --timeout 0 --recursive test/performance/**/*.test.js --exit",
+    "test:perf:quick": "node bin/perf-quick.js",
     "test:perf:deep": "PERF_SCALE=large node --max-old-space-size=4096 ./node_modules/.bin/mocha --timeout 0 --recursive test/performance/**/*.test.js --exit",
     "test:perf:scale": "UTXO_PERF_DB_SCALE=large node --max-old-space-size=4096 ./node_modules/.bin/mocha --timeout 0 --exit test/performance/mainnet_scale_queries.test.js",
     "test:perf:mainnet": "UTXO_PERF_DB_SCALE=mainnet node --max-old-space-size=6144 ./node_modules/.bin/mocha --timeout 0 --exit test/performance/mainnet_scale_queries.test.js",
