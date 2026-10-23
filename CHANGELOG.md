@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stopped trusting X-Forwarded-For by default in the per-IP rate limiter and bounded malformed request answers.
 - Bumped axios, ip-address, fast-uri and proxy-addr to patched versions.
 
+## [0.23.3] - 2026-10-21
+
+### Security
+- Updated the Node base image to 22.23.4 for the CVE-2026-111497 Brotli decoder fix.
+
 ## [0.23.0] - 2026-10-11
 
 ### Added
