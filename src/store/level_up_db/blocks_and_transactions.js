@@ -19,9 +19,9 @@ const { encodeBlock, decodeBlock, encodeTx, decodeTx } = require('./value_codec'
 
 const TXID_HEX_RE = /^[0-9a-f]{64}$/
 
-// The exact full-txid index lives in its own X and Y families (key_codec.js)
-// beside T, whose 8-byte prefix every other T consumer shares and which so
-// cannot be widened in place.
+// X maps a full txid to its block. Y records the full txids indexed by each
+// block so rollback can remove only that block's T and X entries. Both key
+// builders live in key_codec.js and share the layout version boundary with T.
 
 module.exports = {
     // Returns the stored value for a key currently pending in transactionArray.
@@ -123,52 +123,44 @@ module.exports = {
 
     // Transaction (T prefix)
 
-    // T value: [blockHash(32)][fullTxid(32)] = 64 bytes. Kept for
-    // getTransactions/getTransaction and mempool tracking, which only ever
-    // need the 8-byte prefix; it stays a single slot per prefix and can be
-    // silently overwritten by a later colliding txid, same as before. The
-    // exact-match reader (getTxBlock) does not use it: it reads the X record
-    // below instead, which is collision-free because it is keyed on the full
-    // txid rather than an 8-byte prefix. The Y record lets a later rollback
-    // recover which exact txid this block indexed under a given prefix, even
-    // after a colliding tx has overwritten the T/X slot (see
-    // deleteTransactionsInBlock). Records written before the X/Y fields
-    // existed are the legacy T-only shape; getTxBlock treats those as
-    // unindexed since there is no X record to find (see README.md's
-    // Upgrading section for the re-index path).
+    // T key: [T][txid(32)]; value: [blockHash(32)][fullTxid(32)] = 64 bytes.
+    // Read by getTransactions/getTransaction and mempool tracking. The
+    // exact-match reader (getTxBlock) reads the X record below. The Y record
+    // lets a later rollback confirm which txids this block indexed (see
+    // deleteTransactionsInBlock). A bulk seed with its tx index off writes the
+    // 32-byte T value (block hash only) and no X or Y; every T reader decodes
+    // only the first 32 bytes, and getTxBlock reads such a tx as unindexed
+    // because it has no X record (see README.md's Upgrading section). Two txs
+    // never share a T key unless they share the whole txid.
     // A blockHash-less (mempool) insert writes T only, like the S/Z/W writers:
     // X and Y have no reader in the mempool store and no delete path there, so
     // writing them would grow that store by every mempool tx ever seen.
     async insertTransaction(tx) {
-        const txHash8 = tx.hash.substring(0, 16)
         const tWrite = await this.addTransaction(
             "put",
-            kTx(txHash8),
+            kTx(tx.hash),
             Buffer.concat([encodeTx(tx.blockHash), h2b(tx.hash)])
         )
         if (!tx.blockHash) return tWrite
         await this.addTransaction("put", kTxExact(tx.hash), encodeTx(tx.blockHash))
-        return await this.addTransaction("put", kTxBlockRecovery(tx.blockHash, txHash8), h2b(tx.hash))
+        return await this.addTransaction("put", kTxBlockRecovery(tx.blockHash, tx.hash), h2b(tx.hash))
     },
 
-    // Deletes the T slot for an 8-byte prefix with no per-block context (mempool
+    // Deletes the T and X records for a txid with no per-block context (mempool
     // cleanup and mempool-eviction diffing, neither of which knows a blockHash).
-    // Also deletes the X record when the caller passes the full txid; a mempool
-    // entry has no X or Y to delete (insertTransaction writes T only without a
-    // blockHash), so the 8-byte-only callers leave nothing behind there.
-    // deleteTransactionsInBlock (the confirmed-chain rollback path) does not
-    // call this: it uses the Y record instead so a collision cannot make it
-    // delete the wrong tx's data.
+    // A mempool entry has no X or Y (insertTransaction writes T only without a
+    // blockHash), so the X delete is a no-op there. The confirmed-chain rollback
+    // (deleteTransactionsInBlock) calls this only for a block with no Y record;
+    // with one it checks each record's block first (deleteTxBlockRecord).
     async deleteTransaction(txid) {
-        if (typeof txid === 'string' && txid.length === 64) {
-            await this.addTransaction("del", kTxExact(txid.toLowerCase()), null)
-        }
-        return await this.addTransaction("del", kTx(txid.substring(0, 16)), null)
+        const txidLower = txid.toLowerCase()
+        await this.addTransaction("del", kTxExact(txidLower), null)
+        return await this.addTransaction("del", kTx(txidLower), null)
     },
 
     // Deletes the T (exact txid->block) records for every transaction created
     // in blockHash, via the W creation-block reverse index (every transaction
-    // has at least one output, so its txHash8 always appears there). Called
+    // has at least one output, so its txid always appears there). Called
     // from deleteBlock; kept as its own method (mirroring
     // removeCreatedOutputsInBlock's separate W scan over the O/H records) so
     // it stays independently testable.
@@ -181,44 +173,46 @@ module.exports = {
             values: false
         }
 
-        const seenTxHash8 = new Set()
+        const seenTxids = new Set()
         for await (const [key] of this.db.iterator(options)) {
-            // W key: [W(1)][blockHash(32)][txHash8(8)][outputIndex(4)]
-            const txHash8Hex = b2h(key.slice(33, 41))
-            if (seenTxHash8.has(txHash8Hex)) continue
-            seenTxHash8.add(txHash8Hex)
-            await this.deleteTxBlockRecord(txHash8Hex, blockHash)
+            // W key: [W(1)][blockHash(32)][txid(32)][outputIndex(4)]
+            const txidHex = b2h(key.slice(33, 65))
+            // A tx with several outputs has one W record per output, all
+            // adjacent in key order; its T/X/Y records are reversed once.
+            if (seenTxids.has(txidHex)) continue
+            seenTxids.add(txidHex)
+            await this.deleteTxBlockRecord(txidHex, blockHash)
         }
 
-        return seenTxHash8.size
+        return seenTxids.size
     },
 
-    // Reverses exactly what insertTransaction wrote for this (blockHash,
-    // txHash8) pair. Uses the Y record to recover the txid this block
-    // actually indexed under txHash8Hex, so a collision where a later block's
-    // tx has since taken over the shared T/X slot does not make this delete
-    // that other, still-live tx's data. Falls back to the pre-Y-record blind
-    // T delete for history indexed before this record existed (see README.md's
-    // Upgrading section).
-    async deleteTxBlockRecord(txHash8Hex, blockHash) {
-        const recoveryKey = kTxBlockRecovery(blockHash, txHash8Hex)
+    // Reverses exactly what insertTransaction wrote for this (blockHash, txid)
+    // pair. With no Y record (a bulk-seeded block without one) the T and X
+    // records go unconditionally. With one, T and X go only while they still
+    // point at this block: a later block carrying the same txid may have taken
+    // the slot over, and that block has not been rolled back.
+    async deleteTxBlockRecord(txidHex, blockHash) {
+        const recoveryKey = kTxBlockRecovery(blockHash, txidHex)
         const recoveredTxid = await this.db.get(recoveryKey)
 
+        // No Y record: the block was bulk-seeded without one, or has aged past
+        // the undo window, so there is nothing to check the slot's owner against.
         if (recoveredTxid === undefined) {
-            return await this.deleteTransaction(txHash8Hex)
+            return await this.deleteTransaction(txidHex)
         }
 
-        const fullTxid = b2h(recoveredTxid)
-
-        // Only clear the T slot if it still belongs to this exact tx: a later
-        // colliding tx sharing this 8-byte prefix may have since overwritten
-        // it, and that tx has not itself been rolled back.
-        const tValue = await this.db.get(kTx(txHash8Hex))
-        if (tValue !== undefined && tValue.length >= 64 && b2h(tValue.slice(32, 64)) === fullTxid) {
-            await this.addTransaction("del", kTx(txHash8Hex), null)
+        // Clear T only while it still names this block: a later block carrying
+        // the same txid may own the slot now, and it is not being rolled back.
+        const tValue = await this.db.get(kTx(txidHex))
+        if (tValue !== undefined && decodeTx(tValue).bh === blockHash) {
+            await this.addTransaction("del", kTx(txidHex), null)
         }
-
-        await this.addTransaction("del", kTxExact(fullTxid), null)
+        // The same ownership check for the exact-match X record.
+        const xValue = await this.db.get(kTxExact(txidHex))
+        if (xValue !== undefined && decodeTx(xValue).bh === blockHash) {
+            await this.addTransaction("del", kTxExact(txidHex), null)
+        }
         return await this.addTransaction("del", recoveryKey, null)
     },
 
@@ -268,8 +262,10 @@ module.exports = {
         }
     },
 
-    // Returns entries as { txid: "T"+txHash8Hex, block_hash: hex }
-    // Caller strips the leading "T" with .substr(1) to get txHash8Hex.
+    // Returns entries as { txid: "T"+txidHex, block_hash: hex }
+    // Caller strips the leading "T" with .substr(1) to get the txid.
+    // txHashPrefix is any whole-byte hex prefix of a txid; the scan returns every
+    // T record whose txid starts with it, in key (txid) order.
     async getTransactions(txHashPrefix){
         const transactions = []
         const prefix = Buffer.concat([pb(P_TX), h2b(txHashPrefix)])
@@ -281,10 +277,10 @@ module.exports = {
         }
 
         for await (const [key, value] of this.db.iterator(options)) {
-            const txHash8Hex = b2h(key.slice(1))
+            const txidHex = b2h(key.slice(1))
             const blockHashHex = decodeTx(value).bh
             transactions.push({
-                txid: 'T' + txHash8Hex,
+                txid: 'T' + txidHex,
                 block_hash: blockHashHex
             })
         }
@@ -312,7 +308,7 @@ module.exports = {
         }
 
         for await (const [key] of this.db.iterator(options)) {
-            const txid = b2h(key.slice(1))   // 16-char hex (txHash8)
+            const txid = b2h(key.slice(1))   // 64-char hex txid
             // binary-search convention: comparator(element, needle) returns
             // negative when element < needle (search to the right). The prior
             // form `needle.localeCompare(element_first16)` had the sign
@@ -322,7 +318,7 @@ module.exports = {
             // (returning -2 for insertion at index 1). Use `< 0` for any
             // not-found return and an element-vs-needle comparator.
             const txidIndex = bs(txidList, txid, function(element, needle) {
-                return element.substring(0, 16).localeCompare(needle)
+                return element.localeCompare(needle)
             })
 
             if (txidIndex < 0) {

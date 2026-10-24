@@ -95,7 +95,7 @@ function applyOutputValues(resolved, outputDbKeys, outputDbIndices, outputValues
 function unstageInMemorySpend(store, inp, r) {
     const inMemOKey = kOutputFromBuf(r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
     if (DEBUG_TRACE) {
-        logger.info(`TRACE delOutput db=${store.dbName} path=inMem sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+        logger.info(`TRACE delOutput db=${store.dbName} path=inMem sh=${r.scriptPubKeyBuf.toString('hex')} tx=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
     }
     // Capture the staged output value BEFORE removal so a cross-block
     // spend writes durable K/M restore records (see
@@ -116,7 +116,7 @@ function unstageInMemorySpend(store, inp, r) {
 // Phase 3, H without O: logs the divergence and stages nothing.
 function warnMissingOutputValue(store, inp, r) {
     if (DEBUG_TRACE) {
-        logger.info(`TRACE delOutput db=${store.dbName} path=noOval sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+        logger.info(`TRACE delOutput db=${store.dbName} path=noOval sh=${r.scriptPubKeyBuf.toString('hex')} tx=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
     }
     // H present, O missing on disk: the single-input path
     // (removeOutputWithInput) treats this as "do nothing" rather than
@@ -175,7 +175,7 @@ module.exports = {
             : kOutput(output.scriptPubKey, output.txHash, output.outputIndex)
         if (DEBUG_TRACE) {
             const shHex = Buffer.isBuffer(output.scriptPubKey) ? output.scriptPubKey.toString('hex') : output.scriptPubKey
-            logger.info(`TRACE insertOutput db=${this.dbName} sh=${shHex} tx8=${output.txHash} idx=${output.outputIndex} val=${output.value} h=${output.height}`)
+            logger.info(`TRACE insertOutput db=${this.dbName} sh=${shHex} tx=${output.txHash} idx=${output.outputIndex} val=${output.value} h=${output.height}`)
         }
         return await this.addTransaction("put", oKey, oVal)
     },
@@ -375,7 +375,7 @@ module.exports = {
             const mKey = kHintDel(inp.blockHash, inp.prevTxHash, inp.prevOutputIndex)
             const kKey = kOutDelFromBuf(inp.blockHash, r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
             if (DEBUG_TRACE) {
-                logger.info(`TRACE delOutput db=${this.dbName} path=archive sh=${r.scriptPubKeyBuf.toString('hex')} tx8=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+                logger.info(`TRACE delOutput db=${this.dbName} path=archive sh=${r.scriptPubKeyBuf.toString('hex')} tx=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
             }
             await this.addTransaction("put", mKey, r.scriptPubKeyBuf)
             await this.addTransaction("put", kKey, r.oVal)

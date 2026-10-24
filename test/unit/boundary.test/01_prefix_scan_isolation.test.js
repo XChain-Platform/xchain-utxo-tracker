@@ -38,11 +38,11 @@ describe('Boundary: Prefix scan isolation', function () {
   it('does not leak records from adjacent scriptHash prefixes', async function () {
     const scriptHash1 = '00' + randHash().substring(2);
     const scriptHash2 = '01' + randHash().substring(2);
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash1, txHash: txHash8, outputIndex: 0, value: 100000000, height: 1, fullTxHash: txHash8 + randHash().substring(16) });
-    await db.insertOutput({ scriptPubKey: scriptHash2, txHash: txHash8, outputIndex: 0, value: 200000000, height: 1, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash1, txHash: txidHex, outputIndex: 0, value: 100000000, height: 1, fullTxHash: txidHex });
+    await db.insertOutput({ scriptPubKey: scriptHash2, txHash: txidHex, outputIndex: 0, value: 200000000, height: 1, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs1 = await db.getOutputsScriptPubKey(scriptHash1);
@@ -55,10 +55,10 @@ describe('Boundary: Prefix scan isolation', function () {
   });
   it('handles all-zero scriptHash prefix correctly', async function () {
     const scriptHash = '0'.repeat(64);
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 100000000, height: 1, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 100000000, height: 1, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -66,10 +66,10 @@ describe('Boundary: Prefix scan isolation', function () {
   });
   it('handles all-ff scriptHash prefix correctly', async function () {
     const scriptHash = 'f'.repeat(64);
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 100000000, height: 1, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 100000000, height: 1, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -91,10 +91,10 @@ describe('Boundary: Prefix scan isolation', function () {
 
   it('returns exactly one result for single UTXO', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 100000000, height: 1, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 100000000, height: 1, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);

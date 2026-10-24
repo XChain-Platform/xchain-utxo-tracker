@@ -35,7 +35,7 @@ async function storeConfirmedOutput(tracker, { height, txHash, vout = 0, value =
     outputIndex: vout,
     value,
     height,
-    fullTxHash: txHash + 'ab'.repeat(24), // pad to a 64-hex full txid (guard requires it)
+    fullTxHash: txHash, // the O key and value carry the same full txid
   });
   await tracker.db.endTransaction();
 }
@@ -53,7 +53,7 @@ describe('Boundary: confirmation count at the chain tip', function () {
 
   it('an output mined in the tip block is 1-confirmed (not 0)', async function () {
     tracker.blockchainInfoLastBlock = 1000;
-    await storeConfirmedOutput(tracker, { height: 1000, txHash: '11'.repeat(8) });
+    await storeConfirmedOutput(tracker, { height: 1000, txHash: '11'.repeat(32) });
 
     const utxos = await tracker.getUtxosAddress(ADDR.address);
     expect(utxos).to.have.length(1);
@@ -63,7 +63,7 @@ describe('Boundary: confirmation count at the chain tip', function () {
 
   it('an output one block back from the tip is 2-confirmed', async function () {
     tracker.blockchainInfoLastBlock = 1000;
-    await storeConfirmedOutput(tracker, { height: 999, txHash: '22'.repeat(8) });
+    await storeConfirmedOutput(tracker, { height: 999, txHash: '22'.repeat(32) });
 
     const utxos = await tracker.getUtxosAddress(ADDR.address);
     expect(utxos[0].confirmations).to.equal(2);
@@ -71,7 +71,7 @@ describe('Boundary: confirmation count at the chain tip', function () {
 
   it('a genesis-height (0) output counts every block: tip+1 confirmations', async function () {
     tracker.blockchainInfoLastBlock = 5;
-    await storeConfirmedOutput(tracker, { height: 0, txHash: '33'.repeat(8) });
+    await storeConfirmedOutput(tracker, { height: 0, txHash: '33'.repeat(32) });
 
     const utxos = await tracker.getUtxosAddress(ADDR.address);
     expect(utxos[0].confirmations).to.equal(6); // 5 - 0 + 1
@@ -94,7 +94,7 @@ describe('Boundary: confirmation count at the chain tip', function () {
     // catch-up. The formula is not clamped to >= 1, so this pins the observable
     // boundary: height == tip+1 yields exactly 0 (a value a stale tip can emit).
     tracker.blockchainInfoLastBlock = 1000;
-    await storeConfirmedOutput(tracker, { height: 1001, txHash: '44'.repeat(8) });
+    await storeConfirmedOutput(tracker, { height: 1001, txHash: '44'.repeat(32) });
 
     const utxos = await tracker.getUtxosAddress(ADDR.address);
     expect(utxos[0].confirmations).to.equal(0);
@@ -107,7 +107,7 @@ describe('Boundary: confirmation count at the chain tip', function () {
   // withheld.
   it('withholds every confirmed output while the tip height is still uninitialized', async function () {
     tracker.blockchainInfoLastBlock = -1;
-    await storeConfirmedOutput(tracker, { height: 900, txHash: '55'.repeat(8) });
+    await storeConfirmedOutput(tracker, { height: 900, txHash: '55'.repeat(32) });
 
     const utxos = await tracker.getUtxosAddress(ADDR.address);
     expect(utxos).to.have.length(0);
@@ -115,7 +115,7 @@ describe('Boundary: confirmation count at the chain tip', function () {
 
   it('withholds an output more than one block above a stale cached tip', async function () {
     tracker.blockchainInfoLastBlock = 1000;
-    await storeConfirmedOutput(tracker, { height: 1002, txHash: '66'.repeat(8) });
+    await storeConfirmedOutput(tracker, { height: 1002, txHash: '66'.repeat(32) });
 
     const utxos = await tracker.getUtxosAddress(ADDR.address);
     expect(utxos).to.have.length(0);
@@ -123,7 +123,7 @@ describe('Boundary: confirmation count at the chain tip', function () {
 
   it('serves the same output once the tip initializes, with confirmations >= 1', async function () {
     tracker.blockchainInfoLastBlock = -1;
-    await storeConfirmedOutput(tracker, { height: 900, txHash: '77'.repeat(8) });
+    await storeConfirmedOutput(tracker, { height: 900, txHash: '77'.repeat(32) });
     expect(await tracker.getUtxosAddress(ADDR.address)).to.have.length(0);
 
     tracker.blockchainInfoLastBlock = 1000;

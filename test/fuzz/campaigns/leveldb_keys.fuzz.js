@@ -13,8 +13,8 @@
 const { expect } = require('chai');
 const {
   fc, FUZZ_RUNS, TEST_KEYS,
-  arbTxId, arbTxHash8, arbBlockHash, arbSatoshiValue, arbConfirmedHeight,
-  randHash, randHash8
+  arbTxId, arbBlockHash, arbSatoshiValue, arbConfirmedHeight,
+  randHash
 } = require('../support/helpers');
 const LevelUpStore = require('../../../src/store/level_up_db');
 
@@ -39,18 +39,18 @@ function distinctOutputTests() {
             await db.beginTransaction();
             const entries = [];
             for (let i = 0; i < count; i++) {
-              const txHash8 = randHash8();
-              const fullTxHash = txHash8 + randHash().substring(16);
+              const txidHex = randHash();
+              const fullTxHash = txidHex;
               const value = BigInt(i + 1) * 1000n;
               await db.insertOutput({
                 scriptPubKey: scriptHash,
-                txHash: txHash8,
+                txHash: txidHex,
                 outputIndex: 0,
                 value,
                 height: i,
                 fullTxHash
               });
-              entries.push({ txHash8, value: value.toString() });
+              entries.push({ txidHex, value: value.toString() });
             }
             await db.endTransaction(true);
 
@@ -58,8 +58,8 @@ function distinctOutputTests() {
             expect(outputs.length).to.equal(count);
 
             for (const entry of entries) {
-              const match = outputs.find(o => o.txid === entry.txHash8);
-              expect(match, `No output for txHash8 ${entry.txHash8}`).to.exist;
+              const match = outputs.find(o => o.txid === entry.txidHex);
+              expect(match, `No output for txidHex ${entry.txidHex}`).to.exist;
               expect(match.value).to.equal(entry.value);
             }
           } finally {
@@ -82,14 +82,14 @@ function distinctIndexTests() {
           const db = await freshDb();
           try {
             const scriptHash = TEST_KEYS[addrIdx].scriptHash;
-            const txHash8 = randHash8();
-            const fullTxHash = txHash8 + randHash().substring(16);
+            const txidHex = randHash();
+            const fullTxHash = txidHex;
 
             await db.beginTransaction();
             for (let i = 0; i < outputCount; i++) {
               await db.insertOutput({
                 scriptPubKey: scriptHash,
-                txHash: txHash8,
+                txHash: txidHex,
                 outputIndex: i,
                 value: BigInt((i + 1) * 1000),
                 height: 100,
@@ -162,19 +162,19 @@ function distinctInputTests() {
             await db.beginTransaction();
             const inputs = [];
             for (let i = 0; i < count; i++) {
-              const prevTxHash = randHash8();
-              const txHash = randHash8();
+              const prevTxHash = randHash();
+              const txHash = randHash();
               await db.insertInput({ prevTxHash, prevOutputIndex: i, txHash });
               inputs.push({ prevTxHash, idx: i, txHash });
             }
             await db.endTransaction(true);
 
             for (const inp of inputs) {
-              // getInput returns raw I-value Buffer [txHash8(8)]
+              // getInput returns raw I-value Buffer [txidHex(8)]
               const result = await db.getInput(inp.prevTxHash, inp.idx);
               expect(result).to.not.be.null;
               expect(Buffer.isBuffer(result)).to.be.true;
-              expect(result.toString('hex').substring(0, 16)).to.equal(inp.txHash);
+              expect(result.toString('hex')).to.equal(inp.txHash);
             }
           } finally {
             try { await db.close(); } catch (e) {}
@@ -203,11 +203,11 @@ describe('Fuzz: LevelDB Key Construction (P2)', function () {
 
         await db.beginTransaction();
         for (const idx of indices) {
-          const txHash8 = randHash8();
-          const fullTxHash = txHash8 + randHash().substring(16);
+          const txidHex = randHash();
+          const fullTxHash = txidHex;
           await db.insertOutput({
             scriptPubKey: scriptHash,
-            txHash: txHash8,
+            txHash: txidHex,
             outputIndex: idx,
             value: BigInt(idx + 1),
             height: 100,
@@ -238,11 +238,11 @@ describe('Fuzz: LevelDB Key Construction (P2)', function () {
 
               await db.beginTransaction();
               for (let i = 0; i < batchSize; i++) {
-                const txHash8 = randHash8();
-                const fullTxHash = txHash8 + randHash().substring(16);
+                const txidHex = randHash();
+                const fullTxHash = txidHex;
                 await db.insertOutput({
                   scriptPubKey: scriptHash,
-                  txHash: txHash8,
+                  txHash: txidHex,
                   outputIndex: 0,
                   value: BigInt(i + 1),
                   height: i,
@@ -271,7 +271,7 @@ describe('Fuzz: LevelDB Key Construction (P2)', function () {
       try {
         await fc.assert(
           fc.asyncProperty(
-            arbTxHash8(),
+            arbTxId(),
             fc.integer({ min: 0, max: 1000 }),
             async (prevTxHash, idx) => {
               const result = await db.getInput(prevTxHash, idx);

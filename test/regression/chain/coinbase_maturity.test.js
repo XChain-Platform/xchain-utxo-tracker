@@ -45,15 +45,15 @@ describe('coinbase maturity', function () {
     it('coinbase output decodes coinbase=true; non-coinbase stays 44 bytes and decodes false', async function () {
       const scriptHash = crypto.createHash('sha256').update(Buffer.from('deadbeef', 'hex')).digest('hex');
 
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: FULL_TXID_A.substring(0, 16), outputIndex: 0, value: BigInt(50), height: 5, fullTxHash: FULL_TXID_A, coinbase: true });
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: FULL_TXID_B.substring(0, 16), outputIndex: 1, value: BigInt(10), height: 5, fullTxHash: FULL_TXID_B, coinbase: false });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: FULL_TXID_A, outputIndex: 0, value: BigInt(50), height: 5, fullTxHash: FULL_TXID_A, coinbase: true });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: FULL_TXID_B, outputIndex: 1, value: BigInt(10), height: 5, fullTxHash: FULL_TXID_B, coinbase: false });
       await db.endTransaction(true);
 
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
       const byTx = Object.fromEntries(outputs.map(o => [o.txid, o]));
 
-      expect(byTx[FULL_TXID_A.substring(0, 16)].coinbase).to.equal(true);
-      expect(byTx[FULL_TXID_B.substring(0, 16)].coinbase).to.equal(false);
+      expect(byTx[FULL_TXID_A].coinbase).to.equal(true);
+      expect(byTx[FULL_TXID_B].coinbase).to.equal(false);
     });
 
     it('a legacy 44-byte O-value (written without the coinbase byte) decodes as non-coinbase', async function () {
@@ -69,7 +69,7 @@ describe('coinbase maturity', function () {
       const oKey = Buffer.concat([
         Buffer.from([0x4F]),
         Buffer.from(scriptHash, 'hex'),
-        Buffer.from(FULL_TXID_A.substring(0, 16), 'hex'),
+        Buffer.from(FULL_TXID_A, 'hex'),
         (() => { const b = Buffer.alloc(4); b.writeUInt32BE(0); return b; })()
       ]);
       await db.db.put(oKey, legacy);
@@ -108,7 +108,7 @@ describe('coinbase maturity', function () {
     });
 
     async function insertOutputForAddress(fullTxid, vout, height, coinbase) {
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: fullTxid.substring(0, 16), outputIndex: vout, value: BigInt(5000000000), height, fullTxHash: fullTxid, coinbase });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: fullTxid, outputIndex: vout, value: BigInt(5000000000), height, fullTxHash: fullTxid, coinbase });
       await db.endTransaction(true);
       await db.beginTransaction();
     }
@@ -174,7 +174,7 @@ describe('coinbase maturity', function () {
     });
 
     async function insertCoinbaseAt(fullTxid, height) {
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: fullTxid.substring(0, 16), outputIndex: 0, value: BigInt(1000000000000), height, fullTxHash: fullTxid, coinbase: true });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: fullTxid, outputIndex: 0, value: BigInt(1000000000000), height, fullTxHash: fullTxid, coinbase: true });
       await db.endTransaction(true);
       await db.beginTransaction();
     }

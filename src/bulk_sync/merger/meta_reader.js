@@ -19,14 +19,14 @@
  * Streams blocks out of a meta-*.dat file written by MetaWriter.
  *
  * File layout (see src/bulk_sync/writers.js):
- *   - 64-byte header: magic XCHNMTA1, chain/net codes, version, first/last
+ *   - 64-byte header: magic XCHNMTA2, chain/net codes, version, first/last
  *     height, record_count (blocks) at offset 20, record_size=0 at 28.
  *   - Variable-length block records:
  *       height(4 BE) | timestamp(4 BE) | blockHash(32) | previousHash(32)
- *       | tx_count(4 BE) | tx_count × txHash8(8)
+ *       | tx_count(4 BE) | tx_count × txid(32, display order)
  *
  * The generator yields objects whose `blockHash`, `previousHash` and each
- * entry of `txHash8List` are Buffer VIEWS into a single scratch buffer;
+ * entry of `txidList` are Buffer VIEWS into a single scratch buffer;
  * they are invalidated on the next iteration. Callers that need to retain
  * bytes across iterations must Buffer.from(view) to copy.
  *
@@ -37,7 +37,7 @@ const fs = require('fs')
 const HEADER_SIZE = 64
 const MIN_RECORD_SIZE = 76 // header fields before tx list
 
-const MAGIC_META = Buffer.from('XCHNMTA1', 'ascii')
+const { MAGIC_META, META_TXID_SIZE } = require('../writers.js')
 const IO_CHUNK_BYTES = 256 * 1024
 
 class MetaReader {
@@ -60,7 +60,7 @@ class MetaReader {
         }
         if (hdr.slice(0, 8).compare(MAGIC_META) !== 0) {
             fs.closeSync(this._fd)
-            throw new Error(`bad meta magic in ${filePath}`)
+            throw new Error(`bad meta magic '${hdr.slice(0, 8).toString('ascii')}' in ${filePath} (expected ${MAGIC_META.toString('ascii')}; a file from an older bulk-sync format must be parsed again)`)
         }
         this.chainCode    = hdr.readUInt8(8)
         this.networkCode  = hdr.readUInt8(9)
@@ -105,30 +105,30 @@ class MetaReader {
             this.readInto(this._scratch, 0, MIN_RECORD_SIZE, this._pos)
 
             const txCount = this._scratch.readUInt32BE(72)
-            const total   = MIN_RECORD_SIZE + 8 * txCount
+            const total   = MIN_RECORD_SIZE + META_TXID_SIZE * txCount
             if (total > remaining) {
                 throw new Error(`meta truncated: record at ${this._pos} needs ${total}B, only ${remaining}B left`)
             }
 
             this.ensureScratch(total)
             if (txCount > 0) {
-                this.readInto(this._scratch, MIN_RECORD_SIZE, 8 * txCount, this._pos + MIN_RECORD_SIZE)
+                this.readInto(this._scratch, MIN_RECORD_SIZE, META_TXID_SIZE * txCount, this._pos + MIN_RECORD_SIZE)
             }
 
             const height       = this._scratch.readUInt32BE(0)
             const timestamp    = this._scratch.readUInt32BE(4)
             const blockHash    = this._scratch.subarray(8, 40)
             const previousHash = this._scratch.subarray(40, 72)
-            const txHash8List  = new Array(txCount)
+            const txidList     = new Array(txCount)
             for (let i = 0; i < txCount; i++) {
-                const off = MIN_RECORD_SIZE + 8 * i
-                txHash8List[i] = this._scratch.subarray(off, off + 8)
+                const off = MIN_RECORD_SIZE + META_TXID_SIZE * i
+                txidList[i] = this._scratch.subarray(off, off + META_TXID_SIZE)
             }
 
             this._pos += total
             yielded++
 
-            yield { height, timestamp, blockHash, previousHash, txHash8List }
+            yield { height, timestamp, blockHash, previousHash, txidList }
         }
 
         if (yielded !== this.blockCount) {

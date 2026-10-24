@@ -220,7 +220,7 @@ describe('XChainUtxoTracker', function () {
       await tracker.parseTxOutputs(db, tx, blockHash, 10, false, false);
       await db.endTransaction(true);
 
-      const txs = await db.getTransactions(txid.substring(0, 16));
+      const txs = await db.getTransactions(txid);
       expect(txs).to.have.length(1);
       expect(txs[0].block_hash).to.equal(blockHash);
     });
@@ -234,7 +234,7 @@ describe('XChainUtxoTracker', function () {
       await tracker.parseTxOutputs(db, tx, blockHash, 10, false, true);
       await db.endTransaction(true);
 
-      const txs = await db.getTransactions(txid.substring(0, 16));
+      const txs = await db.getTransactions(txid);
       expect(txs).to.be.empty;
     });
   });
@@ -266,9 +266,9 @@ describe('XChainUtxoTracker', function () {
 
       expect(count).to.equal(1);
       // makeSpendInput stores hash in internal byte order (reversed).
-      // parseTxInputs calls .reverse() to get display txid, then .substring(0,16).
+      // parseTxInputs calls .reverse() to get display txid, then .
       // So the stored key uses the original prevTxId's first 16 chars.
-      const input = await db.getInput(prevTxId.substring(0, 16), 0);
+      const input = await db.getInput(prevTxId, 0);
       expect(input).to.not.be.null;
     });
   });

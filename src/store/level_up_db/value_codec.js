@@ -49,12 +49,12 @@ function encodeTx(blockHashHex) {
 
 function decodeTx(buf)          { return { bh: b2h(buf.slice(0, 32)) } }
 
-// I value: [txHash8(8)] = 8 bytes
-function encodeInputVal(txHash8Hex) {
-    if (txHash8Hex.length !== 16) {
-        throw new Error(`encodeInputVal expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+// I value: [spenderTxid(32)] = 32 bytes
+function encodeInputVal(txidHex) {
+    if (typeof txidHex !== 'string' || txidHex.length !== 64) {
+        throw new Error(`encodeInputVal expects a 64-hex (32-byte) txid, got ${txidHex == null ? txidHex : txidHex.length + ' chars'}`)
     }
-    return h2b(txHash8Hex)
+    return h2b(txidHex)
 }
 
 function encodeOutput(value, height, fullTxHashHex, isCoinbase = false) {

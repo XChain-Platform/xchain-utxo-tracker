@@ -46,7 +46,7 @@ describe('Regression: mempool insertTransaction leaves no X or Y records', funct
 
         expect(await db.getValuesFromKeyPattern('58' + txid)).to.be.empty;
         expect(await db.getValuesFromKeyPattern('59' + '0'.repeat(64))).to.be.empty;
-        expect(await db.getTransactions(txid.substring(0, 16))).to.have.length(1);
+        expect(await db.getTransactions(txid)).to.have.length(1);
     });
 
     it('leaves no X or Y behind after mempool eviction', async function () {
@@ -62,7 +62,7 @@ describe('Regression: mempool insertTransaction leaves no X or Y records', funct
         expect(await countPrefix(db, 0x58)).to.equal(0);
         expect(await countPrefix(db, 0x59)).to.equal(0);
         for (const txid of txids) {
-            expect(await db.getTransactions(txid.substring(0, 16))).to.be.empty;
+            expect(await db.getTransactions(txid)).to.be.empty;
         }
     });
 
@@ -75,6 +75,6 @@ describe('Regression: mempool insertTransaction leaves no X or Y records', funct
 
         expect(await db.getValuesFromKeyPattern('58' + txid)).to.have.length(1);
         expect(await db.getValuesFromKeyPattern('59' + blockHash)).to.have.length(1);
-        expect(await db.getTransactions(txid.substring(0, 16))).to.have.length(1);
+        expect(await db.getTransactions(txid)).to.have.length(1);
     });
 });

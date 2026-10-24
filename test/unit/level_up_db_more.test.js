@@ -113,7 +113,7 @@ describe('LevelUpDb (extended coverage)', function () {
 
             // Build the full hex key: P_TX byte + 8-byte txHash prefix
             const P_TX = 0x54;
-            const tx8 = txHash.substring(0, 16);
+            const tx8 = txHash;
             const keyHex = Buffer.from([P_TX]).toString('hex') + tx8;
             const result = await db.getTransaction(keyHex);
             expect(result).to.not.be.null;
@@ -121,7 +121,7 @@ describe('LevelUpDb (extended coverage)', function () {
         });
 
         it('returns null for an unknown key', async function () {
-            const fakeKey = '54' + randHash8();
+            const fakeKey = '54' + randHash();
             const result = await db.getTransaction(fakeKey);
             expect(result).to.be.null;
         });
@@ -141,12 +141,12 @@ describe('LevelUpDb (extended coverage)', function () {
         it('stores and retrieves an output when scriptPubKey is a Buffer', async function () {
             const scriptBuf = randBuf32();
             const scriptHex = scriptBuf.toString('hex');
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const fullTx    = randHash();
 
             await db.insertOutput({
                 scriptPubKey: scriptBuf,  // Buffer path → kOutputFromBuf
-                txHash: txHash8,
+                txHash: txidHex,
                 outputIndex: 0,
                 value: BigInt(55000),
                 height: 42,
@@ -165,11 +165,11 @@ describe('LevelUpDb (extended coverage)', function () {
             // Exercises the high-16-bit word of the cacheKey encoding.
             const scriptBuf = randBuf32();
             const scriptHex = scriptBuf.toString('hex');
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
 
             await db.insertOutput({
                 scriptPubKey: scriptBuf,
-                txHash: txHash8,
+                txHash: txidHex,
                 outputIndex: 0x1FFFE, // > 0xFFFF, sets the high char
                 value: BigInt(1),
                 height: 1
@@ -192,17 +192,17 @@ describe('LevelUpDb (extended coverage)', function () {
         it('stores a hint using a Buffer scriptPubKey and allows deletion by hint', async function () {
             const scriptBuf = randBuf32();
             const scriptHex = scriptBuf.toString('hex');
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
 
-            await db.insertOutput({ scriptPubKey: scriptHex, txHash: txHash8, outputIndex: 0, value: BigInt(100), height: 1 });
-            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 }); // Buffer path
+            await db.insertOutput({ scriptPubKey: scriptHex, txHash: txidHex, outputIndex: 0, value: BigInt(100), height: 1 });
+            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0 }); // Buffer path
             await db.endTransaction(true);
 
             let outputs = await db.getOutputsScriptPubKey(scriptHex);
             expect(outputs).to.have.length(1);
 
             await db.beginTransaction();
-            const deleted = await db.deleteOutputsByHint(txHash8 + randHash().substring(16));
+            const deleted = await db.deleteOutputsByHint(txidHex);
             await db.endTransaction(true);
 
             expect(deleted).to.equal(1);
@@ -223,7 +223,7 @@ describe('LevelUpDb (extended coverage)', function () {
             const result = await db.insertOutputBlock({
                 blockHash: null,
                 scriptPubKey: scriptBuf,
-                txHash: randHash8(),
+                txHash: randHash(),
                 outputIndex: 0
             });
             await db.endTransaction(true);
@@ -233,13 +233,13 @@ describe('LevelUpDb (extended coverage)', function () {
 
         it('stages a W entry with hex scriptPubKey', async function () {
             const scriptHex = randHash();
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const blockHash = randHash();
 
             await db.insertOutputBlock({
                 blockHash,
                 scriptPubKey: scriptHex,  // hex string path
-                txHash: txHash8,
+                txHash: txidHex,
                 outputIndex: 0
             });
             await db.endTransaction(true);
@@ -254,13 +254,13 @@ describe('LevelUpDb (extended coverage)', function () {
         it('stages a W entry with Buffer scriptPubKey', async function () {
             const scriptBuf = randBuf32();
             const scriptHex = scriptBuf.toString('hex');
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const blockHash = randHash();
 
             await db.insertOutputBlock({
                 blockHash,
                 scriptPubKey: scriptBuf,  // Buffer path
-                txHash: txHash8,
+                txHash: txidHex,
                 outputIndex: 0
             });
             await db.endTransaction(true);
@@ -281,13 +281,13 @@ describe('LevelUpDb (extended coverage)', function () {
         it('deletes O and H entries for outputs created in the rolled-back block', async function () {
             const scriptBuf = randBuf32();
             const scriptHex = scriptBuf.toString('hex');
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const blockHash = randHash();
 
             // Insert output + hint + W-index (simulating confirmed block processing)
-            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0, value: BigInt(9000), height: 50 });
-            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
-            await db.insertOutputBlock({ blockHash, scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
+            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0, value: BigInt(9000), height: 50 });
+            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0 });
+            await db.insertOutputBlock({ blockHash, scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0 });
             await db.endTransaction(true);
 
             let outputs = await db.getOutputsScriptPubKey(scriptHex);
@@ -320,12 +320,12 @@ describe('LevelUpDb (extended coverage)', function () {
         it('deletes the W reverse-index for the block but LEAVES the live O/H output', async function () {
             const scriptBuf = randBuf32();
             const scriptHex = scriptBuf.toString('hex');
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const blockHash = randHash();
 
-            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0, value: BigInt(9000), height: 50 });
-            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
-            await db.insertOutputBlock({ blockHash, scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
+            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0, value: BigInt(9000), height: 50 });
+            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0 });
+            await db.insertOutputBlock({ blockHash, scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0 });
             await db.endTransaction(true);
 
             // W entry present, output visible

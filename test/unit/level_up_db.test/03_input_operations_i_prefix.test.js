@@ -29,16 +29,16 @@ function registerInputOperationTests() {
   describe('input operations (I prefix)', function () {
     it('inserts and retrieves an input', async function () {
       const prevTxHash = randHash();
-      const spendingTxHash8 = randHash8();
+      const spendingTxHash8 = randHash();
       await db.insertInput({ prevTxHash, prevOutputIndex: 0, txHash: spendingTxHash8 });
       await db.endTransaction(true);
 
-      const input = await db.getInput(prevTxHash.substring(0, 16), 0);
+      const input = await db.getInput(prevTxHash, 0);
       expect(input).to.not.be.null;
     });
 
     it('returns null for unspent output', async function () {
-      const result = await db.getInput(randHash8(), 0);
+      const result = await db.getInput(randHash(), 0);
       expect(result).to.be.null;
     });
   });

@@ -113,13 +113,13 @@ function registerTransactionOperationTests() {
       await db.insertTransaction({ hash: txHash, blockHash });
       await db.endTransaction(true);
 
-      const txs = await db.getTransactions(txHash.substring(0, 16));
+      const txs = await db.getTransactions(txHash);
       expect(txs).to.have.length(1);
       expect(txs[0].block_hash).to.equal(blockHash);
     });
 
     it('returns empty array for unknown tx prefix', async function () {
-      const txs = await db.getTransactions(randHash8());
+      const txs = await db.getTransactions(randHash());
       expect(txs).to.be.an('array').that.is.empty;
     });
 
@@ -132,7 +132,7 @@ function registerTransactionOperationTests() {
       await db.deleteTransaction(txHash);
       await db.endTransaction(true);
 
-      const txs = await db.getTransactions(txHash.substring(0, 16));
+      const txs = await db.getTransactions(txHash);
       expect(txs).to.be.empty;
     });
   });

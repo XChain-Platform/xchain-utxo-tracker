@@ -25,8 +25,8 @@ function makeDb() {
   return new LevelUpStore('tx-block-index-test-' + Date.now() + '-' + (++dbCounter), true);
 }
 
-// Builds a full txid that shares its 8-byte (16-hex) key prefix with `txid`
-// but differs afterward, to exercise the shared-prefix collision path.
+// Builds a full txid that shares its first 8 bytes (16 hex) with `txid` but
+// differs afterward: keys are on the whole txid, so the two must never meet.
 function withSamePrefix(txid) {
   return txid.substring(0, 16) + randHash().substring(16);
 }
@@ -79,7 +79,6 @@ async function rejectsPrefixCollision() {
 
 async function deletesBlockTransactionsOnRollback() {
   const txHash = randHash();
-  const txHash8 = txHash.substring(0, 16);
   const blockHash = randHash();
   const scriptHash = randHash();
 
@@ -88,7 +87,7 @@ async function deletesBlockTransactionsOnRollback() {
   // The W (creation-block reverse index) record deleteTransactionsInBlock
   // reads to find which txids belong to the block; parseBlockTransactions
   // always writes one alongside the T record on the live REMOVE_SPENT path.
-  await db.insertOutputBlock({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, blockHash });
+  await db.insertOutputBlock({ scriptPubKey: scriptHash, txHash, outputIndex: 0, blockHash });
   await db.endTransaction(true);
 
   expect(await db.getTxBlock(txHash)).to.not.be.null;
@@ -100,7 +99,7 @@ async function deletesBlockTransactionsOnRollback() {
   expect(deletedCount).to.equal(1);
   expect(await db.getTxBlock(txHash)).to.be.null;
   // getTransactions (the prefix-scan reader) agrees the record is gone too.
-  expect(await db.getTransactions(txHash8)).to.be.an('array').that.is.empty;
+  expect(await db.getTransactions(txHash)).to.be.an('array').that.is.empty;
 }
 
 async function preservesLiveBlockMapping() {
@@ -111,20 +110,18 @@ async function preservesLiveBlockMapping() {
   const blockB = randHash();
   const scriptA = randHash();
   const scriptB = randHash();
-  const txA8 = txA.substring(0, 16);
-  const txB8 = txB.substring(0, 16);
 
   await db.insertBlock({ hash: blockA, height: 10, timestamp: 1, previousHash: randHash() });
   await db.insertTransaction({ hash: txA, blockHash: blockA });
-  await db.insertOutputBlock({ scriptPubKey: scriptA, txHash: txA8, outputIndex: 0, blockHash: blockA });
+  await db.insertOutputBlock({ scriptPubKey: scriptA, txHash: txA, outputIndex: 0, blockHash: blockA });
   await db.endTransaction(true);
 
   await db.beginTransaction();
   await db.insertBlock({ hash: blockB, height: 11, timestamp: 2, previousHash: blockA });
-  // Same 8-byte T prefix as txA: this insert overwrites the shared T slot,
-  // but must not disturb txA's own exact-index (X) record.
+  // Same first 8 bytes as txA: this insert must not touch any of txA's records,
+  // since every T, X and Y key carries the whole txid.
   await db.insertTransaction({ hash: txB, blockHash: blockB });
-  await db.insertOutputBlock({ scriptPubKey: scriptB, txHash: txB8, outputIndex: 0, blockHash: blockB });
+  await db.insertOutputBlock({ scriptPubKey: scriptB, txHash: txB, outputIndex: 0, blockHash: blockB });
   await db.endTransaction(true);
 
   const hitA = await db.getTxBlock(txA);
@@ -163,9 +160,9 @@ async function rejectsLegacyRecord() {
   const blockHash = randHash();
 
   await db.insertBlock({ hash: blockHash, height: 3, timestamp: 1, previousHash: randHash() });
-  // Simulate a record written before the full-txid field existed: the old
-  // 32-byte (block hash only) value, with no txid to verify against.
-  await db.addTransaction('put', LevelUpStore.kTx(txHash.substring(0, 16)), LevelUpStore.encodeTx(blockHash));
+  // A T record with the 32-byte (block hash only) value and no X record, the
+  // shape a bulk-sync seed writes with its tx index off: getTxBlock reads X only.
+  await db.addTransaction('put', LevelUpStore.kTx(txHash), LevelUpStore.encodeTx(blockHash));
   await db.endTransaction(true);
 
   expect(await db.getTxBlock(txHash)).to.be.null;
@@ -175,23 +172,22 @@ async function rejectsLegacyRecord() {
 // "T value shape"): a 32-byte T with no Y record is still cleared on rollback.
 async function deletesLegacyTRecordWithoutRecoveryOnRollback() {
   const txHash = randHash();
-  const txHash8 = txHash.substring(0, 16);
   const blockHash = randHash();
 
   await db.insertBlock({ hash: blockHash, height: 5, timestamp: 1, previousHash: randHash() });
   // Write only the T and W records a seed carries, never insertTransaction, so no X/Y exists.
-  await db.addTransaction('put', LevelUpStore.kTx(txHash8), LevelUpStore.encodeTx(blockHash));
-  await db.insertOutputBlock({ scriptPubKey: randHash(), txHash: txHash8, outputIndex: 0, blockHash });
+  await db.addTransaction('put', LevelUpStore.kTx(txHash), LevelUpStore.encodeTx(blockHash));
+  await db.insertOutputBlock({ scriptPubKey: randHash(), txHash, outputIndex: 0, blockHash });
   await db.endTransaction(true);
 
-  expect(await db.getTransactions(txHash8)).to.have.lengthOf(1);
+  expect(await db.getTransactions(txHash)).to.have.lengthOf(1);
 
   await db.beginTransaction();
   const deletedCount = await db.deleteTransactionsInBlock(blockHash);
   await db.endTransaction(true);
 
   expect(deletedCount).to.equal(1);
-  expect(await db.getTransactions(txHash8)).to.be.an('array').that.is.empty;
+  expect(await db.getTransactions(txHash)).to.be.an('array').that.is.empty;
 }
 
 async function reportsCommittedTip() {

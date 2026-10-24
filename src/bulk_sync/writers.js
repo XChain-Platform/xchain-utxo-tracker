@@ -31,22 +31,39 @@
 const fs = require('fs')
 
 const HEADER_SIZE        = 64
-const FILE_VERSION       = 1
+// Format 2 carries the whole 32-byte txid wherever format 1 carried its first 8
+// bytes, so the outputs/spends join and every derived key are on the full txid.
+const FILE_VERSION       = 2
 
 // Match dump.js codes for cross-tool compatibility of the shared prefix.
 const CHAIN_CODES        = { bitcoin: 1, litecoin: 2, dogecoin: 3 }
 const NETWORK_CODES      = { mainnet: 1, testnet: 2, regtest: 3 }
 
-const MAGIC_OUTPUTS      = Buffer.from('XCHNOUT1', 'ascii')
-const MAGIC_SPENDS       = Buffer.from('XCHNSPD1', 'ascii')
-const MAGIC_META         = Buffer.from('XCHNMTA1', 'ascii')
+// The magic's last digit is the format: a format 1 file (8-byte txid fields)
+// reads as a foreign magic, so the merge refuses it instead of misframing it.
+const MAGIC_OUTPUTS      = Buffer.from('XCHNOUT2', 'ascii')
+const MAGIC_SPENDS       = Buffer.from('XCHNSPD2', 'ascii')
+const MAGIC_META         = Buffer.from('XCHNMTA2', 'ascii')
 
-// 121 bytes: the 120-byte body plus a trailing coinbase-flag byte. The
-// record_size header field (offset 28) is the explicit format discriminator: a
-// legacy dump reports 120 and its outputs carry no flag; the merger reads the
-// header size and treats missing-byte as non-coinbase, so old dumps still merge.
-const OUTPUTS_RECORD_SIZE = 121
-const SPENDS_RECORD_SIZE  = 20
+// Outputs record field offsets (layout in the OutputsWriter comment below). The
+// sort and join key is the first OUTPUTS_KEY_SIZE bytes, (txid, vout).
+const OUT_TXID     = 0
+const OUT_VOUT     = 32
+const OUT_VALUE    = 36
+const OUT_HEIGHT   = 44
+const OUT_SCRIPT   = 48
+const OUT_BLOCK    = 80
+const OUT_COINBASE = 112
+const OUTPUTS_RECORD_SIZE = 113
+
+// Spends record field offsets; the key is (prevTxid, prevVout).
+const SPD_PREV_TXID    = 0
+const SPD_PREV_VOUT    = 32
+const SPD_SPENDER_TXID = 36
+const SPENDS_RECORD_SIZE  = 68
+
+// Bytes per tx in a meta block record's tx list.
+const META_TXID_SIZE = 32
 
 const FLUSH_BATCH_BYTES   = 256 * 1024 // ~256 KB per syscall
 
@@ -142,57 +159,55 @@ class FixedRecordWriter {
 }
 
 /**
- * outputs-*.dat: 121 bytes/record.
+ * outputs-*.dat: 113 bytes/record.
  *
- *   [0..8]     txHash8        8B raw
- *   [8..12]    vout           uint32 BE
- *   [12..20]   value          uint64 BE (satoshis)
- *   [20..24]   height         int32 BE
- *   [24..56]   fullTxHash     32B raw
- *   [56..88]   scriptPubKey   32B raw
- *   [88..120]  blockHash      32B raw
- *   [120]      coinbase       uint8 (1 = coinbase output, 0 = normal)
+ *   [0..32]    txid           32B raw, display order
+ *   [32..36]   vout           uint32 BE
+ *   [36..44]   value          uint64 BE (satoshis)
+ *   [44..48]   height         int32 BE
+ *   [48..80]   scriptPubKey   32B raw (sha256 of the script)
+ *   [80..112]  blockHash      32B raw
+ *   [112]      coinbase       uint8 (1 = coinbase output, 0 = normal)
  */
 class OutputsWriter extends FixedRecordWriter {
     constructor(finalPath, chain, netName, firstHeight, lastHeight) {
         super(finalPath, MAGIC_OUTPUTS, chain, netName, firstHeight, lastHeight, OUTPUTS_RECORD_SIZE)
     }
 
-    append(txHash8, vout, value, height, fullTxHash, scriptPubKey, blockHash, isCoinbase) {
+    append(txid, vout, value, height, scriptPubKey, blockHash, isCoinbase) {
         const off = this.slotOffset()
         const b   = this._batch
-        txHash8.copy(b, off + 0, 0, 8)
-        b.writeUInt32BE(vout >>> 0, off + 8)
-        b.writeBigUInt64BE(typeof value === 'bigint' ? value : BigInt(value), off + 12)
-        b.writeInt32BE(height, off + 20)
-        fullTxHash.copy(b, off + 24, 0, 32)
-        scriptPubKey.copy(b, off + 56, 0, 32)
-        blockHash.copy(b, off + 88, 0, 32)
+        txid.copy(b, off + OUT_TXID, 0, 32)
+        b.writeUInt32BE(vout >>> 0, off + OUT_VOUT)
+        b.writeBigUInt64BE(typeof value === 'bigint' ? value : BigInt(value), off + OUT_VALUE)
+        b.writeInt32BE(height, off + OUT_HEIGHT)
+        scriptPubKey.copy(b, off + OUT_SCRIPT, 0, 32)
+        blockHash.copy(b, off + OUT_BLOCK, 0, 32)
         // Coinbase flag rides the value byte-for-byte through the sort and the
         // anti-join into the O-record, where it drives maturity gating.
-        b.writeUInt8(isCoinbase ? 1 : 0, off + 120)
+        b.writeUInt8(isCoinbase ? 1 : 0, off + OUT_COINBASE)
         this.advance()
     }
 }
 
 /**
- * spends-*.dat: 20 bytes/record. Coinbases are NOT emitted.
+ * spends-*.dat: 68 bytes/record. Coinbases are NOT emitted.
  *
- *   [0..8]    prevTxHash8      8B raw
- *   [8..12]   prevVout         uint32 BE
- *   [12..20]  spenderTxHash8   8B raw
+ *   [0..32]   prevTxid         32B raw, display order
+ *   [32..36]  prevVout         uint32 BE
+ *   [36..68]  spenderTxid      32B raw, display order
  */
 class SpendsWriter extends FixedRecordWriter {
     constructor(finalPath, chain, netName, firstHeight, lastHeight) {
         super(finalPath, MAGIC_SPENDS, chain, netName, firstHeight, lastHeight, SPENDS_RECORD_SIZE)
     }
 
-    append(prevTxHash8, prevVout, spenderTxHash8) {
+    append(prevTxid, prevVout, spenderTxid) {
         const off = this.slotOffset()
         const b   = this._batch
-        prevTxHash8.copy(b, off + 0, 0, 8)
-        b.writeUInt32BE(prevVout >>> 0, off + 8)
-        spenderTxHash8.copy(b, off + 12, 0, 8)
+        prevTxid.copy(b, off + SPD_PREV_TXID, 0, 32)
+        b.writeUInt32BE(prevVout >>> 0, off + SPD_PREV_VOUT)
+        spenderTxid.copy(b, off + SPD_SPENDER_TXID, 0, 32)
         this.advance()
     }
 }
@@ -200,13 +215,13 @@ class SpendsWriter extends FixedRecordWriter {
 /**
  * meta-*.dat: variable-length, inlined tx list per block.
  *
- *   Block record (76 + 8*tx_count bytes):
+ *   Block record (76 + 32*tx_count bytes):
  *     [0..4]    height        uint32 BE
  *     [4..8]    timestamp     uint32 BE
  *     [8..40]   blockHash     32B raw
  *     [40..72]  previousHash  32B raw
  *     [72..76]  tx_count      uint32 BE
- *     [76..]    tx_count × txHash8 (8B each)
+ *     [76..]    tx_count × txid (32B each, display order)
  *
  * record_count in the header counts BLOCK records, not txs.
  * Blocks must be written in ascending height order.
@@ -226,9 +241,9 @@ class MetaWriter {
         this._count = 0
     }
 
-    writeBlock(height, timestamp, blockHash, previousHash, txHash8List) {
-        const txCount    = txHash8List.length
-        const recordSize = 76 + 8 * txCount
+    writeBlock(height, timestamp, blockHash, previousHash, txidList) {
+        const txCount    = txidList.length
+        const recordSize = 76 + META_TXID_SIZE * txCount
         this.ensure(recordSize)
 
         const b = this._buf
@@ -239,8 +254,8 @@ class MetaWriter {
         previousHash.copy(b, off, 0, 32);      off += 32
         b.writeUInt32BE(txCount >>> 0,   off); off += 4
         for (let i = 0; i < txCount; i++) {
-            txHash8List[i].copy(b, off, 0, 8)
-            off += 8
+            txidList[i].copy(b, off, 0, META_TXID_SIZE)
+            off += META_TXID_SIZE
         }
         this._pos = off
         this._count++
@@ -285,6 +300,9 @@ module.exports = {
     HEADER_SIZE,
     OUTPUTS_RECORD_SIZE,
     SPENDS_RECORD_SIZE,
+    OUT_TXID, OUT_VOUT, OUT_VALUE, OUT_HEIGHT, OUT_SCRIPT, OUT_BLOCK, OUT_COINBASE,
+    SPD_PREV_TXID, SPD_PREV_VOUT, SPD_SPENDER_TXID,
+    META_TXID_SIZE,
     MAGIC_OUTPUTS,
     MAGIC_SPENDS,
     MAGIC_META,

@@ -54,15 +54,15 @@ function deferred() {
 }
 
 async function putConfirmedOutput(db, scriptHash, txid, vout, value, height) {
-    const txHash8 = txid.substring(0, 16);
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: vout, value, height, fullTxHash: txid });
-    await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: vout });
+    const txidHex = txid;
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: vout, value, height, fullTxHash: txid });
+    await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: vout });
 }
 
 async function putMempoolOutput(mempoolDb, scriptHash, txid, vout, value) {
-    const txHash8 = txid.substring(0, 16);
-    await mempoolDb.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: vout, value, height: -1, fullTxHash: txid });
-    await mempoolDb.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: vout });
+    const txidHex = txid;
+    await mempoolDb.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: vout, value, height: -1, fullTxHash: txid });
+    await mempoolDb.insertOutputHint({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: vout });
 }
 
 // One scenario: W holds two confirmed coins (fund:0 and other:0). The mempool
@@ -97,7 +97,7 @@ async function makeScenario() {
     await putMempoolOutput(mempoolDb, shW, tin, 0, TIN_VALUE);
     await mempoolDb.insertTransaction({ hash: tout, blockHash: null });
     await putMempoolOutput(mempoolDb, shX, tout, 0, TOUT_VALUE);
-    const spend = { prevTxHash: fund, prevOutputIndex: 0, txHash: tout.substring(0, 16) };
+    const spend = { prevTxHash: fund, prevOutputIndex: 0, txHash: tout };
     await mempoolDb.insertInput(spend);
     await mempoolDb.insertInputHint(spend);
     await mempoolDb.endTransaction(true);
@@ -106,7 +106,7 @@ async function makeScenario() {
     await db.beginTransaction();
     await putConfirmedOutput(db, shW, tin, 0, TIN_VALUE, 102);
     await putConfirmedOutput(db, shX, tout, 0, TOUT_VALUE, 102);
-    await db.removeOutputsWithInputsBatch([{ prevTxHash: fund.substring(0, 16), prevOutputIndex: 0, blockHash }]);
+    await db.removeOutputsWithInputsBatch([{ prevTxHash: fund, prevOutputIndex: 0, blockHash }]);
 
     const sync = {
         _t: { commit: 0, cleanup: 0 },
@@ -279,7 +279,7 @@ async function makePruneScenario() {
     await mempoolDb.beginTransaction();
     await mempoolDb.insertTransaction({ hash: t, blockHash: null });
     await putMempoolOutput(mempoolDb, scriptHashOf(ADDR_W, tracker.network), t, 0, CHANGE_VALUE);
-    const spend = { prevTxHash: fund, prevOutputIndex: 0, txHash: t.substring(0, 16) };
+    const spend = { prevTxHash: fund, prevOutputIndex: 0, txHash: t };
     await mempoolDb.insertInput(spend);
     await mempoolDb.insertInputHint(spend);
     await mempoolDb.endTransaction(true);

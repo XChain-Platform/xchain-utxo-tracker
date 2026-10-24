@@ -40,6 +40,7 @@ const fs = require('fs')
 const XChainUtxoTracker  = require('./XChainUtxoTracker');
 const BlockchainConnector = require('./chain/blockchain_connector');
 const { resolveUndoBlocks } = require('./bulk_sync/merger/derive_keys.js')
+const { resumeArgsForWorkDir } = require('./bulk_sync/orchestrator/file_ops.js')
 const memoryBudget = require('./store/memory_budget')
 const { installCrashHandlers, noteCrash } = require('./server/crash_handlers.js')
 const { envInt: sharedEnvInt, intKnob } = require('./config/env_int')
@@ -212,6 +213,8 @@ async function isDbEmpty() {
     const store = new LevelUpStore(DB_NAME)
     try {
         await store.createDatabase()
+        // Refuses an old layout or partial bulk load before treating the path as empty.
+        await store.ensureLayoutVersion({ stamp: false })
         const h = await store.getLastBlockHeight()
         return h < 0
     } finally {
@@ -261,11 +264,7 @@ function runBulkSyncOrchestrator(boot) {
     ]
 
     // Resume support: if parsed/ already has worker output, skip dump+parse.
-    const parsedDir = path.join(BULK_SYNC_WORK_DIR, 'parsed')
-    if (fs.existsSync(parsedDir) && fs.readdirSync(parsedDir).some(f => f.endsWith('.dat'))) {
-        console.log('[bulk-sync] detected existing parsed/ - adding --skip-parse')
-        args.push('--skip-parse')
-    }
+    args.push(...resumeArgsForWorkDir(BULK_SYNC_WORK_DIR))
 
     console.log('[bulk-sync] spawning orchestrator:', ['node', ...args].join(' '))
 

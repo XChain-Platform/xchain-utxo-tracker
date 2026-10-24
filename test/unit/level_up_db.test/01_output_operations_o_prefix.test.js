@@ -29,10 +29,10 @@ function registerOutputStorageTests() {
   describe('output operations (O prefix)', function () {
     it('inserts and queries outputs by scriptPubKey', async function () {
       const scriptHash = randHash();
-      const txHash8 = randHash8();
+      const txidHex = randHash();
       await db.insertOutput({
         scriptPubKey: scriptHash,
-        txHash: txHash8,
+        txHash: txidHex,
         outputIndex: 0,
         value: BigInt('100000000'),
         height: 500,
@@ -42,7 +42,7 @@ function registerOutputStorageTests() {
 
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
       expect(outputs).to.have.length(1);
-      expect(outputs[0].txid).to.equal(txHash8);
+      expect(outputs[0].txid).to.equal(txidHex);
       expect(outputs[0].vout).to.equal(0);
       expect(outputs[0].value).to.equal('100000000');
       expect(outputs[0].height).to.equal(500);
@@ -50,8 +50,8 @@ function registerOutputStorageTests() {
 
     it('stores multiple outputs for the same scriptPubKey', async function () {
       const scriptHash = randHash();
-      const tx1 = randHash8();
-      const tx2 = randHash8();
+      const tx1 = randHash();
+      const tx2 = randHash();
       await db.insertOutput({ scriptPubKey: scriptHash, txHash: tx1, outputIndex: 0, value: BigInt(1000), height: 1 });
       await db.insertOutput({ scriptPubKey: scriptHash, txHash: tx2, outputIndex: 1, value: BigInt(2000), height: 2 });
       await db.endTransaction(true);
@@ -62,7 +62,7 @@ function registerOutputStorageTests() {
 
     it('stores zero-value output', async function () {
       const scriptHash = randHash();
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash8(), outputIndex: 0, value: BigInt(0), height: 10 });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash(), outputIndex: 0, value: BigInt(0), height: 10 });
       await db.endTransaction(true);
 
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -72,7 +72,7 @@ function registerOutputStorageTests() {
     it('stores large Dogecoin-scale values', async function () {
       const scriptHash = randHash();
       const largeValue = BigInt('100000000000000'); // 1M DOGE in sats
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash8(), outputIndex: 0, value: largeValue, height: 1 });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash(), outputIndex: 0, value: largeValue, height: 1 });
       await db.endTransaction(true);
 
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -90,7 +90,7 @@ function registerOutputIdentityTests() {
   describe('output operations (O prefix)', function () {
     it('fullTxid is null when not provided', async function () {
       const scriptHash = randHash();
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash8(), outputIndex: 0, value: BigInt(100), height: 1 });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash(), outputIndex: 0, value: BigInt(100), height: 1 });
       await db.endTransaction(true);
 
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -100,7 +100,7 @@ function registerOutputIdentityTests() {
     it('fullTxid is returned when provided', async function () {
       const scriptHash = randHash();
       const fullTxHash = randHash();
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash8(), outputIndex: 0, value: BigInt(100), height: 1, fullTxHash });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash(), outputIndex: 0, value: BigInt(100), height: 1, fullTxHash });
       await db.endTransaction(true);
 
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -109,14 +109,14 @@ function registerOutputIdentityTests() {
 
     // Regression guard: rangeEnd must append 12 bytes of 0xFF (commit
     // 6385686), not a single 0xFF byte, or the range scan in
-    // getOutputsScriptPubKey treats an output whose txHash8 starts with
+    // getOutputsScriptPubKey treats an output whose txidHex starts with
     // 0xFF as sorting past the upper bound and silently skips it. This
     // guards against accidental re-reverts during perf refactors of
     // LevelUpDb.js.
     it('returns outputs whose txHash8 starts with 0xFF (rangeEnd regression)', async function () {
       const scriptHash = randHash();
-      const txFF = 'ff' + randHash8().substring(2); // first byte 0xFF
-      const txNonFF = '00' + randHash8().substring(2); // first byte 0x00
+      const txFF = 'ff' + randHash().substring(2); // first byte 0xFF
+      const txNonFF = '00' + randHash().substring(2); // first byte 0x00
       await db.insertOutput({ scriptPubKey: scriptHash, txHash: txFF, outputIndex: 0, value: BigInt(123), height: 1 });
       await db.insertOutput({ scriptPubKey: scriptHash, txHash: txNonFF, outputIndex: 0, value: BigInt(456), height: 2 });
       await db.endTransaction(true);
@@ -128,12 +128,12 @@ function registerOutputIdentityTests() {
       expect(outputs).to.have.length(2);
     });
 
-    // Stronger variant: the txHash8 is ALL 0xFF bytes, exercising the worst
+    // Stronger variant: the txidHex is ALL 0xFF bytes, exercising the worst
     // case for the rangeEnd upper bound. With a 1-byte 0xFF suffix this
     // returned []; with 12 bytes it returns the entry.
     it('returns outputs whose txHash8 is all 0xFF', async function () {
       const scriptHash = randHash();
-      const txAllFF = 'ffffffffffffffff';
+      const txAllFF = 'f'.repeat(64);
       await db.insertOutput({ scriptPubKey: scriptHash, txHash: txAllFF, outputIndex: 7, value: BigInt(789), height: 3 });
       await db.endTransaction(true);
 
@@ -153,7 +153,7 @@ function registerOutputPaginationStartTests() {
     describe('pagination + safety ceiling', function () {
       async function seed(scriptHash, n) {
         for (let i = 0; i < n; i++) {
-          await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash8(), outputIndex: i % 3, value: BigInt(1000 + i), height: i + 1, fullTxHash: randHash() });
+          await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash(), outputIndex: i % 3, value: BigInt(1000 + i), height: i + 1, fullTxHash: randHash() });
         }
         await db.endTransaction(true);
       }
@@ -182,7 +182,7 @@ function registerOutputPaginationTraversalTests() {
     describe('pagination + safety ceiling', function () {
       async function seed(scriptHash, n) {
         for (let i = 0; i < n; i++) {
-          await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash8(), outputIndex: i % 3, value: BigInt(1000 + i), height: i + 1, fullTxHash: randHash() });
+          await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash(), outputIndex: i % 3, value: BigInt(1000 + i), height: i + 1, fullTxHash: randHash() });
         }
         await db.endTransaction(true);
       }
@@ -215,7 +215,7 @@ function registerOutputPaginationValidationTests() {
     describe('pagination + safety ceiling', function () {
       async function seed(scriptHash, n) {
         for (let i = 0; i < n; i++) {
-          await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash8(), outputIndex: i % 3, value: BigInt(1000 + i), height: i + 1, fullTxHash: randHash() });
+          await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash(), outputIndex: i % 3, value: BigInt(1000 + i), height: i + 1, fullTxHash: randHash() });
         }
         await db.endTransaction(true);
       }

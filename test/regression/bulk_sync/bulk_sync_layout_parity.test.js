@@ -50,8 +50,8 @@ const {
     encodeBlock, encodeTx, encodeInputVal, encodeOutput, encodeOutHint, encodeScriptBlk,
 } = require('../../../src/store/level_up_db/value_codec.js');
 
-const OUTPUTS_KEY_SIZE = 12; // txHash8(8) + vout(4)
-const SPENDS_KEY_SIZE  = 12;
+const OUTPUTS_KEY_SIZE = 36; // txid(32) + vout(4)
+const SPENDS_KEY_SIZE  = 36;
 const HEADER_SIZE      = 64;
 const EMPTY            = Buffer.alloc(0);
 
@@ -135,14 +135,14 @@ function liveStorePrefixes() {
 // Hash a label to 32 distinct bytes, so a shifted or swapped field never lines
 // up with its neighbour by accident the way a repeated fill byte would.
 function h32(label) { return crypto.createHash('sha256').update(label).digest(); }
-function hex8(buf)  { return buf.subarray(0, 8).toString('hex'); }
+function hexTxid(buf) { return buf.toString('hex'); }
 
 // Build one live sample per prefix: the live builder's key and the stored value.
 // T is the legacy 32-byte blockHash seeded with txIndex off, as for this Bitcoin seed;
 // non-Bitcoin seeds write the live 64-byte T plus X and Y (bulk_sync_tx_index_parity).
 function liveSample(p) {
     const hash = h32('sample-hash').toString('hex');
-    const tx8  = hex8(h32('sample-tx'));
+    const tx8  = hexTxid(h32('sample-tx'));
     const scr  = h32('sample-script');
     switch (p) {
     case 'B': return { key: kBlock(hash),                 val: encodeBlock(1, 2, hash) };
@@ -238,20 +238,20 @@ function writeInputs(tmp) {
     const outputsPath = path.join(tmp, 'outputs.dat');
     const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', block1.height, block2.height);
     for (const o of OUTS) {
-        w.append(o.txid.subarray(0, 8), o.vout, o.value, o.block.height, o.txid, o.script, o.block.hash, o.coinbase);
+        w.append(o.txid, o.vout, o.value, o.block.height, o.script, o.block.hash, o.coinbase);
     }
     w.close();
 
     const spendsPath = path.join(tmp, 'spends.dat');
     const sp = new SpendsWriter(spendsPath, 'bitcoin', 'regtest', block1.height, block2.height);
-    sp.append(SPENT.txid.subarray(0, 8), SPENT.vout, SPENDER.subarray(0, 8));
+    sp.append(SPENT.txid, SPENT.vout, SPENDER);
     sp.close();
 
     const metaPath = path.join(tmp, 'meta.dat');
     const meta = new MetaWriter(metaPath, 'bitcoin', 'regtest', block1.height, block2.height);
     meta.writeBlock(block1.height, block1.ts, block1.hash, block1.prev,
-        [h32('tx-cb'), h32('tx-a'), h32('tx-s')].map(t => t.subarray(0, 8)));
-    meta.writeBlock(block2.height, block2.ts, block2.hash, block2.prev, [SPENDER.subarray(0, 8)]);
+        [h32('tx-cb'), h32('tx-a'), h32('tx-s')]);
+    meta.writeBlock(block2.height, block2.ts, block2.hash, block2.prev, [SPENDER]);
     meta.close();
 
     return { outputsPath, spendsPath, metaPath };
@@ -266,10 +266,10 @@ async function runMerge(tmp, dbPath, undoBlocks = 100) {
     const outputsSorted = path.join(tmp, 'outputs-sorted.dat');
     const spendsSorted  = path.join(tmp, 'spends-sorted.dat');
     await externalSort({ inputPath: outputsPath, outputPath: outputsSorted, headerSize: HEADER_SIZE, recordSize: rs, keySize: OUTPUTS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'so') });
-    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 20, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
+    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 68, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
 
     const liveUtxos = path.join(tmp, 'live-utxos.dat');
-    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 20, keySize: OUTPUTS_KEY_SIZE });
+    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 68, keySize: OUTPUTS_KEY_SIZE });
 
     const keysDir = path.join(tmp, 'keys');
     await deriveKeys({
@@ -293,17 +293,17 @@ function expectedRecords() {
         add('N', kStoredBlk(b.hash.toString('hex')), EMPTY);
     }
     for (const [txid, b] of [[h32('tx-cb'), block1], [h32('tx-a'), block1], [h32('tx-s'), block1], [SPENDER, block2]]) {
-        add('T', kTx(hex8(txid)), encodeTx(b.hash.toString('hex')));
+        add('T', kTx(hexTxid(txid)), encodeTx(b.hash.toString('hex')));
     }
     for (const o of unspent) {
-        add('O', kOutputFromBuf(o.script, hex8(o.txid), o.vout),
+        add('O', kOutputFromBuf(o.script, hexTxid(o.txid), o.vout),
             encodeOutput(o.value, o.block.height, o.txid.toString('hex'), o.coinbase));
-        add('H', kOutHint(hex8(o.txid), o.vout), encodeOutHint(o.script.toString('hex')));
+        add('H', kOutHint(hexTxid(o.txid), o.vout), encodeOutHint(o.script.toString('hex')));
     }
-    add('I', kInput(hex8(SPENT.txid), SPENT.vout), encodeInputVal(hex8(SPENDER)));
-    add('J', kInHint(hex8(SPENDER), hex8(SPENT.txid), SPENT.vout), EMPTY);
+    add('I', kInput(hexTxid(SPENT.txid), SPENT.vout), encodeInputVal(hexTxid(SPENDER)));
+    add('J', kInHint(hexTxid(SPENDER), hexTxid(SPENT.txid), SPENT.vout), EMPTY);
     for (const o of OUTS) {
-        add('W', kOutBlk(o.block.hash.toString('hex'), hex8(o.txid), o.vout), o.script);
+        add('W', kOutBlk(o.block.hash.toString('hex'), hexTxid(o.txid), o.vout), o.script);
     }
     // S and Z carry each script's first-seen block only.
     const firstSeen = new Map();

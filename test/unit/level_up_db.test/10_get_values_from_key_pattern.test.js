@@ -29,8 +29,8 @@ function registerKeyPatternTests() {
   describe('getValuesFromKeyPattern', function () {
     it('scans by key prefix', async function () {
       const scriptHash = randHash();
-      const txHash8 = randHash8();
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: BigInt(100), height: 1 });
+      const txidHex = randHash();
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: BigInt(100), height: 1 });
       await db.endTransaction(true);
 
       // Output key starts with 0x4F + scriptHash
@@ -52,7 +52,7 @@ function registerKeyPatternTests() {
     // O-specific tests above are removed or refactored.
     it('scans across keys whose suffix-byte-after-prefix is 0xFF', async function () {
       const scriptHash = randHash();
-      const txFF = 'ff' + randHash8().substring(2);
+      const txFF = 'ff' + randHash().substring(2);
       await db.insertOutput({ scriptPubKey: scriptHash, txHash: txFF, outputIndex: 0, value: BigInt(100), height: 1 });
       await db.endTransaction(true);
 

@@ -31,7 +31,7 @@ const crypto = require('crypto')
 const { processBlock } = require('../../../../src/bulk_sync/process_block.js')
 const {
     OutputsWriter, SpendsWriter, MetaWriter,
-    HEADER_SIZE, OUTPUTS_RECORD_SIZE,
+    HEADER_SIZE, OUTPUTS_RECORD_SIZE, SPENDS_RECORD_SIZE,
 } = require('../../../../src/bulk_sync/writers.js')
 
 const GENESIS_BLOCK_HASH_HEX = '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f'
@@ -91,29 +91,25 @@ meta.close()
 
     const r = buf.slice(HEADER_SIZE)
     assert.strictEqual(
-        r.slice(0, 8).toString('hex'),
-        GENESIS_TXID_HEX.substring(0, 16),
-        'outputs txHash8 = first 8 bytes of display txid',
-    )
-    assert.strictEqual(r.readUInt32BE(8), 0,                       'vout')
-    assert.strictEqual(r.readBigUInt64BE(12), BigInt(GENESIS_COINBASE_VALUE), 'value')
-    assert.strictEqual(r.readInt32BE(20), 0,                       'height')
-    assert.strictEqual(
-        r.slice(24, 56).toString('hex'),
+        r.slice(0, 32).toString('hex'),
         GENESIS_TXID_HEX,
-        'outputs fullTxHash',
+        'outputs txid = display txid',
     )
+    assert.strictEqual(r.readUInt32BE(32), 0,                       'vout')
+    assert.strictEqual(r.readBigUInt64BE(36), BigInt(GENESIS_COINBASE_VALUE), 'value')
+    assert.strictEqual(r.readInt32BE(44), 0,                        'height')
     const expectedScriptHash = crypto.createHash('sha256').update(coinbaseScript).digest()
     assert.strictEqual(
-        r.slice(56, 88).toString('hex'),
+        r.slice(48, 80).toString('hex'),
         expectedScriptHash.toString('hex'),
         'outputs scriptPubKey = sha256(script)',
     )
     assert.strictEqual(
-        r.slice(88, 120).toString('hex'),
+        r.slice(80, 112).toString('hex'),
         GENESIS_BLOCK_HASH_HEX,
         'outputs blockHash',
     )
+    assert.strictEqual(r[112], 1, 'outputs coinbase flag')
     console.log('[smoke/process-block] outputs-*.dat OK')
 }
 
@@ -128,7 +124,7 @@ meta.close()
 // meta-*.dat
 {
     const buf = fs.readFileSync(metaPath)
-    assert.strictEqual(buf.length, HEADER_SIZE + 76 + 8)
+    assert.strictEqual(buf.length, HEADER_SIZE + 76 + 32)
     assert.strictEqual(Number(buf.readBigUInt64LE(20)), 1)
 
     let off = HEADER_SIZE
@@ -146,9 +142,9 @@ meta.close()
     )
     assert.strictEqual(buf.readUInt32BE(off + 72), 1, 'tx_count')
     assert.strictEqual(
-        buf.slice(off + 76, off + 84).toString('hex'),
-        GENESIS_TXID_HEX.substring(0, 16),
-        'meta txHash8',
+        buf.slice(off + 76, off + 108).toString('hex'),
+        GENESIS_TXID_HEX,
+        'meta txid',
     )
     console.log('[smoke/process-block] meta-*.dat OK')
 }
@@ -160,8 +156,9 @@ meta.close()
         '00000000000000000000000000000000',
         'hex',
     )
-    // First 8 bytes of the display-order hash = last 8 bytes of LE, reversed.
-    const expectedPrev8Hex = '0000000000000000' // because the high half of prevInternalLE is zeros
+    // The display-order hash is the LE bytes reversed, so its leading bytes
+    // are the zero high half of prevInternalLE.
+    const expectedPrevHex = Buffer.from(prevInternalLE).reverse().toString('hex')
 
     const synthTxInternal = Buffer.alloc(32, 0x77)
     const synthScript     = Buffer.from('76a914' + '00'.repeat(20) + '88ac', 'hex')
@@ -200,13 +197,13 @@ meta.close()
     m2.close()
 
     const spdBuf = fs.readFileSync(spd2)
-    assert.strictEqual(spdBuf.length, HEADER_SIZE + 20)
+    assert.strictEqual(spdBuf.length, HEADER_SIZE + SPENDS_RECORD_SIZE)
     assert.strictEqual(Number(spdBuf.readBigUInt64LE(20)), 1)
     const sr = spdBuf.slice(HEADER_SIZE)
-    assert.strictEqual(sr.slice(0, 8).toString('hex'), expectedPrev8Hex, 'spends prevTxHash8 reversed correctly')
-    assert.strictEqual(sr.readUInt32BE(8), 3, 'spends prevVout')
-    // spenderTxHash8 = first 8 bytes of reverse(synthTxInternal) = still all 0x77
-    assert.strictEqual(sr.slice(12, 20).toString('hex'), '7777777777777777', 'spends spenderTxHash8')
+    assert.strictEqual(sr.slice(0, 32).toString('hex'), expectedPrevHex, 'spends prevTxid reversed correctly')
+    assert.strictEqual(sr.readUInt32BE(32), 3, 'spends prevVout')
+    // spenderTxid = reverse(synthTxInternal) = still all 0x77
+    assert.strictEqual(sr.slice(36, 68).toString('hex'), '77'.repeat(32), 'spends spenderTxid')
 
     // meta previousHash should equal reverse(synthPrevBlockLE) = still all 0xaa
     const metaBuf = fs.readFileSync(meta2)

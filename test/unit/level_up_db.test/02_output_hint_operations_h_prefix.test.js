@@ -31,11 +31,11 @@ function registerOutputHintOperationTests() {
   describe('output hint operations (H prefix)', function () {
     it('inserts output hint and deletes outputs by hint', async function () {
       const scriptHash = randHash();
-      const txHash8 = randHash8();
-      const fullTxHash = txHash8 + randHash().substring(16);
+      const txidHex = randHash();
+      const fullTxHash = txidHex;
 
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: BigInt(1000), height: 1 });
-      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: BigInt(1000), height: 1 });
+      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0 });
       await db.endTransaction(true);
 
       // Verify output exists

@@ -24,14 +24,14 @@
 // (39696e8) and was later reverted (a2774ac).
 //
 // The existing unit/boundary "all-ff scriptHash prefix" case only stores
-// outputIndex 0 (suffix = txHash8 + 00000000), so it never exercises a maximal
+// outputIndex 0 (suffix = txidHex + 00000000), so it never exercises a maximal
 // suffix. Here the suffix bytes after the 33-byte O-prefix are themselves all
-// 0xFF (txHash8 = ff..ff, outputIndex = 0xFFFFFFFF), the precise shape that a
+// 0xFF (txidHex = ff..ff, outputIndex = 0xFFFFFFFF), the precise shape that a
 // too-short upper bound would drop.
 const { expect } = require('chai');
 const LevelUpStore = require('../../src/store/level_up_db');
 
-const FF_TXID8 = 'ff'.repeat(8);          // 8-byte O-key txHash8, all 0xFF
+const FF_TXID8 = 'ff'.repeat(32);         // 32-byte O-key txid, all 0xFF
 const MAX_VOUT = 0xFFFFFFFF;              // 4-byte outputIndex, all 0xFF
 const FF_FULLTXID = 'ff'.repeat(32);      // 64-hex full txid
 
@@ -81,7 +81,7 @@ describe('Boundary: range-scan with maximal 0xFF key suffix', function () {
       value: 111, height: 1, fullTxHash: FF_FULLTXID,
     });
     await db.insertOutput({
-      scriptPubKey: scriptHashB, txHash: '00'.repeat(8), outputIndex: 0,
+      scriptPubKey: scriptHashB, txHash: '00'.repeat(32), outputIndex: 0,
       value: 222, height: 1, fullTxHash: '00'.repeat(32),
     });
     await db.endTransaction();
@@ -157,7 +157,7 @@ describe('Boundary: getValuesFromKeyPattern hex-decode + inclusive bounds', func
     // even-length prefix; the scan must not crash and must stay prefix-scoped.
     const scriptHash = 'be'.repeat(32);
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: '11'.repeat(8), outputIndex: 0, value: 5, height: 1, fullTxHash: '11'.repeat(32) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: '11'.repeat(32), outputIndex: 0, value: 5, height: 1, fullTxHash: '11'.repeat(32) });
     await db.endTransaction();
 
     const rows = await db.getValuesFromKeyPattern('4f' + scriptHash + 'a');
@@ -180,8 +180,8 @@ describe('Boundary: getValuesFromKeyPattern hex-decode + inclusive bounds', func
   it('returns rows at the exact prefix and is inclusive of the upper bound', async function () {
     const scriptHash = 'be'.repeat(32);
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: '11'.repeat(8), outputIndex: 0, value: 5, height: 1, fullTxHash: '11'.repeat(32) });
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: 'ff'.repeat(8), outputIndex: MAX_VOUT, value: 6, height: 1, fullTxHash: FF_FULLTXID });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: '11'.repeat(32), outputIndex: 0, value: 5, height: 1, fullTxHash: '11'.repeat(32) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: 'ff'.repeat(32), outputIndex: MAX_VOUT, value: 6, height: 1, fullTxHash: FF_FULLTXID });
     await db.endTransaction();
 
     // O prefix byte is 0x4F ('O'); build [4F][scriptHash] as hex.
@@ -192,14 +192,14 @@ describe('Boundary: getValuesFromKeyPattern hex-decode + inclusive bounds', func
 
   it('covers a key whose suffix after the scan prefix is >12 bytes of 0xFF', async function () {
     // Regression for the widened rangeEnd cap: a 2-byte prefix scan here leaves a
-    // 43-byte all-0xFF suffix, which the old 12-byte upper bound sorted below and
+    // 67-byte all-0xFF suffix, which the old 12-byte upper bound sorted below and
     // silently dropped. The same failure mode hits the reorg-restore scans
     // elsewhere in the store, where a dropped key means a spent output never
     // gets restored on rollback (a permanent balance under-count).
     // Regression for the widened rangeEnd cap. An all-0xFF scriptHash scanned by a
-    // 2-byte prefix [O][0xFF] leaves a 43-byte all-0xFF suffix. The old 12-byte
+    // 2-byte prefix [O][0xFF] leaves a 67-byte all-0xFF suffix. The old 12-byte
     // rangeEnd upper bound sorted BELOW such a key and silently dropped it - the
-    // exact failure mode of the K/P_OUT_DEL reorg-restore scan (44-byte suffix) and
+    // exact failure mode of the K/P_OUT_DEL reorg-restore scan (68-byte suffix) and
     // the Z/P_BLK_SCRIPT scan (32-byte suffix), where a dropped key means a spent
     // output is never restored on rollback (permanent balance under-count). The
     // widened cap must include it.
@@ -209,7 +209,7 @@ describe('Boundary: getValuesFromKeyPattern hex-decode + inclusive bounds', func
     await db.endTransaction();
 
     // Scan prefix = 0x4F ('O') + first scriptHash byte (0xFF) = 2 bytes; the stored
-    // key continues with 43 more 0xFF bytes, well past the old 12-byte cap.
+    // key continues with 67 more 0xFF bytes, well past the old 12-byte cap.
     const rows = await db.getValuesFromKeyPattern('4fff');
     expect(rows).to.be.an('array').with.length(1);
   });

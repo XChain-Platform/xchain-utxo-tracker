@@ -33,8 +33,8 @@ const { deriveKeys }     = require('../../../src/bulk_sync/merger/derive_keys.js
 const { loadKeys }       = require('../../../src/bulk_sync/merger/loader.js');
 const { parseArgs, readOutputsRecordSize } = require('../../../src/bulk_sync/orchestrator.js');
 
-const OUTPUTS_KEY_SIZE = 12;
-const SPENDS_KEY_SIZE  = 12;
+const OUTPUTS_KEY_SIZE = 36;
+const SPENDS_KEY_SIZE  = 36;
 const HEADER_SIZE      = 64;
 const RUN_LOADER       = path.join(__dirname, '../../../src/bulk_sync/run_loader.js');
 
@@ -49,20 +49,20 @@ const TX_B   = h32('rs-tx-b');
 function writeInputs(tmp) {
     const outputsPath = path.join(tmp, 'outputs.dat');
     const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', block1.height, block2.height);
-    w.append(TX_A.subarray(0, 8), 0, 1000n, block1.height, TX_A, h32('rs-script-1'), block1.hash, false);
-    w.append(TX_A.subarray(0, 8), 1, 2000n, block1.height, TX_A, h32('rs-script-2'), block1.hash, false);
-    w.append(TX_B.subarray(0, 8), 0, 900n,  block2.height, TX_B, h32('rs-script-3'), block2.hash, false);
+    w.append(TX_A, 0, 1000n, block1.height, h32('rs-script-1'), block1.hash, false);
+    w.append(TX_A, 1, 2000n, block1.height, h32('rs-script-2'), block1.hash, false);
+    w.append(TX_B, 0, 900n,  block2.height, h32('rs-script-3'), block2.hash, false);
     w.close();
 
     const spendsPath = path.join(tmp, 'spends.dat');
     const sp = new SpendsWriter(spendsPath, 'bitcoin', 'regtest', block1.height, block2.height);
-    sp.append(TX_A.subarray(0, 8), 1, TX_B.subarray(0, 8));
+    sp.append(TX_A, 1, TX_B);
     sp.close();
 
     const metaPath = path.join(tmp, 'meta.dat');
     const meta = new MetaWriter(metaPath, 'bitcoin', 'regtest', block1.height, block2.height);
-    meta.writeBlock(block1.height, block1.ts, block1.hash, block1.prev, [TX_A.subarray(0, 8)]);
-    meta.writeBlock(block2.height, block2.ts, block2.hash, block2.prev, [TX_B.subarray(0, 8)]);
+    meta.writeBlock(block1.height, block1.ts, block1.hash, block1.prev, [TX_A]);
+    meta.writeBlock(block2.height, block2.ts, block2.hash, block2.prev, [TX_B]);
     meta.close();
     return { outputsPath, spendsPath, metaPath };
 }
@@ -74,9 +74,9 @@ async function derive(tmp, removeSpentOpt) {
     const outputsSorted = path.join(tmp, 'outputs-sorted.dat');
     const spendsSorted  = path.join(tmp, 'spends-sorted.dat');
     await externalSort({ inputPath: outputsPath, outputPath: outputsSorted, headerSize: HEADER_SIZE, recordSize: rs, keySize: OUTPUTS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'so') });
-    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 20, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
+    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 68, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
     const liveUtxos = path.join(tmp, 'live-utxos.dat');
-    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 20, keySize: OUTPUTS_KEY_SIZE });
+    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 68, keySize: OUTPUTS_KEY_SIZE });
 
     const keysDir = path.join(tmp, 'keys');
     const opts = {

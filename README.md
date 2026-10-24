@@ -20,7 +20,7 @@ UTXO indexing service for the XChain Platform. Continuously polls the coin nodes
 
 - **Full UTXO index**: every unspent output indexed by SHA-256 scriptPubKey hash for fast address lookups
 - **Compact binary encoding**: 11 LevelDB key prefix types stored as raw binary Buffers, reducing DB size ~50% vs hex strings
-- **Truncated txid keys**: 8-byte transaction ID truncations in most index keys for further space savings; JSON-RPC `get_tx_block` instead resolves against a separate index keyed on the full 64-hex txid, so two txids that happen to share their 8-byte prefix never contend for the same record and a rollback of one cannot delete the other's mapping
+- **Full txid keys**: every index key that names a transaction carries the whole 32-byte txid (store layout 2), so two transactions that share leading txid bytes never touch each other's records
 - **Active-UTXO-only storage**: only unspent outputs in the live index; spent outputs archived temporarily for reorg recovery
 - **Real-time mempool tracking**: unconfirmed transactions in a separate in-memory LevelDB, updated every 60 seconds
 - **BigInt precision**: JSON-RPC `get_info` returns full-precision balance strings via `satoshiToDecimalString()`; the REST `/balance` endpoint returns a float (use `get_info` when precision matters)
@@ -79,39 +79,29 @@ npm run api
 ## Upgrading
 
 > [!IMPORTANT]
-> **Pre-migration LevelDB snapshots must be re-indexed.**
-> The on-disk output (`O`) record format was extended to carry the full 32-byte
-> transaction hash. Records written before that field was added store a zero hash
-> instead, which decodes to a missing txid. The tracker cannot derive a valid,
-> spendable transaction id from such a record: only the 8-byte key prefix is
-> available, and a 16-character prefix is not a usable txid.
+> **Store layout 2 requires a rebuild of every older store.**
+> Layout 2 keys every txid field on the whole 32-byte txid; earlier releases
+> keyed most of them on the first 8 bytes, which let two transactions sharing
+> that prefix overwrite or delete each other's outputs. The old keys do not
+> hold the full txid, so they cannot be converted in place. On boot, a non-empty
+> store with no `LAYOUT_VERSION` record, an older version, an unreadable stamp,
+> or a newer version is refused before any chain data is read. The tracker never
+> clears or interprets an incompatible store automatically.
 >
-> If your LevelDB was first populated by a version of the tracker that predates
-> the full-hash output format, wipe the data directory and re-sync from the coin
-> node before serving address/UTXO queries with the current version. Without a
-> re-index, any UTXO drawn from a pre-migration record raises an explicit
-> "missing a fullTxHash ... re-index this LevelDB" error on the first spend attempt
-> rather than silently producing an invalid transaction. A fresh sync, or any DB
-> already synced under the current format, needs no action.
+> - **Rebuild:** stop the tracker, reset its data store, and restart for a full
+>   rescan, or run bulk sync into a fresh empty store. The startup error names
+>   both choices. Do not load layout 2 keys over the old directory.
+> - **Snapshots:** `getbootstrap` snapshots made by an earlier release remain
+>   layout 1. Rebuild after restoring one instead of starting the tracker on it.
+> - **Bulk sync:** parse streams also carry full txids and use format 2. Existing
+>   format 1 parse artifacts must be parsed again before merging.
+> - **API:** the `get_utxos` page cursor (`nextCursor` / `X-Next-Cursor`) is now
+>   `<64-hex txid>:<vout>`; a cursor issued before the upgrade is rejected with
+>   `INVALID_CURSOR`, so a client restarts that walk from the first page.
 
-> [!IMPORTANT]
-> **`get_tx_block` needs a re-index against pre-migration history too.**
-> `get_tx_block` is served from an exact-match index keyed on the full
-> 32-byte txid (not the `T` record's 8-byte-prefix key), so two txids sharing
-> an 8-byte prefix each get their own record and neither can overwrite or
-> delete the other's mapping. This index is written by `insertTransaction`
-> alongside the `T` record, so a `T` record written before this index
-> existed has no matching entry: `get_tx_block` treats it as unindexed and
-> returns `null` rather than falling back to the collision-prone `T` key.
->
-> Blocks indexed via bulk-sync (the initial-sync fast path) never populate
-> this index either: with the default `removeSpent` setting bulk-sync calls
-> neither `insertTransaction` nor its exact-match write. `get_tx_block`
-> returns `null` for any txid from bulk-synced history until bulk-sync's
-> writer is updated to populate it; until then, wipe the data directory and
-> re-sync live (not via bulk-sync) to backfill `get_tx_block` for existing
-> history. Address, UTXO and balance queries are unaffected either way,
-> since they never depended on the `T` record or this index.
+Bulk sync writes the same full-txid `T`, `X`, and `Y` transaction indexes as
+live indexing when the transaction index is enabled, so `get_tx_block` has the
+same lookup behavior for bulk-seeded and incrementally indexed history.
 
 ## Metrics and log shipping (optional, off by default)
 

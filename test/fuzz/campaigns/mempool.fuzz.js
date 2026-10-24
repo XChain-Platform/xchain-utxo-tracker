@@ -54,12 +54,12 @@ function pendingSpendTests() {
             });
             await addToMempool(t, spendTx);
 
-            // getInput takes the 8-byte (16-hex) txid prefix that the I-key stores;
-            // kInput asserts this contract (a full 64-hex txid throws by design), and
-            // every real caller in XChainUtxoTracker passes txid.substring(0,16).
-            const txHash8 = coinbaseTx._txid.substring(0, 16);
-            const inputByTxHash8 = await t.mempoolDb.getInput(txHash8, 0);
-            expect(inputByTxHash8).to.not.be.null;
+            // The mempool store wrote this input's I record while parsing the tx.
+            // getInput takes the full 64-hex txid the I-key stores; kInput asserts
+            // that width, and every real caller in XChainUtxoTracker passes it.
+            const txidHex = coinbaseTx._txid;
+            const inputByTxid = await t.mempoolDb.getInput(txidHex, 0);
+            expect(inputByTxid).to.not.be.null;
 
             // addrIdx: confirmed stays, pending shows negative (being spent)
             const info = await t.getBalanceInfo(TEST_KEYS[addrIdx].address);

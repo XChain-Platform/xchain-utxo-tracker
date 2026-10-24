@@ -18,8 +18,8 @@
 // spendable while still immature (nodes reject the spend). These tests drive
 // the real pipeline end to end (writers -> external-sort -> anti-join ->
 // derive-keys -> loader -> LevelDB) and query the tracker, proving the flag
-// rides all the way into the O-record. They also prove a legacy 120-byte dump
-// (no flag byte) still merges and serves, treated as non-coinbase.
+// rides all the way into the O-record. They also prove a format-1 dump (8-byte
+// txid fields) is refused rather than merged.
 
 const fs     = require('fs');
 const os     = require('os');
@@ -29,7 +29,8 @@ const { expect } = require('chai');
 const bitcoin = require('bitcoinjs-lib');
 const { ClassicLevel } = require('classic-level');
 
-const { OutputsWriter, SpendsWriter, MetaWriter } = require('../../../src/bulk_sync/writers.js');
+const { OutputsWriter, SpendsWriter, MetaWriter, OUTPUTS_RECORD_SIZE, SPENDS_RECORD_SIZE } = require('../../../src/bulk_sync/writers.js');
+const { assertCurrentParseFormat } = require('../../../src/bulk_sync/orchestrator/file_ops.js');
 const { externalSort }   = require('../../../src/bulk_sync/merger/external_sort.js');
 const { leftAntiJoin }   = require('../../../src/bulk_sync/merger/streaming_join.js');
 const { deriveKeys }     = require('../../../src/bulk_sync/merger/derive_keys.js');
@@ -38,8 +39,8 @@ const { readOutputsRecordSize } = require('../../../src/bulk_sync/orchestrator.j
 const LevelUpStore       = require('../../../src/store/level_up_db.js');
 const XChainUtxoTracker  = require('../../../src/XChainUtxoTracker.js');
 
-const OUTPUTS_KEY_SIZE = 12; // txHash8(8) + vout(4)
-const SPENDS_KEY_SIZE  = 12;
+const OUTPUTS_KEY_SIZE = 36; // txid(32) + vout(4)
+const SPENDS_KEY_SIZE  = 36;
 const HEADER_SIZE      = 64;
 
 // The bitcoinjs network the tracker resolves for bitcoin-regtest. Deriving the
@@ -59,9 +60,10 @@ function fixtureAddress() {
 
 function fullTxid(ch) { return Buffer.from(ch.repeat(64), 'hex'); }
 
-// Write a legacy 120-byte outputs-*.dat (no coinbase flag byte). Mirrors the
-// writer format used before the coinbase flag byte was added, so we can prove
-// the merger still accepts that width.
+// Write a format-1, 120-byte outputs-*.dat (8-byte txid key field, no coinbase
+// flag byte), so we can prove the merger refuses it. The layout is the format-1
+// record exactly: txid prefix, vout, value, height, full txid, script hash and
+// block hash, under the XCHNOUT1 magic.
 function writeLegacyOutputsFile(filePath, records, firstHeight, lastHeight) {
     const RS = 120;
     const header = Buffer.alloc(HEADER_SIZE);
@@ -90,7 +92,7 @@ function writeLegacyOutputsFile(filePath, records, firstHeight, lastHeight) {
 // Run the merge tail (sort -> anti-join -> derive-keys -> loader) over an
 // outputs file plus a meta file, loading into a fresh LevelDB at dbPath. The
 // record width is read from the outputs header (readOutputsRecordSize), exactly
-// as the orchestrator does, so 120- and 121-byte dumps take the same path.
+// as the orchestrator does.
 async function runMerge(tmp, outputsPath, metaPath, dbPath) {
     const spendsPath = path.join(tmp, 'spends.dat');
     new SpendsWriter(spendsPath, 'bitcoin', 'regtest', 0, 999).close(); // no spends
@@ -100,10 +102,10 @@ async function runMerge(tmp, outputsPath, metaPath, dbPath) {
     const outputsSorted = path.join(tmp, 'outputs-sorted.dat');
     const spendsSorted  = path.join(tmp, 'spends-sorted.dat');
     await externalSort({ inputPath: outputsPath, outputPath: outputsSorted, headerSize: HEADER_SIZE, recordSize: rs, keySize: OUTPUTS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'so') });
-    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 20, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
+    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: SPENDS_RECORD_SIZE, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
 
     const liveUtxos = path.join(tmp, 'live-utxos.dat');
-    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 20, keySize: OUTPUTS_KEY_SIZE });
+    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: SPENDS_RECORD_SIZE, keySize: OUTPUTS_KEY_SIZE });
 
     const keysDir = path.join(tmp, 'keys');
     await deriveKeys({
@@ -148,19 +150,19 @@ describe('coinbase maturity survives the bulk-sync pipeline', function () {
         const outputsPath = path.join(tmp, 'outputs.dat');
         const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', 40, 60);
         const A = fullTxid('a'), B = fullTxid('b'), C = fullTxid('c');
-        w.append(A.subarray(0, 8), 0, 5000000000n, 60, A, scriptHash, blockHash, true);  // immature coinbase
-        w.append(B.subarray(0, 8), 0, 5000000000n, 40, B, scriptHash, blockHash, true);  // mature coinbase
-        w.append(C.subarray(0, 8), 0, 5000000000n, 60, C, scriptHash, blockHash, false); // non-coinbase
+        w.append(A, 0, 5000000000n, 60, scriptHash, blockHash, true);  // immature coinbase
+        w.append(B, 0, 5000000000n, 40, scriptHash, blockHash, true);  // mature coinbase
+        w.append(C, 0, 5000000000n, 60, scriptHash, blockHash, false); // non-coinbase
         w.close();
 
         const meta = new MetaWriter(path.join(tmp, 'meta.dat'), 'bitcoin', 'regtest', 40, 60);
-        meta.writeBlock(40, 1700000000, blockHash, Buffer.alloc(32), [B.subarray(0, 8)]);
-        meta.writeBlock(60, 1700000600, Buffer.alloc(32, 0x22), blockHash, [A.subarray(0, 8), C.subarray(0, 8)]);
+        meta.writeBlock(40, 1700000000, blockHash, Buffer.alloc(32), [B]);
+        meta.writeBlock(60, 1700000600, Buffer.alloc(32, 0x22), blockHash, [A, C]);
         meta.close();
 
         const dbPath = path.join(tmp, 'db');
         const rs = await runMerge(tmp, outputsPath, path.join(tmp, 'meta.dat'), dbPath);
-        expect(rs).to.equal(121); // header discriminator picked the coinbase-flagged width
+        expect(rs).to.equal(OUTPUTS_RECORD_SIZE); // read from the dump header, as the orchestrator does
 
         const { tracker, store, mempoolDb } = await openTracker(dbPath, 150);
         try {
@@ -189,11 +191,11 @@ describe('coinbase maturity survives the bulk-sync pipeline', function () {
         const outputsPath = path.join(tmp, 'outputs.dat');
         const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', 10, 10);
         const A = fullTxid('a');
-        w.append(A.subarray(0, 8), 0, 2500000000n, 10, A, scriptHash, blockHash, true); // mature coinbase
+        w.append(A, 0, 2500000000n, 10, scriptHash, blockHash, true); // mature coinbase
         w.close();
 
         const meta = new MetaWriter(path.join(tmp, 'meta.dat'), 'bitcoin', 'regtest', 10, 10);
-        meta.writeBlock(10, 1700000000, blockHash, Buffer.alloc(32), [A.subarray(0, 8)]);
+        meta.writeBlock(10, 1700000000, blockHash, Buffer.alloc(32), [A]);
         meta.close();
 
         const dbPath = path.join(tmp, 'db');
@@ -220,8 +222,8 @@ describe('coinbase maturity survives the bulk-sync pipeline', function () {
     beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'xchain-bulk-cb-')); });
     afterEach(function () { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {} });
 
-    it('a legacy 120-byte dump (no flag byte) still merges and serves as non-coinbase', async function () {
-        const { address, scriptHash } = fixtureAddress();
+    it('refuses a format-1 dump (8-byte txid fields) instead of merging it', async function () {
+        const { scriptHash } = fixtureAddress();
         const blockHash = Buffer.alloc(32, 0x44);
         const A = fullTxid('a');
 
@@ -229,33 +231,24 @@ describe('coinbase maturity survives the bulk-sync pipeline', function () {
         writeLegacyOutputsFile(outputsPath, [
             { fullTxHash: A, vout: 0, value: 5000000000n, height: 5, scriptHash, blockHash },
         ], 5, 5);
+        // The header still reports the format-1 width, as an old parse leaves it.
         expect(readOutputsRecordSize(outputsPath)).to.equal(120);
+        expect(() => assertCurrentParseFormat({ outputs: outputsPath }, { parsed: '/work/parsed', merge: '/work/merge' }))
+            .to.throw(/format 'XCHNOUT1', expected 'XCHNOUT2'.*Remove \/work\/parsed and \/work\/merge/);
 
         const meta = new MetaWriter(path.join(tmp, 'meta.dat'), 'bitcoin', 'regtest', 5, 5);
-        meta.writeBlock(5, 1700000000, blockHash, Buffer.alloc(32), [A.subarray(0, 8)]);
+        meta.writeBlock(5, 1700000000, blockHash, Buffer.alloc(32), [A]);
         meta.close();
-
-        const dbPath = path.join(tmp, 'db');
-        const rs = await runMerge(tmp, outputsPath, path.join(tmp, 'meta.dat'), dbPath);
-        expect(rs).to.equal(120);
-
-        // tip 10: only 6 confs. A coinbase here would be withheld; because the
-        // legacy record carries no flag it decodes as non-coinbase and is served.
-        const { tracker, store, mempoolDb } = await openTracker(dbPath, 10);
+        // deriveKeys refuses the width on its own as well, for callers that skip
+        // the orchestrator's magic check.
+        let threw = null;
         try {
-            const raw = await store.getOutputsScriptPubKey(scriptHash.toString('hex'));
-            expect(raw).to.have.length(1);
-            expect(raw[0].coinbase).to.equal(false);
-            // The re-encoded on-disk value must be the legacy 44-byte form.
-            const oKey = Buffer.concat([Buffer.from([0x4F]), scriptHash, A.subarray(0, 8), Buffer.alloc(4)]);
-            const oVal = await store.db.get(oKey);
-            expect(oVal.length).to.equal(44);
-
-            const utxos = await tracker.getUtxosAddress(address);
-            expect(utxos.map(u => u.txid)).to.include(A.toString('hex'));
-        } finally {
-            await store.db.close();
-            await mempoolDb.close();
-        }
+            await deriveKeys({
+                metaPath: path.join(tmp, 'meta.dat'), outputsPath, liveUtxosPath: outputsPath, spendsByPrevPath: outputsPath,
+                outDir: path.join(tmp, 'keys'), tmpDir: path.join(tmp, 'derive'),
+                network: 'bitcoin-regtest', outputsRecordSize: 120,
+            });
+        } catch (e) { threw = e; }
+        expect(threw && threw.message).to.match(/unsupported outputsRecordSize 120/);
     });
 });

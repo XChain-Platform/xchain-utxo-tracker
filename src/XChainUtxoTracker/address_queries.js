@@ -110,8 +110,8 @@ async function readBalanceInfo(address){
         // Note: with REMOVE_SPENT=true, totalReceived only reflects currently unspent confirmed outputs
         totalReceived += amount
 
-        // getInput keys on the 8-byte (16-hex) txid prefix, matching insertInput.
-        let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+        // getInput keys on the full txid, matching insertInput.
+        let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
         // Confirmed output being spent in the mempool: counts as confirmed but pending out
         if (mempoolInput != null) pendingBalance -= amount
         confirmedBalance += amount
@@ -127,7 +127,7 @@ async function readBalanceInfo(address){
         // tx still present in both stores during the cleanup window).
         if (confirmedKeys.has(txid + ':' + nextOutput.vout)) continue
 
-        let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+        let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
         if (mempoolInput == null) {
             pendingBalance += BigInt(nextOutput.value)
             utxosPending++
@@ -173,8 +173,8 @@ async function readUtxosAddress(address, { limit = null, after = null } = {}){
         let txid = claimConfirmedOutpoint(confirmedKeys, nextOutput)
 
         // Skip confirmed outputs being spent in the mempool. getInput keys on
-        // the 8-byte (16-hex) txid prefix, matching insertInput.
-        let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+        // the full txid, matching insertInput.
+        let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
         if (mempoolInput != null) continue
 
         addServableConfirmedUtxo.call(this, results, nextOutput, txid, scriptPubKeyHex)
@@ -204,24 +204,24 @@ async function addServableMempoolUtxo(results, nextOutput, { confirmedKeys, page
     if (confirmedKeys.has(txid + ':' + nextOutput.vout)) return
     // Across pages the page's own list cannot see an outpoint emitted on an
     // earlier page, so ask the confirmed store directly.
-    if (paged && await this.db.hasOutputForTx(txid.substring(0, 16), nextOutput.vout)) return
+    if (paged && await this.db.hasOutputForTx(txid, nextOutput.vout)) return
     // Skip mempool outputs that are also spent by another mempool tx
-    let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+    let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
     if (mempoolInput != null) return
     results.push(mempoolUtxo(nextOutput, txid, scriptPubKeyHex))
 }
 
-// The fail-loud txid guard: a stored output must carry its full 64-char txid,
-// since a 16-char key prefix means the record predates the fullTxHash field.
+// The fail-loud txid guard: a served output must carry its full 64-char txid.
 function requireFullTxid(nextOutput){
     let txid = nextOutput.fullTxid || nextOutput.txid
 
-    // A valid txid is the full 32-byte hash (64 hex chars). When fullTxid
-    // is null the fallback yields the 8-byte O-key prefix (16 hex chars),
-    // which happens only for O-records written before the full hash was
-    // added to the O-record format. Such a record can never produce a
-    // valid spend, so fail loudly here rather than letting the truncated
-    // id silently corrupt a downstream PSBT. Re-index this LevelDB.
+    // A valid txid is the full 32-byte hash (64 hex chars). The O value's
+    // fullTxid comes first; a value without one falls back to the O key, which
+    // in store layout 2 is the whole txid too. Anything shorter can never
+    // produce a valid spend, so fail loudly here rather than letting a
+    // truncated id silently corrupt a downstream PSBT. A layout 1 store, whose
+    // keys held 16-char prefixes, is refused at boot (store_layout.js) before
+    // any read reaches this guard.
     if (txid.length !== 64) {
         throw new Error(
             `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
@@ -253,7 +253,7 @@ function utxoQueryPlan(address, network, limit){
 
 // Continuation cursor for the next page, captured BEFORE the loop below
 // rewrites each output's `txid` to the full hash. The cursor is the last
-// *scanned* confirmed DB key (txHash8:vout), independent of mempool-spend
+// *scanned* confirmed DB key (txid:vout), independent of mempool-spend
 // filtering. Only set when a full page was read (more rows may remain). Pages
 // are gap- and repeat-free only at one committed height: a block committed between
 // pages can re-serve page 1's mempool output as confirmed, so a pager restarts when sync.tracker_height

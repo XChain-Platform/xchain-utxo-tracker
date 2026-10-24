@@ -48,12 +48,12 @@ describe('LevelUpDb (extended coverage)', function () {
         it('removes committed outputs via batch (getMany path)', async function () {
             const scriptBuf = randBuf32();
             const scriptHex = scriptBuf.toString('hex');
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const blockHash = randHash();
 
             // Commit output + hint to DB (not in-memory)
-            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0, value: BigInt(3000), height: 10 });
-            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
+            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0, value: BigInt(3000), height: 10 });
+            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0 });
             await db.endTransaction(true);
 
             // Clear the output cache so Phase 2 hits the DB read path
@@ -61,7 +61,7 @@ describe('LevelUpDb (extended coverage)', function () {
 
             await db.beginTransaction();
             const count = await db.removeOutputsWithInputsBatch([
-                { prevTxHash: txHash8, prevOutputIndex: 0, blockHash }
+                { prevTxHash: txidHex, prevOutputIndex: 0, blockHash }
             ]);
             await db.endTransaction(true);
 
@@ -89,15 +89,15 @@ describe('LevelUpDb (extended coverage)', function () {
         it('removes in-memory (same-batch) outputs via batch', async function () {
             const scriptBuf = randBuf32();
             const scriptHex = scriptBuf.toString('hex');
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const blockHash = randHash();
 
             // Insert output + hint and spend in the SAME batch (in-memory path)
             await db.beginTransaction();
-            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0, value: BigInt(2000), height: 5 });
-            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
+            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0, value: BigInt(2000), height: 5 });
+            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0 });
             const count = await db.removeOutputsWithInputsBatch([
-                { prevTxHash: txHash8, prevOutputIndex: 0, blockHash }
+                { prevTxHash: txidHex, prevOutputIndex: 0, blockHash }
             ]);
             await db.endTransaction(true);
 
@@ -133,12 +133,12 @@ describe('LevelUpDb (extended coverage)', function () {
 
         it('throws the outpoint-naming diagnostic when a staged output is already gone (duplicate outpoint in one batch)', async function () {
             const scriptBuf = randBuf32();
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const blockHash = randHash();
 
             await db.beginTransaction();
-            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0, value: BigInt(2000), height: 5 });
-            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
+            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0, value: BigInt(2000), height: 5 });
+            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0 });
 
             // The same outpoint listed twice: the first removal deletes the staged O,
             // the second finds it missing and must throw with outpoint context rather
@@ -146,8 +146,8 @@ describe('LevelUpDb (extended coverage)', function () {
             let threw = false;
             try {
                 await db.removeOutputsWithInputsBatch([
-                    { prevTxHash: txHash8, prevOutputIndex: 0, blockHash },
-                    { prevTxHash: txHash8, prevOutputIndex: 0, blockHash },
+                    { prevTxHash: txidHex, prevOutputIndex: 0, blockHash },
+                    { prevTxHash: txidHex, prevOutputIndex: 0, blockHash },
                 ]);
             } catch (e) {
                 threw = true;
@@ -158,13 +158,13 @@ describe('LevelUpDb (extended coverage)', function () {
         });
 
         it('warns and skips when hint is missing (pre-REMOVE_SPENT data)', async function () {
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const blockHash = randHash();
 
             // No output or hint exists for this input
             await db.beginTransaction();
             const count = await db.removeOutputsWithInputsBatch([
-                { prevTxHash: txHash8, prevOutputIndex: 0, blockHash }
+                { prevTxHash: txidHex, prevOutputIndex: 0, blockHash }
             ]);
             await db.endTransaction(true);
 
@@ -190,11 +190,11 @@ describe('LevelUpDb (extended coverage)', function () {
         it('handles multiple inputs in one batch (mixed committed and missing)', async function () {
             const script1 = randBuf32();
             const script1Hex = script1.toString('hex');
-            const tx1 = randHash8();
+            const tx1 = randHash();
             const blockHash = randHash();
 
             // Only tx1 has an output; tx2 does not
-            const tx2 = randHash8();
+            const tx2 = randHash();
 
             await db.insertOutput({ scriptPubKey: script1, txHash: tx1, outputIndex: 0, value: BigInt(100), height: 1 });
             await db.insertOutputHint({ scriptPubKey: script1, txHash: tx1, outputIndex: 0 });
@@ -232,12 +232,12 @@ describe('LevelUpDb (extended coverage)', function () {
         it('uses output cache (hit path) when output was recently inserted', async function () {
             const scriptBuf = randBuf32();
             const scriptHex = scriptBuf.toString('hex');
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const blockHash = randHash();
 
             // Insert and commit; this populates the static outputCache
-            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0, value: BigInt(7777), height: 3 });
-            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
+            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0, value: BigInt(7777), height: 3 });
+            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0 });
             await db.endTransaction(true);
 
             // Phase 2 of removeOutputsWithInputsBatch should see a cache hit.
@@ -246,7 +246,7 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.beginTransaction();
             const hitsBefore = LevelUpStore.outputCacheHits;
             await db.removeOutputsWithInputsBatch([
-                { prevTxHash: txHash8, prevOutputIndex: 0, blockHash }
+                { prevTxHash: txidHex, prevOutputIndex: 0, blockHash }
             ]);
             await db.endTransaction(true);
 
@@ -274,12 +274,12 @@ describe('LevelUpDb (extended coverage)', function () {
         it('leaves H record intact (no undo-less delete) when output has no matching value', async function () {
             // Insert hint only (no O record) to force the oVal==null branch in Phase 3
             const scriptBuf = randBuf32();
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const blockHash = randHash();
 
             // Insert only the H entry manually via addTransaction
             await db.addTransaction('put',
-                Buffer.concat([Buffer.from([0x48]), Buffer.from(txHash8, 'hex'), Buffer.alloc(4)]),
+                Buffer.concat([Buffer.from([0x48]), Buffer.from(txidHex, 'hex'), Buffer.alloc(4)]),
                 scriptBuf
             );
             await db.endTransaction(true);
@@ -288,7 +288,7 @@ describe('LevelUpDb (extended coverage)', function () {
 
             await db.beginTransaction();
             const count = await db.removeOutputsWithInputsBatch([
-                { prevTxHash: txHash8, prevOutputIndex: 0, blockHash }
+                { prevTxHash: txidHex, prevOutputIndex: 0, blockHash }
             ]);
             await db.endTransaction(true);
 
@@ -299,7 +299,7 @@ describe('LevelUpDb (extended coverage)', function () {
             // unwind unable to restore it. The store must leave it intact instead,
             // matching removeOutputWithInput()'s "do nothing" behavior for the same
             // store state.
-            const stillPresent = await db.hasOutputForTx(txHash8, 0);
+            const stillPresent = await db.hasOutputForTx(txidHex, 0);
             expect(stillPresent).to.equal(true);
         });
     });

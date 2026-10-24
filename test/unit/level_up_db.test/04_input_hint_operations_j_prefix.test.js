@@ -31,15 +31,15 @@ function registerInputHintOperationTests() {
   describe('input hint operations (J prefix)', function () {
     it('inserts input hint and deletes inputs by hint', async function () {
       const prevTxHash = randHash();
-      const spendingTxHash8 = randHash8();
-      const spendingFullTx = spendingTxHash8 + randHash().substring(16);
+      const spendingTxHash8 = randHash();
+      const spendingFullTx = spendingTxHash8;
 
       await db.insertInput({ prevTxHash, prevOutputIndex: 0, txHash: spendingTxHash8 });
       await db.insertInputHint({ prevTxHash, prevOutputIndex: 0, txHash: spendingTxHash8 });
       await db.endTransaction(true);
 
       // Input should exist
-      let input = await db.getInput(prevTxHash.substring(0, 16), 0);
+      let input = await db.getInput(prevTxHash, 0);
       expect(input).to.not.be.null;
 
       // Delete by hint
@@ -48,7 +48,7 @@ function registerInputHintOperationTests() {
       await db.endTransaction(true);
 
       expect(deleted).to.equal(1);
-      input = await db.getInput(prevTxHash.substring(0, 16), 0);
+      input = await db.getInput(prevTxHash, 0);
       expect(input).to.be.null;
     });
   });

@@ -36,8 +36,8 @@ describe('LevelUpDb (extended coverage)', function () {
         it('deletes all outputs across multiple txids', async function () {
             const script1 = randHash();
             const script2 = randHash();
-            const tx1     = randHash8();
-            const tx2     = randHash8();
+            const tx1     = randHash();
+            const tx2     = randHash();
 
             await db.insertOutput({ scriptPubKey: script1, txHash: tx1, outputIndex: 0, value: BigInt(1), height: 1 });
             await db.insertOutputHint({ scriptPubKey: script1, txHash: tx1, outputIndex: 0 });
@@ -47,8 +47,8 @@ describe('LevelUpDb (extended coverage)', function () {
 
             await db.beginTransaction();
             const total = await db.deleteOutputsByHints([
-                tx1 + randHash().substring(16),
-                tx2 + randHash().substring(16),
+                tx1,
+                tx2,
             ]);
             await db.endTransaction(true);
 

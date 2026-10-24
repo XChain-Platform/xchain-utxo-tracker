@@ -36,8 +36,8 @@ describe('LevelUpDb (extended coverage)', function () {
         it('deletes all inputs across multiple txids', async function () {
             const prev1 = randHash();
             const prev2 = randHash();
-            const tx1   = randHash8();
-            const tx2   = randHash8();
+            const tx1   = randHash();
+            const tx2   = randHash();
 
             await db.insertInput({ prevTxHash: prev1, prevOutputIndex: 0, txHash: tx1 });
             await db.insertInputHint({ prevTxHash: prev1, prevOutputIndex: 0, txHash: tx1 });
@@ -48,14 +48,14 @@ describe('LevelUpDb (extended coverage)', function () {
             await db.beginTransaction();
             // deleteInputsByHints accepts full tx ids; deleteInputsByHint uses first 16 chars
             const total = await db.deleteInputsByHints([
-                tx1 + randHash().substring(16),
-                tx2 + randHash().substring(16),
+                tx1,
+                tx2,
             ]);
             await db.endTransaction(true);
 
             expect(total).to.equal(2);
-            expect(await db.getInput(prev1.substring(0, 16), 0)).to.be.null;
-            expect(await db.getInput(prev2.substring(0, 16), 0)).to.be.null;
+            expect(await db.getInput(prev1, 0)).to.be.null;
+            expect(await db.getInput(prev2, 0)).to.be.null;
         });
     });
 

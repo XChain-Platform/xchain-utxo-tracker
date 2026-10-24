@@ -19,22 +19,25 @@
  * Key/value encoding: all hashes stored as raw binary Buffers (not hex strings)
  * to minimize database size.
  *
- * Key layouts (byte sizes):
- *   B: [0x42][blockHash(32)]                                          = 33 B
- *   T: [0x54][txHash8(8)]                                             =  9 B
- *   I: [0x49][prevTxHash8(8)][outputIndex(4)]                        = 13 B
- *   O: [0x4F][scriptPubKey(32)][txHash8(8)][outputIndex(4)]          = 45 B
- *   H: [0x48][txHash8(8)][outputIndex(4)]                            = 13 B
- *   J: [0x4A][txHash8(8)][prevTxHash8(8)][outputIndex(4)]            = 21 B
- *   S: [0x53][scriptPubKey(32)]                                       = 33 B
- *   Z: [0x5A][blockHash(32)][scriptPubKey(32)]                        = 65 B
- *   K: [0x4B][blockHash(32)][scriptPubKey(32)][txHash8(8)][idx(4)]   = 77 B
- *   M: [0x4D][blockHash(32)][txHash8(8)][outputIndex(4)]             = 45 B
- *   N: [0x4E][blockHash(32)]                                          = 33 B
- *   W: [0x57][blockHash(32)][txHash8(8)][outputIndex(4)]             = 45 B
- *   X: [0x58][fullTxid(32)]                                           = 33 B
- *   Y: [0x59][blockHash(32)][txHash8(8)]                              = 41 B
- *   R: [0x52]                                                         =  1 B
+ * Key layouts (byte sizes), store layout version 2. Every txid field is the
+ * whole 32-byte txid; layout 1 stores (no LAYOUT_VERSION record) keyed them on
+ * the first 8 bytes and are refused on open (store_layout.js):
+ *   B: [0x42][blockHash(32)]                                          =  33 B
+ *   T: [0x54][txid(32)]                                               =  33 B
+ *   I: [0x49][prevTxid(32)][outputIndex(4)]                           =  37 B
+ *   O: [0x4F][scriptPubKey(32)][txid(32)][outputIndex(4)]             =  69 B
+ *   H: [0x48][txid(32)][outputIndex(4)]                               =  37 B
+ *   J: [0x4A][txid(32)][prevTxid(32)][outputIndex(4)]                 =  69 B
+ *   S: [0x53][scriptPubKey(32)]                                       =  33 B
+ *   Z: [0x5A][blockHash(32)][scriptPubKey(32)]                        =  65 B
+ *   K: [0x4B][blockHash(32)][scriptPubKey(32)][txid(32)][idx(4)]      = 101 B
+ *   M: [0x4D][blockHash(32)][txid(32)][outputIndex(4)]                =  69 B
+ *   N: [0x4E][blockHash(32)]                                          =  33 B
+ *   W: [0x57][blockHash(32)][txid(32)][outputIndex(4)]                =  69 B
+ *   X: [0x58][txid(32)]                                               =  33 B
+ *   Y: [0x59][blockHash(32)][txid(32)]                                =  65 B
+ *   R: [0x52]                                                         =   1 B
+ *   LAYOUT_VERSION (UTF-8 string key, reserved 'L' byte): decimal version
  *
  * Single-byte diagnostic records (no suffix; at most one of each per store):
  *   P: [0x50] pending K/M cleanup list, Q: [0x51] undo-window watermark
@@ -45,7 +48,7 @@
  *   T: [blockHash(32)][fullTxid(32)]                                  = 64 B
  *      (legacy and bulk-sync-seeded T values are [blockHash(32)] = 32 B;
  *      insertTransaction also writes the X/Y records below)
- *   I: [txHash8(8)]                                                   =  8 B
+ *   I: [spenderTxid(32)]                                              = 32 B
  *   O: [value(8)][height(4)][fullTxHash(32)]{[coinbase(1)]}          = 44/45 B
  *   H: [scriptPubKey(32)]                                             = 32 B
  *   S: [height(4)]                                                    =  4 B
@@ -190,6 +193,7 @@ installMethods(LevelUpStore.prototype,
     loadPart('./level_up_db/outputs.js'),
     loadPart('./level_up_db/output_cleanup.js'),
     loadPart('./level_up_db/output_scripts.js'),
+    loadPart('./level_up_db/store_layout.js'),
 )
 
 // Attached to the class rather than exported one line at a time: one export

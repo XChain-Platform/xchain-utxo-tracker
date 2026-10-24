@@ -28,7 +28,7 @@ const { expect } = require('chai');
 const LevelUpStore = require('../../src/store/level_up_db');
 
 const HASH64 = 'a1'.repeat(32);   // 64-hex / 32-byte hash or scriptPubKey
-const HASH16 = 'b2'.repeat(8);    // 16-hex / 8-byte txid prefix
+const TXID64 = 'b2'.repeat(32);   // 64-hex / 32-byte txid
 const BUF32  = Buffer.from(HASH64, 'hex');
 const IDX    = 0xFFFFFFFF;        // max vout, exercises the widest encoding
 
@@ -37,29 +37,29 @@ const IDX    = 0xFFFFFFFF;        // max vout, exercises the widest encoding
 // (the registry-completeness test cross-checks the exports).
 const REGISTRY = [
     { name: 'kBlock',     len: 33, key: () => LevelUpStore.kBlock(HASH64) },
-    { name: 'kTx',        len: 9,  key: () => LevelUpStore.kTx(HASH16) },
-    { name: 'kInput',     len: 13, key: () => LevelUpStore.kInput(HASH16, IDX) },
-    { name: 'kOutput',    len: 45, key: () => LevelUpStore.kOutput(HASH64, HASH16, IDX) },
-    { name: 'kOutHint',   len: 13, key: () => LevelUpStore.kOutHint(HASH16, IDX) },
-    { name: 'kInHint',    len: 21, key: () => LevelUpStore.kInHint(HASH16, HASH16, IDX) },
+    { name: 'kTx',        len: 33, key: () => LevelUpStore.kTx(TXID64) },
+    { name: 'kInput',     len: 37, key: () => LevelUpStore.kInput(TXID64, IDX) },
+    { name: 'kOutput',    len: 69, key: () => LevelUpStore.kOutput(HASH64, TXID64, IDX) },
+    { name: 'kOutHint',   len: 37, key: () => LevelUpStore.kOutHint(TXID64, IDX) },
+    { name: 'kInHint',    len: 69, key: () => LevelUpStore.kInHint(TXID64, TXID64, IDX) },
     { name: 'kScriptBlk', len: 33, key: () => LevelUpStore.kScriptBlk(HASH64) },
     { name: 'kBlkScript', len: 65, key: () => LevelUpStore.kBlkScript(HASH64, HASH64) },
-    { name: 'kOutDel',    len: 77, key: () => LevelUpStore.kOutDel(HASH64, HASH64, HASH16, IDX) },
-    { name: 'kHintDel',   len: 45, key: () => LevelUpStore.kHintDel(HASH64, HASH16, IDX) },
+    { name: 'kOutDel',    len: 101, key: () => LevelUpStore.kOutDel(HASH64, HASH64, TXID64, IDX) },
+    { name: 'kHintDel',   len: 69, key: () => LevelUpStore.kHintDel(HASH64, TXID64, IDX) },
     { name: 'kStoredBlk', len: 33, key: () => LevelUpStore.kStoredBlk(HASH64) },
-    { name: 'kOutBlk',    len: 45, key: () => LevelUpStore.kOutBlk(HASH64, HASH16, IDX) },
+    { name: 'kOutBlk',    len: 69, key: () => LevelUpStore.kOutBlk(HASH64, TXID64, IDX) },
     { name: 'kTxExact',   len: 33, key: () => LevelUpStore.kTxExact(HASH64) },
-    { name: 'kTxBlockRecovery', len: 41, key: () => LevelUpStore.kTxBlockRecovery(HASH64, HASH16) },
+    { name: 'kTxBlockRecovery', len: 65, key: () => LevelUpStore.kTxBlockRecovery(HASH64, TXID64) },
 ];
 
 // Buffer-variant builders mirror a hex builder's bytes, not a new family.
 const PARITY_PAIRS = [
     { name: 'kOutput/kOutputFromBuf',
-      hex: () => LevelUpStore.kOutput(HASH64, HASH16, IDX),
-      buf: () => LevelUpStore.kOutputFromBuf(BUF32, HASH16, IDX) },
+      hex: () => LevelUpStore.kOutput(HASH64, TXID64, IDX),
+      buf: () => LevelUpStore.kOutputFromBuf(BUF32, TXID64, IDX) },
     { name: 'kOutDel/kOutDelFromBuf',
-      hex: () => LevelUpStore.kOutDel(HASH64, HASH64, HASH16, IDX),
-      buf: () => LevelUpStore.kOutDelFromBuf(HASH64, BUF32, HASH16, IDX) },
+      hex: () => LevelUpStore.kOutDel(HASH64, HASH64, TXID64, IDX),
+      buf: () => LevelUpStore.kOutDelFromBuf(HASH64, BUF32, TXID64, IDX) },
     { name: 'kScriptBlk/kScriptBlkFromBuf',
       hex: () => LevelUpStore.kScriptBlk(HASH64),
       buf: () => LevelUpStore.kScriptBlkFromBuf(BUF32) },
@@ -114,7 +114,7 @@ describe('LevelUpDb key-schema invariants', function () {
 
 describe('LevelUpDb key-schema invariants', function () {
 
-    it('rangeEnd covers short getValuesFromKeyPattern prefixes over the longest (77-byte) key', function () {
+    it('rangeEnd covers short getValuesFromKeyPattern prefixes over the longest (101-byte) key', function () {
         const maxLen = Math.max(...REGISTRY.map((r) => r.key().length));
         for (const prefixLen of [1, 2, 3]) {
             const prefix = Buffer.alloc(prefixLen, 0x4B); // K family, the longest keys
@@ -142,9 +142,9 @@ describe('LevelUpDb key-schema invariants', function () {
     });
 
     // removeTxBlockRecoveryIndexOnly prunes an aged-out block's Y records with a
-    // [Y][blockHash] prefix scan, so every txHash8 under that block must sort in range.
+    // [Y][blockHash] prefix scan, so every full txid under that block must sort in range.
     it('kTxBlockRecovery: a [Y][blockHash] prefix scan reaches every key of that block', function () {
-        const key = LevelUpStore.kTxBlockRecovery(HASH64, 'ff'.repeat(8));
+        const key = LevelUpStore.kTxBlockRecovery(HASH64, 'ff'.repeat(32));
         const prefix = key.slice(0, 33);
         expect(Buffer.compare(key, LevelUpStore.rangeEnd(prefix))).to.be.at.most(0);
         expect(Buffer.compare(key, prefix)).to.be.above(0);

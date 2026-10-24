@@ -185,8 +185,8 @@ async function parseBlockTransactions(sync, transactions, nextBlockHash, nextBlo
             const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
             // A coinbase input spends nothing, so there is no previous output to remove.
             if ((nextInput.index === 4294967295) || !standardInput) continue
-            const prevTxHash8 = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse()).substring(0, 16)
-            removeInputs.push({ prevTxHash: prevTxHash8, prevOutputIndex: nextInput.index, blockHash: nextBlockHash })
+            const prevTxHash = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse())
+            removeInputs.push({ prevTxHash, prevOutputIndex: nextInput.index, blockHash: nextBlockHash })
         }
     }
     let blockInputTotal = removeInputs.length

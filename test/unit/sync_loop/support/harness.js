@@ -140,13 +140,18 @@ function useSyncLoopHarness() {
         h.tracker = null;
     });
     h.run = (node, onSleep, opts) => runLoop(h, node, onSleep, opts);
-    // Seeds every main store as it opens, for the boot-state cases.
+    // Seeds every main store as it opens, for the boot-state cases. The seed is
+    // written in the current key layout, so the store is stamped with it too;
+    // an unstamped store with data reads as an older layout and is refused.
     h.seedMainStore = (seed) => {
         const open = LevelUpStore.prototype.createDatabase.wrappedMethod;
         LevelUpStore.prototype.createDatabase.callsFake(async function () {
             this.inMemory = true;
             const db = await open.call(this);
-            if (!this.dbName.startsWith('mempool')) await seed(this);
+            if (!this.dbName.startsWith('mempool')) {
+                await seed(this);
+                await this.setLayoutVersion();
+            }
             return db;
         });
     };

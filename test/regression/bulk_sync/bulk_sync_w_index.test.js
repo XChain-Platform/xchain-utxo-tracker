@@ -43,8 +43,8 @@ const { readOutputsRecordSize } = require('../../../src/bulk_sync/orchestrator.j
 const LevelUpStore       = require('../../../src/store/level_up_db.js');
 const { ClassicLevel }   = require('classic-level');
 
-const OUTPUTS_KEY_SIZE = 12; // txHash8(8) + vout(4)
-const SPENDS_KEY_SIZE  = 12;
+const OUTPUTS_KEY_SIZE = 36; // txid(32) + vout(4)
+const SPENDS_KEY_SIZE  = 36;
 const HEADER_SIZE      = 64;
 const P_OUT_BLK        = 0x57; // 'W'
 const P_OUTPUT         = 0x4F; // 'O'
@@ -59,10 +59,10 @@ async function runMerge(tmp, outputsPath, spendsPath, metaPath, dbPath) {
     const outputsSorted = path.join(tmp, 'outputs-sorted.dat');
     const spendsSorted  = path.join(tmp, 'spends-sorted.dat');
     await externalSort({ inputPath: outputsPath, outputPath: outputsSorted, headerSize: HEADER_SIZE, recordSize: rs, keySize: OUTPUTS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'so') });
-    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 20, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
+    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 68, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
 
     const liveUtxos = path.join(tmp, 'live-utxos.dat');
-    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 20, keySize: OUTPUTS_KEY_SIZE });
+    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 68, keySize: OUTPUTS_KEY_SIZE });
 
     const keysDir = path.join(tmp, 'keys');
     await deriveKeys({
@@ -107,7 +107,7 @@ async function keyExists(db, key) {
 const script    = Buffer.alloc(32, 0xab);
 const block1    = Buffer.alloc(32, 0x11);
 const block2    = Buffer.alloc(32, 0x22);
-const A = fullTxid('a'), B = fullTxid('b'), S = fullTxid('50');
+const A = fullTxid('a'), B = fullTxid('b'), S = fullTxid('5');
 const outs = [
     { txid: A, blockHash: block1, height: 10 },
     { txid: S, blockHash: block1, height: 10 },
@@ -118,19 +118,19 @@ function writeInputs(tmp) {
     const outputsPath = path.join(tmp, 'outputs.dat');
     const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', 10, 11);
     for (const o of outs) {
-        w.append(o.txid.subarray(0, 8), 0, 5000000000n, o.height, o.txid, script, o.blockHash, false);
+        w.append(o.txid, 0, 5000000000n, o.height, script, o.blockHash, false);
     }
     w.close();
 
     const spendsPath = path.join(tmp, 'spends.dat');
     const sp = new SpendsWriter(spendsPath, 'bitcoin', 'regtest', 10, 11);
-    sp.append(S.subarray(0, 8), 0, B.subarray(0, 8)); // block2 spends S:0
+    sp.append(S, 0, B); // block2 spends S:0
     sp.close();
 
     const metaPath = path.join(tmp, 'meta.dat');
     const meta = new MetaWriter(metaPath, 'bitcoin', 'regtest', 10, 11);
-    meta.writeBlock(10, 1700000000, block1, Buffer.alloc(32), [A.subarray(0, 8), S.subarray(0, 8)]);
-    meta.writeBlock(11, 1700000600, block2, block1, [B.subarray(0, 8)]);
+    meta.writeBlock(10, 1700000000, block1, Buffer.alloc(32), [A, S]);
+    meta.writeBlock(11, 1700000600, block2, block1, [B]);
     meta.close();
 
     return { outputsPath, spendsPath, metaPath };
@@ -145,7 +145,7 @@ async function buildLiveW() {
     for (const o of outs) {
         await store.insertOutputBlock({
             scriptPubKey: script,
-            txHash:       o.txid.subarray(0, 8).toString('hex'),
+            txHash:       o.txid.toString('hex'),
             outputIndex:  0,
             blockHash:    o.blockHash.toString('hex'),
         });
@@ -200,7 +200,7 @@ describe('Regression (bulk-sync): W creation-block index parity and reorg unwind
         await store.db.open();
         try {
             // A:0 was created in block1 and is unspent -> O record present.
-            const oKeyA = Buffer.concat([Buffer.from([P_OUTPUT]), script, A.subarray(0, 8), Buffer.alloc(4)]);
+            const oKeyA = Buffer.concat([Buffer.from([P_OUTPUT]), script, A, Buffer.alloc(4)]);
             expect(await keyExists(store.db, oKeyA)).to.equal(true);
             // W keys for block1 present (A:0 and S:0).
             expect(await collectWRecords(store.db)).to.have.length(3);
@@ -239,7 +239,7 @@ function writeWindowInputs(tmp) {
     const outputsPath = path.join(tmp, 'outputs.dat');
     const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', startH, endH);
     for (const b of blocks) {
-        w.append(b.txid.subarray(0, 8), 0, 5000000000n, b.height, b.txid, script, b.blockHash, false);
+        w.append(b.txid, 0, 5000000000n, b.height, script, b.blockHash, false);
     }
     w.close();
 
@@ -250,7 +250,7 @@ function writeWindowInputs(tmp) {
     const meta = new MetaWriter(metaPath, 'bitcoin', 'regtest', startH, endH);
     let prev = Buffer.alloc(32);
     for (const b of blocks) {
-        meta.writeBlock(b.height, 1700000000 + b.height, b.blockHash, prev, [b.txid.subarray(0, 8)]);
+        meta.writeBlock(b.height, 1700000000 + b.height, b.blockHash, prev, [b.txid]);
         prev = b.blockHash;
     }
     meta.close();
@@ -278,9 +278,9 @@ describe('Regression (bulk-sync): W index is windowed to undoBlocks', function (
         const outputsSorted = path.join(tmp, 'outputs-sorted.dat');
         const spendsSorted  = path.join(tmp, 'spends-sorted.dat');
         await externalSort({ inputPath: outputsPath, outputPath: outputsSorted, headerSize: HEADER_SIZE, recordSize: rs, keySize: OUTPUTS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'so') });
-        await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 20, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
+        await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 68, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
         const liveUtxos = path.join(tmp, 'live-utxos.dat');
-        await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 20, keySize: OUTPUTS_KEY_SIZE });
+        await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 68, keySize: OUTPUTS_KEY_SIZE });
 
         const keysDir = path.join(tmp, 'keys');
         await deriveKeys({

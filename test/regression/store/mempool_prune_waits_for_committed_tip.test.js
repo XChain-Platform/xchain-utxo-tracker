@@ -101,7 +101,7 @@ describe('Regression: mempool prune waits for the committed tip', function () {
 
     expect(await tracker.db.getLastBlockHeight()).to.equal(0, 'block 1 is not committed yet');
     expect(outpoints(await tracker.getUtxosAddress(TEST_KEYS[0].address))).to.not.include(x);
-    expect(await tracker.mempoolDb.getTransaction('54' + spend.getId().substring(0, 16)), 'T kept').to.not.equal(null);
+    expect(await tracker.mempoolDb.getTransaction('54' + spend.getId()), 'T kept').to.not.equal(null);
 
     // Once the block commits, its own cleanup removes T and X is spent on the confirmed side.
     fx.release();

@@ -39,7 +39,7 @@ describe('store_errors', function () {
         expect(error).to.be.an.instanceOf(InvalidCursorError);
         expect(error.name).to.equal('InvalidCursorError');
         expect(error.message).to.equal(
-            'invalid pagination cursor "bad-cursor" (expected "<txHash8Hex>:<vout>")'
+            'invalid pagination cursor "bad-cursor" (expected "<txid>:<vout>")'
         );
         expect(error.code).to.equal('INVALID_CURSOR');
         expect(error.data).to.deep.equal({ code: 'INVALID_CURSOR' });

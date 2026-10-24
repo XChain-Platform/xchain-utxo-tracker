@@ -33,14 +33,18 @@ describe('LevelUpDb (extended coverage)', function () {
         beforeEach(async function () { db = makeDb(); await db.createDatabase(); });
         afterEach(async function () { try { await db.close(); } catch (e) {} });
 
+        // Every case but the width ones carries a 64-hex txid, so each is
+        // rejected for the reason its label names and not for its width.
+        const TXID = 'deadbeef'.repeat(8);
         const cursorCases = [
             ['non-string (number)', 42],
-            ['no colon', 'deadbeefdeadbeef'],
+            ['no colon', TXID],
             ['colon at position 0', ':0'],
-            ['txHash8 too short (14 hex)', 'deadbeefdeadbe:0'],
-            ['txHash8 not hex', 'gggggggggggggggg:0'],
-            ['vout not digits', 'deadbeefdeadbeef:abc'],
-            ['vout > 0xFFFFFFFF', 'deadbeefdeadbeef:4294967296'],
+            ['txidHex too short (14 hex)', 'deadbeefdeadbe:0'],
+            ['txidHex not hex', 'g'.repeat(64) + ':0'],
+            ['vout not digits', TXID + ':abc'],
+            ['vout > 0xFFFFFFFF', TXID + ':4294967296'],
+            ['a well-formed 16-hex txid (the layout 1 cursor form)', 'deadbeefdeadbeef:0'],
         ];
 
         for (const [label, cursor] of cursorCases) {
@@ -56,6 +60,17 @@ describe('LevelUpDb (extended coverage)', function () {
                 expect(err.code).to.equal('INVALID_CURSOR');
             });
         }
+
+        it('accepts a well-formed 64-hex txid cursor and resumes after it', async function () {
+            const scriptHash = randHash();
+            const txids = [randHash(), randHash(), randHash()].sort();
+            for (const txid of txids) {
+                await db.insertOutput({ scriptPubKey: scriptHash, txHash: txid, outputIndex: 0, value: 1n, height: 1, fullTxHash: txid });
+            }
+            await db.endTransaction(true);
+            const page = await db.getOutputsScriptPubKey(scriptHash, { after: txids[0] + ':0' });
+            expect(page.map((o) => o.txid)).to.deep.equal(txids.slice(1));
+        });
     });
 
 });

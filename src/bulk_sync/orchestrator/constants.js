@@ -18,8 +18,8 @@ const path = require('path')
 
 // constants
 
-const OUTPUTS_KEY_SIZE = 12   // txHash8(8) + vout(4)
-const SPENDS_KEY_SIZE  = 12   // prevTxHash8(8) + prevVout(4)
+const OUTPUTS_KEY_SIZE = 36   // txid(32) + vout(4)
+const SPENDS_KEY_SIZE  = 36   // prevTxid(32) + prevVout(4)
 
 // The bulk-sync programs (dump.js, parse_worker.js) sit beside the orchestrator
 // entry, one directory above this part.

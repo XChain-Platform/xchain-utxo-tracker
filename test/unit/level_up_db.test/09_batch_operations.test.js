@@ -28,7 +28,7 @@ let db;
 function registerBatchOperationTests() {
   describe('batch operations', function () {
     it('beginTransaction resets the transaction map', async function () {
-      await db.insertOutput({ scriptPubKey: randHash(), txHash: randHash8(), outputIndex: 0, value: BigInt(1), height: 1 });
+      await db.insertOutput({ scriptPubKey: randHash(), txHash: randHash(), outputIndex: 0, value: BigInt(1), height: 1 });
       expect(db.transactionArray.size).to.equal(1);
 
       await db.beginTransaction();
@@ -45,7 +45,7 @@ function registerBatchOperationTests() {
     it('endTransaction with batch=false discards pending writes', async function () {
       const scriptHash = randHash();
       await db.beginTransaction();
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash8(), outputIndex: 0, value: BigInt(999), height: 1 });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: randHash(), outputIndex: 0, value: BigInt(999), height: 1 });
       expect(db.transactionArray.size).to.equal(1);
 
       await db.endTransaction(false); // discard
