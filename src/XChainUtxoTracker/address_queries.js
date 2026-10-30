@@ -73,13 +73,36 @@ module.exports = {
         if (!record) return null
 
         return { height: record.h }
+    },
+
+    // getFirstSeen's answer with the snapshot it was read at, under the store-commit lock.
+    async getFirstSeenAt(address){
+        const script = addressToScript(address, this.network)
+        const scriptHash = createHash('sha256').update(script).digest('hex')
+        return withStoreRead(this, async () => {
+            const snapshot = await readCommittedSnapshot.call(this)
+            const record = await this.db.getOutputScriptBlock(scriptHash)
+            return { firstSeen: record ? { height: record.h } : null, ...snapshot }
+        })
     }
+}
+
+// The committed height, tip hash and reorg count, read under the lock with the rows they label.
+async function readCommittedSnapshot(){
+    // Read the committed height inside the read lock, so the reported height is the one these rows came from.
+    const committedHeight = await this.db.getLastBlockHeight()
+    // Read the tip hash with it: the same batch commits both, and a same-height reorg changes only the hash.
+    const committedHash = await this.db.getLastBlockHash()
+    // Read the reorg count here too: a same-height reorg moves it before the replacement block commits.
+    const reorgCount = this.reorgCount
+    return { committedHeight, committedHash, reorgCount }
 }
 
 // get_info's body: the confirmed snapshot, then the mempool snapshot.
 async function readBalanceInfo(address){
     let script = addressToScript(address, this.network)
     let scriptHash = createHash('sha256').update(script).digest('hex')
+    const snapshot = await readCommittedSnapshot.call(this)
 
     let confirmedBalance = 0n
     let pendingBalance = 0n
@@ -134,18 +157,13 @@ async function readBalanceInfo(address){
         }
     }
 
-    return balanceInfoResult.call(this, address, { confirmedBalance, pendingBalance, totalReceived, utxosConfirmed, utxosPending })
+    return withReadSnapshot(balanceInfoResult.call(this, address, { confirmedBalance, pendingBalance, totalReceived, utxosConfirmed, utxosPending }), snapshot)
 }
 
 // get_utxos's body: the confirmed snapshot, then the mempool snapshot.
 async function readUtxosAddress(address, { limit = null, after = null } = {}){
     const { scriptHash, scriptPubKeyHex, paged, pageLimit } = utxoQueryPlan(address, this.network, limit)
-    // Read the committed height inside the read lock, so the reported height is the one these rows came from.
-    const committedHeight = await this.db.getLastBlockHeight()
-    // Read the tip hash with it: the same batch commits both, and a same-height reorg changes only the hash.
-    const committedHash = await this.db.getLastBlockHash()
-    // Read the reorg count here too: a same-height reorg moves it before the replacement block commits.
-    const reorgCount = this.reorgCount
+    const snapshot = await readCommittedSnapshot.call(this)
 
     // Paged mode pulls one bounded page of confirmed outputs (resuming from
     // `after`); unbounded mode pulls everything but is capped by the
@@ -184,7 +202,7 @@ async function readUtxosAddress(address, { limit = null, after = null } = {}){
         await addServableMempoolUtxo.call(this, results, nextOutput, { confirmedKeys, paged, scriptPubKeyHex })
     }
 
-    return withNextCursor(results, paged, nextCursor, { committedHeight, committedHash, reorgCount })
+    return withNextCursor(results, paged, nextCursor, snapshot)
 }
 
 // Adds the response entry for one mempool output, unless the confirmed store
@@ -324,14 +342,18 @@ function mempoolUtxo(nextOutput, txid, scriptPubKeyHex){
 // Expose the continuation cursor as a non-enumerable property so the array
 // still serializes as a bare UTXO list (preserving the existing API/JSON-RPC
 // contract) while the REST layer can read it for the X-Next-Cursor header.
-function withNextCursor(results, paged, nextCursor, { committedHeight, committedHash, reorgCount }){
+function withNextCursor(results, paged, nextCursor, snapshot){
     if (paged) Object.defineProperty(results, 'nextCursor', { value: nextCursor, enumerable: false })
-    // Carry the height, tip hash and reorg count read under the lock, for the response's freshness fields.
-    Object.defineProperty(results, 'committedHeight', { value: committedHeight, enumerable: false })
-    if (typeof committedHash === 'string') Object.defineProperty(results, 'committedHash', { value: committedHash, enumerable: false })
-    if (typeof reorgCount === 'number') Object.defineProperty(results, 'reorgCount', { value: reorgCount, enumerable: false })
+    return withReadSnapshot(results, snapshot)
+}
 
-    return results
+// Carry the height, tip hash and reorg count read under the lock, for the response's freshness fields.
+// Non-enumerable, so the serialized body keeps its shape.
+function withReadSnapshot(target, { committedHeight, committedHash, reorgCount }){
+    Object.defineProperty(target, 'committedHeight', { value: committedHeight, enumerable: false })
+    if (typeof committedHash === 'string') Object.defineProperty(target, 'committedHash', { value: committedHash, enumerable: false })
+    if (typeof reorgCount === 'number') Object.defineProperty(target, 'reorgCount', { value: reorgCount, enumerable: false })
+    return target
 }
 
 // The get_info response body, balances as coin-denominated decimal strings.

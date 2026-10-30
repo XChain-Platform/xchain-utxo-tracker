@@ -25,12 +25,13 @@ async function getFirstSeen(tracker, address){
     return await tracker.getFirstSeen(address)
 }
 
-// Return balance
+// Return balance, with the height, tip hash and reorg count its rows were read at
 async function getBalance(tracker, address){
     let utxos = await tracker.getUtxosAddress(address)
     let balance = 0n
     for (let nextUtxo of utxos) balance = balance + BigInt(nextUtxo.value)
-    return XChainUtxoTracker.satoshiToDecimalString(balance)
+    const { committedHeight, committedHash, reorgCount } = utxos
+    return { balance: XChainUtxoTracker.satoshiToDecimalString(balance), committedHeight, committedHash, reorgCount }
 }
 
 async function getInfo(tracker, address){
@@ -368,7 +369,10 @@ function createApp(config){
         app, tracker, probeGate, requestGate,
         getUtxos: (address, opts) => getUtxos(tracker, address, opts),
         getFirstSeen: (address) => getFirstSeen(tracker, address),
-        getBalance: config.getBalance || ((address) => getBalance(tracker, address)),
+        getFirstSeenAt: (address) => tracker.getFirstSeenAt(address),
+        // Wrap an injected reader's bare balance, so its freshness falls back to the live height.
+        getBalance: config.getBalance ? async (address) => ({ balance: await config.getBalance(address) })
+            : ((address) => getBalance(tracker, address)),
         getInfo: (address) => getInfo(tracker, address),
         parsePageOpts: (query) => parsePageOpts(query, config.MAX_PAGE_LIMIT),
         getFreshnessMeta: (height, readAt) => getFreshnessMeta(tracker, height, readAt),

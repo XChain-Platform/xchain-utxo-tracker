@@ -21,6 +21,7 @@ const { buildChain, makeNode, useSyncLoopHarness } = require('./support/harness'
 const { installObservability, _resetObservability: resetObservability } = require('../../../src/observability');
 const { installUtxoTrackerMetrics } = require('../../../src/server/utxo_tracker_metrics.js');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker.js');
+const { get_sync_status } = require('../../../src/api/sync_status.js');
 const { TIP_SETTLE_STABLE_READS } = require('../../../src/XChainUtxoTracker/reorg_node_reads.js');
 
 const SETTLE_EXTRA_SLEEPS = TIP_SETTLE_STABLE_READS - 1;
@@ -282,5 +283,35 @@ describe('XChainUtxoTracker sync loop: readiness latches across a stop and a rel
         expect(first.synced, 'a relaunched loop must re-earn the latch').to.equal(false);
         expect(first.mempool).to.equal(false);
         expect(first.freshness).to.include({ synced: false, mempool_ready: false });
+    });
+});
+
+// The node tip belongs to the run that read it, like the latches: a relaunched
+// loop whose node is down must not report the previous run's tip.
+describe('XChainUtxoTracker sync loop: node tip across a relaunch', function () {
+    const h = useSyncLoopHarness();
+
+    it('reports no node tip from the previous run until the relaunched loop reads one', async function () {
+        const node = makeNode(buildChain(6));
+        await h.run(node, (n) => (n >= 2 ? 'stop' : null));
+        const tracker = h.tracker;
+        expect(tracker.latestKnownChainTip, 'the first run read a node tip').to.be.a('number');
+        node.faults.info = [new Error('node RPC down')];
+        let first = null;
+        tracker.sleep = async function () {
+            await new Promise((resolve) => setImmediate(resolve));
+            if (first === null) {
+                // The status read sees the node down too, so it falls back to the loop's tip.
+                const down = Object.assign(Object.create(this), {
+                    connector: { getBlockchainInfo: async () => { throw new Error('node RPC down'); } }
+                });
+                first = { tip: this.latestKnownChainTip, status: await get_sync_status(down) };
+            }
+            this.keepParsing = false;
+        };
+        await tracker.start();
+        expect(first, 'the relaunched loop never slept').to.not.equal(null);
+        expect(first.tip).to.equal(null);
+        expect(first.status).to.include({ node_height: -1, lag: null, synced: false });
     });
 });

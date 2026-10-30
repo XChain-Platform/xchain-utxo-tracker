@@ -287,8 +287,8 @@ async function assertLevelDbArchiveOrThrow(archivePath, reportedSource) {
 // A metadata member bigger than this is not metadata (xchain-node's reader uses the same bound).
 const BOOTSTRAP_META_MAX_BYTES = 64 * 1024
 
-// Read the unwrapped wrapper's bootstrap.json, or null when it is absent, oversized,
-// unreadable, or not format 1 (an archive published before the member existed).
+// Read the unwrapped bootstrap.json by basename wherever it sits (leading the wrapper only speeds
+// xchain-node's read), or null when absent, oversized, unreadable or not format 1 (a legacy archive).
 function readUnwrappedArchiveMeta(tmpDir) {
     const metaPath = findMemberByBasename(tmpDir, BOOTSTRAP_META_MEMBER)
     try {

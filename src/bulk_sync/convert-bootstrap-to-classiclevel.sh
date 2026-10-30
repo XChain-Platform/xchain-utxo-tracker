@@ -141,6 +141,7 @@ printf '%s  data.tar.gz\n' "$h" > "$WORK/wrap/data.sha256"
 log "  data.tar.gz sha256 = $h"
 
 log "[7/7] wrap outer archive -> $OUT"
+# Keep bootstrap.json the first member: xchain-node reads only the leading member.
 tar czf "$OUT" -C "$WORK/wrap" bootstrap.json data.tar.gz data.sha256
 rm -rf "$WORK/wrap" "$WORK/outer"
 

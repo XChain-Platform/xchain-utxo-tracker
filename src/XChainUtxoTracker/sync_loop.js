@@ -139,6 +139,8 @@ function newSyncLoopState({ lastProcessedBlockIndex, lastProcessedBlockHash }){
     // rather than in the constructor so the window starts when tracking starts.
     this.lastNodeRpcOkAt = Date.now()
     this.blockchainInfoLastBlock = -1
+    // The previous run's tip, which every tip consumer reads first, goes with it.
+    this.latestKnownChainTip = null
     // A relaunched loop re-earns readiness against the store it just opened:
     // only pollAtChainTip and the mempool poller may raise these again. The
     // published catch-up wait goes with the run, like its nodeCatchingUpProblem twin.

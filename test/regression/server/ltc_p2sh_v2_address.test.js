@@ -32,6 +32,8 @@ describe('LTC test-network P2SH version-2 address queries', function () {
       db: {
         getOutputsScriptPubKey: async (h) => { seen.push(h); return []; },
         getOutputScriptBlock: async (h) => { seen.push(h); return null; },
+        getLastBlockHeight: async () => 0,
+        getLastBlockHash: async () => null,
       },
       mempoolDb: { getOutputsScriptPubKey: async (h) => { seen.push(h); return []; } },
     };

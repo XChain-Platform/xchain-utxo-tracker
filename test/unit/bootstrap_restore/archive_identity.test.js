@@ -34,7 +34,8 @@ const sha256File = (file) => createHash('sha256').update(fs.readFileSync(file)).
 
 // A publisher-shaped wrapper: bootstrap.json first (when given), then an inner
 // data.tar.gz holding a root-level LevelDB store and its data.sha256.
-function buildWrapper(dir, metaBody) {
+// metaFirst false puts bootstrap.json second, the order xchain-node's leading read misses.
+function buildWrapper(dir, metaBody, { metaFirst = true } = {}) {
     const store = path.join(dir, 'store');
     const stage = path.join(dir, 'stage');
     fs.mkdirSync(store, { recursive: true });
@@ -47,7 +48,8 @@ function buildWrapper(dir, metaBody) {
     const members = ['data.tar.gz', 'data.sha256'];
     if (metaBody !== null) {
         fs.writeFileSync(path.join(stage, 'bootstrap.json'), typeof metaBody === 'string' ? metaBody : JSON.stringify(metaBody));
-        members.unshift('bootstrap.json');
+        if (metaFirst) members.unshift('bootstrap.json');
+        else members.splice(1, 0, 'bootstrap.json');
     }
     const archive = path.join(dir, 'wrapper.tar.gz');
     if (spawnSync('tar', ['-czf', archive, '-C', stage, ...members]).status !== 0) throw new Error('wrapper tar failed');
@@ -75,6 +77,14 @@ async function expectRefusal(archive, pattern, identity = TARGET) {
     expect(err.message).to.match(/bootstrap\.json declares/);
     expect(err.message).to.match(pattern);
     expect(unwrapDirs(), 'the refused unwrap must clean its temp dir').to.equal(before);
+}
+
+// Prove a fixture really carries bootstrap.json somewhere other than first.
+function expectMetaNotLeading(archive) {
+    const listing = spawnSync('tar', ['-tzf', archive], { encoding: 'utf8' });
+    const names = listing.stdout.split('\n').filter(Boolean).map(n => n.replace(/^\.\//, ''));
+    expect(names).to.include('bootstrap.json');
+    expect(names[0]).to.not.equal('bootstrap.json');
 }
 
 async function expectAccepted(archive) {
@@ -122,6 +132,18 @@ describe('validateBootstrapArchiveOrThrow archive identity gate', function () {
     it('still refuses a foreign module when the tracker NETWORK names no coin/network', async function () {
         const noNet = { module: 'xchain-utxo-tracker', coin: null, network: null };
         await expectRefusal(buildWrapper(tmp, meta({ module: 'xchain-indexer' })), /module "xchain-indexer"/, noNet);
+    });
+
+    it('refuses a foreign-coin wrapper even when bootstrap.json does not lead the archive', async function () {
+        const archive = buildWrapper(tmp, meta({ coin: 'litecoin', network: 'testnet' }), { metaFirst: false });
+        expectMetaNotLeading(archive);
+        await expectRefusal(archive, /coin "litecoin", network "testnet"/);
+    });
+
+    it('accepts a matching wrapper whose bootstrap.json does not lead the archive', async function () {
+        const archive = buildWrapper(tmp, meta(), { metaFirst: false });
+        expectMetaNotLeading(archive);
+        await expectAccepted(archive);
     });
 });
 
