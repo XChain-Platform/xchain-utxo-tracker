@@ -61,7 +61,11 @@ function build(tips) {
     tipBelowCommittedTipRefused: false,
     blocksQuantity: 0
   };
-  return { tracker, sync, store, verifyCalls, sleeps, readCount: () => reads };
+  return {
+    tracker, sync, store, verifyCalls, sleeps,
+    readCount: () => reads,
+    setTips: (next) => { tips = next; reads = 0; }
+  };
 }
 
 describe('tip-below rollback settles the node tip first @regression', function () {
@@ -108,6 +112,20 @@ describe('tip-below rollback settles the node tip first @regression', function (
 
     expect(verifyCalls).to.deep.equal([]);
     expect(store.deletes).to.equal(0);
+  });
+
+  it('does not walk back valid blocks while a refused tip climbs back through the undo window', async function () {
+    const { tracker, sync, store, verifyCalls, setTips } = build([COMMITTED - 15]);
+    await refreshNodeTip.call(tracker, sync);
+    expect(sync.tipBelowCommittedTipRefused).to.equal(true);
+
+    setTips([COMMITTED - 12]);
+    await refreshNodeTip.call(tracker, sync);
+
+    expect(verifyCalls).to.deep.equal([COMMITTED - 15]);
+    expect(store.deletes).to.equal(0);
+    expect(store.top).to.equal(COMMITTED);
+    expect(sync.lastProcessedBlockIndex).to.equal(COMMITTED);
   });
 });
 

@@ -122,6 +122,17 @@ async function waitOnCatchingUpNode(sync){
     await this.sleep(5000)
 }
 
+// A refused walk marks one continuous below-tip event as deeper than the undo
+// window. Do not retry it when the node climbs back inside the window:
+// reconsiderblock pauses between heights, so two equal reads there would
+// otherwise walk back valid blocks. Wait for the node to regain our height;
+// pollAtChainTip then compares the hashes and reconciles a real replacement.
+async function waitAfterRefusedTipBelow(sync){
+    if (!sync.tipBelowCommittedTipRefused) return false
+    await this.sleep(5000)
+    return true
+}
+
 // Our committed tip is above the node's: wait while the node is still catching
 // up; otherwise discard any open batch, read the committed block, and either
 // roll back onto the node's chain or repair the stored tip pointer.
@@ -137,6 +148,8 @@ async function recoverFromTipBelowOurs(sync){
         sync.nodeCatchingUpProblem = false
         this.nodeCatchingUp = null
     }
+
+    if (await waitAfterRefusedTipBelow.call(this, sync)) return
 
     // Never act on a single tip reading: settle it first, against the
     // in-memory cursor, before anything is discarded. A periodic refresh
