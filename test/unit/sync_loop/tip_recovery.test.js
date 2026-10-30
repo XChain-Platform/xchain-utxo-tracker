@@ -50,9 +50,8 @@ describe('XChainUtxoTracker sync loop: node tip below ours', function () {
                 };
             }
             if (n === 3 + SETTLE_EXTRA_SLEEPS) node.chain = full;
-            // After the lower candidate moves back to `full`, it must itself
-            // remain stable for a complete window before indexing resumes.
-            return n >= 5 + (2 * SETTLE_EXTRA_SLEEPS) ? 'stop' : null;
+            // The lower tip settles on sleeps 2-6; indexing reaches 69 by sleep 8.
+            return n >= 5 + SETTLE_EXTRA_SLEEPS ? 'stop' : null;
         });
         expect(h.tracker.reorgCount).to.equal(0);
         expect(seen.height).to.equal(69);

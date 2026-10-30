@@ -108,10 +108,57 @@ async function settleWalkTip(first){
     return null
 }
 
+// A node running invalidateblock (or any multi-block disconnect) drops its tip
+// one block at a time, so a poll mid-disconnect reads a transient tip that may
+// sit inside the undo window while the final one is past it. Acting on that
+// first reading deletes up to the whole window, after which the final tip is
+// refused against a window already spent. So a tip below ours is acted on only
+// once it remains unchanged for the full settle window; one repeated reading
+// is not sufficient because an intermediate tip can pause longer than the
+// read delay. The settled reading replaces the first one. Returns false,
+// ending the pass with nothing deleted or discarded, when the tip does not
+// settle, cannot be read, or is no longer below `ourHeight` (the in-memory
+// cursor); the next pass reads it afresh.
+async function settleNodeTipBelow(sync, ourHeight){
+    let previous = this.blockchainInfoLastBlock
+    let stableReads = 0
+    for (let read = 0; read < TIP_SETTLE_MAX_READS; read++){
+        await this.sleep(TIP_SETTLE_DELAY_MS)
+        let info
+        try {
+            info = await this.connector.getBlockchainInfo()
+        } catch (e){
+            logger.error(nodeUtil.format('Error re-reading the node tip before a rollback: ' + e.message, e))
+            return false
+        }
+        if (!nodeTipIsParseable(info, this.consensusNetwork)) return false
+        const tip = info["blocks"]
+        if (tip === previous){
+            stableReads++
+            if (stableReads === TIP_SETTLE_STABLE_READS){
+                sync.lastBlockchainInfo = info
+                this.latestKnownChainTip = tip
+                this.blockchainInfoLastBlock = tip
+                // Back at or above our height (a reconsiderblock, a node that
+                // caught up, or one stale reply): no rollback and no discard;
+                // the next pass reconciles.
+                return tip < ourHeight
+            }
+        } else {
+            previous = tip
+            stableReads = 0
+        }
+    }
+    logger.warn("The node tip is still moving after " + TIP_SETTLE_MAX_READS + " readings (last " + previous
+        + ", ours " + ourHeight + "); not rolling back on a moving tip, re-checking next pass.")
+    return false
+}
+
 module.exports = {
     RETRY_WALK,
     nodeBlockHashOrRetry,
     TIP_SETTLE_DELAY_MS,
     TIP_SETTLE_STABLE_READS,
-    TIP_SETTLE_MAX_READS
+    TIP_SETTLE_MAX_READS,
+    settleNodeTipBelow
 }

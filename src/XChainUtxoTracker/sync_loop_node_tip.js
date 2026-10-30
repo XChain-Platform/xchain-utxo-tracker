@@ -24,13 +24,8 @@ const { CHECK_BLOCK_DELAY_MS, MEMPOOL_INTERVAL, P_PENDING_CLEANUP_KEY, logger } 
 // walk can apply it without a require cycle; re-exported below for its callers.
 const { nodeStillCatchingUp, catchUpWaitState, nodeTipIsParseable } = require('./catch_up_helpers.js')
 const { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal, flushPendingAtTip } = require('./sync_loop_block_apply.js')
-// The pause and re-read budget for settling a tip below ours, shared with the
-// reorg walk's mid-walk refresh so both apply one rule.
-const {
-    TIP_SETTLE_DELAY_MS,
-    TIP_SETTLE_STABLE_READS,
-    TIP_SETTLE_MAX_READS
-} = require('./reorg_node_reads.js')
+// The sync loop and reorg walk share one rule for settling a lower node tip.
+const { settleNodeTipBelow } = require('./reorg_node_reads.js')
 
 // Sync loop steps, called with the tracker as `this`; sync_loop.js says how.
 
@@ -197,52 +192,6 @@ async function recoverFromTipBelowOurs(sync){
     // The tip was settled above, before the discard.
     if (lastBlockDb.height > this.blockchainInfoLastBlock) return rollBackToNodeTip.call(this, sync, lastBlockDb)
     return repairLastBlockPointer.call(this, sync, lastBlockDb)
-}
-
-// A node running invalidateblock (or any multi-block disconnect) drops its tip
-// one block at a time, so a poll mid-disconnect reads a transient tip that may
-// sit inside the undo window while the final one is past it. Acting on that
-// first reading deletes up to the whole window, after which the final tip is
-// refused against a window already spent. So a tip below ours is acted on only
-// once it remains unchanged for the full settle window; one repeated reading
-// is not sufficient because an intermediate tip can pause longer than the
-// read delay. The settled reading replaces the first one. Returns false,
-// ending the pass with nothing deleted or discarded, when the tip does not
-// settle, cannot be read, or is no longer below `ourHeight` (the in-memory
-// cursor); the next pass reads it afresh.
-async function settleNodeTipBelow(sync, ourHeight){
-    let previous = this.blockchainInfoLastBlock
-    let stableReads = 0
-    for (let read = 0; read < TIP_SETTLE_MAX_READS; read++){
-        await this.sleep(TIP_SETTLE_DELAY_MS)
-        let info
-        try {
-            info = await this.connector.getBlockchainInfo()
-        } catch (e){
-            logger.error(nodeUtil.format('Error re-reading the node tip before a rollback: ' + e.message, e))
-            return false
-        }
-        if (!nodeTipIsParseable(info, this.consensusNetwork)) return false
-        const tip = info["blocks"]
-        if (tip === previous){
-            stableReads++
-            if (stableReads === TIP_SETTLE_STABLE_READS){
-                sync.lastBlockchainInfo = info
-                this.latestKnownChainTip = tip
-                this.blockchainInfoLastBlock = tip
-                // Back at or above our height (a reconsiderblock, a node that
-                // caught up, or one stale reply): no rollback and no discard;
-                // the next pass reconciles.
-                return tip < ourHeight
-            }
-        } else {
-            previous = tip
-            stableReads = 0
-        }
-    }
-    logger.warn("The node tip is still moving after " + TIP_SETTLE_MAX_READS + " readings (last " + previous
-        + ", ours " + ourHeight + "); not rolling back on a moving tip, re-checking next pass.")
-    return false
 }
 
 // True regression: the node's tip is genuinely below our committed
