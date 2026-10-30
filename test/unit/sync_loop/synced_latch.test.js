@@ -21,6 +21,9 @@ const { buildChain, makeNode, useSyncLoopHarness } = require('./support/harness'
 const { installObservability, _resetObservability: resetObservability } = require('../../../src/observability');
 const { installUtxoTrackerMetrics } = require('../../../src/server/utxo_tracker_metrics.js');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker.js');
+const { TIP_SETTLE_STABLE_READS } = require('../../../src/XChainUtxoTracker/reorg_node_reads.js');
+
+const SETTLE_EXTRA_SLEEPS = TIP_SETTLE_STABLE_READS - 1;
 
 // Scrapes the real registry and reads the gauge and the /status verdict for
 // the same instant; the /status side uses getFreshnessMeta's own inputs.
@@ -64,8 +67,8 @@ describe('XChainUtxoTracker sync loop: synced latch on a refused rollback or a c
         const seen = await h.run(node, async (n, s) => {
             if (n === 1) { install(); s.atTip = await sample(h.tracker, reg()); node.chain = full.slice(0, 2); }
             if (n === 2) s.refused = await sample(h.tracker, reg());
-            if (n === 3) node.chain = full;
-            if (n >= 5) { s.back = await sample(h.tracker, reg()); return 'stop'; }
+            if (n === 3 + SETTLE_EXTRA_SLEEPS) node.chain = full;
+            if (n >= 5 + SETTLE_EXTRA_SLEEPS) { s.back = await sample(h.tracker, reg()); return 'stop'; }
             return null;
         });
         expect(seen.atTip).to.include({ gauge: 1, status: true });
@@ -83,7 +86,7 @@ describe('XChainUtxoTracker sync loop: synced latch on a refused rollback or a c
             if (n === 1) { install(); node.retired = node.chain; node.chain = node.chain.slice(0, 10); node.ibd = true; }
             if (n === 2) s.waiting = await sample(h.tracker, reg());
             if (n === 3) node.ibd = false;
-            if (n >= 5) { s.back = await sample(h.tracker, reg()); return 'stop'; }
+            if (n >= 5 + SETTLE_EXTRA_SLEEPS) { s.back = await sample(h.tracker, reg()); return 'stop'; }
             return null;
         });
         expect(seen.waiting).to.include({ gauge: 0, status: false, committed: 12, tip: 9 });
@@ -111,8 +114,8 @@ describe('XChainUtxoTracker sync loop: synced latch through a rollback or a node
                 node.retired = node.chain;
                 node.chain = node.chain.slice(0, 10);
             }
-            if (n === 3) s.afterRollback = gaugeNow(reg());
-            return n >= 4 ? 'stop' : null;
+            if (n === 3 + SETTLE_EXTRA_SLEEPS) s.afterRollback = gaugeNow(reg());
+            return n >= 4 + SETTLE_EXTRA_SLEEPS ? 'stop' : null;
         });
         expect(h.tracker.reorgCount).to.equal(1);
         expect(seen.height).to.equal(9);

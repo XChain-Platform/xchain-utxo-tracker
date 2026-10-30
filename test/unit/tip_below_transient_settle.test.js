@@ -18,7 +18,8 @@ const { refreshNodeTip } = require('../../src/XChainUtxoTracker/sync_loop_node_t
 // mid-disconnect reads a transient tip. When that transient tip sits inside the
 // undo window and the final one is past it, acting on the first reading walks
 // back the whole window and only then meets the refusal against the final tip.
-// A tip below ours must settle (two agreeing readings) before any rollback.
+// A tip below ours must remain unchanged for the full settling window before
+// any rollback.
 const COMMITTED = 100669;
 const WINDOW = 12;
 
@@ -126,6 +127,28 @@ describe('tip-below rollback settles the node tip first @regression', function (
     expect(store.deletes).to.equal(0);
     expect(store.top).to.equal(COMMITTED);
     expect(sync.lastProcessedBlockIndex).to.equal(COMMITTED);
+  });
+});
+
+describe('tip-below rollback waits through a repeated intermediate tip @regression', function () {
+  it('does not spend the undo window when an intermediate tip repeats before falling again', async function () {
+    const intermediate = COMMITTED - WINDOW;
+    const final = COMMITTED - WINDOW - 3;
+    const { tracker, sync, store, verifyCalls, readCount } = build([
+      intermediate,
+      intermediate,
+      intermediate,
+      final
+    ]);
+
+    await refreshNodeTip.call(tracker, sync);
+
+    expect(readCount()).to.equal(9);
+    expect(verifyCalls).to.deep.equal([final]);
+    expect(store.deletes).to.equal(0);
+    expect(store.top).to.equal(COMMITTED);
+    expect(sync.lastProcessedBlockIndex).to.equal(COMMITTED);
+    expect(sync.tipBelowCommittedTipRefused).to.equal(true);
   });
 });
 

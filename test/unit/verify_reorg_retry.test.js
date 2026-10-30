@@ -292,8 +292,9 @@ describe('XChainUtxoTracker.verifyReorg mid-walk tip refresh', function () {
 });
 
 // A lower mid-walk tip is the height every committed block above it is deleted
-// against, so it is taken only once two readings agree, as at walk entry; a
-// passing reading must not spend the undo window on blocks the node still has.
+// against, so it is taken only after a full window of unchanged readings, as at
+// walk entry; a passing reading must not spend the undo window on blocks the
+// node still has.
 describe('XChainUtxoTracker.verifyReorg mid-walk tip refresh settles a lower reading', function () {
   this.timeout(0);
 
@@ -308,13 +309,30 @@ describe('XChainUtxoTracker.verifyReorg mid-walk tip refresh settles a lower rea
   });
 
   it('keeps the walk tip while the reading is still moving, then acts on the settled one', async function () {
-    // Five falling readings never settle; the walk keeps 103 and retries.
+    // Falling readings never settle; the walk keeps 103 and retries.
     const readings = [99, 98, 97, 96, 95, 94];
     const { tracker, state } = buildTipDropTracker({
       info: (s) => ({ blocks: readings.length ? readings.shift() : s.nodeTip, initialblockdownload: false, verificationprogress: 1 })
     });
     expect(await tracker.verifyReorg(103)).to.equal(true);
     expect(state.deleted).to.deep.equal([105, 104, 103, 102, 101]);
+  });
+
+  it('does not spend the undo window when a repeated mid-walk tip falls again', async function () {
+    // The intermediate tip is walkable, but the final tip is not. Accepting the
+    // first repeated height would delete two blocks before the final refusal.
+    const readings = [103, 103, 103, 100];
+    const { tracker, state } = buildTipDropTracker({
+      undoBlocks: 3,
+      info: (s) => ({ blocks: readings.length ? readings.shift() : s.nodeTip, initialblockdownload: false, verificationprogress: 1 })
+    });
+
+    let err = null;
+    try { await tracker.verifyReorg(); } catch (e) { err = e; }
+
+    expect(err, 'expected the above-tip budget refusal').to.be.an('error');
+    expect(err.tipBelowCommittedTip).to.equal(true);
+    expect(state.deleted).to.deep.equal([]);
   });
 });
 
