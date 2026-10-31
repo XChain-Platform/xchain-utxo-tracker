@@ -23,7 +23,7 @@ const { CHECK_BLOCK_DELAY_MS, MEMPOOL_INTERVAL, P_PENDING_CLEANUP_KEY, logger } 
 // The tip parse gate lives in catch_up_helpers.js (a leaf module) so the reorg
 // walk can apply it without a require cycle; re-exported below for its callers.
 const { nodeStillCatchingUp, catchUpWaitState, nodeTipIsParseable } = require('./catch_up_helpers.js')
-const { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal, flushPendingAtTip } = require('./sync_loop_block_apply.js')
+const { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal, countRefusedWalk, flushPendingAtTip } = require('./sync_loop_block_apply.js')
 // The sync loop and reorg walk share one rule for settling a lower node tip.
 const { settleNodeTipBelow } = require('./reorg_node_reads.js')
 
@@ -41,9 +41,10 @@ async function refreshNodeTip(sync){
                 logger.info("The node is not synced. Waiting for it to synchronize...")
             }
 
-            // A reindexing node reports its low tip here, below the parse gate;
-            // the latch must drop with it, as in recoverFromTipBelowOurs.
-            if (this.latestKnownChainTip < sync.lastProcessedBlockIndex) this.synced = false
+            // A refused tip has not been reconciled, whatever height it reports.
+            // The first parseable pass at the committed tip raises the latch again.
+            this.synced = false
+            this.mempoolReconverged = false
             sync.lastBlockchainInfo = null
             sync.nodeSyncedProblem = true
             await this.sleep(3000)
@@ -214,23 +215,16 @@ async function rollBackToNodeTip(sync, lastBlockDb){
     try {
         await this.verifyReorg(this.blockchainInfoLastBlock)
     } catch (err){
-        // A gap deeper than the undo window, refused BEFORE any
-        // delete (nothing walked back, index intact). Neither exit
-        // (a restart lands in the same refusal) nor haltForResync
-        // (nothing needs rebuilding) fits: stay up, say it once,
-        // and re-check the tip every poll so a node that is merely
-        // catching up without reporting IBD resolves it on its own.
+        // A tagged gap is safe to wait on. Re-read both the store cursor and
+        // node tip because the walk may have committed deletes before refusing.
         if (err && err.tipBelowCommittedTip){
             if (!sync.tipBelowCommittedTipRefused){
                 logger.error(err.message)
             }
             sync.tipBelowCommittedTipRefused = true
-            // The walk may have deleted blocks before it refused (the
-            // message carries "already rolled back"). Re-read the cursor
-            // from the store, or a restored node tip equals the stale
-            // cursor and the deleted heights are never re-indexed.
             sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
             sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
+            sync.lastBlockchainInfo = null
             await this.sleep(5000)
             return countRefusedWalk.call(this, lastBlockDb.height - sync.lastProcessedBlockIndex)
         }
@@ -242,16 +236,6 @@ async function rollBackToNodeTip(sync, lastBlockDb){
     // Every rollback drops the cached tip, so the next pass reads the node again.
     sync.lastBlockchainInfo = null
     resyncMempoolAfterReorg.call(this)
-}
-
-// The walk counts a reorg only when it finishes, so blocks it deleted before
-// refusing would never reach reorg_count: count them from the drop in the
-// committed height across the refused walk.
-function countRefusedWalk(walkedBack){
-    if (walkedBack > 0){
-        this.reorgCount++
-        this.lastReorgDepth = walkedBack
-    }
 }
 
 // The node's tip is below our in-memory cursor but not below the committed

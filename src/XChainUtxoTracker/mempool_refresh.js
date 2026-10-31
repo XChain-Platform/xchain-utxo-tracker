@@ -167,12 +167,15 @@ async function pruneMempoolStore(rawMempool, counts, mayDelete){
         // Off tip, dedup only: the block flush's cleanup removes mined txs, the next pass at tip evicted ones.
         let deletedInfo = await this.mempoolDb.deleteAndCompareTxsNotInList(rawMempool, { keepOnly: mayDelete !== true })
         // Commit as the store-commit lock's writer so no address read sees half of it.
-        await withStoreCommit(this, () => this.mempoolDb.endTransaction())
+        await withStoreCommit(this, async () => {
+            await this.mempoolDb.endTransaction()
+            this.mempoolEpoch++
+            if (rawMempool.length) this.mempoolReconverged = false
+        })
         // rawMempool now holds only the txs the store still lacks, so the
         // store is a partial snapshot until the last batch lands. Withdraw
         // readiness left over from the previous pass;
         // markMempoolReconverged re-asserts it after the final batch.
-        if (rawMempool.length) this.mempoolReconverged = false
         counts.deletedTransactionsCount = deletedInfo.transactionsDeleted
         counts.deletedInputsCount = deletedInfo.inputsDeleted
         counts.deletedOutputsCount = deletedInfo.outputsDeleted
@@ -267,7 +270,10 @@ async function stageMempoolBatch(nextTxsHex, nodeTxids, rawMempool, counts){
             }
         }
         // Commit as the store-commit lock's writer so no address read sees half of it.
-        await withStoreCommit(this, () => this.mempoolDb.endTransaction())
+        await withStoreCommit(this, async () => {
+            await this.mempoolDb.endTransaction()
+            this.mempoolEpoch++
+        })
     } catch (err){
         // Discard this batch's staged writes and rethrow to the
         // outer handler; mempoolBusy is cleared in finally.

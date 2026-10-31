@@ -82,6 +82,7 @@ module.exports = {
         return withStoreRead(this, async () => {
             const snapshot = await readCommittedSnapshot.call(this)
             const record = await this.db.getOutputScriptBlock(scriptHash)
+            snapshot.mempoolReconverged = this.mempoolReconverged === true
             return { firstSeen: record ? { height: record.h } : null, ...snapshot }
         })
     }
@@ -95,7 +96,7 @@ async function readCommittedSnapshot(){
     const committedHash = await this.db.getLastBlockHash()
     // Read the reorg count here too: a same-height reorg moves it before the replacement block commits.
     const reorgCount = this.reorgCount
-    return { committedHeight, committedHash, reorgCount }
+    return { committedHeight, committedHash, reorgCount, mempoolEpoch: this.mempoolEpoch }
 }
 
 // get_info's body: the confirmed snapshot, then the mempool snapshot.
@@ -110,8 +111,7 @@ async function readBalanceInfo(address){
     let utxosPending = 0
     let totalReceived = 0n
 
-    let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
-    let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
+    const { confirmedOutputs, mempoolOutputs } = await readBalanceOutputs.call(this, scriptHash)
 
     // Outpoints already accounted from the confirmed store. A just-mined tx
     // lives in both stores until the deferred mempool cleanup runs, so the
@@ -157,7 +157,15 @@ async function readBalanceInfo(address){
         }
     }
 
+    snapshot.mempoolReconverged = this.mempoolReconverged === true
     return withReadSnapshot(balanceInfoResult.call(this, address, { confirmedBalance, pendingBalance, totalReceived, utxosConfirmed, utxosPending }), snapshot)
+}
+
+// Load both stores in the same confirmed-then-mempool order used by get_info.
+async function readBalanceOutputs(scriptHash){
+    const confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
+    const mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
+    return { confirmedOutputs, mempoolOutputs }
 }
 
 // get_utxos's body: the confirmed snapshot, then the mempool snapshot.
@@ -202,6 +210,7 @@ async function readUtxosAddress(address, { limit = null, after = null } = {}){
         await addServableMempoolUtxo.call(this, results, nextOutput, { confirmedKeys, paged, scriptPubKeyHex })
     }
 
+    snapshot.mempoolReconverged = this.mempoolReconverged === true
     return withNextCursor(results, paged, nextCursor, snapshot)
 }
 
@@ -276,7 +285,8 @@ function utxoQueryPlan(address, network, limit){
 // are gap- and repeat-free only at one committed height: a block committed between
 // pages can re-serve page 1's mempool output as confirmed, so a pager restarts when sync.tracker_height
 // or sync.committed_hash moves (a same-height reorg keeps the height and changes the hash); REST carries
-// them as X-Tracker-Height and X-Tracker-Tip-Hash, beside X-Reorg-Count.
+// them as X-Tracker-Height and X-Tracker-Tip-Hash, beside X-Reorg-Count. A pager
+// also restarts when mempool_epoch moves because later pages filter against it.
 function nextPageCursor(confirmedOutputs, paged, pageLimit){
     return (paged && confirmedOutputs.length === pageLimit)
         ? confirmedOutputs[confirmedOutputs.length - 1].txid + ':' + confirmedOutputs[confirmedOutputs.length - 1].vout
@@ -349,10 +359,12 @@ function withNextCursor(results, paged, nextCursor, snapshot){
 
 // Carry the height, tip hash and reorg count read under the lock, for the response's freshness fields.
 // Non-enumerable, so the serialized body keeps its shape.
-function withReadSnapshot(target, { committedHeight, committedHash, reorgCount }){
+function withReadSnapshot(target, { committedHeight, committedHash, reorgCount, mempoolEpoch, mempoolReconverged }){
     Object.defineProperty(target, 'committedHeight', { value: committedHeight, enumerable: false })
     if (typeof committedHash === 'string') Object.defineProperty(target, 'committedHash', { value: committedHash, enumerable: false })
     if (typeof reorgCount === 'number') Object.defineProperty(target, 'reorgCount', { value: reorgCount, enumerable: false })
+    if (typeof mempoolEpoch === 'number') Object.defineProperty(target, 'mempoolEpoch', { value: mempoolEpoch, enumerable: false })
+    if (typeof mempoolReconverged === 'boolean') Object.defineProperty(target, 'mempoolReconverged', { value: mempoolReconverged, enumerable: false })
     return target
 }
 

@@ -258,6 +258,7 @@ function initStatusCounters(){
     // detect chains that reorg frequently and know how deep the last one was.
     this.reorgCount = 0
     this.lastReorgDepth = 0
+    this.mempoolEpoch = Date.now()
 
     // Forward-progress heartbeat, stamped when a block batch is committed.
     // Kept in memory because the /metrics collector runs synchronously and so

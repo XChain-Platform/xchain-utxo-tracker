@@ -155,15 +155,15 @@ function parseArchiveMeta(text) {
 }
 
 // Compare an archive's declared identity with the restore target, case-insensitively.
-// Only a field present on BOTH sides that differs is a mismatch; a field either side
-// lacks is unchecked (legacy archives carry no member, converter-built ones null coin).
+// A missing archive field is unchecked for legacy and converter-built archives. A target
+// missing a field declared by the archive is a mismatch, matching xchain-node's gate.
 function compareArchiveIdentity(meta, target) {
     const mismatches = [];
     const unchecked = [];
     for (const field of ARCHIVE_IDENTITY_FIELDS) {
         const archive = identityValue(meta && meta[field]);
         const wanted = identityValue(target && target[field]);
-        if (archive === null || wanted === null) unchecked.push(field);
+        if (archive === null) unchecked.push(field);
         else if (archive !== wanted) mismatches.push({ field, archive, target: wanted });
     }
     const status = mismatches.length > 0 ? 'mismatch' : unchecked.length > 0 ? 'unchecked' : 'match';

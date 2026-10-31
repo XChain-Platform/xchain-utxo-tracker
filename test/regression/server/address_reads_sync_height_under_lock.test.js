@@ -49,6 +49,8 @@ function readAt(target, height) {
   Object.defineProperty(target, 'committedHeight', { value: height, enumerable: false });
   Object.defineProperty(target, 'committedHash', { value: READ_HASH, enumerable: false });
   Object.defineProperty(target, 'reorgCount', { value: 3, enumerable: false });
+  Object.defineProperty(target, 'mempoolEpoch', { value: 12, enumerable: false });
+  Object.defineProperty(target, 'mempoolReconverged', { value: false, enumerable: false });
   return target;
 }
 
@@ -64,7 +66,8 @@ function trackerReadAtSevenLiveEight() {
   tracker.reorgCount = 4;
   tracker.getBalanceInfo.resolves(infoAt(7));
   tracker.getUtxosAddress.resolves(readAt([{ txid: 'a'.repeat(64), vout: 0, value: '150000000' }], 7));
-  tracker.getFirstSeenAt = sinon.stub().resolves({ firstSeen: null, committedHeight: 7, committedHash: READ_HASH, reorgCount: 3 });
+  tracker.getFirstSeenAt = sinon.stub().resolves({ firstSeen: null, committedHeight: 7, committedHash: READ_HASH,
+    reorgCount: 3, mempoolEpoch: 12, mempoolReconverged: false });
   return tracker;
 }
 
@@ -82,12 +85,15 @@ function expectReadSync(sync) {
   expect(sync.tracker_height).to.equal(7);
   expect(sync.committed_hash).to.equal(READ_HASH);
   expect(sync.reorg_count).to.equal(3);
+  expect(sync.mempool_epoch).to.equal(12);
+  expect(sync.mempool_ready).to.equal(false);
 }
 
 function expectReadHeaders(res) {
   expect(res.headers['x-tracker-height']).to.equal('7');
   expect(res.headers['x-tracker-tip-hash']).to.equal(READ_HASH);
   expect(res.headers['x-reorg-count']).to.equal('3');
+  expect(res.headers['x-mempool-epoch']).to.equal('12');
 }
 
 describe('Regression: address reads report the snapshot their rows were read at', function () {
