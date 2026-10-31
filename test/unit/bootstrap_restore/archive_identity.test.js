@@ -134,6 +134,11 @@ describe('validateBootstrapArchiveOrThrow archive identity gate', function () {
         await expectRefusal(buildWrapper(tmp, meta({ module: 'xchain-indexer' })), /module "xchain-indexer"/, noNet);
     });
 
+    it('refuses declared coin and network when the restore target omits them', async function () {
+        const noNet = { module: 'xchain-utxo-tracker', coin: null, network: null };
+        await expectRefusal(buildWrapper(tmp, meta()), /Configure NETWORK as <coin>-<network>/, noNet);
+    });
+
     it('refuses a foreign-coin wrapper even when bootstrap.json does not lead the archive', async function () {
         const archive = buildWrapper(tmp, meta({ coin: 'litecoin', network: 'testnet' }), { metaFirst: false });
         expectMetaNotLeading(archive);
@@ -166,10 +171,14 @@ describe('restore archive identity helpers', function () {
             .to.deep.equal({ module: 'xchain-utxo-tracker', coin: 'bitcoin', network: null });
     });
 
-    it('marks a field unchecked, never mismatched, when either side lacks it', function () {
+    it('leaves missing archive fields unchecked but rejects missing target fields', function () {
         expect(compareArchiveIdentity(null, TARGET))
             .to.deep.equal({ status: 'unchecked', mismatches: [], unchecked: ['module', 'coin', 'network'] });
-        expect(compareArchiveIdentity(TARGET, { ...TARGET, coin: null }).status).to.equal('unchecked');
+        expect(compareArchiveIdentity(TARGET, { ...TARGET, coin: null })).to.deep.equal({
+            status: 'mismatch',
+            mismatches: [{ field: 'coin', archive: 'bitcoin', target: null }],
+            unchecked: [],
+        });
         expect(compareArchiveIdentity(TARGET, TARGET).status).to.equal('match');
         expect(compareArchiveIdentity({ ...TARGET, network: 'testnet' }, TARGET).mismatches)
             .to.deep.equal([{ field: 'network', archive: 'testnet', target: 'mainnet' }]);

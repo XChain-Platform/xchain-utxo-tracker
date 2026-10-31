@@ -30,8 +30,8 @@ async function getBalance(tracker, address){
     let utxos = await tracker.getUtxosAddress(address)
     let balance = 0n
     for (let nextUtxo of utxos) balance = balance + BigInt(nextUtxo.value)
-    const { committedHeight, committedHash, reorgCount } = utxos
-    return { balance: XChainUtxoTracker.satoshiToDecimalString(balance), committedHeight, committedHash, reorgCount }
+    const { committedHeight, committedHash, reorgCount, mempoolEpoch, mempoolReconverged } = utxos
+    return { balance: XChainUtxoTracker.satoshiToDecimalString(balance), committedHeight, committedHash, reorgCount, mempoolEpoch, mempoolReconverged }
 }
 
 async function getInfo(tracker, address){
@@ -78,8 +78,9 @@ async function getFreshnessMeta(tracker, knownCommittedHeight, readAt){
     const rawTip = (typeof tracker.latestKnownChainTip === 'number')
         ? tracker.latestKnownChainTip
         : (typeof tracker.blockchainInfoLastBlock === 'number' ? tracker.blockchainInfoLastBlock : -1)
+    const page = readAt || {}
     const freshness = XChainUtxoTracker.computeFreshness(committedHeight, rawTip, tracker.isSynced(), {
-        mempoolReconverged: tracker.isMempoolReconverged(),
+        mempoolReconverged: typeof page.mempoolReconverged === 'boolean' ? page.mempoolReconverged : tracker.isMempoolReconverged(),
         halted: !!tracker.halted,
         haltReason: tracker.haltReason,
         haltedAt: tracker.haltedAt,
@@ -110,13 +111,13 @@ async function getFreshnessMeta(tracker, knownCommittedHeight, readAt){
     // tracker rather than as a moved counter.
     freshness.reorg_count = (tracker && typeof tracker.reorgCount === 'number')
         ? tracker.reorgCount : undefined
-    const page = readAt || {}
     // A page's own count, read with its rows, wins over the live one a later rollback could move.
     if (typeof page.reorgCount === 'number') freshness.reorg_count = page.reorgCount
     if (freshness.reorg_count === undefined) delete freshness.reorg_count
     // Name the chain a page was read on: a same-height reorg keeps tracker_height and changes this
     // hash, and unlike reorg_count it survives a restart. Sent only when read with the rows.
     if (typeof page.committedHash === 'string') freshness.committed_hash = page.committedHash
+    if (typeof page.mempoolEpoch === 'number') freshness.mempool_epoch = page.mempoolEpoch
     return freshness
 }
 
@@ -135,6 +136,7 @@ async function setFreshnessHeaders(tracker, res, knownCommittedHeight, readAt){
     if (typeof f.reorg_count === 'number') res.set('X-Reorg-Count', String(f.reorg_count))
     // The REST twin of sync.committed_hash: the chain a page's rows were read on.
     if (typeof f.committed_hash === 'string') res.set('X-Tracker-Tip-Hash', f.committed_hash)
+    if (typeof f.mempool_epoch === 'number') res.set('X-Mempool-Epoch', String(f.mempool_epoch))
     return f
 }
 

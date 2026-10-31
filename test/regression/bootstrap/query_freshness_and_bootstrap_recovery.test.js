@@ -129,7 +129,8 @@ describe('computeFreshness', function () {
     const src = fs.readFileSync(path.join(__dirname, '../../../src/api/startup.js'), 'utf8');
     const fn = src.slice(src.indexOf('async function getFreshnessMeta('));
     const body = fn.slice(0, fn.indexOf('async function setFreshnessHeaders'));
-    expect(body).to.match(/mempoolReconverged:\s*tracker\.isMempoolReconverged\(\)/);
+    expect(body).to.match(/page\.mempoolReconverged/);
+    expect(body).to.match(/tracker\.isMempoolReconverged\(\)/);
     expect(body).to.match(/halted:\s*!!tracker\.halted/);
     expect(body).to.match(/haltReason:\s*tracker\.haltReason/);
     expect(body).to.match(/nodeHeightStale:\s*isNodeRpcStale\(\{ lastNodeRpcOkAt: tracker\.lastNodeRpcOkAt \}\)/);

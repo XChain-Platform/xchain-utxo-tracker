@@ -219,6 +219,17 @@ async function balanceNeverStraddles() {
     expect(covered, 'pause points exercised').to.be.at.least(3);
 }
 
+async function blockCleanupMovesMempoolEpoch() {
+    const scenario = await makeScenario();
+    try {
+        const before = scenario.tracker.mempoolEpoch;
+        await scenario.runFlush();
+        expect(scenario.tracker.mempoolEpoch).to.equal(before + 1);
+    } finally {
+        await closeScenario(scenario);
+    }
+}
+
 async function readWaitsForFlush() {
     const scenario = await makeScenario();
     try {
@@ -341,6 +352,8 @@ describe('Regression: address reads never straddle a block flush', function () {
     it('get_info confirmed plus pending is the same before and after the block, at every pause point', balanceNeverStraddles);
 
     it('a read started while the flush is between commit and cleanup waits for the flush', readWaitsForFlush);
+
+    it('a block commit that cleans mined mempool rows moves the mempool epoch', blockCleanupMovesMempoolEpoch);
 });
 
 describe('Regression: address reads never straddle a mempool refresh commit', function () {

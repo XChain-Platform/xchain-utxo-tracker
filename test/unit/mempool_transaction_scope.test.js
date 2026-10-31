@@ -94,6 +94,7 @@ describe('updateMempool transaction scope (write transaction must not span the f
     });
 
     const commitSpy = sinon.spy(mempoolDb, 'endTransaction');
+    const epochBefore = tracker.mempoolEpoch;
 
     await tracker.updateMempool();
 
@@ -110,6 +111,7 @@ describe('updateMempool transaction scope (write transaction must not span the f
     // commit at the very end.
     const committingCalls = commitSpy.getCalls().filter((c) => c.args[0] !== false);
     expect(committingCalls.length).to.be.greaterThan(2);
+    expect(tracker.mempoolEpoch - epochBefore).to.equal(committingCalls.length);
 
     // The pass reconverged and the busy flag was released.
     expect(tracker.mempoolReconverged).to.equal(true);

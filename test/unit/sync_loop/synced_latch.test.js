@@ -139,6 +139,38 @@ describe('XChainUtxoTracker sync loop: synced latch through a rollback or a node
     });
 });
 
+describe('XChainUtxoTracker sync loop: synced latch through a rollback or a node below the parse gate', function () {
+    const h = useSyncLoopHarness();
+    const metrics = useMetrics(h);
+    const install = () => metrics.install();
+    const reg = () => metrics.registry;
+
+    it('publishes synced 0 when an unparseable reply arrives at the committed tip', async function () {
+        const node = makeNode(buildChain(8));
+        const seen = await h.run(node, async (n, s) => {
+            if (n === 1) {
+                install();
+                s.atTip = await sample(h.tracker, reg());
+                h.tracker.mempoolReconverged = true;
+                node.progress = 0.2;
+            }
+            if (n === 2) {
+                s.gated = await sample(h.tracker, reg());
+                s.gatedSynced = h.tracker.isSynced();
+                s.gatedMempool = h.tracker.mempoolReconverged;
+                node.progress = 1;
+            }
+            if (n >= 4) { s.back = await sample(h.tracker, reg()); return 'stop'; }
+            return null;
+        }, { network: 'bitcoin-mainnet' });
+        expect(seen.atTip).to.include({ gauge: 1, status: true, committed: 7, tip: 7 });
+        expect(seen.gated).to.include({ gauge: 0, status: false, committed: 7, tip: 7 });
+        expect(seen.gatedSynced).to.equal(false);
+        expect(seen.gatedMempool).to.equal(false);
+        expect(seen.back).to.include({ gauge: 1, status: true, committed: 7, tip: 7 });
+    });
+});
+
 // A node that swaps our committed tip at the same height leaves the store serving
 // an orphaned block until the walk ends, so the latch must not read synced
 // while the tip hash is re-checked or while the walk runs.

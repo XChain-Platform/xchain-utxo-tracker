@@ -65,6 +65,7 @@ describe('rollBackToNodeTip refusal after deletes', function () {
     expect(sync.lastProcessedBlockIndex).to.equal(await tracker.db.getLastBlockHeight());
     expect(sync.lastProcessedBlockIndex).to.equal(DELETED_TO);
     expect(sync.lastProcessedBlockHash).to.equal('db' + DELETED_TO);
+    expect(sync.lastBlockchainInfo).to.equal(null);
   });
 
   it('does not idle at tip once the node tip is restored to the old height', async function () {
