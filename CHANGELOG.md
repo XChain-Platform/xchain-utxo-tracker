@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.5] - 2026-10-31
+
+### Fixed
+
+- Stop the mempool store writing tx-index records it never deletes, which grew tracker memory until it was OOM-killed.
+
 ## [0.23.4] - 2026-10-23
 
 ### Security

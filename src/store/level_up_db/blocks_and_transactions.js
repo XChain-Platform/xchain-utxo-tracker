@@ -13,7 +13,7 @@
  **********************************************************************/
 
 const bs = require("binary-search")
-const { P_TX, P_OUT_BLK, ZERO_HASH } = require('./constants')
+const { P_TX, P_OUT_BLK } = require('./constants')
 const { toMapKey, kBlock, kTx, h2b, b2h, pb, rangeEnd } = require('./key_codec')
 const { encodeBlock, decodeBlock, encodeTx, decodeTx } = require('./value_codec')
 
@@ -174,27 +174,29 @@ module.exports = {
     // existed are the legacy T-only shape; getTxBlock treats those as
     // unindexed since there is no X record to find (see README.md's
     // Upgrading section for the re-index path).
+    // A blockHash-less (mempool) insert writes T only, like the S/Z/W writers:
+    // X and Y have no reader in the mempool store and no delete path there, so
+    // writing them would grow that store by every mempool tx ever seen.
     async insertTransaction(tx) {
         const txHash8 = tx.hash.substring(0, 16)
-        const blockHash = tx.blockHash || ZERO_HASH
-        await this.addTransaction(
+        const tWrite = await this.addTransaction(
             "put",
             kTx(txHash8),
             Buffer.concat([encodeTx(tx.blockHash), h2b(tx.hash)])
         )
+        if (!tx.blockHash) return tWrite
         await this.addTransaction("put", kTxExact(tx.hash), encodeTx(tx.blockHash))
-        return await this.addTransaction("put", kTxBlockRecovery(blockHash, txHash8), h2b(tx.hash))
+        return await this.addTransaction("put", kTxBlockRecovery(tx.blockHash, txHash8), h2b(tx.hash))
     },
 
     // Deletes the T slot for an 8-byte prefix with no per-block context (mempool
     // cleanup and mempool-eviction diffing, neither of which knows a blockHash).
-    // Best-effort on the X record: only cleaned up here when the caller happens
-    // to pass the full txid (mempool confirmation cleanup does); the ambiguous
-    // 8-byte-only callers leave any X record for a rolled-back or evicted
-    // mempool entry to be masked by getTxBlock's own getBlock() check rather
-    // than actively removed. deleteTransactionsInBlock (the confirmed-chain
-    // rollback path) does not call this: it uses the Y record instead so a
-    // collision cannot make it delete the wrong tx's data.
+    // Also deletes the X record when the caller passes the full txid; a mempool
+    // entry has no X or Y to delete (insertTransaction writes T only without a
+    // blockHash), so the 8-byte-only callers leave nothing behind there.
+    // deleteTransactionsInBlock (the confirmed-chain rollback path) does not
+    // call this: it uses the Y record instead so a collision cannot make it
+    // delete the wrong tx's data.
     async deleteTransaction(txid) {
         if (typeof txid === 'string' && txid.length === 64) {
             await this.addTransaction("del", kTxExact(txid.toLowerCase()), null)
