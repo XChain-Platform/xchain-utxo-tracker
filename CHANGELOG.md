@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Stop the mempool store writing tx-index records it never deletes, which grew tracker memory until it was OOM-killed.
 
+### Security
+
+- Updated body-parser, follow-redirects and qs to clear the npm advisories published after v0.23.4.
+
 ## [0.23.4] - 2026-10-23
 
 ### Security
