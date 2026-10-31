@@ -117,8 +117,8 @@ async function settleWalkTip(first){
 // is not sufficient because an intermediate tip can pause longer than the
 // read delay. The settled reading replaces the first one. Returns false,
 // ending the pass with nothing deleted or discarded, when the tip does not
-// settle, cannot be read, or is no longer below `ourHeight` (the in-memory
-// cursor); the next pass reads it afresh.
+// settle, cannot be read, is still in initial block download, or is no longer
+// below `ourHeight` (the in-memory cursor); the next pass reads it afresh.
 async function settleNodeTipBelow(sync, ourHeight){
     let previous = this.blockchainInfoLastBlock
     let stableReads = 0
@@ -131,7 +131,9 @@ async function settleNodeTipBelow(sync, ourHeight){
             logger.error(nodeUtil.format('Error re-reading the node tip before a rollback: ' + e.message, e))
             return false
         }
-        if (!nodeTipIsParseable(info, this.consensusNetwork)) return false
+        // A re-read in initial block download ends the pass; the next pass's
+        // entry check then routes the gap to the catch-up wait.
+        if (!nodeTipIsParseable(info, this.consensusNetwork) || nodeStillCatchingUp(info)) return false
         const tip = info["blocks"]
         if (tip === previous){
             stableReads++

@@ -41,15 +41,16 @@ describe('get_first_seen_status (freshness-aware sibling)', function () {
 
   it('registers the sibling and returns first_seen plus the sync meta', function () {
     const body = methodBody('get_first_seen_status');
-    expect(body).to.match(/getFirstSeen\(address\)/);
+    expect(body).to.match(/getFirstSeenAt\(address\)/);
     expect(body).to.match(/first_seen:/);
-    expect(body).to.match(/sync:\s*await getFreshnessMeta\(\)/);
+    // The sync meta is the snapshot the lookup was read at, never a live read after it.
+    expect(body).to.match(/sync:\s*await getFreshnessMeta\(read\.committedHeight, read\)/);
   });
 
   it('normalises a never-seen address to an explicit null rather than undefined', function () {
-    // tracker.getFirstSeen returns null or {height}; the wrapper must never emit
+    // getFirstSeenAt's firstSeen is null or {height}; the wrapper must never emit
     // an absent key, or the caller is back to guessing.
-    expect(methodBody('get_first_seen_status')).to.match(/first_seen:\s*firstSeen\s*\|\|\s*null/);
+    expect(methodBody('get_first_seen_status')).to.match(/first_seen:\s*read\.firstSeen\s*\|\|\s*null/);
   });
 
   it('leaves the legacy get_first_seen shape frozen', function () {

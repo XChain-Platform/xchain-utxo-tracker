@@ -23,7 +23,8 @@ const { refreshNodeTip } = require('../../src/XChainUtxoTracker/sync_loop_node_t
 const COMMITTED = 100669;
 const WINDOW = 12;
 
-// `tips` is the sequence of node tip readings; the last one repeats.
+// `tips` is the sequence of node tip readings; the last one repeats. A reading
+// is a height or a whole getblockchaininfo reply.
 function build(tips) {
   const tracker = new XChainUtxoTracker(
     'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
@@ -32,7 +33,10 @@ function build(tips) {
   tracker.sleep = async (ms) => { sleeps.push(ms); };
   let reads = 0;
   tracker.connector = {
-    getBlockchainInfo: async () => ({ blocks: tips[Math.min(reads++, tips.length - 1)] })
+    getBlockchainInfo: async () => {
+      const t = tips[Math.min(reads++, tips.length - 1)];
+      return (typeof t === 'object') ? { ...t } : { blocks: t };
+    }
   };
   const store = { top: COMMITTED, deletes: 0 };
   tracker.db = {
@@ -149,6 +153,48 @@ describe('tip-below rollback waits through a repeated intermediate tip @regressi
     expect(store.top).to.equal(COMMITTED);
     expect(sync.lastProcessedBlockIndex).to.equal(COMMITTED);
     expect(sync.tipBelowCommittedTipRefused).to.equal(true);
+  });
+});
+
+// The entry check routes a node in initial block download to the catch-up wait,
+// but a node can enter it between that reading and the settle re-reads (a
+// restart, or a proxy over several backends). The settled reading is what the
+// rollback acts on, so it must pass the same check.
+describe('tip-below settle refuses a reading still in initial block download @regression', function () {
+  this.timeout(0);
+  const below = (ibd) => ({ blocks: COMMITTED - 5, initialblockdownload: ibd });
+
+  it('deletes and discards nothing when the settled reading reports initial block download', async function () {
+    const { tracker, sync, store, verifyCalls } = build([below(false), below(true)]);
+    let discards = 0;
+    tracker.discardInflightBatchForReorg = async () => { discards++; return false; };
+    await refreshNodeTip.call(tracker, sync);
+
+    expect(verifyCalls).to.deep.equal([]);
+    expect(discards).to.equal(0);
+    expect(store.deletes).to.equal(0);
+    expect(store.top).to.equal(COMMITTED);
+    expect(sync.lastProcessedBlockIndex).to.equal(COMMITTED);
+  });
+
+  it('enters the catch-up wait on the next pass instead of rolling back', async function () {
+    const { tracker, sync, store, verifyCalls, setTips } = build([below(false), below(true)]);
+    await refreshNodeTip.call(tracker, sync);
+    setTips([below(true)]);
+    await refreshNodeTip.call(tracker, sync);
+
+    expect(sync.nodeCatchingUpProblem).to.equal(true);
+    expect(tracker.nodeCatchingUp).to.not.equal(null);
+    expect(verifyCalls).to.deep.equal([]);
+    expect(store.deletes).to.equal(0);
+  });
+
+  it('still rolls back when every reading reports the node out of initial block download', async function () {
+    const { tracker, sync, store, verifyCalls } = build([below(false)]);
+    await refreshNodeTip.call(tracker, sync);
+
+    expect(verifyCalls).to.deep.equal([COMMITTED - 5]);
+    expect(store.deletes).to.equal(5);
   });
 });
 

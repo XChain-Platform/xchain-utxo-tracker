@@ -35,13 +35,14 @@ function registerUtxoRoute({ app, requestGate, getUtxos, parsePageOpts, setFresh
         }
     }))
 }
-function registerFirstSeenRoute({ app, requestGate, getFirstSeen, setFreshnessHeaders }){
+function registerFirstSeenRoute({ app, requestGate, getFirstSeenAt, setFreshnessHeaders }){
     app.get('/firstseen/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
-            const firstSeen = await getFirstSeen(address);
-            await setFreshnessHeaders(res);
-            res.json(firstSeen);
+            // Headers carry the snapshot the lookup was read at; the body stays bare {height} or null.
+            const read = await getFirstSeenAt(address);
+            await setFreshnessHeaders(res, read.committedHeight, read);
+            res.json(read.firstSeen);
         } catch (err) {
             sendAddressError(res, err);
         }
@@ -51,12 +52,12 @@ function registerBalanceRoute({ app, requestGate, getBalance, setFreshnessHeader
     app.get('/balance/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
         try {
-            const balance = await getBalance(address);
+            const read = await getBalance(address);
             // See /utxos above: expose mempool readiness via header (off the floored
             // freshness meta) without altering the existing bare-number body.
-            const freshness = await setFreshnessHeaders(res);
+            const freshness = await setFreshnessHeaders(res, read.committedHeight, read);
             res.set('X-Mempool-Ready', String(freshness.mempool_ready));
-            res.send(balance);
+            res.send(read.balance);
         } catch (err) {
             sendAddressError(res, err);
         }
@@ -72,8 +73,8 @@ function registerInfoRoute({ app, requestGate, getInfo, setFreshnessHeaders }){
             // still reconverging after a restart and `balances.pending` may be
             // understated; callers should not treat pending=0 as authoritative yet.
             // Freshness surface, both as headers and (since the body is already a
-            // JSON object) an additive `sync` field callers can gate on.
-            const freshness = await setFreshnessHeaders(res);
+            // JSON object) an additive `sync` field callers can gate on, at the snapshot the body was read at.
+            const freshness = await setFreshnessHeaders(res, info ? info.committedHeight : undefined, info);
             // Off the floored meta, same reason as /utxos: an orphaned view must not
             // publish X-Synced:false beside X-Mempool-Ready:true.
             res.set('X-Mempool-Ready', String(freshness.mempool_ready));
@@ -211,20 +212,21 @@ const jsonRpcController = {
         // Freshness-aware sibling of get_first_seen: one shape in every case, so a
         // null first_seen from a lagging, halted or unwinding tracker is
         // distinguishable from an address that has genuinely never appeared on chain.
+        // Report the snapshot these three read their rows at, as get_utxos does.
         async get_first_seen_status({address}) {
-            const { getFirstSeen, getFreshnessMeta } = this.context
-            const firstSeen = await getFirstSeen(address)
-            return { first_seen: firstSeen || null, sync: await getFreshnessMeta() }
+            const { getFirstSeenAt, getFreshnessMeta } = this.context
+            const read = await getFirstSeenAt(address)
+            return { first_seen: read.firstSeen || null, sync: await getFreshnessMeta(read.committedHeight, read) }
         },
         async get_balance({address}) {
             const { getBalance, getFreshnessMeta } = this.context
-            let balance = await getBalance(address)
-            return { balance: balance, sync: await getFreshnessMeta() }
+            const read = await getBalance(address)
+            return { balance: read.balance, sync: await getFreshnessMeta(read.committedHeight, read) }
         },
         async get_info({address}) {
             const { getInfo, getFreshnessMeta } = this.context
             const info = await getInfo(address)
-            if (info && typeof info === 'object') info.sync = await getFreshnessMeta()
+            if (info && typeof info === 'object') info.sync = await getFreshnessMeta(info.committedHeight, info)
             return info
         },
         // Exact full-txid to block lookup, frozen shape: {block_hash, block_height,
