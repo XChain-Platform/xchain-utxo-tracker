@@ -31,6 +31,14 @@ const PREFIX_LAST_BLOCK_HEIGHT = Buffer.from("LAST_BLOCK_HEIGHT")
 
 const PREFIX_LAST_BLOCK_HASH   = Buffer.from("LAST_BLOCK_HASH")
 
+// Store layout version, under the same reserved 'L' metadata byte. Version 2 keys
+// every txid field on the whole 32-byte txid; a store with no stamp, or a lower
+// one, was written with 8-byte txid prefixes and is refused rather than read
+// (see store_layout.js). The value is the version as a decimal UTF-8 string.
+const PREFIX_LAYOUT_VERSION    = Buffer.from("LAYOUT_VERSION")
+
+const STORE_LAYOUT_VERSION     = 2
+
 // Single-byte prefix values
 const P_BLOCK      = 0x42  // 'B'
 
@@ -58,7 +66,7 @@ const P_OUT_BLK    = 0x57  // 'W' - creation-block reverse index for outputs
 
 const P_TX_EXACT   = 0x58  // 'X' - exact full-txid -> blockHash index
 
-const P_TX_BLOCK_RECOVERY = 0x59  // 'Y' - per-block txHash8 -> full txid, for rollback
+const P_TX_BLOCK_RECOVERY = 0x59  // 'Y' - per-block full txid recovery index
 
 // O value: [value(8)][height(4)][fullTxHash(32)] = 44 bytes, plus an OPTIONAL
 // 45th coinbase-flag byte (0x01) appended only for coinbase outputs.
@@ -69,8 +77,8 @@ const EMPTY = Buffer.alloc(0)
 
 // LevelUpStore class
 
-// LRU-ish cache for recently-written output values, keyed by txHash8 plus a
-// packed 2-char outputIndex (see insertOutput). UTXO locality: most spends
+// LRU-ish cache for recently-written output values, keyed by the full txid hex
+// plus a packed 2-char outputIndex (see insertOutput). UTXO locality: most spends
 // consume outputs created within the last few thousand blocks, so a bounded
 // in-memory cache absorbs a large fraction of Phase 2 reads in
 // removeOutputsWithInputsBatch without touching the DB. Map insertion order
@@ -79,4 +87,4 @@ const OUTPUT_CACHE_MAX = 2_000_000
 
 const KNOWN_SCRIPTS_MAX = 2_000_000
 
-module.exports = { DEBUG_TRACE, logger, PREFIX_LAST_BLOCK_HEIGHT, PREFIX_LAST_BLOCK_HASH, P_BLOCK, P_TX, P_INPUT, P_OUTPUT, P_OUT_HINT, P_IN_HINT, P_SCRIPT_BLK, P_BLK_SCRIPT, P_OUT_DEL, P_HINT_DEL, P_STORED_BLK, P_OUT_BLK, P_TX_EXACT, P_TX_BLOCK_RECOVERY, ZERO_HASH, EMPTY, OUTPUT_CACHE_MAX, KNOWN_SCRIPTS_MAX }
+module.exports = { DEBUG_TRACE, logger, PREFIX_LAST_BLOCK_HEIGHT, PREFIX_LAST_BLOCK_HASH, PREFIX_LAYOUT_VERSION, STORE_LAYOUT_VERSION, P_BLOCK, P_TX, P_INPUT, P_OUTPUT, P_OUT_HINT, P_IN_HINT, P_SCRIPT_BLK, P_BLK_SCRIPT, P_OUT_DEL, P_HINT_DEL, P_STORED_BLK, P_OUT_BLK, P_TX_EXACT, P_TX_BLOCK_RECOVERY, ZERO_HASH, EMPTY, OUTPUT_CACHE_MAX, KNOWN_SCRIPTS_MAX }

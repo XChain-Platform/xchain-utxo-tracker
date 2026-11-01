@@ -35,8 +35,8 @@ const { loadKeys }     = require('../../../src/bulk_sync/merger/loader.js');
 const { readOutputsRecordSize } = require('../../../src/bulk_sync/orchestrator.js');
 const { ClassicLevel } = require('classic-level');
 
-const OUTPUTS_KEY_SIZE = 12;
-const SPENDS_KEY_SIZE  = 12;
+const OUTPUTS_KEY_SIZE = 36;
+const SPENDS_KEY_SIZE  = 36;
 const HEADER_SIZE      = 64;
 const P_SCRIPT_BLK     = 0x53; // 'S'
 const P_BLK_SCRIPT     = 0x5A; // 'Z'
@@ -70,7 +70,7 @@ async function buildWindowedIndexes(tmp) {
     const outputsPath = path.join(tmp, 'outputs.dat');
     const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', startH, endH);
     for (const b of blocks) {
-        w.append(b.txid.subarray(0, 8), 0, 5000000000n, b.height, b.txid, b.script, b.blockHash, false);
+        w.append(b.txid, 0, 5000000000n, b.height, b.script, b.blockHash, false);
     }
     w.close();
 
@@ -81,7 +81,7 @@ async function buildWindowedIndexes(tmp) {
     const meta = new MetaWriter(metaPath, 'bitcoin', 'regtest', startH, endH);
     let prev = Buffer.alloc(32);
     for (const b of blocks) {
-        meta.writeBlock(b.height, 1700000000 + b.height, b.blockHash, prev, [b.txid.subarray(0, 8)]);
+        meta.writeBlock(b.height, 1700000000 + b.height, b.blockHash, prev, [b.txid]);
         prev = b.blockHash;
     }
     meta.close();
@@ -90,9 +90,9 @@ async function buildWindowedIndexes(tmp) {
     const outputsSorted = path.join(tmp, 'outputs-sorted.dat');
     const spendsSorted  = path.join(tmp, 'spends-sorted.dat');
     await externalSort({ inputPath: outputsPath, outputPath: outputsSorted, headerSize: HEADER_SIZE, recordSize: rs, keySize: OUTPUTS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'so') });
-    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 20, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
+    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 68, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
     const liveUtxos = path.join(tmp, 'live-utxos.dat');
-    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 20, keySize: OUTPUTS_KEY_SIZE });
+    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: rs, rightRecordSize: 68, keySize: OUTPUTS_KEY_SIZE });
 
     const keysDir = path.join(tmp, 'keys');
     const { stats } = await deriveKeys({

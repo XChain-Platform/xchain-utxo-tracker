@@ -31,27 +31,28 @@ const {
     P_TX_EXACT, P_TX_BLOCK_RECOVERY,
 } = require('../../../store/level_up_db/constants.js')
 
-// Legacy outputs record size. New dumps are 121 bytes (trailing coinbase flag);
-// callers pass opts.outputsRecordSize (read from the dump header) so both
-// widths merge. Kept as the default for legacy callers that omit it.
-const OUTPUTS_RECORD_SIZE = 120
-const OUTPUTS_RECORD_SIZE_CB = 121
-const SPENDS_RECORD_SIZE  = 20
-const OUTPUTS_HEADER_SIZE = 64
+// The parse-stream record widths and field offsets, single-sourced in writers.js.
+// Format 2 outputs are 113 bytes (with the trailing coinbase flag) and spends 68;
+// callers pass opts.outputsRecordSize read from the dump header.
+const {
+    OUTPUTS_RECORD_SIZE, SPENDS_RECORD_SIZE, HEADER_SIZE: OUTPUTS_HEADER_SIZE,
+    OUT_TXID, OUT_VOUT, OUT_VALUE, OUT_HEIGHT, OUT_SCRIPT, OUT_BLOCK, OUT_COINBASE,
+    SPD_PREV_TXID, SPD_PREV_VOUT, SPD_SPENDER_TXID,
+} = require('../../writers.js')
 
 // Per-prefix (keySize, valueSize, recordSize). Each width must equal what the
 // live key_codec builder and value_codec encoder produce for that prefix; the
 // bulk-sync layout parity regression test fails when they drift.
 const LAYOUT = {
     B: { keySize: 33, valSize: 40, recordSize:  73 },
-    T: { keySize:  9, valSize: 32, recordSize:  41 },
-    I: { keySize: 13, valSize:  8, recordSize:  21 },
-    O: { keySize: 45, valSize: 45, recordSize:  90 },
-    H: { keySize: 13, valSize: 32, recordSize:  45 },
-    J: { keySize: 21, valSize:  0, recordSize:  21 },
+    T: { keySize: 33, valSize: 32, recordSize:  65 },
+    I: { keySize: 37, valSize: 32, recordSize:  69 },
+    O: { keySize: 69, valSize: 45, recordSize: 114 },
+    H: { keySize: 37, valSize: 32, recordSize:  69 },
+    J: { keySize: 69, valSize:  0, recordSize:  69 },
     N: { keySize: 33, valSize:  0, recordSize:  33 },
     S: { keySize: 33, valSize:  4, recordSize:  37 },
-    W: { keySize: 45, valSize: 32, recordSize:  77 },
+    W: { keySize: 69, valSize: 32, recordSize: 101 },
     Z: { keySize: 65, valSize:  0, recordSize:  65 },
 }
 
@@ -117,7 +118,8 @@ module.exports = {
     P_BLOCK, P_TX, P_INPUT, P_OUTPUT, P_OUT_HINT, P_IN_HINT,
     P_STORED_BLK, P_SCRIPT_BLK, P_OUT_BLK, P_BLK_SCRIPT,
     P_TX_EXACT, P_TX_BLOCK_RECOVERY,
-    OUTPUTS_RECORD_SIZE, OUTPUTS_RECORD_SIZE_CB, SPENDS_RECORD_SIZE,
-    OUTPUTS_HEADER_SIZE,
+    OUTPUTS_RECORD_SIZE, SPENDS_RECORD_SIZE, OUTPUTS_HEADER_SIZE,
+    OUT_TXID, OUT_VOUT, OUT_VALUE, OUT_HEIGHT, OUT_SCRIPT, OUT_BLOCK, OUT_COINBASE,
+    SPD_PREV_TXID, SPD_PREV_VOUT, SPD_SPENDER_TXID,
     LAYOUT, noop, ensureDir, clearPriorDeriveOutputs, FlatWriter, sortByKey,
 }

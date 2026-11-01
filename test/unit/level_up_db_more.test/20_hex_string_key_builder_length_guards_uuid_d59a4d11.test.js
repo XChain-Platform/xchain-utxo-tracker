@@ -40,11 +40,11 @@ describe('LevelUpDb (extended coverage)', function () {
         it('kBlock succeeds with a 64-hex blockHash', () => {
             expect(() => LevelUpStore.kBlock(randHash())).to.not.throw();
         });
-        it('kTx throws on a wrong-length txid prefix', () => {
-            expect(() => LevelUpStore.kTx(randHash())).to.throw(/16-hex \(8-byte\) txid prefix/);
+        it('kTx throws on a wrong-length txid', () => {
+            expect(() => LevelUpStore.kTx(randHash8())).to.throw(/64-hex \(32-byte\) txid/);
         });
-        it('kTx succeeds with a 16-hex prefix', () => {
-            expect(() => LevelUpStore.kTx(randHash8())).to.not.throw();
+        it('kTx succeeds with a 64-hex txid', () => {
+            expect(() => LevelUpStore.kTx(randHash())).to.not.throw();
         });
         it('kScriptBlk throws on a wrong-length scriptPubKey', () => {
             expect(() => LevelUpStore.kScriptBlk('ab')).to.throw(/64-hex \(32-byte\) scriptPubKey/);

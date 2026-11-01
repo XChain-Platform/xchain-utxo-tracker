@@ -73,13 +73,37 @@ module.exports = {
         if (!record) return null
 
         return { height: record.h }
+    },
+
+    // getFirstSeen's answer with the snapshot it was read at, under the store-commit lock.
+    async getFirstSeenAt(address){
+        const script = addressToScript(address, this.network)
+        const scriptHash = createHash('sha256').update(script).digest('hex')
+        return withStoreRead(this, async () => {
+            const snapshot = await readCommittedSnapshot.call(this)
+            const record = await this.db.getOutputScriptBlock(scriptHash)
+            snapshot.mempoolReconverged = this.mempoolReconverged === true
+            return { firstSeen: record ? { height: record.h } : null, ...snapshot }
+        })
     }
+}
+
+// The committed height, tip hash and reorg count, read under the lock with the rows they label.
+async function readCommittedSnapshot(){
+    // Read the committed height inside the read lock, so the reported height is the one these rows came from.
+    const committedHeight = await this.db.getLastBlockHeight()
+    // Read the tip hash with it: the same batch commits both, and a same-height reorg changes only the hash.
+    const committedHash = await this.db.getLastBlockHash()
+    // Read the reorg count here too: a same-height reorg moves it before the replacement block commits.
+    const reorgCount = this.reorgCount
+    return { committedHeight, committedHash, reorgCount, mempoolEpoch: this.mempoolEpoch }
 }
 
 // get_info's body: the confirmed snapshot, then the mempool snapshot.
 async function readBalanceInfo(address){
     let script = addressToScript(address, this.network)
     let scriptHash = createHash('sha256').update(script).digest('hex')
+    const snapshot = await readCommittedSnapshot.call(this)
 
     let confirmedBalance = 0n
     let pendingBalance = 0n
@@ -87,8 +111,7 @@ async function readBalanceInfo(address){
     let utxosPending = 0
     let totalReceived = 0n
 
-    let confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
-    let mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
+    const { confirmedOutputs, mempoolOutputs } = await readBalanceOutputs.call(this, scriptHash)
 
     // Outpoints already accounted from the confirmed store. A just-mined tx
     // lives in both stores until the deferred mempool cleanup runs, so the
@@ -110,8 +133,8 @@ async function readBalanceInfo(address){
         // Note: with REMOVE_SPENT=true, totalReceived only reflects currently unspent confirmed outputs
         totalReceived += amount
 
-        // getInput keys on the 8-byte (16-hex) txid prefix, matching insertInput.
-        let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+        // getInput keys on the full txid, matching insertInput.
+        let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
         // Confirmed output being spent in the mempool: counts as confirmed but pending out
         if (mempoolInput != null) pendingBalance -= amount
         confirmedBalance += amount
@@ -127,25 +150,28 @@ async function readBalanceInfo(address){
         // tx still present in both stores during the cleanup window).
         if (confirmedKeys.has(txid + ':' + nextOutput.vout)) continue
 
-        let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+        let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
         if (mempoolInput == null) {
             pendingBalance += BigInt(nextOutput.value)
             utxosPending++
         }
     }
 
-    return balanceInfoResult.call(this, address, { confirmedBalance, pendingBalance, totalReceived, utxosConfirmed, utxosPending })
+    snapshot.mempoolReconverged = this.mempoolReconverged === true
+    return withReadSnapshot(balanceInfoResult.call(this, address, { confirmedBalance, pendingBalance, totalReceived, utxosConfirmed, utxosPending }), snapshot)
+}
+
+// Load both stores in the same confirmed-then-mempool order used by get_info.
+async function readBalanceOutputs(scriptHash){
+    const confirmedOutputs = await this.db.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
+    const mempoolOutputs = await this.mempoolDb.getOutputsScriptPubKey(scriptHash, { maxOutputs: MAX_ADDRESS_OUTPUTS })
+    return { confirmedOutputs, mempoolOutputs }
 }
 
 // get_utxos's body: the confirmed snapshot, then the mempool snapshot.
 async function readUtxosAddress(address, { limit = null, after = null } = {}){
     const { scriptHash, scriptPubKeyHex, paged, pageLimit } = utxoQueryPlan(address, this.network, limit)
-    // Read the committed height inside the read lock, so the reported height is the one these rows came from.
-    const committedHeight = await this.db.getLastBlockHeight()
-    // Read the tip hash with it: the same batch commits both, and a same-height reorg changes only the hash.
-    const committedHash = await this.db.getLastBlockHash()
-    // Read the reorg count here too: a same-height reorg moves it before the replacement block commits.
-    const reorgCount = this.reorgCount
+    const snapshot = await readCommittedSnapshot.call(this)
 
     // Paged mode pulls one bounded page of confirmed outputs (resuming from
     // `after`); unbounded mode pulls everything but is capped by the
@@ -173,8 +199,8 @@ async function readUtxosAddress(address, { limit = null, after = null } = {}){
         let txid = claimConfirmedOutpoint(confirmedKeys, nextOutput)
 
         // Skip confirmed outputs being spent in the mempool. getInput keys on
-        // the 8-byte (16-hex) txid prefix, matching insertInput.
-        let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+        // the full txid, matching insertInput.
+        let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
         if (mempoolInput != null) continue
 
         addServableConfirmedUtxo.call(this, results, nextOutput, txid, scriptPubKeyHex)
@@ -184,7 +210,8 @@ async function readUtxosAddress(address, { limit = null, after = null } = {}){
         await addServableMempoolUtxo.call(this, results, nextOutput, { confirmedKeys, paged, scriptPubKeyHex })
     }
 
-    return withNextCursor(results, paged, nextCursor, { committedHeight, committedHash, reorgCount })
+    snapshot.mempoolReconverged = this.mempoolReconverged === true
+    return withNextCursor(results, paged, nextCursor, snapshot)
 }
 
 // Adds the response entry for one mempool output, unless the confirmed store
@@ -204,24 +231,24 @@ async function addServableMempoolUtxo(results, nextOutput, { confirmedKeys, page
     if (confirmedKeys.has(txid + ':' + nextOutput.vout)) return
     // Across pages the page's own list cannot see an outpoint emitted on an
     // earlier page, so ask the confirmed store directly.
-    if (paged && await this.db.hasOutputForTx(txid.substring(0, 16), nextOutput.vout)) return
+    if (paged && await this.db.hasOutputForTx(txid, nextOutput.vout)) return
     // Skip mempool outputs that are also spent by another mempool tx
-    let mempoolInput = await this.mempoolDb.getInput(txid.substring(0, 16), nextOutput.vout)
+    let mempoolInput = await this.mempoolDb.getInput(txid, nextOutput.vout)
     if (mempoolInput != null) return
     results.push(mempoolUtxo(nextOutput, txid, scriptPubKeyHex))
 }
 
-// The fail-loud txid guard: a stored output must carry its full 64-char txid,
-// since a 16-char key prefix means the record predates the fullTxHash field.
+// The fail-loud txid guard: a served output must carry its full 64-char txid.
 function requireFullTxid(nextOutput){
     let txid = nextOutput.fullTxid || nextOutput.txid
 
-    // A valid txid is the full 32-byte hash (64 hex chars). When fullTxid
-    // is null the fallback yields the 8-byte O-key prefix (16 hex chars),
-    // which happens only for O-records written before the full hash was
-    // added to the O-record format. Such a record can never produce a
-    // valid spend, so fail loudly here rather than letting the truncated
-    // id silently corrupt a downstream PSBT. Re-index this LevelDB.
+    // A valid txid is the full 32-byte hash (64 hex chars). The O value's
+    // fullTxid comes first; a value without one falls back to the O key, which
+    // in store layout 2 is the whole txid too. Anything shorter can never
+    // produce a valid spend, so fail loudly here rather than letting a
+    // truncated id silently corrupt a downstream PSBT. A layout 1 store, whose
+    // keys held 16-char prefixes, is refused at boot (store_layout.js) before
+    // any read reaches this guard.
     if (txid.length !== 64) {
         throw new Error(
             `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
@@ -253,12 +280,13 @@ function utxoQueryPlan(address, network, limit){
 
 // Continuation cursor for the next page, captured BEFORE the loop below
 // rewrites each output's `txid` to the full hash. The cursor is the last
-// *scanned* confirmed DB key (txHash8:vout), independent of mempool-spend
+// *scanned* confirmed DB key (txid:vout), independent of mempool-spend
 // filtering. Only set when a full page was read (more rows may remain). Pages
 // are gap- and repeat-free only at one committed height: a block committed between
 // pages can re-serve page 1's mempool output as confirmed, so a pager restarts when sync.tracker_height
 // or sync.committed_hash moves (a same-height reorg keeps the height and changes the hash); REST carries
-// them as X-Tracker-Height and X-Tracker-Tip-Hash, beside X-Reorg-Count.
+// them as X-Tracker-Height and X-Tracker-Tip-Hash, beside X-Reorg-Count. A pager
+// also restarts when mempool_epoch moves because later pages filter against it.
 function nextPageCursor(confirmedOutputs, paged, pageLimit){
     return (paged && confirmedOutputs.length === pageLimit)
         ? confirmedOutputs[confirmedOutputs.length - 1].txid + ':' + confirmedOutputs[confirmedOutputs.length - 1].vout
@@ -324,14 +352,20 @@ function mempoolUtxo(nextOutput, txid, scriptPubKeyHex){
 // Expose the continuation cursor as a non-enumerable property so the array
 // still serializes as a bare UTXO list (preserving the existing API/JSON-RPC
 // contract) while the REST layer can read it for the X-Next-Cursor header.
-function withNextCursor(results, paged, nextCursor, { committedHeight, committedHash, reorgCount }){
+function withNextCursor(results, paged, nextCursor, snapshot){
     if (paged) Object.defineProperty(results, 'nextCursor', { value: nextCursor, enumerable: false })
-    // Carry the height, tip hash and reorg count read under the lock, for the response's freshness fields.
-    Object.defineProperty(results, 'committedHeight', { value: committedHeight, enumerable: false })
-    if (typeof committedHash === 'string') Object.defineProperty(results, 'committedHash', { value: committedHash, enumerable: false })
-    if (typeof reorgCount === 'number') Object.defineProperty(results, 'reorgCount', { value: reorgCount, enumerable: false })
+    return withReadSnapshot(results, snapshot)
+}
 
-    return results
+// Carry the height, tip hash and reorg count read under the lock, for the response's freshness fields.
+// Non-enumerable, so the serialized body keeps its shape.
+function withReadSnapshot(target, { committedHeight, committedHash, reorgCount, mempoolEpoch, mempoolReconverged }){
+    Object.defineProperty(target, 'committedHeight', { value: committedHeight, enumerable: false })
+    if (typeof committedHash === 'string') Object.defineProperty(target, 'committedHash', { value: committedHash, enumerable: false })
+    if (typeof reorgCount === 'number') Object.defineProperty(target, 'reorgCount', { value: reorgCount, enumerable: false })
+    if (typeof mempoolEpoch === 'number') Object.defineProperty(target, 'mempoolEpoch', { value: mempoolEpoch, enumerable: false })
+    if (typeof mempoolReconverged === 'boolean') Object.defineProperty(target, 'mempoolReconverged', { value: mempoolReconverged, enumerable: false })
+    return target
 }
 
 // The get_info response body, balances as coin-denominated decimal strings.

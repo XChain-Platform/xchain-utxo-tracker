@@ -71,7 +71,7 @@ describe('XChainUtxoTracker (more)', function () {
                 const fh = randHash();
                 await db.insertOutput({
                     scriptPubKey: scriptHash,
-                    txHash: fh.substring(0, 16),
+                    txHash: fh,
                     outputIndex: i,
                     value: BigInt('10000000'),
                     height: 100 + i,
@@ -105,7 +105,7 @@ describe('XChainUtxoTracker (more)', function () {
             await mempoolDb.beginTransaction();
             await mempoolDb.insertOutput({
                 scriptPubKey: scriptHash,
-                txHash: mFh.substring(0, 16),
+                txHash: mFh,
                 outputIndex: 0,
                 value: BigInt('5000000'),
                 height: -1,
@@ -119,7 +119,7 @@ describe('XChainUtxoTracker (more)', function () {
 
             // Second page (after=validCursor): should NOT include mempool.
             // Cursor format must be "<txHash8Hex>:<vout>"; use a valid but non-existent one.
-            const validCursor = randHash8() + ':0';
+            const validCursor = randHash() + ':0';
             const page2 = await tracker.getUtxosAddress(address, { limit: 10, after: validCursor });
             expect(page2.every(u => u.confirmations !== 0)).to.be.true;
         });
@@ -132,32 +132,27 @@ describe('XChainUtxoTracker (more)', function () {
     registerTrackerHooks();
 
     describe('getUtxosAddress pagination', function () {
-        it('throws on pre-migration mempool output missing fullTxHash', async function () {
+        it('serves the key\'s full txid for a mempool output whose value lacks fullTxHash', async function () {
             const bitcoin = require('bitcoinjs-lib');
             const { createHash } = require('crypto');
             const address = 'n1wgm6kkzMcNfAtJmes8YhpvtDzdNhDY5a';
             const script = bitcoin.address.toOutputScript(address, tracker.network);
             const scriptHash = createHash('sha256').update(script).digest('hex');
 
-            // Insert mempool output WITHOUT fullTxHash
+            // Insert mempool output WITHOUT fullTxHash: the O key carries the
+            // whole txid, so that is what is served.
+            const txid = randHash();
             await mempoolDb.insertOutput({
                 scriptPubKey: scriptHash,
-                txHash: randHash8(),
+                txHash: txid,
                 outputIndex: 0,
                 value: BigInt('100000000'),
                 height: -1
             });
             await mempoolDb.endTransaction(true);
 
-            let threw = null;
-            try {
-                await tracker.getUtxosAddress(address);
-            } catch (e) {
-                threw = e;
-            }
-            expect(threw).to.not.be.null;
-            expect(threw.message).to.match(/fullTxHash/);
-            expect(threw.message).to.match(/re-index/i);
+            const utxos = await tracker.getUtxosAddress(address, { limit: 5 });
+            expect(utxos.map((u) => u.txid)).to.deep.equal([txid]);
         });
     });
 });

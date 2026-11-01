@@ -32,8 +32,8 @@ function registerDeleteComparisonTests() {
       const tx2 = randHash();
       const scriptHash1 = randHash();
       const scriptHash2 = randHash();
-      const tx1_8 = tx1.substring(0, 16);
-      const tx2_8 = tx2.substring(0, 16);
+      const tx1_8 = tx1;
+      const tx2_8 = tx2;
 
       await db.insertTransaction({ hash: tx1, blockHash: randHash() });
       await db.insertTransaction({ hash: tx2, blockHash: randHash() });
@@ -75,8 +75,8 @@ function registerLexSmallerDeletionTests() {
       // tx_lo sorts before tx_hi lexicographically (chosen with '00..' / 'ff..' prefixes)
       const tx_lo = '00' + randHash().substring(2);
       const tx_hi = 'ff' + randHash().substring(2);
-      const tx_lo_8 = tx_lo.substring(0, 16);
-      const tx_hi_8 = tx_hi.substring(0, 16);
+      const tx_lo_8 = tx_lo;
+      const tx_hi_8 = tx_hi;
       const scriptHash_lo = randHash();
       const scriptHash_hi = randHash();
 
@@ -109,8 +109,8 @@ function registerLexLargerDeletionTests() {
     it('deletes the lex-larger tx when only the lex-smaller one is kept', async function () {
       const tx_lo = '00' + randHash().substring(2);
       const tx_hi = 'ff' + randHash().substring(2);
-      const tx_lo_8 = tx_lo.substring(0, 16);
-      const tx_hi_8 = tx_hi.substring(0, 16);
+      const tx_lo_8 = tx_lo;
+      const tx_hi_8 = tx_hi;
       const scriptHash_lo = randHash();
       const scriptHash_hi = randHash();
 
@@ -159,8 +159,8 @@ function registerKeepOnlyTests() {
       const scriptHash = randHash();
       await db.insertTransaction({ hash: gone, blockHash: randHash() });
       await db.insertTransaction({ hash: kept, blockHash: randHash() });
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: gone.substring(0, 16), outputIndex: 0, value: BigInt(1), height: -1 });
-      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: gone.substring(0, 16), outputIndex: 0 });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: gone, outputIndex: 0, value: BigInt(1), height: -1 });
+      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: gone, outputIndex: 0 });
       await db.endTransaction(true);
 
       await db.beginTransaction();

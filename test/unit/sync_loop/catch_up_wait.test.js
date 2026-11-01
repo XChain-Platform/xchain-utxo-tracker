@@ -15,6 +15,9 @@
 
 const { expect } = require('chai');
 const { buildChain, makeNode, useSyncLoopHarness } = require('./support/harness');
+const { TIP_SETTLE_STABLE_READS } = require('../../../src/XChainUtxoTracker/reorg_node_reads.js');
+
+const SETTLE_EXTRA_SLEEPS = TIP_SETTLE_STABLE_READS - 1;
 
 describe('XChainUtxoTracker sync loop: catch-up wait', function () {
     const h = useSyncLoopHarness();
@@ -25,7 +28,7 @@ describe('XChainUtxoTracker sync loop: catch-up wait', function () {
             if (n === 1) { node.retired = node.chain; node.chain = node.chain.slice(0, 10); node.ibd = true; }
             if (n === 2) s.waiting = h.tracker.nodeCatchingUp;
             if (n === 3) node.ibd = false;
-            return n >= 5 ? 'stop' : null;
+            return n >= 5 + SETTLE_EXTRA_SLEEPS ? 'stop' : null;
         });
         expect(seen.waiting).to.include({ node_height: 9, stored_height: 12 });
         expect(h.tracker.nodeCatchingUp).to.equal(null);

@@ -99,7 +99,7 @@ describe('XChainUtxoTracker (more)', function () {
             await db.endTransaction(true);
 
             expect(info.outputsCount).to.equal(1);
-            const txs = await db.getTransactions(txid.substring(0, 16));
+            const txs = await db.getTransactions(txid);
             expect(txs).to.have.length(1);
         });
 
@@ -113,7 +113,7 @@ describe('XChainUtxoTracker (more)', function () {
             await db.endTransaction(true);
 
             expect(info.outputsCount).to.equal(1);
-            const txs = await db.getTransactions(txid.substring(0, 16));
+            const txs = await db.getTransactions(txid);
             expect(txs).to.be.empty;
         });
 
@@ -155,7 +155,7 @@ describe('XChainUtxoTracker (more)', function () {
             const info = await tracker.parseTransaction(db, tx, randHash(), 5, false, false);
             await db.endTransaction(true);
 
-            const txs = await db.getTransactions(customId.substring(0, 16));
+            const txs = await db.getTransactions(customId);
             expect(txs).to.have.length(1);
         });
 

@@ -16,6 +16,9 @@
 
 const { expect } = require('chai');
 const { buildChain, makeNode, useSyncLoopHarness } = require('./support/harness');
+const { TIP_SETTLE_STABLE_READS } = require('../../../src/XChainUtxoTracker/reorg_node_reads.js');
+
+const SETTLE_EXTRA_SLEEPS = TIP_SETTLE_STABLE_READS - 1;
 
 describe('XChainUtxoTracker sync loop: node tip below ours', function () {
     const h = useSyncLoopHarness();
@@ -26,8 +29,8 @@ describe('XChainUtxoTracker sync loop: node tip below ours', function () {
         const seen = await h.run(node, (n, s) => {
             if (n === 1) node.chain = full.slice(0, 2);
             if (n === 2) s.refusedAt = h.tracker.lastCommittedHeight;
-            if (n === 3) node.chain = full;
-            return n >= 5 ? 'stop' : null;
+            if (n === 3 + SETTLE_EXTRA_SLEEPS) node.chain = full;
+            return n >= 5 + SETTLE_EXTRA_SLEEPS ? 'stop' : null;
         });
         expect(seen.refusedAt).to.equal(39);
         expect(h.tracker.reorgCount).to.equal(0);
@@ -46,8 +49,9 @@ describe('XChainUtxoTracker sync loop: node tip below ours', function () {
                     if (!fired && hs[0] >= 60) { fired = true; h.clock += 40000; node.chain = full.slice(0, 45); }
                 };
             }
-            if (n === 3) node.chain = full;
-            return n >= 5 ? 'stop' : null;
+            if (n === 3 + SETTLE_EXTRA_SLEEPS) node.chain = full;
+            // The lower tip settles on sleeps 2-6; indexing reaches 69 by sleep 8.
+            return n >= 5 + SETTLE_EXTRA_SLEEPS ? 'stop' : null;
         });
         expect(h.tracker.reorgCount).to.equal(0);
         expect(seen.height).to.equal(69);

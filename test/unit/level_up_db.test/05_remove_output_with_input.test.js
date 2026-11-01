@@ -29,16 +29,16 @@ function registerRemoveOutputWithInputTests() {
   describe('removeOutputWithInput', function () {
     it('removes a committed output and stages K/M records', async function () {
       const scriptHash = randHash();
-      const txHash8 = randHash8();
+      const txidHex = randHash();
       const blockHash = randHash();
 
       // Insert output + hint, commit
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: BigInt(5000), height: 10 });
-      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: BigInt(5000), height: 10 });
+      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0 });
       await db.endTransaction(true);
 
       await db.beginTransaction();
-      await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
+      await db.removeOutputWithInput({ prevTxHash: txidHex, prevOutputIndex: 0, blockHash });
       await db.endTransaction(true);
 
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -47,15 +47,15 @@ function registerRemoveOutputWithInputTests() {
 
     it('removes an in-memory (same-batch) output', async function () {
       const scriptHash = randHash();
-      const txHash8 = randHash8();
+      const txidHex = randHash();
       const blockHash = randHash();
 
       // Insert output + hint and spend it all in the same in-flight batch (not committed).
       // Insert output + hint in same batch (not committed)
       await db.beginTransaction();
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: BigInt(1000), height: 5 });
-      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
-      await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: BigInt(1000), height: 5 });
+      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0 });
+      await db.removeOutputWithInput({ prevTxHash: txidHex, prevOutputIndex: 0, blockHash });
       await db.endTransaction(true);
 
       const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -63,12 +63,12 @@ function registerRemoveOutputWithInputTests() {
     });
 
     it('logs warning for missing output hint (pre-REMOVE_SPENT data)', async function () {
-      const txHash8 = randHash8();
+      const txidHex = randHash();
       const blockHash = randHash();
 
       await db.beginTransaction();
       // No output or hint exists; should not throw
-      const result = await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
+      const result = await db.removeOutputWithInput({ prevTxHash: txidHex, prevOutputIndex: 0, blockHash });
       expect(result).to.be.true;
     });
   });

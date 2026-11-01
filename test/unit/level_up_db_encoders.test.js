@@ -20,6 +20,7 @@ const { encodeBlock, encodeTx, encodeInputVal, encodeOutHint, encodeOutput } = L
 
 const HEX64 = 'a'.repeat(64);
 const HEX16 = 'b'.repeat(16);
+const TXID64 = 'b'.repeat(64);
 const ZERO_HASH = '0'.repeat(64);
 
 describe('LevelUpDb value-encoder width guards', function () {
@@ -47,12 +48,13 @@ describe('LevelUpDb value-encoder width guards', function () {
         });
     });
 
-    describe('encodeInputVal (txHash8)', function () {
-        it('accepts a correct 16-hex txid prefix', function () {
-            expect(encodeInputVal(HEX16)).to.have.length(8);
+    describe('encodeInputVal (txid)', function () {
+        it('accepts a correct 64-hex txid', function () {
+            expect(encodeInputVal(TXID64)).to.have.length(32);
         });
-        it('throws with the function name on a wrong-width txid prefix', function () {
-            expect(() => encodeInputVal('bb')).to.throw(/encodeInputVal expects a 16-hex/);
+        it('throws with the function name on a wrong-width txid', function () {
+            expect(() => encodeInputVal('bb')).to.throw(/encodeInputVal expects a 64-hex/);
+            expect(() => encodeInputVal(HEX16)).to.throw(/encodeInputVal expects a 64-hex/);
         });
     });
 

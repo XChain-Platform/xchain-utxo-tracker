@@ -25,6 +25,7 @@ const { RecordReader,
         RecordWriter }          = require('../streaming_join.js')
 const {
     P_INPUT, P_IN_HINT, SPENDS_RECORD_SIZE,
+    SPD_PREV_TXID, SPD_PREV_VOUT, SPD_SPENDER_TXID,
     LAYOUT, FlatWriter, sortByKey,
 } = require('./record_layout.js')
 
@@ -34,8 +35,8 @@ async function deriveSpendKeys(ctx, stats) {
     const { spendsByPrevPath, outDir, tmpDir, ramBudgetBytes, removeSpent, onProgress } = ctx
 
     // Phase 8: spends-by-prevtx → I.dat (sorted), J-raw (unsorted)
-    // spends-by-prevtx.dat has no header, records = 20B, sorted by
-    // (prevTxHash8, prevVout): matches I key order exactly.
+    // spends-by-prevtx.dat has no header; its records are sorted by
+    // (prevTxid, prevVout), which matches I key order exactly.
     //
     // Skipped entirely when removeSpent=true (the default and only parity
     // seed): the live confirmed path never persists I/J records. The explicit
@@ -70,24 +71,24 @@ function writeSpendRecords(spendsReader, iOut, jRaw) {
             const rec = spendsReader.next()
             if (!rec) break
             spendCount++
-            const prevTxHash8    = rec.subarray(0, 8)
-            const prevVoutBE     = rec.subarray(8, 12)
-            const spenderTxHash8 = rec.subarray(12, 20)
+            const prevTxid    = rec.subarray(SPD_PREV_TXID, SPD_PREV_TXID + 32)
+            const prevVoutBE  = rec.subarray(SPD_PREV_VOUT, SPD_PREV_VOUT + 4)
+            const spenderTxid = rec.subarray(SPD_SPENDER_TXID, SPD_SPENDER_TXID + 32)
 
-            // I record: 'I' + prevTxHash8(8) + prevVoutBE(4) | spenderTxHash8(8)
+            // I record: 'I' + prevTxid(32) + prevVoutBE(4) | spenderTxid(32)
             const iBuf = Buffer.allocUnsafe(LAYOUT.I.recordSize)
             iBuf[0] = P_INPUT
-            prevTxHash8   .copy(iBuf, 1, 0, 8)
-            prevVoutBE    .copy(iBuf, 9, 0, 4)
-            spenderTxHash8.copy(iBuf, 13, 0, 8)
+            prevTxid   .copy(iBuf, 1, 0, 32)
+            prevVoutBE .copy(iBuf, 33, 0, 4)
+            spenderTxid.copy(iBuf, 37, 0, 32)
             iOut.writeRecord(iBuf)
 
-            // J record: 'J' + spenderTxHash8(8) + prevTxHash8(8) + prevVoutBE(4) | (empty)
+            // J record: 'J' + spenderTxid(32) + prevTxid(32) + prevVoutBE(4) | (empty)
             jRaw.write((buf, off) => {
                 buf[off] = P_IN_HINT
-                spenderTxHash8.copy(buf, off + 1,  0, 8)
-                prevTxHash8   .copy(buf, off + 9,  0, 8)
-                prevVoutBE    .copy(buf, off + 17, 0, 4)
+                spenderTxid.copy(buf, off + 1,  0, 32)
+                prevTxid   .copy(buf, off + 33, 0, 32)
+                prevVoutBE .copy(buf, off + 65, 0, 4)
             })
         }
     } finally {

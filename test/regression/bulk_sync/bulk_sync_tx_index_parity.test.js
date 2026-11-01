@@ -33,8 +33,8 @@ const { deriveKeys }     = require('../../../src/bulk_sync/merger/derive_keys.js
 const { loadKeys }       = require('../../../src/bulk_sync/merger/loader.js');
 const LevelUpStore       = require('../../../src/store/level_up_db');
 
-const OUTPUTS_KEY_SIZE = 12;
-const SPENDS_KEY_SIZE  = 12;
+const OUTPUTS_KEY_SIZE = 36;
+const SPENDS_KEY_SIZE  = 36;
 const HEADER_SIZE      = 64;
 const TX_PREFIXES      = new Set(['T', 'X', 'Y']);
 
@@ -46,7 +46,7 @@ const block3 = { height: 12, ts: 1700001200, hash: h32('ti-block-3'), prev: bloc
 
 const TX_A = h32('ti-tx-a');
 const TX_B = h32('ti-tx-b');
-// Shares TX_A's 8-byte prefix but is a different transaction in a later block.
+// Shares TX_A's first 8 bytes but is a different transaction in a later block.
 const TX_C = Buffer.concat([TX_A.subarray(0, 8), h32('ti-tx-c').subarray(8)]);
 const TX_D = h32('ti-tx-d');
 
@@ -63,22 +63,21 @@ function writeInputs(tmp) {
     // Later blocks first: the slot owner must come from the sort, not the file order.
     for (const t of SEEDED_TXS.slice().reverse()) {
         for (let v = 0; v < t.outputs; v++) {
-            w.append(t.txid.subarray(0, 8), v, 1000n + BigInt(v), t.block.height, t.txid,
-                h32('ti-script-' + t.txid.toString('hex') + v), t.block.hash, false);
+            w.append(t.txid, v, 1000n + BigInt(v), t.block.height, h32('ti-script-' + t.txid.toString('hex') + v), t.block.hash, false);
         }
     }
     w.close();
 
     const spendsPath = path.join(tmp, 'spends.dat');
     const sp = new SpendsWriter(spendsPath, 'dogecoin', 'regtest', block1.height, block3.height);
-    sp.append(TX_A.subarray(0, 8), 1, TX_B.subarray(0, 8));
+    sp.append(TX_A, 1, TX_B);
     sp.close();
 
     const metaPath = path.join(tmp, 'meta.dat');
     const meta = new MetaWriter(metaPath, 'dogecoin', 'regtest', block1.height, block3.height);
-    meta.writeBlock(block1.height, block1.ts, block1.hash, block1.prev, [TX_A.subarray(0, 8)]);
-    meta.writeBlock(block2.height, block2.ts, block2.hash, block2.prev, [TX_B.subarray(0, 8)]);
-    meta.writeBlock(block3.height, block3.ts, block3.hash, block3.prev, [TX_C.subarray(0, 8), TX_D.subarray(0, 8)]);
+    meta.writeBlock(block1.height, block1.ts, block1.hash, block1.prev, [TX_A]);
+    meta.writeBlock(block2.height, block2.ts, block2.hash, block2.prev, [TX_B]);
+    meta.writeBlock(block3.height, block3.ts, block3.hash, block3.prev, [TX_C, TX_D]);
     meta.close();
     return { outputsPath, spendsPath, metaPath };
 }
@@ -87,16 +86,16 @@ async function seed(tmp, deriveOpts, cleanupOutputs) {
     const { outputsPath, spendsPath, metaPath } = writeInputs(tmp);
     const outputsSorted = path.join(tmp, 'outputs-sorted.dat');
     const spendsSorted  = path.join(tmp, 'spends-sorted.dat');
-    await externalSort({ inputPath: outputsPath, outputPath: outputsSorted, headerSize: HEADER_SIZE, recordSize: 121, keySize: OUTPUTS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'so') });
-    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 20, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
+    await externalSort({ inputPath: outputsPath, outputPath: outputsSorted, headerSize: HEADER_SIZE, recordSize: 113, keySize: OUTPUTS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'so') });
+    await externalSort({ inputPath: spendsPath,  outputPath: spendsSorted,  headerSize: HEADER_SIZE, recordSize: 68, keySize: SPENDS_KEY_SIZE, ramBudgetBytes: 1 << 20, tmpDir: path.join(tmp, 'ss') });
     const liveUtxos = path.join(tmp, 'live-utxos.dat');
-    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: 121, rightRecordSize: 20, keySize: OUTPUTS_KEY_SIZE });
+    await leftAntiJoin({ leftPath: outputsSorted, rightPath: spendsSorted, outputPath: liveUtxos, leftRecordSize: 113, rightRecordSize: 68, keySize: OUTPUTS_KEY_SIZE });
 
     const keysDir = path.join(tmp, 'keys');
     const { stats } = await deriveKeys(Object.assign({
         metaPath, outputsPath, liveUtxosPath: liveUtxos, spendsByPrevPath: spendsSorted,
         outDir: keysDir, tmpDir: path.join(tmp, 'derive'),
-        ramBudgetBytes: 1 << 20, network: 'dogecoin-regtest', undoBlocks: 2, outputsRecordSize: 121,
+        ramBudgetBytes: 1 << 20, network: 'dogecoin-regtest', undoBlocks: 2, outputsRecordSize: 113,
         onProgress(ev) {
             if (cleanupOutputs && ev.phase === 'script-cand-raw-done') fs.unlinkSync(outputsPath);
         },
@@ -159,19 +158,21 @@ async function matchesLiveInsertTransaction(tmp) {
     expect(stats.Y).to.equal(3);
     const seeded = await seededTxRecords(dbPath);
     const live   = await liveTxRecords(tmp);
-    expect(live.size).to.equal(3 + 4 + 3);
+    expect(live.size).to.equal(4 + 4 + 3);
     expect(Array.from(seeded.entries()).sort()).to.deep.equal(Array.from(live.entries()).sort());
 }
 
-async function laterBlockOwnsSharedSlot(tmp) {
+async function sharedPrefixKeepsSeparateRecords(tmp) {
     const { dbPath } = await seedAndLoad(tmp);
     const db = new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' });
     await db.open();
     try {
-        const t = await db.get(Buffer.concat([Buffer.from([0x54]), TX_A.subarray(0, 8)]));
-        expect(t.length).to.equal(64);
-        expect(t.subarray(0, 32).equals(block3.hash)).to.equal(true);
-        expect(t.subarray(32).equals(TX_C)).to.equal(true);
+        for (const [txid, block] of [[TX_A, block1], [TX_C, block3]]) {
+            const t = await db.get(Buffer.concat([Buffer.from([0x54]), txid]));
+            expect(t.length).to.equal(64);
+            expect(t.subarray(0, 32).equals(block.hash)).to.equal(true);
+            expect(t.subarray(32).equals(txid)).to.equal(true);
+        }
         for (const [txid, block] of [[TX_A, block1], [TX_C, block3]]) {
             const x = await db.get(Buffer.concat([Buffer.from([0x58]), txid]));
             expect(x.equals(block.hash)).to.equal(true);
@@ -279,7 +280,7 @@ async function replacesLegacyT(tmp) {
     const { dbPath } = await seedAndLoad(tmp, { removeSpent: false }, { removeSpent: false });
     const seeded = await seededTxRecords(dbPath);
     const tLens = Array.from(seeded.entries()).filter(([k]) => k.startsWith('54')).map(([, v]) => v.length / 2);
-    expect(tLens).to.deep.equal([64, 64, 64]);
+    expect(tLens).to.deep.equal([64, 64, 64, 64]);
 }
 
 describe('Regression (bulk-sync): non-Bitcoin seeds use the live tx index (T 64B, X, Y)', function () {
@@ -290,7 +291,7 @@ describe('Regression (bulk-sync): non-Bitcoin seeds use the live tx index (T 64B
     afterEach(function () { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {} });
 
     it('seeds T, X and Y byte-identical to the live insertTransaction path, collision included', () => matchesLiveInsertTransaction(tmp));
-    it('keeps the later block in a shared T prefix slot and both txids in X', () => laterBlockOwnsSharedSlot(tmp));
+    it('keeps txids sharing their first 8 bytes in separate T and X records', () => sharedPrefixKeepsSeparateRecords(tmp));
     it('answers get_tx_block for seeded history', () => answersGetTxBlock(tmp));
     it('rolls back a seeded tip block without disturbing earlier seeded transactions', () => rollsBackSeededTip(tmp));
     it('survives production cleanup of the consumed outputs stream', () => survivesOutputsCleanup(tmp));

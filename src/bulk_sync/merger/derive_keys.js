@@ -24,22 +24,22 @@
  * header, fixed size. Files are sorted ascending by key.
  *
  *   B.dat   33+40 =  73B  (key: 'B'+blockHash32;        val: heightBE(4)+tsBE(4)+prevHash32)
- *   T.dat    9+32 =  41B  (key: 'T'+txHash8(8);         val: blockHash32)
+ *   T.dat   33+32 =  65B  (key: 'T'+txid32;             val: blockHash32)
  *                           Legacy 32B shape (live T is blockHash32+fullTxid32);
  *                           removeSpent=false only. See SPEC.md "T value shape":
  *                           T must widen to 64B in any change that seeds Y.
- *   I.dat   13+ 8 =  21B  (key: 'I'+prevTxHash8+voutBE; val: spenderTxHash8)
- *   O.dat   45+45 =  90B  (key: 'O'+script32+txHash8+voutBE;
+ *   I.dat   37+32 =  69B  (key: 'I'+prevTxid32+voutBE;  val: spenderTxid32)
+ *   O.dat   69+45 = 114B  (key: 'O'+script32+txid32+voutBE;
  *                           val: valueBE(8)+heightBE(4)+fullTxHash32+coinbase(1))
  *                           The coinbase byte is always present in this
  *                           intermediate so the record stays fixed-width for the
  *                           external sort; the loader re-encodes it to the live
  *                           path's optional-byte form (44B normal / 45B coinbase).
- *   H.dat   13+32 =  45B  (key: 'H'+txHash8+voutBE;     val: script32)
- *   J.dat   21+ 0 =  21B  (key: 'J'+spenderTxHash8+prevTxHash8+prevVoutBE)
+ *   H.dat   37+32 =  69B  (key: 'H'+txid32+voutBE;      val: script32)
+ *   J.dat   69+ 0 =  69B  (key: 'J'+spenderTxid32+prevTxid32+prevVoutBE)
  *   N.dat   33+ 0 =  33B  (key: 'N'+blockHash32)
  *   S.dat   33+ 4 =  37B  (key: 'S'+script32;           val: heightBE(4))
- *   W.dat   45+32 =  77B  (key: 'W'+blockHash32+txHash8+voutBE; val: script32)
+ *   W.dat   69+32 = 101B  (key: 'W'+blockHash32+txid32+voutBE; val: script32)
  *                           Creation-block reverse index. One record per output
  *                           in the pre-cancellation outputs stream (i.e. at
  *                           output-creation time, before spends are applied) so

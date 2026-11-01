@@ -16,7 +16,7 @@
 
 const fs             = require('fs')
 const path           = require('path')
-const { OUTPUTS_RECORD_SIZE } = require('../writers.js')
+const { OUTPUTS_RECORD_SIZE, MAGIC_OUTPUTS, MAGIC_SPENDS, MAGIC_META } = require('../writers.js')
 
 // helpers
 
@@ -172,11 +172,68 @@ function patchOutputHeader(fd, maxLastHeight, totalRecordCount) {
 }
 
 /**
+ * Throws unless each concatenated parse stream carries the current format's
+ * magic. A stream from an older format (8-byte txid fields) names the work
+ * directories to clear so the next run dumps and parses the blocks again.
+ */
+function assertCurrentParseFormat(paths, dirs) {
+    const expected = { outputs: MAGIC_OUTPUTS, spends: MAGIC_SPENDS, meta: MAGIC_META }
+    for (const [name, filePath] of Object.entries(paths)) {
+        const want = expected[name].toString('ascii')
+        let got
+        const fd = fs.openSync(filePath, 'r')
+        try {
+            const buf = Buffer.alloc(8)
+            got = fs.readSync(fd, buf, 0, 8, 0) === 8 ? buf.toString('ascii') : '<short>'
+        } finally {
+            fs.closeSync(fd)
+        }
+        if (got !== want) {
+            throw new Error(`${filePath}: bulk-sync ${name} format '${got}', expected '${want}' (txid fields are 32 bytes in`
+                + ` the current format). Remove ${dirs.parsed} and ${dirs.merge} and run again so the blocks are dumped and parsed afresh.`)
+        }
+    }
+}
+
+// Whether a parse-worker output file starts with a current-format magic.
+function hasCurrentParseMagic(filePath) {
+    let fd
+    try {
+        fd = fs.openSync(filePath, 'r')
+        const buf = Buffer.alloc(8)
+        if (fs.readSync(fd, buf, 0, 8, 0) !== 8) return false
+        return [MAGIC_OUTPUTS, MAGIC_SPENDS, MAGIC_META].some(m => m.equals(buf))
+    } catch (_) {
+        return false
+    } finally {
+        if (fd !== undefined) { try { fs.closeSync(fd) } catch (_) {} }
+    }
+}
+
+/**
+ * The orchestrator flags that resume a work dir: --skip-parse when parsed/ holds
+ * current-format worker output. Output in an older format (8-byte txid fields)
+ * cannot be merged and the dumps it came from are gone, so the work dir is
+ * cleared instead and the run starts over from the dump.
+ */
+function resumeArgsForWorkDir(workDir, log = console.log) {
+    const parsedDir = path.join(workDir, 'parsed')
+    const files = fs.existsSync(parsedDir) ? fs.readdirSync(parsedDir).filter(f => f.endsWith('.dat')) : []
+    if (files.length === 0) return []
+    const stale = files.find(f => !hasCurrentParseMagic(path.join(parsedDir, f)))
+    if (stale) {
+        log(`[bulk-sync] ${stale} in parsed/ is from an older bulk-sync format; clearing ${workDir} and starting over`)
+        fs.rmSync(workDir, { recursive: true, force: true })
+        return []
+    }
+    log('[bulk-sync] detected existing parsed/ - adding --skip-parse')
+    return ['--skip-parse']
+}
+
+/**
  * Read the record_size field (offset 28, u32 LE) from a dump/intermediate
- * header. This is the explicit width discriminator between the legacy 120-byte
- * outputs record and the 121-byte coinbase-flagged record. Falls back to
- * the compiled OUTPUTS_RECORD_SIZE if the field is absent (0) or unreadable, so
- * a pre-record_size dump still parses at the current width.
+ * header. Falls back to the compiled OUTPUTS_RECORD_SIZE if the field is absent
+ * (0) or unreadable; the merge refuses any width but the current one.
  */
 function readOutputsRecordSize(filePath) {
     let fd
@@ -205,4 +262,4 @@ function findFiles(dir, prefix, suffix) {
         .map(f => path.join(dir, f))
 }
 
-module.exports = { fmtDuration, concatFilesWithHeader, readOutputsRecordSize, findFiles }
+module.exports = { fmtDuration, concatFilesWithHeader, readOutputsRecordSize, assertCurrentParseFormat, resumeArgsForWorkDir, findFiles }

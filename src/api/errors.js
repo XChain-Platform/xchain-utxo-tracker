@@ -6,15 +6,13 @@ const fs = require('fs')
 const path = require('path')
 const { createHash, createPublicKey, verify: verifyAsymmetric } = require('crypto')
 const { getLogger } = require('../observability')
+const { findMemberByBasename, assertArchiveIdentityOrThrow } = require('./errors/archive_identity.js')
 const {
     isWrapperArchive,
     parseSha256Sidecar,
     hasRequiredLevelDbMembers,
     parseDetachedSignature,
-    BOOTSTRAP_META_MEMBER,
-    trackerArchiveIdentity,
-    parseArchiveMeta,
-    compareArchiveIdentity
+    trackerArchiveIdentity
 } = require('../bootstrap/restore_validation.js')
 
 const logger = getLogger()
@@ -155,20 +153,6 @@ function sha256File(source) {
     })
 }
 
-// Locate a member by basename inside an already-extracted directory tree.
-function findMemberByBasename(rootDir, wantBase) {
-    const stack = [rootDir]
-    while (stack.length) {
-        const dir = stack.pop()
-        for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-            const full = path.join(dir, ent.name)
-            if (ent.isDirectory()) { stack.push(full); continue }
-            if (ent.name === wantBase) return full
-        }
-    }
-    return null
-}
-
 // Unwrap a BootstrapService two-layer wrapper archive (outer gzip tar whose members
 // are `data.tar.gz` + `data.sha256`) into a temp working dir, verify the inner
 // payload against its published checksum, and return the inner `data.tar.gz` path as
@@ -282,37 +266,6 @@ async function assertLevelDbArchiveOrThrow(archivePath, reportedSource) {
             + `at its root (no CURRENT plus MANIFEST-* member at depth 0), so extracting it over the wiped /data `
             + `would leave the tracker on an empty database. A store nested in a directory must be repacked `
             + `from inside that directory (tar -cf - -C <store> .).`)
-}
-
-// A metadata member bigger than this is not metadata (xchain-node's reader uses the same bound).
-const BOOTSTRAP_META_MAX_BYTES = 64 * 1024
-
-// Read the unwrapped wrapper's bootstrap.json, or null when it is absent, oversized,
-// unreadable, or not format 1 (an archive published before the member existed).
-function readUnwrappedArchiveMeta(tmpDir) {
-    const metaPath = findMemberByBasename(tmpDir, BOOTSTRAP_META_MEMBER)
-    try {
-        return (metaPath && fs.statSync(metaPath).size <= BOOTSTRAP_META_MAX_BYTES)
-            ? parseArchiveMeta(fs.readFileSync(metaPath, 'utf8')) : null
-    } catch (_) { return null }
-}
-
-// Identity gate, after provenance (so the metadata is authenticated) and before the wipe:
-// refuse a wrapper whose bootstrap.json names another module, coin or network, or a real
-// signed archive for another combo passes every gate and installs a foreign chain's store.
-function assertArchiveIdentityOrThrow(tmpDir, source, target) {
-    const identity = compareArchiveIdentity(readUnwrappedArchiveMeta(tmpDir), target)
-    const label = (id) => `${id.module || '?'} ${id.coin || '?'}/${id.network || '?'}`
-    if (identity.status === 'mismatch') {
-        const found = identity.mismatches.map(m => `${m.field} "${m.archive}"`).join(', ')
-        throw new Error(`Refusing to restore "${source}": its bootstrap.json declares ${found}, but this `
-            + `tracker is ${label(target)}. The archive belongs to another tracker; nothing was wiped.`)
-    }
-    // An archive or a target that does not name a field cannot be compared on it: say so, then restore as before.
-    if (identity.status === 'unchecked')
-        logger.warn(`Bootstrap archive identity not checked for ${identity.unchecked.join('/')} `
-            + `(archive or tracker NETWORK does not name it); restore target is ${label(target)}.`)
-    else logger.info(`Restore archive identity matches this tracker (${label(target)})`)
 }
 
 // Post-extraction ground truth: the store must be AT the database root, because that

@@ -29,7 +29,8 @@ const { resolveUndoBlocks }    = require('../../../chain/undo_blocks.js')
 const {
     P_BLOCK, P_TX, P_OUTPUT, P_OUT_HINT, P_STORED_BLK,
     P_TX_EXACT, P_TX_BLOCK_RECOVERY,
-    OUTPUTS_RECORD_SIZE, OUTPUTS_RECORD_SIZE_CB, OUTPUTS_HEADER_SIZE,
+    OUTPUTS_RECORD_SIZE, OUTPUTS_HEADER_SIZE,
+    OUT_TXID, OUT_VOUT, OUT_VALUE, OUT_HEIGHT, OUT_SCRIPT, OUT_BLOCK, OUT_COINBASE,
     LAYOUT, noop, ensureDir, clearPriorDeriveOutputs, FlatWriter, sortByKey,
 } = require('./record_layout.js')
 const { writeScriptCandidates,
@@ -37,12 +38,12 @@ const { writeScriptCandidates,
 const { deriveSpendKeys }      = require('./derive_keys_pass_spends.js')
 
 // T.dat carries the block height after the key so the sort orders colliding
-// prefixes by block and the loader's later put (the higher block) wins the slot;
+// txids by block and the loader's later put (the higher block) wins the slot;
 // the loader drops those 4 bytes.
 const TX_INDEX_LAYOUT = {
-    T: { keySize:  9, valSize: 68, recordSize: 77 },
-    X: { keySize: 33, valSize: 32, recordSize: 65 },
-    Y: { keySize: 41, valSize: 32, recordSize: 73 },
+    T: { keySize: 33, valSize: 68, recordSize: 101 },
+    X: { keySize: 33, valSize: 32, recordSize:  65 },
+    Y: { keySize: 65, valSize: 32, recordSize:  97 },
 }
 
 /**
@@ -56,12 +57,13 @@ const TX_INDEX_LAYOUT = {
  *                                          there are removed first
  * @param {string}  opts.tmpDir            temp scratch
  * @param {number}  opts.outputsRecordSize width of records in outputsPath /
- *                                          liveUtxosPath. 121 for dumps that
- *                                          carry the coinbase flag, 120
- *                                          for legacy dumps. Defaults to 120 so
- *                                          legacy callers keep working. The
- *                                          orchestrator reads it from the dump
- *                                          header's record_size field.
+ *                                          liveUtxosPath, from the dump header's
+ *                                          record_size field. Must be the
+ *                                          current OUTPUTS_RECORD_SIZE (113, the
+ *                                          format-2 record with its trailing
+ *                                          coinbase byte); a dump of another
+ *                                          width is from an older format and
+ *                                          is refused.
  * @param {number}  opts.ramBudgetBytes    sort RAM cap (default 1 GiB)
  * @param {string}  opts.network           network string e.g. 'dogecoin-mainnet'.
  *                                          Resolves per-chain undoBlocks
@@ -122,12 +124,13 @@ function resolveDeriveOptions(opts) {
         ? !/^bitcoin(?:-|$)/i.test(String(opts.network))
         : opts.txIndex === true
     const onProgress     = opts.onProgress     || noop
+    // A format-1 record (120 or 121 bytes, 8-byte txid key) would misframe every
+    // field below, so only the current width is accepted.
     const outputsRecordSize = opts.outputsRecordSize || OUTPUTS_RECORD_SIZE
-    if (outputsRecordSize !== OUTPUTS_RECORD_SIZE && outputsRecordSize !== OUTPUTS_RECORD_SIZE_CB) {
-        throw new Error(`deriveKeys: unsupported outputsRecordSize ${outputsRecordSize} (expected 120 or 121)`)
+    if (outputsRecordSize !== OUTPUTS_RECORD_SIZE) {
+        throw new Error(`deriveKeys: unsupported outputsRecordSize ${outputsRecordSize} (expected ${OUTPUTS_RECORD_SIZE});`
+            + ' outputs from an older bulk-sync format must be parsed again')
     }
-    // Coinbase flag lives at byte 120, present only in 121-byte records.
-    const hasCoinbaseByte = outputsRecordSize === OUTPUTS_RECORD_SIZE_CB
 
     if (!metaPath || !outputsPath || !liveUtxosPath || !spendsByPrevPath) {
         throw new Error('deriveKeys: metaPath, outputsPath, liveUtxosPath, spendsByPrevPath are required')
@@ -141,7 +144,7 @@ function resolveDeriveOptions(opts) {
     return {
         metaPath, outputsPath, liveUtxosPath, spendsByPrevPath, outDir, tmpDir,
         ramBudgetBytes, undoBlocks, removeSpent, txIndex, onProgress,
-        outputsRecordSize, hasCoinbaseByte,
+        outputsRecordSize,
     }
 }
 
@@ -219,12 +222,12 @@ function scanMetaBlocks(ctx, meta, bRawPath, tRawPath) {
 
             // Legacy T: val = blockHash (32B); txIndex emits the live 64B T instead
             if (tRaw) {
-                for (let i = 0; i < blk.txHash8List.length; i++) {
-                    const th = blk.txHash8List[i]
+                for (let i = 0; i < blk.txidList.length; i++) {
+                    const txid = blk.txidList[i]
                     tRaw.write((buf, off) => {
                         buf[off] = P_TX
-                        th.copy(buf, off + 1, 0, 8)
-                        blk.blockHash.copy(buf, off + 9, 0, 32)
+                        txid.copy(buf, off + 1, 0, 32)
+                        blk.blockHash.copy(buf, off + 33, 0, 32)
                     })
                 }
             }
@@ -259,14 +262,14 @@ async function deriveTxIndexKeys(ctx, stats, wMinHeight) {
     let prev = null
     try {
         for (let rec = reader.next(); rec; rec = reader.next()) {
-            const fullTxid = rec.subarray(24, 56)
+            const fullTxid = rec.subarray(OUT_TXID, OUT_TXID + 32)
             if (prev !== null && prev.equals(fullTxid)) continue
             prev = Buffer.from(fullTxid)
-            const txHash8 = rec.subarray(0, 8), heightBE = rec.subarray(20, 24), blockHash = rec.subarray(88, 120)
+            const heightBE = rec.subarray(OUT_HEIGHT, OUT_HEIGHT + 4), blockHash = rec.subarray(OUT_BLOCK, OUT_BLOCK + 32)
             raw.T.write((buf, off) => {
                 buf[off] = P_TX
-                txHash8.copy(buf, off + 1); heightBE.copy(buf, off + 9)
-                blockHash.copy(buf, off + 13); fullTxid.copy(buf, off + 45)
+                fullTxid.copy(buf, off + 1); heightBE.copy(buf, off + 33)
+                blockHash.copy(buf, off + 37); fullTxid.copy(buf, off + 69)
             })
             raw.X.write((buf, off) => {
                 buf[off] = P_TX_EXACT
@@ -275,15 +278,15 @@ async function deriveTxIndexKeys(ctx, stats, wMinHeight) {
             if (heightBE.readUInt32BE(0) < wMinHeight) continue
             raw.Y.write((buf, off) => {
                 buf[off] = P_TX_BLOCK_RECOVERY
-                blockHash.copy(buf, off + 1); txHash8.copy(buf, off + 33); fullTxid.copy(buf, off + 41)
+                blockHash.copy(buf, off + 1); fullTxid.copy(buf, off + 33); fullTxid.copy(buf, off + 65)
             })
         }
     } finally {
         reader.close()
         for (const k of ['T', 'X', 'Y']) raw[k].close()
     }
-    // T sorts on key plus height (13B) so a shared 8-byte prefix ends in block order.
-    const sortKey = { T: 13, X: 33, Y: 41 }
+    // T sorts on key plus height (37B) so a txid two blocks carry ends in block order.
+    const sortKey = { T: 37, X: 33, Y: 65 }
     for (const k of ['T', 'X', 'Y']) {
         await sortByKey(rawPath[k], path.join(outDir, k + '.dat'), TX_INDEX_LAYOUT[k].recordSize, sortKey[k], path.join(tmpDir, 'sort-tx-' + k), ramBudgetBytes)
         try { fs.unlinkSync(rawPath[k]) } catch (_) {}
@@ -295,20 +298,19 @@ async function deriveTxIndexKeys(ctx, stats, wMinHeight) {
 // Phases 3 and 4: live-utxos becomes H.dat (already in key order) and O.dat
 // (sorted by key).
 async function deriveOutputKeys(ctx, stats) {
-    const { liveUtxosPath, outDir, tmpDir, ramBudgetBytes, onProgress, outputsRecordSize, hasCoinbaseByte } = ctx
+    const { liveUtxosPath, outDir, tmpDir, ramBudgetBytes, onProgress, outputsRecordSize } = ctx
 
     // Phase 3: live-utxos → H.dat (sorted), O-raw (unsorted)
     // live-utxos.dat has no header (produced by streaming-join). Records are
-    // 120B outputs, sorted by (txHash8, vout). That happens to be H's sort
+    // outputs records sorted by (txid, vout). That happens to be H's sort
     // order already → emit H directly with no re-sort.
     const liveReader = new RecordReader(liveUtxosPath, 0, outputsRecordSize)
     const hOut       = new RecordWriter(path.join(outDir, 'H.dat'), LAYOUT.H.recordSize)
     const oRawPath   = path.join(tmpDir, 'O-raw.dat')
     const oRaw       = new FlatWriter(oRawPath, LAYOUT.O.recordSize)
-    const liveCount  = writeLiveOutputRecords(liveReader, hOut, oRaw, hasCoinbaseByte)
+    const liveCount  = writeLiveOutputRecords(liveReader, hOut, oRaw)
 
-    stats.H = liveCount
-    stats.O = liveCount
+    stats.H = stats.O = liveCount
     onProgress({ phase: 'live-done', liveCount })
 
     // Phase 4: sort O by key
@@ -319,7 +321,7 @@ async function deriveOutputKeys(ctx, stats) {
 
 // Writes one H record and one O record per live UTXO, then closes the reader
 // and both writers. Returns the live UTXO count.
-function writeLiveOutputRecords(liveReader, hOut, oRaw, hasCoinbaseByte) {
+function writeLiveOutputRecords(liveReader, hOut, oRaw) {
     let liveCount = 0
 
     try {
@@ -328,34 +330,31 @@ function writeLiveOutputRecords(liveReader, hOut, oRaw, hasCoinbaseByte) {
             if (!rec) break
             liveCount++
 
-            // Layout from writers.js OutputsWriter:
-            //   [0..8]    txHash8
-            //   [8..12]   vout (BE u32)
-            //   [12..20]  value (BE u64)
-            //   [20..24]  height (BE i32)
-            //   [24..56]  fullTxHash
-            //   [56..88]  scriptPubKey
-            //   [88..120] blockHash
-            const txHash8      = rec.subarray(0, 8)
-            // voutBE is stored in-place at [8..12]; we'll slice it.
-            const voutBE       = rec.subarray(8, 12)
-            const valBE        = rec.subarray(12, 20)
-            const heightBE     = rec.subarray(20, 24)
-            const fullTxHash   = rec.subarray(24, 56)
-            const scriptPubKey = rec.subarray(56, 88)
-            // Byte 120 exists only in 121-byte records; legacy 120-byte
-            // records have no flag and are treated as non-coinbase.
-            const coinbase     = hasCoinbaseByte && rec[120] === 1
+            // Layout from writers.js OutputsWriter (format 2):
+            //   [0..32]   txid (display order)
+            //   [32..36]  vout (BE u32)
+            //   [36..44]  value (BE u64)
+            //   [44..48]  height (BE i32)
+            //   [48..80]  scriptPubKey (sha256 of the script)
+            //   [80..112] blockHash
+            //   [112]     coinbase flag (1 = coinbase output)
+            // Every field is a view into the reader's buffer, copied out below.
+            const txid         = rec.subarray(OUT_TXID, OUT_TXID + 32)
+            const voutBE       = rec.subarray(OUT_VOUT, OUT_VOUT + 4)
+            const valBE        = rec.subarray(OUT_VALUE, OUT_VALUE + 8)
+            const heightBE     = rec.subarray(OUT_HEIGHT, OUT_HEIGHT + 4)
+            const scriptPubKey = rec.subarray(OUT_SCRIPT, OUT_SCRIPT + 32)
+            const coinbase     = rec[OUT_COINBASE] === 1
 
-            // H record: 'H' + txHash8(8) + voutBE(4) | scriptPubKey(32)
+            // H record: 'H' + txid(32) + voutBE(4) | scriptPubKey(32)
             const hBuf = Buffer.allocUnsafe(LAYOUT.H.recordSize)
             hBuf[0] = P_OUT_HINT
-            txHash8.copy(hBuf, 1, 0, 8)
-            voutBE.copy(hBuf, 9, 0, 4)
-            scriptPubKey.copy(hBuf, 13, 0, 32)
+            txid.copy(hBuf, 1, 0, 32)
+            voutBE.copy(hBuf, 33, 0, 4)
+            scriptPubKey.copy(hBuf, 37, 0, 32)
             hOut.writeRecord(hBuf)
 
-            // O record: 'O' + scriptPubKey(32) + txHash8(8) + voutBE(4)
+            // O record: 'O' + scriptPubKey(32) + txid(32) + voutBE(4)
             //          | value(8) + height(4) + fullTxHash(32) + coinbase(1)
             // The coinbase byte keeps the record fixed-width for the external
             // sort; the loader collapses it to the live path's optional-byte
@@ -363,12 +362,12 @@ function writeLiveOutputRecords(liveReader, hOut, oRaw, hasCoinbaseByte) {
             oRaw.write((buf, off) => {
                 buf[off] = P_OUTPUT
                 scriptPubKey.copy(buf, off + 1, 0, 32)
-                txHash8     .copy(buf, off + 33, 0, 8)
-                voutBE      .copy(buf, off + 41, 0, 4)
-                valBE       .copy(buf, off + 45, 0, 8)
-                heightBE    .copy(buf, off + 53, 0, 4)
-                fullTxHash  .copy(buf, off + 57, 0, 32)
-                buf[off + 89] = coinbase ? 1 : 0
+                txid        .copy(buf, off + 33, 0, 32)
+                voutBE      .copy(buf, off + 65, 0, 4)
+                valBE       .copy(buf, off + 69, 0, 8)
+                heightBE    .copy(buf, off + 77, 0, 4)
+                txid        .copy(buf, off + 81, 0, 32)
+                buf[off + 113] = coinbase ? 1 : 0
             })
         }
     } finally {

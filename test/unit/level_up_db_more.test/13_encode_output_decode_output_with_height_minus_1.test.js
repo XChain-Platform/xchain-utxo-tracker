@@ -37,7 +37,7 @@ describe('LevelUpDb (extended coverage)', function () {
             const scriptHash = randHash();
             await db.insertOutput({
                 scriptPubKey: scriptHash,
-                txHash: randHash8(),
+                txHash: randHash(),
                 outputIndex: 0,
                 value: BigInt(1000),
                 height: -1  // mempool / no-height sentinel

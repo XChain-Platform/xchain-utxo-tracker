@@ -12,7 +12,7 @@
 
 // Regression: cleanupAgedBlocks prunes the Y per-block tx recovery records.
 //
-// insertTransaction writes T, X and Y ('Y'/0x59, keyed [blockHash][txHash8]) for
+// insertTransaction writes T, X and Y ('Y'/0x59, keyed [blockHash][txidHex]) for
 // every confirmed tx. Y has exactly one reader, the reorg unwind
 // (deleteTxBlockRecord), which reaches a block's txs through its W records and so
 // cannot go past the undoBlocks window. An aged-out block's Y records are therefore
@@ -70,7 +70,7 @@ describe('Regression: cleanupAgedBlocks prunes the Y recovery index (T and X sur
         // X (read by getTxBlock) and T (the tx list) are kept for both blocks.
         expect((await db.getTxBlock(aged.txid)).block_hash).to.equal(aged.blockHash);
         expect((await db.getTxBlock(live.txid)).block_hash).to.equal(live.blockHash);
-        expect(await db.getTransactions(aged.txid.substring(0, 16))).to.have.length(1);
+        expect(await db.getTransactions(aged.txid)).to.have.length(1);
     });
 });
 

@@ -73,13 +73,13 @@ function registerCoinbaseRecordTests() {
 
     it('does not create I records for coinbase input', async function () {
       const coinbaseTx = makeCoinbaseTx(0);
-      const txid8 = coinbaseTx._txid.substring(0, 16);
+      const txid = coinbaseTx._txid;
       const block = makeBlock(0, '0'.repeat(64), [coinbaseTx]);
 
       await processAndCommit(tracker, block);
 
       // Coinbase index is 0xFFFFFFFF; no I record should exist
-      const input = await tracker.db.getInput(txid8, 4294967295);
+      const input = await tracker.db.getInput(txid, 4294967295);
       expect(input).to.be.null;
     });
 

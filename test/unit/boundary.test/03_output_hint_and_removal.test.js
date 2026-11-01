@@ -32,17 +32,17 @@ describe('Boundary: Output hint and removal', function () {
 
   it('removeOutputWithInput removes an output and its hint', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
     const blockHash = randHash();
-    const fullTxHash = txHash8 + randHash().substring(16);
+    const fullTxHash = txidHex;
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 5000000000, height: 1, fullTxHash });
-    await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 5000000000, height: 1, fullTxHash });
+    await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0 });
     await db.endTransaction();
 
     await db.beginTransaction();
-    await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
+    await db.removeOutputWithInput({ prevTxHash: txidHex, prevOutputIndex: 0, blockHash });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -50,15 +50,15 @@ describe('Boundary: Output hint and removal', function () {
   });
   it('removeOutputWithInput finds same-block output in transactionArray', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
     const blockHash = randHash();
-    const fullTxHash = txHash8 + randHash().substring(16);
+    const fullTxHash = txidHex;
 
     // Insert and spend within the same uncommitted batch.
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 5000000000, height: 1, fullTxHash });
-    await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
-    await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 5000000000, height: 1, fullTxHash });
+    await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0 });
+    await db.removeOutputWithInput({ prevTxHash: txidHex, prevOutputIndex: 0, blockHash });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -80,20 +80,20 @@ describe('Boundary: Output hint and removal', function () {
 
   it('deletion is recoverable via processDeletedOutputs', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
     const blockHash = randHash();
-    const fullTxHash = txHash8 + randHash().substring(16);
+    const fullTxHash = txidHex;
 
     // Insert the output and commit it, so the spend below has real committed
     // state to delete rather than a staged record it can just drop.
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 5000000000, height: 1, fullTxHash });
-    await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 5000000000, height: 1, fullTxHash });
+    await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0 });
     await db.endTransaction();
 
     // Spend it (creates K/M records).
     await db.beginTransaction();
-    await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
+    await db.removeOutputWithInput({ prevTxHash: txidHex, prevOutputIndex: 0, blockHash });
     await db.endTransaction();
 
     // Verify it's gone

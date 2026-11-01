@@ -58,7 +58,7 @@ function bulkSpendSet(block) {
     const spends = [];
     const writers = {
         outputs: { append() {} },
-        spends: { append(prevHash8, index) { spends.push(`${Buffer.from(prevHash8).toString('hex')}:${index}`); } },
+        spends: { append(prevTxid, index) { spends.push(`${Buffer.from(prevTxid).toString('hex')}:${index}`); } },
         meta: { writeBlock() {} },
     };
     processBlock(block, 1, rand32(), writers);
@@ -89,7 +89,7 @@ describe('bulk-sync spend rule parity with the live input pass', function () {
 
     it('skips coinbase and falsy standard_input inputs on both paths, and keeps standard ones', async function () {
         const { prev, block } = buildBlock();
-        const key = (txid, vout) => `${txid.substring(0, 16)}:${vout}`;
+        const key = (txid, vout) => `${txid}:${vout}`;
         for (const set of [bulkSpendSet(block), await liveSpendSet(block)]) {
             expect(set.has(key(prev[0], 1))).to.equal(true);
             expect(set.has(key(prev[2], 3))).to.equal(true);

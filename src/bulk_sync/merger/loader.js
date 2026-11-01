@@ -42,6 +42,7 @@ const { TX_INDEX_LAYOUT } = require('./derive_keys/derive_keys_pass.js')
 const { RecordReader } = require('./streaming_join.js')
 const { encodeOutput, kOutBlk } = require('../../store/level_up_db.js')
 const { Q_UNDO_WATERMARK_KEY } = require('../../XChainUtxoTracker/constants.js')
+const { PREFIX_LAYOUT_VERSION, STORE_LAYOUT_VERSION } = require('../../store/level_up_db/constants.js')
 const { ClassicLevel } = require('classic-level')
 
 // The intermediate O.dat value is fixed-width (value8 + height4 + fullTxHash32 +
@@ -92,26 +93,35 @@ function resolveTxIndex(keysDir, option, L) {
 // is the 32-byte scriptPubKey the live path stores. A single mismatch aborts the
 // load rather than shipping a subtly-wrong reorg window.
 function validateWRecord(key, value) {
-    if (key.length !== 45) {
-        throw new Error(`loadKeys: W key must be 45 bytes, got ${key.length}`)
+    if (key.length !== 69) {
+        throw new Error(`loadKeys: W key must be 69 bytes, got ${key.length}`)
     }
     if (value.length !== 32) {
         throw new Error(`loadKeys: W value (scriptPubKey) must be 32 bytes, got ${value.length}`)
     }
     const blockHashHex = key.subarray(1, 33).toString('hex')
-    const txHash8Hex   = key.subarray(33, 41).toString('hex')
-    const idx          = key.readUInt32BE(41)
-    const liveKey      = kOutBlk(blockHashHex, txHash8Hex, idx)
+    const txidHex      = key.subarray(33, 65).toString('hex')
+    const idx          = key.readUInt32BE(65)
+    const liveKey      = kOutBlk(blockHashHex, txidHex, idx)
     if (!liveKey.equals(key)) {
-        throw new Error(`loadKeys: W key mismatch vs live insertOutputBlock encoding at block ${blockHashHex} tx ${txHash8Hex} idx ${idx}`)
+        throw new Error(`loadKeys: W key mismatch vs live insertOutputBlock encoding at block ${blockHashHex} tx ${txidHex} idx ${idx}`)
     }
 }
 
 // T.dat records carry the block height after the key so the derive sort orders a
-// shared prefix by block; the live T value is the block hash and txid only.
+// txid two blocks carry by block; the live T value is the block hash and txid only.
 function dropTHeight(value) { return value.subarray(4) }
 
 function noop() {}
+
+// True for a store with no keys, or whose only key is the current layout stamp.
+async function holdsNothingButCurrentStamp(db) {
+    const keys = await db.keys({ limit: 2 }).all()
+    if (keys.length === 0) return true
+    if (keys.length > 1 || !Buffer.from(keys[0]).equals(PREFIX_LAYOUT_VERSION)) return false
+    const stamp = await db.get(PREFIX_LAYOUT_VERSION)
+    return stamp !== undefined && stamp.toString() === String(STORE_LAYOUT_VERSION)
+}
 
 function openDb(dbPath) {
     // Match LevelUpDb.js: open with buffer encodings so Buffer keys/values
@@ -195,7 +205,9 @@ function peekLastMarkers(keysDir) {
     catch (e) { return null }
 }
 
-// Write the LAST_* markers and the Q watermark in one last batch, after every prefix.
+// Write the LAST_* markers, the Q watermark and the store layout stamp in one last
+// batch, after every prefix: a load that stops early leaves no stamp and no tip, and
+// the tracker's boot gate refuses such a store rather than reading it.
 async function writeFinalMarkers(db, keysDir, stats) {
     const L = readLastMarkers(keysDir)
     // DB is opened with buffer encodings; store the string metadata keys
@@ -203,11 +215,12 @@ async function writeFinalMarkers(db, keysDir, stats) {
     const finalOps = [
         { type: 'put', key: Buffer.from('LAST_BLOCK_HEIGHT'), value: Buffer.from(L.LAST_BLOCK_HEIGHT) },
         { type: 'put', key: Buffer.from('LAST_BLOCK_HASH'),   value: Buffer.from(L.LAST_BLOCK_HASH)   },
+        { type: 'put', key: PREFIX_LAYOUT_VERSION,            value: Buffer.from(String(STORE_LAYOUT_VERSION)) },
     ]
     // Write Q only for a non-empty window, as the live tracker does (derive caps N at undoBlocks).
     if (stats.N > 0) finalOps.push({ type: 'put', key: Q_UNDO_WATERMARK_KEY, value: Buffer.from(String(stats.N)) })
     await db.batch(finalOps)
-    stats.L = 2
+    stats.L = 3
     stats.Q = stats.N > 0 ? 1 : 0
 }
 
@@ -256,8 +269,11 @@ async function loadKeys(opts) {
         // the markers looks empty on the next boot and reseeds on top of its
         // own partial write. Refuse loudly instead of serving stale or
         // phantom UTXOs.
-        const existing = await db.keys({ limit: 1 }).all()
-        if (existing.length > 0) {
+        // The one key a fresh store may hold is the current layout stamp: the
+        // tracker's start() writes it on an empty store, and a tracker stopped
+        // before its first flush leaves it alone there, with no tip, so the next
+        // boot takes this path. Refusing it would refuse every later boot too.
+        if (!(await holdsNothingButCurrentStamp(db))) {
             throw new Error(`loadKeys: target DB at ${dbPath} is not empty; a bulk load requires a fresh, empty dbPath (remove the directory, or point --out at an empty path, before re-running)`)
         }
 

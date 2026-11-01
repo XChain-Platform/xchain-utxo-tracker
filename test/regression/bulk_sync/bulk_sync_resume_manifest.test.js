@@ -43,7 +43,7 @@ function buildConcatOutputs(tmp, { chain = 'bitcoin', net = 'regtest', from = 10
     const script = Buffer.alloc(32, 0xaa);
     for (let h = from; h <= to; h++) {
         const txid = fullTxid((0x10 + h % 200).toString(16).padStart(2, '0'));
-        w.append(txid.subarray(0, 8), 0, 5000000000n, h, txid, script, Buffer.alloc(32, h & 0xff), false);
+        w.append(txid, 0, 5000000000n, h, script, Buffer.alloc(32, h & 0xff), false);
     }
     w.close();
     const outPath = path.join(tmp, name);

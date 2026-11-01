@@ -28,6 +28,7 @@ const { expect } = require('chai');
 const { ClassicLevel } = require('classic-level');
 
 const { loadKeys } = require('../../../src/bulk_sync/merger/loader.js');
+const { PREFIX_LAYOUT_VERSION, STORE_LAYOUT_VERSION } = require('../../../src/store/level_up_db/constants.js');
 
 // Seed one record of the shape a crashed load leaves behind: a data key with
 // no LAST_* markers, which is precisely what isDbEmpty() reads as empty.
@@ -111,5 +112,31 @@ describe('bulk loader refuses a populated target DB', function () {
         // Still fails (the fixture carries no prefix files) but NOT on emptiness.
         expect(thrown).to.be.an('error');
         expect(thrown.message).to.match(/missing B\.dat/);
+    });
+});
+
+describe('bulk loader refuses a populated target DB', function () {
+    this.timeout(30000);
+
+    let tmp;
+    beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bulk-nonempty-')); });
+    afterEach(function () { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+    // The layout stamp alone is what a stopped tracker leaves and is accepted;
+    // the stamp beside any other key is still a populated store.
+    it('rejects a store holding the layout stamp plus a data key', async function () {
+        const dbPath  = path.join(tmp, 'db-stamp-plus');
+        const keysDir = path.join(tmp, 'keys');
+        fs.mkdirSync(keysDir, { recursive: true });
+        await seedMarkerlessResidue(dbPath);
+        const db = new ClassicLevel(dbPath, { keyEncoding: 'buffer', valueEncoding: 'buffer' });
+        await db.open();
+        await db.put(PREFIX_LAYOUT_VERSION, Buffer.from(String(STORE_LAYOUT_VERSION)));
+        await db.close();
+
+        let thrown = null;
+        try { await loadKeys({ keysDir, dbPath, removeSpent: true }); }
+        catch (err) { thrown = err; }
+        expect(thrown && thrown.message).to.match(/is not empty/);
     });
 });

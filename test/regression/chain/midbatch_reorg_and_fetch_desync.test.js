@@ -58,7 +58,7 @@ describe('discardInflightBatchForReorg', function () {
     await db.beginTransaction();
     const scriptHash = 'a'.repeat(64);
     const fullTxid = 'd'.repeat(64);
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: fullTxid.substring(0, 16), outputIndex: 0, value: BigInt(5000), height: 10, fullTxHash: fullTxid, coinbase: false });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: fullTxid, outputIndex: 0, value: BigInt(5000), height: 10, fullTxHash: fullTxid, coinbase: false });
 
     const discarded = await tracker.discardInflightBatchForReorg(3);
     expect(discarded).to.equal(true);

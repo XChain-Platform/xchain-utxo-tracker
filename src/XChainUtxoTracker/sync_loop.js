@@ -27,6 +27,10 @@ module.exports = {
         this.mempoolDb = new LevelUpStore("mempool"+this.dbName, true)
         await this.db.createDatabase()
         await this.mempoolDb.createDatabase()
+        // Check the layout before reading any chain state. An old store is left
+        // intact and startup refuses it with rebuild instructions. The mempool
+        // store is in memory and always new.
+        await this.db.ensureLayoutVersion()
 
         // A store already declared unrecoverable boots halted, with the original
         // time and height on /status, and never re-enters the loop: the window it
@@ -135,6 +139,8 @@ function newSyncLoopState({ lastProcessedBlockIndex, lastProcessedBlockHash }){
     // rather than in the constructor so the window starts when tracking starts.
     this.lastNodeRpcOkAt = Date.now()
     this.blockchainInfoLastBlock = -1
+    // The previous run's tip, which every tip consumer reads first, goes with it.
+    this.latestKnownChainTip = null
     // A relaunched loop re-earns readiness against the store it just opened:
     // only pollAtChainTip and the mempool poller may raise these again. The
     // published catch-up wait goes with the run, like its nodeCatchingUpProblem twin.

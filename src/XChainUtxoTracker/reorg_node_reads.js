@@ -42,16 +42,17 @@ async function nodeBlockHashOrRetry(lastBlockIndex, walk){
     }
 }
 
-// Pause between the tip readings that must agree before a lower tip is acted
-// on, and how many re-reads a moving tip gets. Shared with the sync loop's
+// Pause between tip readings, how many consecutive unchanged re-reads make a
+// lower tip stable, and the total re-read budget. Shared with the sync loop's
 // tip check (sync_loop_node_tip.js), which applies the same rule at walk entry.
 const TIP_SETTLE_DELAY_MS = 2000
-const TIP_SETTLE_MAX_READS = 5
+const TIP_SETTLE_STABLE_READS = 5
+const TIP_SETTLE_MAX_READS = 10
 
 // Re-reads the node's tip after a failed hash fetch (usually a tip that dropped
 // below the walk). An unusable reading keeps the current tip; a higher one is
 // taken at once, and a lower or first-ever one, which every block above it is
-// deleted against, only once two readings agree, as the sync loop's check does.
+// deleted against, only after a full stable window, as the sync loop's check does.
 async function refreshWalkTip(currentTip){
     const tip = await readWalkTip.call(this)
     if (tip === null) return currentTip
@@ -82,21 +83,84 @@ async function readWalkTip(){
     return info["blocks"]
 }
 
-// Re-reads until two readings TIP_SETTLE_DELAY_MS apart agree, starting from
-// `first`. Returns the settled tip, or null when a re-read is unusable or the
-// tip is still moving, so the walk keeps its current tip and retries.
+// Requires an unchanged tip for the full settle window. A single repeated
+// reading is not enough: invalidateblock can pause at an intermediate height
+// longer than TIP_SETTLE_DELAY_MS before continuing. Returns the settled tip,
+// or null when a re-read is unusable or the total budget expires, so the walk
+// keeps its current tip and retries.
 async function settleWalkTip(first){
     let previous = first
+    let stableReads = 0
     for (let read = 0; read < TIP_SETTLE_MAX_READS; read++){
         await this.sleep(TIP_SETTLE_DELAY_MS)
         const tip = await readWalkTip.call(this)
         if (tip === null) return null
-        if (tip === previous) return tip
-        previous = tip
+        if (tip === previous){
+            stableReads++
+            if (stableReads === TIP_SETTLE_STABLE_READS) return tip
+        } else {
+            previous = tip
+            stableReads = 0
+        }
     }
     logger.warn("verifyReorg: the node tip is still moving after " + TIP_SETTLE_MAX_READS + " readings (last "
         + previous + "); keeping the walk's tip and retrying.")
     return null
 }
 
-module.exports = { RETRY_WALK, nodeBlockHashOrRetry, TIP_SETTLE_DELAY_MS, TIP_SETTLE_MAX_READS }
+// A node running invalidateblock (or any multi-block disconnect) drops its tip
+// one block at a time, so a poll mid-disconnect reads a transient tip that may
+// sit inside the undo window while the final one is past it. Acting on that
+// first reading deletes up to the whole window, after which the final tip is
+// refused against a window already spent. So a tip below ours is acted on only
+// once it remains unchanged for the full settle window; one repeated reading
+// is not sufficient because an intermediate tip can pause longer than the
+// read delay. The settled reading replaces the first one. Returns false,
+// ending the pass with nothing deleted or discarded, when the tip does not
+// settle, cannot be read, is still in initial block download, or is no longer
+// below `ourHeight` (the in-memory cursor); the next pass reads it afresh.
+async function settleNodeTipBelow(sync, ourHeight){
+    let previous = this.blockchainInfoLastBlock
+    let stableReads = 0
+    for (let read = 0; read < TIP_SETTLE_MAX_READS; read++){
+        await this.sleep(TIP_SETTLE_DELAY_MS)
+        let info
+        try {
+            info = await this.connector.getBlockchainInfo()
+        } catch (e){
+            logger.error(nodeUtil.format('Error re-reading the node tip before a rollback: ' + e.message, e))
+            return false
+        }
+        // A re-read in initial block download ends the pass; the next pass's
+        // entry check then routes the gap to the catch-up wait.
+        if (!nodeTipIsParseable(info, this.consensusNetwork) || nodeStillCatchingUp(info)) return false
+        const tip = info["blocks"]
+        if (tip === previous){
+            stableReads++
+            if (stableReads === TIP_SETTLE_STABLE_READS){
+                sync.lastBlockchainInfo = info
+                this.latestKnownChainTip = tip
+                this.blockchainInfoLastBlock = tip
+                // Back at or above our height (a reconsiderblock, a node that
+                // caught up, or one stale reply): no rollback and no discard;
+                // the next pass reconciles.
+                return tip < ourHeight
+            }
+        } else {
+            previous = tip
+            stableReads = 0
+        }
+    }
+    logger.warn("The node tip is still moving after " + TIP_SETTLE_MAX_READS + " readings (last " + previous
+        + ", ours " + ourHeight + "); not rolling back on a moving tip, re-checking next pass.")
+    return false
+}
+
+module.exports = {
+    RETRY_WALK,
+    nodeBlockHashOrRetry,
+    TIP_SETTLE_DELAY_MS,
+    TIP_SETTLE_STABLE_READS,
+    TIP_SETTLE_MAX_READS,
+    settleNodeTipBelow
+}

@@ -31,26 +31,26 @@ describe('mempool insertOutput does not write the shared outputCache', function 
   beforeEach(async function () { LevelUpStore.outputCache = new Map(); db = makeDb(); await db.createDatabase(); });
   afterEach(async function () { try { await db.close(); } catch (e) {} LevelUpStore.outputCache = new Map(); });
 
-  function cacheKeyFor(txHash8, idx) {
-    return txHash8 + String.fromCharCode((idx >>> 16) & 0xFFFF, idx & 0xFFFF);
+  function cacheKeyFor(txidHex, idx) {
+    return txidHex + String.fromCharCode((idx >>> 16) & 0xFFFF, idx & 0xFFFF);
   }
 
   it('a confirmed output (height>=0) is cached', async function () {
-    const tx8 = randHash8();
+    const tx8 = randHash();
     await db.beginTransaction();
     await db.insertOutput({ scriptPubKey: randHash(), txHash: tx8, outputIndex: 0, value: BigInt(1000), height: 42, fullTxHash: randHash(), coinbase: false });
     expect(LevelUpStore.outputCache.has(cacheKeyFor(tx8, 0))).to.equal(true);
   });
 
   it('a mempool output (height<0) is NOT cached', async function () {
-    const tx8 = randHash8();
+    const tx8 = randHash();
     await db.beginTransaction();
     await db.insertOutput({ scriptPubKey: randHash(), txHash: tx8, outputIndex: 0, value: BigInt(1000), height: -1, fullTxHash: randHash(), coinbase: false });
     expect(LevelUpStore.outputCache.has(cacheKeyFor(tx8, 0))).to.equal(false);
   });
 
   it('a mempool insert cannot overwrite a confirmed cache entry', async function () {
-    const tx8 = randHash8();
+    const tx8 = randHash();
     await db.beginTransaction();
     // Confirmed Pass 1 caches height 42.
     await db.insertOutput({ scriptPubKey: randHash(), txHash: tx8, outputIndex: 0, value: BigInt(1000), height: 42, fullTxHash: randHash(), coinbase: false });
@@ -208,7 +208,7 @@ describe('hasOutputForTx point-probe', function () {
 
   it('returns true for a live confirmed output and false otherwise', async function () {
     const script = randHash();
-    const tx8 = randHash8();
+    const tx8 = randHash();
     await db.beginTransaction();
     await db.insertOutput({ scriptPubKey: script, txHash: tx8, outputIndex: 0, value: BigInt(1), height: 5, fullTxHash: randHash(), coinbase: false });
     await db.insertOutputHint({ scriptPubKey: script, txHash: tx8, outputIndex: 0 });
@@ -216,6 +216,6 @@ describe('hasOutputForTx point-probe', function () {
 
     expect(await db.hasOutputForTx(tx8, 0)).to.equal(true);
     expect(await db.hasOutputForTx(tx8, 7)).to.equal(false);
-    expect(await db.hasOutputForTx(randHash8(), 0)).to.equal(false);
+    expect(await db.hasOutputForTx(randHash(), 0)).to.equal(false);
   });
 });

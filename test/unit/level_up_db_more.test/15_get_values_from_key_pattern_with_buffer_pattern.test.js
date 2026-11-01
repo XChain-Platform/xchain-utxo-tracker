@@ -35,8 +35,8 @@ describe('LevelUpDb (extended coverage)', function () {
 
         it('accepts a Buffer as pattern and returns matching entries', async function () {
             const scriptHash = randHash();
-            const txHash8    = randHash8();
-            await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: BigInt(200), height: 2 });
+            const txidHex    = randHash();
+            await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: BigInt(200), height: 2 });
             await db.endTransaction(true);
 
             // Build the O-prefix Buffer directly

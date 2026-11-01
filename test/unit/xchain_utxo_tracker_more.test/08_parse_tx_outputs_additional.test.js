@@ -82,7 +82,7 @@ describe('XChainUtxoTracker (more)', function () {
             await db.endTransaction(true);
 
             expect(count).to.equal(1);
-            const txs = await db.getTransactions(customId.substring(0, 16));
+            const txs = await db.getTransactions(customId);
             expect(txs).to.have.length(1);
         });
 

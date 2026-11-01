@@ -37,7 +37,7 @@ class AddressTooLargeError extends Error {
 // Thrown when a pagination cursor is malformed (the API layer maps to HTTP 400).
 class InvalidCursorError extends Error {
     constructor(cursor) {
-        super(`invalid pagination cursor ${JSON.stringify(cursor)} (expected "<txHash8Hex>:<vout>")`)
+        super(`invalid pagination cursor ${JSON.stringify(cursor)} (expected "<txid>:<vout>")`)
         this.name = 'InvalidCursorError'
         this.code = 'INVALID_CURSOR'
         // Mirror .code into .data for the same reason as AddressTooLargeError above.

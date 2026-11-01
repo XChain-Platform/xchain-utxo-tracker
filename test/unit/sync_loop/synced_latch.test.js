@@ -21,6 +21,10 @@ const { buildChain, makeNode, useSyncLoopHarness } = require('./support/harness'
 const { installObservability, _resetObservability: resetObservability } = require('../../../src/observability');
 const { installUtxoTrackerMetrics } = require('../../../src/server/utxo_tracker_metrics.js');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker.js');
+const { get_sync_status } = require('../../../src/api/sync_status.js');
+const { TIP_SETTLE_STABLE_READS } = require('../../../src/XChainUtxoTracker/reorg_node_reads.js');
+
+const SETTLE_EXTRA_SLEEPS = TIP_SETTLE_STABLE_READS - 1;
 
 // Scrapes the real registry and reads the gauge and the /status verdict for
 // the same instant; the /status side uses getFreshnessMeta's own inputs.
@@ -64,8 +68,8 @@ describe('XChainUtxoTracker sync loop: synced latch on a refused rollback or a c
         const seen = await h.run(node, async (n, s) => {
             if (n === 1) { install(); s.atTip = await sample(h.tracker, reg()); node.chain = full.slice(0, 2); }
             if (n === 2) s.refused = await sample(h.tracker, reg());
-            if (n === 3) node.chain = full;
-            if (n >= 5) { s.back = await sample(h.tracker, reg()); return 'stop'; }
+            if (n === 3 + SETTLE_EXTRA_SLEEPS) node.chain = full;
+            if (n >= 5 + SETTLE_EXTRA_SLEEPS) { s.back = await sample(h.tracker, reg()); return 'stop'; }
             return null;
         });
         expect(seen.atTip).to.include({ gauge: 1, status: true });
@@ -83,7 +87,7 @@ describe('XChainUtxoTracker sync loop: synced latch on a refused rollback or a c
             if (n === 1) { install(); node.retired = node.chain; node.chain = node.chain.slice(0, 10); node.ibd = true; }
             if (n === 2) s.waiting = await sample(h.tracker, reg());
             if (n === 3) node.ibd = false;
-            if (n >= 5) { s.back = await sample(h.tracker, reg()); return 'stop'; }
+            if (n >= 5 + SETTLE_EXTRA_SLEEPS) { s.back = await sample(h.tracker, reg()); return 'stop'; }
             return null;
         });
         expect(seen.waiting).to.include({ gauge: 0, status: false, committed: 12, tip: 9 });
@@ -111,8 +115,8 @@ describe('XChainUtxoTracker sync loop: synced latch through a rollback or a node
                 node.retired = node.chain;
                 node.chain = node.chain.slice(0, 10);
             }
-            if (n === 3) s.afterRollback = gaugeNow(reg());
-            return n >= 4 ? 'stop' : null;
+            if (n === 3 + SETTLE_EXTRA_SLEEPS) s.afterRollback = gaugeNow(reg());
+            return n >= 4 + SETTLE_EXTRA_SLEEPS ? 'stop' : null;
         });
         expect(h.tracker.reorgCount).to.equal(1);
         expect(seen.height).to.equal(9);
@@ -131,6 +135,38 @@ describe('XChainUtxoTracker sync loop: synced latch through a rollback or a node
             return null;
         }, { network: 'bitcoin-mainnet' });
         expect(seen.reindexing).to.include({ gauge: 0, status: false, committed: 7, tip: 2 });
+        expect(seen.back).to.include({ gauge: 1, status: true, committed: 7, tip: 7 });
+    });
+});
+
+describe('XChainUtxoTracker sync loop: synced latch through a rollback or a node below the parse gate', function () {
+    const h = useSyncLoopHarness();
+    const metrics = useMetrics(h);
+    const install = () => metrics.install();
+    const reg = () => metrics.registry;
+
+    it('publishes synced 0 when an unparseable reply arrives at the committed tip', async function () {
+        const node = makeNode(buildChain(8));
+        const seen = await h.run(node, async (n, s) => {
+            if (n === 1) {
+                install();
+                s.atTip = await sample(h.tracker, reg());
+                h.tracker.mempoolReconverged = true;
+                node.progress = 0.2;
+            }
+            if (n === 2) {
+                s.gated = await sample(h.tracker, reg());
+                s.gatedSynced = h.tracker.isSynced();
+                s.gatedMempool = h.tracker.mempoolReconverged;
+                node.progress = 1;
+            }
+            if (n >= 4) { s.back = await sample(h.tracker, reg()); return 'stop'; }
+            return null;
+        }, { network: 'bitcoin-mainnet' });
+        expect(seen.atTip).to.include({ gauge: 1, status: true, committed: 7, tip: 7 });
+        expect(seen.gated).to.include({ gauge: 0, status: false, committed: 7, tip: 7 });
+        expect(seen.gatedSynced).to.equal(false);
+        expect(seen.gatedMempool).to.equal(false);
         expect(seen.back).to.include({ gauge: 1, status: true, committed: 7, tip: 7 });
     });
 });
@@ -279,5 +315,35 @@ describe('XChainUtxoTracker sync loop: readiness latches across a stop and a rel
         expect(first.synced, 'a relaunched loop must re-earn the latch').to.equal(false);
         expect(first.mempool).to.equal(false);
         expect(first.freshness).to.include({ synced: false, mempool_ready: false });
+    });
+});
+
+// The node tip belongs to the run that read it, like the latches: a relaunched
+// loop whose node is down must not report the previous run's tip.
+describe('XChainUtxoTracker sync loop: node tip across a relaunch', function () {
+    const h = useSyncLoopHarness();
+
+    it('reports no node tip from the previous run until the relaunched loop reads one', async function () {
+        const node = makeNode(buildChain(6));
+        await h.run(node, (n) => (n >= 2 ? 'stop' : null));
+        const tracker = h.tracker;
+        expect(tracker.latestKnownChainTip, 'the first run read a node tip').to.be.a('number');
+        node.faults.info = [new Error('node RPC down')];
+        let first = null;
+        tracker.sleep = async function () {
+            await new Promise((resolve) => setImmediate(resolve));
+            if (first === null) {
+                // The status read sees the node down too, so it falls back to the loop's tip.
+                const down = Object.assign(Object.create(this), {
+                    connector: { getBlockchainInfo: async () => { throw new Error('node RPC down'); } }
+                });
+                first = { tip: this.latestKnownChainTip, status: await get_sync_status(down) };
+            }
+            this.keepParsing = false;
+        };
+        await tracker.start();
+        expect(first, 'the relaunched loop never slept').to.not.equal(null);
+        expect(first.tip).to.equal(null);
+        expect(first.status).to.include({ node_height: -1, lag: null, synced: false });
     });
 });

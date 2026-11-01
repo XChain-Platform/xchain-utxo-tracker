@@ -40,16 +40,16 @@ describe('LevelUpDb (extended coverage)', function () {
             // corrupted, so the reorg-recovered output never reappeared in the DB.
             const scriptBuf = randBuf32();
             const scriptHex = scriptBuf.toString('hex');
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const blockHash = randHash();
 
             await db.beginTransaction();
-            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0, value: BigInt(4000), height: 7 });
-            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
+            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0, value: BigInt(4000), height: 7 });
+            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0 });
 
             // removeOutputWithInput on an in-memory entry populates deletedTransactionArray
             // and removes the O-key from transactionArray (forcing the else-branch on recovery).
-            await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
+            await db.removeOutputWithInput({ prevTxHash: txidHex, prevOutputIndex: 0, blockHash });
             expect(db.deletedTransactionArray.has(blockHash)).to.be.true;
 
             // Recover (reorg undo); exercises the in-memory else-branch.
@@ -78,13 +78,13 @@ describe('LevelUpDb (extended coverage)', function () {
         it('purges in-memory deletedTransactionArray without recovery when recover=false', async function () {
             const scriptBuf = randBuf32();
             const scriptHex = scriptBuf.toString('hex');
-            const txHash8   = randHash8();
+            const txidHex   = randHash();
             const blockHash = randHash();
 
             await db.beginTransaction();
-            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0, value: BigInt(1234), height: 3 });
-            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txHash8, outputIndex: 0 });
-            await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
+            await db.insertOutput({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0, value: BigInt(1234), height: 3 });
+            await db.insertOutputHint({ scriptPubKey: scriptBuf, txHash: txidHex, outputIndex: 0 });
+            await db.removeOutputWithInput({ prevTxHash: txidHex, prevOutputIndex: 0, blockHash });
 
             // deletedTransactionArray should have an entry before purge
             expect(db.deletedTransactionArray.has(blockHash)).to.be.true;

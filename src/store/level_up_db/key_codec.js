@@ -28,44 +28,46 @@ function idxBuf(n) {
     return b
 }
 
-// Parse an "<txHash8Hex>:<vout>" cursor: the txid (8-byte/16-hex O-key prefix)
+// Parse an "<txidHex>:<vout>" cursor: the full txid (64 hex, as in the O key)
 // and vout of the last output returned by the previous page. Returns null on any
 // malformed input so the caller rejects it rather than crashing the iterator.
+// A 16-hex cursor (the 8-byte txid form a layout 1 store issued) is malformed
+// here too: it cannot name a layout 2 O key, so its client restarts the walk.
 function parseOutputCursor(cursor) {
     if (typeof cursor !== 'string') return null
     const sep = cursor.indexOf(':')
     if (sep <= 0) return null
-    const txHash8Hex = cursor.slice(0, sep)
-    const voutStr    = cursor.slice(sep + 1)
-    if (!/^[0-9a-fA-F]{16}$/.test(txHash8Hex)) return null
+    const txidHex = cursor.slice(0, sep)
+    const voutStr = cursor.slice(sep + 1)
+    if (!/^[0-9a-fA-F]{64}$/.test(txidHex)) return null
     if (!/^\d+$/.test(voutStr)) return null
     const vout = Number(voutStr)
     if (!Number.isInteger(vout) || vout < 0 || vout > 0xFFFFFFFF) return null
-    return { txHash8Hex: txHash8Hex.toLowerCase(), vout }
+    return { txidHex: txidHex.toLowerCase(), vout }
 }
 
 function rangeEnd(prefix) {
     // The 0xFF suffix must be at least as long as the longest key suffix of ANY
     // range scan, or a key whose leading suffix bytes are all 0xFF sorts above the
     // (shorter) inclusive `lte` bound and is silently dropped from the iterator.
-    // The previous 12-byte suffix covered only the 12-byte-suffix scans (O/H/I/M:
-    // 33-byte prefix over 45-byte keys), but UNDER-covered the reorg-consistency
-    // scans: the K/P_OUT_DEL restore scan uses a 33-byte [K+blockHash] prefix over
-    // 77-byte keys (44-byte suffix) and the Z/P_BLK_SCRIPT scan leaves a 32-byte
+    // The address scan ([O][scriptHash], 33 bytes) leaves a 36-byte [txid][vout]
+    // suffix. The reorg-consistency scans are the longest: the K/P_OUT_DEL restore scan
+    // uses a 33-byte [K+blockHash] prefix over 101-byte keys (68-byte suffix), the
+    // M and W scans leave 36-byte suffixes, and the Z/P_BLK_SCRIPT scan a 32-byte
     // scriptHash suffix. A dropped K key means a spent output is NOT restored on a
     // reorg rollback (permanent balance under-count); a dropped Z key leaves a stale
-    // first-seen (S) record. 64 bytes covers the current maximum (44) with margin; a
-    // longer all-0xFF upper bound never bleeds into the next prefix (the differing
-    // prefix byte is compared first) and never excludes a valid key.
+    // first-seen (S) record. A longer all-0xFF upper bound never bleeds into the
+    // next prefix (the differing prefix byte is compared first) and never excludes
+    // a valid key.
     //
     // The suffix is sized so that prefix.length + suffix.length is at least the
-    // longest key in the schema (77 bytes: K/P_OUT_DEL). The internal fixed-prefix
+    // longest key in the schema (101 bytes: K/P_OUT_DEL). The internal fixed-prefix
     // scans always leave >= 33-byte prefixes, but getValuesFromKeyPattern accepts
-    // patterns as short as 2 bytes, which over a 77-byte K key leaves a 75-byte
+    // patterns as short as 2 bytes, which over a 101-byte K key leaves a 99-byte
     // suffix that a fixed 64-byte 0xFF bound would under-cover. Deriving the length
     // from the prefix keeps the bound valid for every scan while retaining the
     // 64-byte floor for the common fixed-prefix cases.
-    const MAX_KEY_LEN = 77
+    const MAX_KEY_LEN = 101
     return Buffer.concat([prefix, Buffer.alloc(Math.max(64, MAX_KEY_LEN - prefix.length), 0xFF)])
 }
 
@@ -99,80 +101,73 @@ function kBlock(blockHashHex) {
     return buf
 }
 
-function kTx(txHash8Hex) {
-    if (txHash8Hex.length !== 16) {
-        throw new Error(`kTx expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
+// Every txid field in a key is the whole 32-byte txid (64 hex). A shorter
+// field would let two transactions that share the leading bytes write the same
+// key and overwrite or delete each other's records.
+function assertTxid(builder, field, hex) {
+    if (typeof hex !== 'string' || hex.length !== 64) {
+        throw new Error(`${builder} expects a 64-hex (32-byte) ${field}, got ${hex == null ? hex : hex.length + ' chars'}`)
     }
-    const buf = Buffer.allocUnsafe(9)
+}
+
+function kTx(txidHex) {
+    assertTxid('kTx', 'txid', txidHex)
+    const buf = Buffer.allocUnsafe(33)
     buf[0] = P_TX
-    buf.write(txHash8Hex, 1, 'hex')
+    buf.write(txidHex, 1, 'hex')
     return buf
 }
 
-function kInput(prevTxHash8Hex, idx) {
-    // The I-key carries only the 8-byte (16-hex) txid prefix. Fail loudly if a
-    // caller passes a full 64-hex txid: today that resolves to the right key
-    // purely by buffer-overrun coincidence (write caps at the 12 free bytes,
-    // then writeUInt32BE(idx,9) overwrites the overrun), so any future change to
-    // this layout would silently make every getInput miss. Assert the contract.
+function kInput(prevTxidHex, idx) {
+    // A wrong-length txid would leave allocUnsafe bytes in the key or overrun
+    // into the index field, which the writeUInt32BE then silently overwrites
+    // back to a well-formed but wrong key; assert the width instead.
     //
-    // Two prev-txids sharing a 64-bit prefix alias to one I-key, and that stays
-    // bounded: REMOVE_SPENT=true keeps I records out of the on-disk store entirely
-    // (derive-keys skips I.dat for the same reason), so they exist only in the
-    // ephemeral in-memory mempool store. Every getInput caller reads presence, never
-    // the value, so an alias costs one outpoint a wrong pending-balance flag until
-    // the next mempool poll, not a confirmed-balance error.
-    if (prevTxHash8Hex.length !== 16) {
-        throw new Error(`kInput expects a 16-hex (8-byte) txid prefix, got ${prevTxHash8Hex.length} chars`)
-    }
-    const buf = Buffer.allocUnsafe(13)
+    // I records live only in the in-memory mempool store: REMOVE_SPENT=true keeps
+    // them out of the on-disk store (derive-keys skips I.dat for the same reason),
+    // and every getInput caller reads presence, never the value. Keyed on the
+    // whole prev txid, two spent outpoints never share an I key.
+    assertTxid('kInput', 'prevTxid', prevTxidHex)
+    const buf = Buffer.allocUnsafe(37)
     buf[0] = P_INPUT
-    buf.write(prevTxHash8Hex, 1, 'hex')
-    buf.writeUInt32BE(idx >>> 0, 9)
+    buf.write(prevTxidHex, 1, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 33)
     return buf
 }
 
-function kOutput(scriptHex, txHash8Hex, idx) {
+function kOutput(scriptHex, txidHex, idx) {
     // Same overrun-coincidence hazard kInput() guards against: a wrong-length
-    // scriptHex would overrun into the txHash8Hex field, which the next
-    // .write() then silently overwrites back to a well-formed (wrong) key.
+    // scriptHex would overrun into the txid field, which the next .write()
+    // then silently overwrites back to a well-formed (wrong) key.
     if (scriptHex.length !== 64) {
         throw new Error(`kOutput expects a 64-hex (32-byte) scriptPubKey, got ${scriptHex.length} chars`)
     }
-    if (txHash8Hex.length !== 16) {
-        throw new Error(`kOutput expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
-    }
-    const buf = Buffer.allocUnsafe(45)
+    assertTxid('kOutput', 'txid', txidHex)
+    const buf = Buffer.allocUnsafe(69)
     buf[0] = P_OUTPUT
     buf.write(scriptHex, 1, 'hex')
-    buf.write(txHash8Hex, 33, 'hex')
-    buf.writeUInt32BE(idx >>> 0, 41)
+    buf.write(txidHex, 33, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 65)
     return buf
 }
 
-function kOutHint(txHash8Hex, idx) {
-    if (txHash8Hex.length !== 16) {
-        throw new Error(`kOutHint expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
-    }
-    const buf = Buffer.allocUnsafe(13)
+function kOutHint(txidHex, idx) {
+    assertTxid('kOutHint', 'txid', txidHex)
+    const buf = Buffer.allocUnsafe(37)
     buf[0] = P_OUT_HINT
-    buf.write(txHash8Hex, 1, 'hex')
-    buf.writeUInt32BE(idx >>> 0, 9)
+    buf.write(txidHex, 1, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 33)
     return buf
 }
 
-function kInHint(txHash8Hex, prevTxHash8Hex, idx) {
-    if (txHash8Hex.length !== 16) {
-        throw new Error(`kInHint expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
-    }
-    if (prevTxHash8Hex.length !== 16) {
-        throw new Error(`kInHint expects a 16-hex (8-byte) prevTxHash prefix, got ${prevTxHash8Hex.length} chars`)
-    }
-    const buf = Buffer.allocUnsafe(21)
+function kInHint(txidHex, prevTxidHex, idx) {
+    assertTxid('kInHint', 'txid', txidHex)
+    assertTxid('kInHint', 'prevTxid', prevTxidHex)
+    const buf = Buffer.allocUnsafe(69)
     buf[0] = P_IN_HINT
-    buf.write(txHash8Hex, 1, 'hex')
-    buf.write(prevTxHash8Hex, 9, 'hex')
-    buf.writeUInt32BE(idx >>> 0, 17)
+    buf.write(txidHex, 1, 'hex')
+    buf.write(prevTxidHex, 33, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 65)
     return buf
 }
 
@@ -234,37 +229,33 @@ function kBlkScriptFromBuf(blockHashHex, scriptBuf) {
     return buf
 }
 
-function kOutDel(blockHashHex, scriptHex, txHash8Hex, idx) {
+function kOutDel(blockHashHex, scriptHex, txidHex, idx) {
     if (blockHashHex.length !== 64) {
         throw new Error(`kOutDel expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
     }
     if (scriptHex.length !== 64) {
         throw new Error(`kOutDel expects a 64-hex (32-byte) scriptPubKey, got ${scriptHex.length} chars`)
     }
-    if (txHash8Hex.length !== 16) {
-        throw new Error(`kOutDel expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
-    }
-    const buf = Buffer.allocUnsafe(77)
+    assertTxid('kOutDel', 'txid', txidHex)
+    const buf = Buffer.allocUnsafe(101)
     buf[0] = P_OUT_DEL
     buf.write(blockHashHex, 1, 'hex')
     buf.write(scriptHex, 33, 'hex')
-    buf.write(txHash8Hex, 65, 'hex')
-    buf.writeUInt32BE(idx >>> 0, 73)
+    buf.write(txidHex, 65, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 97)
     return buf
 }
 
-function kHintDel(blockHashHex, txHash8Hex, idx) {
+function kHintDel(blockHashHex, txidHex, idx) {
     if (blockHashHex.length !== 64) {
         throw new Error(`kHintDel expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
     }
-    if (txHash8Hex.length !== 16) {
-        throw new Error(`kHintDel expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
-    }
-    const buf = Buffer.allocUnsafe(45)
+    assertTxid('kHintDel', 'txid', txidHex)
+    const buf = Buffer.allocUnsafe(69)
     buf[0] = P_HINT_DEL
     buf.write(blockHashHex, 1, 'hex')
-    buf.write(txHash8Hex, 33, 'hex')
-    buf.writeUInt32BE(idx >>> 0, 41)
+    buf.write(txidHex, 33, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 65)
     return buf
 }
 
@@ -282,24 +273,22 @@ function kStoredBlk(blockHashHex) {
 // in, so a rolled-back block can enumerate (and delete) the O/H entries it
 // produced. Mirrors the K layout but keyed on the creation block rather than the
 // spend block. Value is the 32-byte scriptPubKey needed to rebuild the O key.
-function kOutBlk(blockHashHex, txHash8Hex, idx) {
+function kOutBlk(blockHashHex, txidHex, idx) {
     if (blockHashHex.length !== 64) {
         throw new Error(`kOutBlk expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
     }
-    if (txHash8Hex.length !== 16) {
-        throw new Error(`kOutBlk expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
-    }
-    const buf = Buffer.allocUnsafe(45)
+    assertTxid('kOutBlk', 'txid', txidHex)
+    const buf = Buffer.allocUnsafe(69)
     buf[0] = P_OUT_BLK
     buf.write(blockHashHex, 1, 'hex')
-    buf.write(txHash8Hex, 33, 'hex')
-    buf.writeUInt32BE(idx >>> 0, 41)
+    buf.write(txidHex, 33, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 65)
     return buf
 }
 
-// X key: full txid -> blockHash. Keyed on the whole 32-byte txid, so two txids
-// that share their 8-byte T prefix never contend for one slot the way T does;
-// that is what makes coexistence and rollback symmetry possible.
+// X key: full txid -> blockHash. It is separate from T because X exists only
+// for transactions indexed in confirmed blocks, while T also tracks mempool
+// membership.
 function kTxExact(txidHex) {
     if (txidHex.length !== 64) {
         throw new Error(`kTxExact expects a 64-hex (32-byte) txid, got ${txidHex.length} chars`)
@@ -310,45 +299,40 @@ function kTxExact(txidHex) {
     return buf
 }
 
-// Y key: (blockHash, txHash8) -> full txid. Recovers which txid a block created
-// under an 8-byte prefix, so a rollback targets that tx's own X (and current T)
-// record even after a later colliding tx overwrote the shared T slot.
-function kTxBlockRecovery(blockHashHex, txHash8Hex) {
+// Y key: (blockHash, txid) -> full txid. Records which full transaction key a
+// block created so rollback can remove only that block's T and X entries.
+function kTxBlockRecovery(blockHashHex, txidHex) {
     if (blockHashHex.length !== 64) {
         throw new Error(`kTxBlockRecovery expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
     }
-    if (txHash8Hex.length !== 16) {
-        throw new Error(`kTxBlockRecovery expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
-    }
-    const buf = Buffer.allocUnsafe(41)
+    assertTxid('kTxBlockRecovery', 'txid', txidHex)
+    const buf = Buffer.allocUnsafe(65)
     buf[0] = P_TX_BLOCK_RECOVERY
     buf.write(blockHashHex, 1, 'hex')
-    buf.write(txHash8Hex, 33, 'hex')
+    buf.write(txidHex, 33, 'hex')
     return buf
 }
 
 // Build an O-prefixed output key from an already-binary scriptPubKey buffer
 // (used in the input-removal path where the script is fetched from the H index).
-function kOutputFromBuf(scriptPubKeyBuf, txHash8Hex, idx) {
+function kOutputFromBuf(scriptPubKeyBuf, txidHex, idx) {
     // Same overrun-coincidence hazard the hex builders guard against: .copy()
     // silently caps at the source length instead of throwing, so a short
     // scriptPubKeyBuf would leave uninitialized allocUnsafe garbage in the key.
     if (scriptPubKeyBuf.length !== 32) {
         throw new Error(`kOutputFromBuf expects a 32-byte scriptPubKey buffer, got ${scriptPubKeyBuf.length} bytes`)
     }
-    if (txHash8Hex.length !== 16) {
-        throw new Error(`kOutputFromBuf expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
-    }
-    const buf = Buffer.allocUnsafe(45)
+    assertTxid('kOutputFromBuf', 'txid', txidHex)
+    const buf = Buffer.allocUnsafe(69)
     buf[0] = P_OUTPUT
     scriptPubKeyBuf.copy(buf, 1, 0, 32)
-    buf.write(txHash8Hex, 33, 'hex')
-    buf.writeUInt32BE(idx >>> 0, 41)
+    buf.write(txidHex, 33, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 65)
     return buf
 }
 
 // Build a K-prefixed deleted-output key from a binary scriptPubKey buffer.
-function kOutDelFromBuf(blockHashHex, scriptPubKeyBuf, txHash8Hex, idx) {
+function kOutDelFromBuf(blockHashHex, scriptPubKeyBuf, txidHex, idx) {
     if (blockHashHex.length !== 64) {
         throw new Error(`kOutDelFromBuf expects a 64-hex (32-byte) blockHash, got ${blockHashHex.length} chars`)
     }
@@ -358,15 +342,13 @@ function kOutDelFromBuf(blockHashHex, scriptPubKeyBuf, txHash8Hex, idx) {
     if (scriptPubKeyBuf.length !== 32) {
         throw new Error(`kOutDelFromBuf expects a 32-byte scriptPubKey buffer, got ${scriptPubKeyBuf.length} bytes`)
     }
-    if (txHash8Hex.length !== 16) {
-        throw new Error(`kOutDelFromBuf expects a 16-hex (8-byte) txid prefix, got ${txHash8Hex.length} chars`)
-    }
-    const buf = Buffer.allocUnsafe(77)
+    assertTxid('kOutDelFromBuf', 'txid', txidHex)
+    const buf = Buffer.allocUnsafe(101)
     buf[0] = P_OUT_DEL
     buf.write(blockHashHex, 1, 'hex')
     scriptPubKeyBuf.copy(buf, 33, 0, 32)
-    buf.write(txHash8Hex, 65, 'hex')
-    buf.writeUInt32BE(idx >>> 0, 73)
+    buf.write(txidHex, 65, 'hex')
+    buf.writeUInt32BE(idx >>> 0, 97)
     return buf
 }
 

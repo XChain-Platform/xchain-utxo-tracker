@@ -64,7 +64,7 @@ function registerTrackerHooks() {
     tracker = await createTestTracker();
     await tracker.db.beginTransaction();
     await tracker.db.insertOutput({
-      scriptPubKey: ADDR.scriptHash, txHash: 'cc'.repeat(8), outputIndex: 0,
+      scriptPubKey: ADDR.scriptHash, txHash: 'cc'.repeat(32), outputIndex: 0,
       value: 4242, height: 3, fullTxHash: 'cc'.repeat(32),
     });
     await tracker.db.endTransaction();
@@ -148,7 +148,7 @@ describe('Security: get_input_from_key_pattern guard + scan surface', function (
     // must fail loud rather than accumulate past it.
     await tracker.db.beginTransaction();
     await tracker.db.insertOutput({
-      scriptPubKey: ADDR.scriptHash, txHash: 'dd'.repeat(8), outputIndex: 1,
+      scriptPubKey: ADDR.scriptHash, txHash: 'dd'.repeat(32), outputIndex: 1,
       value: 1111, height: 4, fullTxHash: 'dd'.repeat(32),
     });
     await tracker.db.endTransaction();

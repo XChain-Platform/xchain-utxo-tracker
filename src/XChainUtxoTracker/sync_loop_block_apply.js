@@ -185,8 +185,8 @@ async function parseBlockTransactions(sync, transactions, nextBlockHash, nextBlo
             const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
             // A coinbase input spends nothing, so there is no previous output to remove.
             if ((nextInput.index === 4294967295) || !standardInput) continue
-            const prevTxHash8 = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse()).substring(0, 16)
-            removeInputs.push({ prevTxHash: prevTxHash8, prevOutputIndex: nextInput.index, blockHash: nextBlockHash })
+            const prevTxHash = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse())
+            removeInputs.push({ prevTxHash, prevOutputIndex: nextInput.index, blockHash: nextBlockHash })
         }
     }
     let blockInputTotal = removeInputs.length
@@ -281,6 +281,7 @@ async function commitWithMempoolCleanup(sync, nextBlockHeight){
                 await this.mempoolDb.deleteTransaction(txid)
             }
             await this.mempoolDb.endTransaction()
+            this.mempoolEpoch++
         })
     } finally {
         if (holdMempool) this.mempoolBusy = false
@@ -340,16 +341,26 @@ function resyncMempoolAfterReorg(){
     pass().catch(err => logger.error("Post-reorg mempool resync failed: " + err.message))
 }
 
-// Runs a reorg walk begun without a node tip. The walk re-reads the tip when a
-// hash fetch fails, so it can now refuse a gap deeper than the undo window
-// (tagged tipBelowCommittedTip) before any further delete. That refusal is not
-// a crash: drop the cached tip so the next pass re-reads it and routes the gap
-// through rollBackToNodeTip, which waits on it, logs it once and latches it.
+// The walk counts a reorg only when it finishes. Count blocks deleted before a
+// refusal from the walk's committed rollback counter so pointer repairs are not
+// mistaken for reorg depth.
+function countRefusedWalk(walkedBack){
+    if (walkedBack > 0){
+        this.reorgCount++
+        this.lastReorgDepth = walkedBack
+    }
+}
+
+// Runs a reorg walk begun without a node tip. A mid-walk tip refresh can refuse
+// after deleting blocks, so preserve that accounting before handing the gap
+// back to the node tip check and forcing it to read a fresh tip.
 async function verifyReorgHandingBackTipRefusal(sync){
+    const rollbacksBefore = this.reorgRollbacksThisProcess || 0
     try {
         await this.verifyReorg()
     } catch (err){
         if (!(err && err.tipBelowCommittedTip)) throw err
+        countRefusedWalk.call(this, (this.reorgRollbacksThisProcess || 0) - rollbacksBefore)
         logger.warn("Reorg walk stopped: the node's tip fell below the committed tip mid-walk, deeper than "
             + "the undo window allows; handing it back to the node tip check.")
         sync.lastBlockchainInfo = null
@@ -365,4 +376,4 @@ async function flushPendingAtTip(sync){
 }
 
 // flushBatch is exported for the store-commit lock regression test.
-module.exports = { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal, flushBatch, flushPendingAtTip }
+module.exports = { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal, countRefusedWalk, flushBatch, flushPendingAtTip }

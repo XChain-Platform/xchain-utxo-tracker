@@ -21,7 +21,7 @@ const util = require('../common/util')
 const { DEBUG_TRACE } = require('./constants.js')
 const XChainUtxoTracker = require('../XChainUtxoTracker.js')
 
-async function parseTransactionInputs(db, transaction, blockHash, nextTxId8, addHints, removeSpent) {
+async function parseTransactionInputs(db, transaction, blockHash, nextTxId, addHints, removeSpent) {
         // Process all inputs concurrently (each input has its own hash buffer so
         // the in-place .reverse() calls don't interfere between parallel closures
         const inputCounts = await Promise.all(transaction.ins.map(async (nextInput) => {
@@ -44,13 +44,12 @@ async function parseTransactionInputs(db, transaction, blockHash, nextTxId8, add
             const prevTxHashHex = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse())
 
             if (removeSpent){
-                let prevTxHash8 = prevTxHashHex.substring(0, 16)
-                await db.removeOutputWithInput({prevTxHash:prevTxHash8, prevOutputIndex:nextInput.index, blockHash:blockHash})
+                await db.removeOutputWithInput({prevTxHash:prevTxHashHex, prevOutputIndex:nextInput.index, blockHash:blockHash})
             } else {
                 await db.insertInput({
                     prevTxHash:prevTxHashHex,
                     prevOutputIndex:nextInput.index,
-                    txHash:nextTxId8
+                    txHash:nextTxId
                 })
             }
 
@@ -58,7 +57,7 @@ async function parseTransactionInputs(db, transaction, blockHash, nextTxId8, add
                 await db.insertInputHint({
                     prevTxHash:prevTxHashHex,
                     prevOutputIndex:nextInput.index,
-                    txHash:nextTxId8
+                    txHash:nextTxId
                 })
             }
 
@@ -68,17 +67,17 @@ async function parseTransactionInputs(db, transaction, blockHash, nextTxId8, add
         return inputCounts
 }
 
-async function parseTransactionOutputs(db, transaction, blockHash, blockHeight, nextTxId, nextTxId8, isCoinbase, addHints, removeSpent) {
+async function parseTransactionOutputs(db, transaction, blockHash, blockHeight, nextTxId, isCoinbase, addHints, removeSpent) {
         // Process all outputs concurrently (each output is fully independent
         await Promise.all(transaction.outs.map(async (nextOutput, txOutputIndex) => {
             const scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
 
-            await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, value:nextOutput.value, height:blockHeight, fullTxHash:nextTxId, coinbase:isCoinbase})
+            await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId, outputIndex:txOutputIndex, value:nextOutput.value, height:blockHeight, fullTxHash:nextTxId, coinbase:isCoinbase})
 
             if (addHints || removeSpent){
-                await db.insertOutputHint({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex})
+                await db.insertOutputHint({scriptPubKey:scriptHash, txHash:nextTxId, outputIndex:txOutputIndex})
                 await db.insertOutputScriptBlock(scriptHash, blockHash, blockHeight)
-                await db.insertOutputBlock({scriptPubKey:scriptHash, txHash:nextTxId8, outputIndex:txOutputIndex, blockHash})
+                await db.insertOutputBlock({scriptPubKey:scriptHash, txHash:nextTxId, outputIndex:txOutputIndex, blockHash})
             }
         }))
 }
@@ -86,7 +85,6 @@ async function parseTransactionOutputs(db, transaction, blockHash, blockHeight, 
 module.exports = {
     async parseTransaction(db, transaction, blockHash, blockHeight = -1, addHints = false, removeSpent = false){
         const nextTxId = transaction.getId()
-        let nextTxId8 = nextTxId.substring(0,16)
 
         let resultInfo = {
             inputsCount: 0,
@@ -100,10 +98,10 @@ module.exports = {
         }
 
         const inputCounts = await parseTransactionInputs(db, transaction, blockHash,
-            nextTxId8, addHints, removeSpent)
+            nextTxId, addHints, removeSpent)
 
         await parseTransactionOutputs(db, transaction, blockHash, blockHeight,
-            nextTxId, nextTxId8, isCoinbase, addHints, removeSpent)
+            nextTxId, isCoinbase, addHints, removeSpent)
 
         resultInfo["inputsCount"]  = inputCounts.reduce((acc, n) => acc + n, 0)
         resultInfo["outputsCount"] = transaction.outs.length
@@ -116,7 +114,6 @@ module.exports = {
     // removeOutputWithInput can find same-block outputs in transactionArray.
     async parseTxOutputs(db, transaction, blockHash, blockHeight, addHints, removeSpent){
         const nextTxId  = transaction.getId()
-        const nextTxId8 = nextTxId.substring(0, 16)
         const isCoinbase = XChainUtxoTracker.isCoinbaseTransaction(transaction)
         const _tt = XChainUtxoTracker.parseOutBuckets
 
@@ -138,19 +135,19 @@ module.exports = {
             if (DEBUG_TRACE) _tt.hash += Date.now() - _h0
 
             const _i0 = DEBUG_TRACE ? Date.now() : 0
-            await db.insertOutput({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex, value: nextOutput.value, height: blockHeight, fullTxHash: nextTxId, coinbase: isCoinbase})
+            await db.insertOutput({scriptPubKey: scriptHash, txHash: nextTxId, outputIndex: txOutputIndex, value: nextOutput.value, height: blockHeight, fullTxHash: nextTxId, coinbase: isCoinbase})
             if (DEBUG_TRACE) _tt.ins += Date.now() - _i0
 
             if (addHints || removeSpent) {
                 const _i1 = DEBUG_TRACE ? Date.now() : 0
-                await db.insertOutputHint({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex})
+                await db.insertOutputHint({scriptPubKey: scriptHash, txHash: nextTxId, outputIndex: txOutputIndex})
                 if (DEBUG_TRACE) _tt.ins += Date.now() - _i1
 
                 const _s0 = DEBUG_TRACE ? Date.now() : 0
                 await db.insertOutputScriptBlock(scriptHash, blockHash, blockHeight)
                 if (DEBUG_TRACE) _tt.sb += Date.now() - _s0
 
-                await db.insertOutputBlock({scriptPubKey: scriptHash, txHash: nextTxId8, outputIndex: txOutputIndex, blockHash})
+                await db.insertOutputBlock({scriptPubKey: scriptHash, txHash: nextTxId, outputIndex: txOutputIndex, blockHash})
             }
         }
 
@@ -162,7 +159,6 @@ module.exports = {
     // so removeOutputWithInput will resolve intra-block spends correctly.
     async parseTxInputs(db, transaction, blockHash, addHints, removeSpent){
         const nextTxId  = transaction.getId()
-        const nextTxId8 = nextTxId.substring(0, 16)
 
         const inputCounts = await Promise.all(transaction.ins.map(async (nextInput) => {
             const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
@@ -184,13 +180,12 @@ module.exports = {
             const prevTxHashHex = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse())
 
             if (removeSpent) {
-                const prevTxHash8 = prevTxHashHex.substring(0, 16)
-                await db.removeOutputWithInput({prevTxHash: prevTxHash8, prevOutputIndex: nextInput.index, blockHash: blockHash})
+                await db.removeOutputWithInput({prevTxHash: prevTxHashHex, prevOutputIndex: nextInput.index, blockHash: blockHash})
             } else {
                 await db.insertInput({
                     prevTxHash: prevTxHashHex,
                     prevOutputIndex: nextInput.index,
-                    txHash: nextTxId8
+                    txHash: nextTxId
                 })
             }
 
@@ -198,7 +193,7 @@ module.exports = {
                 await db.insertInputHint({
                     prevTxHash: prevTxHashHex,
                     prevOutputIndex: nextInput.index,
-                    txHash: nextTxId8
+                    txHash: nextTxId
                 })
             }
 

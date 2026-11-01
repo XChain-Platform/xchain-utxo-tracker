@@ -28,7 +28,7 @@ describe('Boundary: Coinbase input skip', function () {
     await processAndCommit(tracker, block);
 
     // No input record should exist for coinbase
-    const input = await tracker.db.getInput('0'.repeat(16), 4294967295);
+    const input = await tracker.db.getInput('0'.repeat(64), 4294967295);
     expect(input).to.be.null;
   });
 });

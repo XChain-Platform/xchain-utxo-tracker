@@ -29,17 +29,17 @@ function registerProcessDeletedOutputTests() {
   describe('processDeletedOutputs', function () {
     it('recovers outputs from K/M records', async function () {
       const scriptHash = randHash();
-      const txHash8 = randHash8();
+      const txidHex = randHash();
       const blockHash = randHash();
 
       // Insert and commit output
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: BigInt(7000), height: 20 });
-      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: BigInt(7000), height: 20 });
+      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0 });
       await db.endTransaction(true);
 
       // Spend it (creates K/M records)
       await db.beginTransaction();
-      await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
+      await db.removeOutputWithInput({ prevTxHash: txidHex, prevOutputIndex: 0, blockHash });
       await db.endTransaction(true);
 
       // Output should be gone
@@ -59,15 +59,15 @@ function registerProcessDeletedOutputTests() {
 
     it('purges K/M records without recovery when recover=false', async function () {
       const scriptHash = randHash();
-      const txHash8 = randHash8();
+      const txidHex = randHash();
       const blockHash = randHash();
 
-      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: BigInt(1000), height: 5 });
-      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0 });
+      await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: BigInt(1000), height: 5 });
+      await db.insertOutputHint({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0 });
       await db.endTransaction(true);
 
       await db.beginTransaction();
-      await db.removeOutputWithInput({ prevTxHash: txHash8, prevOutputIndex: 0, blockHash });
+      await db.removeOutputWithInput({ prevTxHash: txidHex, prevOutputIndex: 0, blockHash });
       await db.endTransaction(true);
 
       // Purge without recovery

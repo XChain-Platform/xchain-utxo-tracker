@@ -135,7 +135,7 @@ function probeValueFor(ordinal) {
 /**
  * Build the deterministic plan for a tier: which outputs each probe address
  * holds, in the order the store will return them (O keys sort by
- * [scriptHash][txHash8][vout], i.e. by the 8-byte txid prefix).
+ * [scriptHash][txid][vout], i.e. by txid then vout).
  *
  * Computed WITHOUT touching the database so the expectations are independent of
  * the code under test: if the store's key schema changed, the plan would not
@@ -154,7 +154,6 @@ function buildPlan(tier) {
             const fullTxid = txidFor(ordinal);
             utxos.push({
                 fullTxid,
-                txHash8: fullTxid.slice(0, 16),
                 vout: i % 4,
                 value: probeValueFor(ordinal),
                 // Heights walk a plausible mainnet range; every probe output is
@@ -166,9 +165,9 @@ function buildPlan(tier) {
             ordinal++;
         }
         // The store returns a prefix range in key order, which is ascending by
-        // the 8-byte txid prefix then vout. Mirror that here so a returned array
-        // can be compared element-by-element, not just as a set.
-        utxos.sort((a, b) => (a.txHash8 < b.txHash8 ? -1 : a.txHash8 > b.txHash8 ? 1 : a.vout - b.vout));
+        // txid then vout. Mirror that here so a returned array can be compared
+        // element-by-element, not just as a set.
+        utxos.sort((a, b) => (a.fullTxid < b.fullTxid ? -1 : a.fullTxid > b.fullTxid ? 1 : a.vout - b.vout));
         probes[name] = { ...key, utxos };
     }
 
@@ -255,7 +254,7 @@ async function generateStore({ tier, dir, batchUtxos = 50000, onProgress = null 
     const put = async (scriptHashHex, fullTxid, vout, value, height, coinbase) => {
         const output = {
             scriptPubKey: scriptHashHex,
-            txHash: fullTxid.slice(0, 16),
+            txHash: fullTxid,
             fullTxHash: fullTxid,
             outputIndex: vout,
             value,

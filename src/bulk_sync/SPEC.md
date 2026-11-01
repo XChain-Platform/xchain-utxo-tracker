@@ -33,10 +33,10 @@ chain, net, version, heights) works across dump and intermediate files.
 
 ```
 Shared prefix (0..20), same layout as dump.js
-  [0..8]    8   magic          "XCHNOUT1" | "XCHNSPD1" | "XCHNMTA1"
+  [0..8]    8   magic          "XCHNOUT2" | "XCHNSPD2" | "XCHNMTA2"
   [8]       1   chain_code     uint8: 1=bitcoin, 2=litecoin, 3=dogecoin
   [9]       1   net_code       uint8: 1=mainnet, 2=testnet, 3=regtest
-  [10..12]  2   version        uint16 LE = 1
+  [10..12]  2   version        uint16 LE = 2
   [12..16]  4   first_height   uint32 LE
   [16..20]  4   last_height    uint32 LE
 
@@ -51,35 +51,60 @@ A file whose count is still 0 at open time signals a crashed/partial worker; re-
 that range. `record_size` documents the fixed record size inline (0 for variable-length
 streams like `meta-*.dat`).
 
-## outputs-*.dat  (magic `XCHNOUT1`, record_size = 121)
+## outputs-*.dat  (magic `XCHNOUT2`, record_size = 113)
 
 One record per TxOut in the block range. Coinbases included. Unsorted, append-only.
 
 ```
 offset    size  field
-[0..8]      8   txHash8         first 8B of the containing tx's txid
-[8..12]     4   vout            uint32 BE
-[12..20]    8   value           uint64 BE (satoshis)
-[20..24]    4   height          int32 BE  (always ≥0 in bulk-sync; -1 reserved for mempool)
-[24..56]   32   fullTxHash      full 32B txid
-[56..88]   32   scriptPubKey    32B sha256(script)  (matches LevelUpDb O-key format)
-[88..120]  32   blockHash       containing block hash
-[120]       1   coinbase        uint8 (1 = coinbase output, 0 = normal)
+[0..32]    32   txid            full 32B txid, display order
+[32..36]    4   vout            uint32 BE
+[36..44]    8   value           uint64 BE (satoshis)
+[44..48]    4   height          int32 BE  (always ≥0 in bulk-sync; -1 reserved for mempool)
+[48..80]   32   scriptPubKey    32B sha256(script)  (matches LevelUpDb O-key format)
+[80..112]  32   blockHash       containing block hash
+[112]       1   coinbase        uint8 (1 = coinbase output, 0 = normal)
 ```
 
 `blockHash` is included so the merger can emit Z/S records directly from a re-sort of this stream without cross-referencing `meta-*.dat`.
 
-**Version compatibility.** The `coinbase` byte is the only field ever added to this
-record. The header's `record_size` field (offset 28) is the explicit discriminator: a
-legacy dump reports 120 with no flag byte, a current dump reports 121. The merger reads
-`record_size` from the header and threads it through the outputs sort, the anti-join, and
-`derive_keys.js`, so both widths merge; a 120-byte record carries no flag and its output is
-treated as non-coinbase (matching the LevelUpDb legacy-decode rule). The coinbase fact is
-re-derived from the block bytes at parse time (the generation tx's single 0xFFFFFFFF-index
-input), so even a `.xdmp` produced before this field existed yields correctly-flagged outputs when
-re-parsed by a current worker.
+**Format version.** Format 2 (magics ending in `2`, header version 2) carries the whole
+txid wherever format 1 carried its first 8 bytes, because the live store keys every txid
+field on the whole txid (store layout 2) and two transactions that share an 8-byte prefix
+must never meet on a join or a key. The merge refuses a format-1 stream
+(`assertCurrentParseFormat` in `orchestrator/file_ops.js`, and `deriveKeys` refuses any
+outputs width but 113), and `api.js` clears a work dir whose `parsed/` holds format-1
+files instead of resuming it with `--skip-parse`. The `.xdmp` dumps are unchanged, so a
+dump re-parsed by a current worker yields format 2. The coinbase fact is re-derived from
+the block bytes at parse time (the generation tx's single 0xFFFFFFFF-index input).
 
-## spends-*.dat  (magic `XCHNSPD1`, record_size = 20)
+## Store layout 2 compatibility
+
+The loader stamps the completed LevelDB with `LAYOUT_VERSION=2` in the same
+final batch as `LAST_BLOCK_HEIGHT` and `LAST_BLOCK_HASH`. Every transaction
+field in a layout 2 key is 32 bytes:
+
+| Prefix | Key after the prefix byte | Total bytes |
+|---|---|---:|
+| T | `txid(32)` | 33 |
+| I | `prevTxid(32) + vout(4)` | 37 |
+| O | `scriptHash(32) + txid(32) + vout(4)` | 69 |
+| H | `txid(32) + vout(4)` | 37 |
+| J | `spenderTxid(32) + prevTxid(32) + vout(4)` | 69 |
+| K | `blockHash(32) + scriptHash(32) + txid(32) + vout(4)` | 101 |
+| M | `blockHash(32) + txid(32) + vout(4)` | 69 |
+| W | `blockHash(32) + txid(32) + vout(4)` | 69 |
+| X | `txid(32)` | 33 |
+| Y | `blockHash(32) + txid(32)` | 65 |
+
+Layout 1 stores have 8-byte transaction prefixes and cannot be converted in
+place because those keys do not retain the missing txid bytes. Tracker startup
+leaves an incompatible store unchanged and refuses it before reading chain
+state. Rebuild with bulk sync into a fresh empty store, or reset the store for a
+full rescan. A partial bulk load with data but no final layout stamp is refused
+the same way and must be rebuilt.
+
+## spends-*.dat  (magic `XCHNSPD2`, record_size = 68)
 
 One record per non-coinbase input. Coinbases produce no record.
 Bulk sync records a spend for each non-coinbase input whose `standard_input` field is
@@ -87,33 +112,33 @@ absent or truthy, and skips inputs where it is present and falsy.
 
 ```
 offset   size  field
-[0..8]     8   prevTxHash8     txHash8 of the output being spent
-[8..12]    4   prevVout        uint32 BE
-[12..20]   8   spenderTxHash8  txHash8 of the spending tx
+[0..32]   32   prevTxid        txid of the output being spent, display order
+[32..36]   4   prevVout        uint32 BE
+[36..68]  32   spenderTxid     txid of the spending tx, display order
 ```
 
-Merger derives both `I` and `J` LevelUpDb keys from this 20-byte record, and uses
-`(prevTxHash8, prevVout)` as the join key against `outputs-*.dat`.
+Merger derives both `I` and `J` LevelUpDb keys from this record, and uses
+`(prevTxid, prevVout)` as the join key against `outputs-*.dat`.
 
-## meta-*.dat  (magic `XCHNMTA1`, record_size = 0, variable length)
+## meta-*.dat  (magic `XCHNMTA2`, record_size = 0, variable length)
 
 Blocks emitted in ascending height order. Each block header is followed immediately
 by the txs contained in that block. `blockHash` is implicit context for the tx list
 (no redundant per-tx blockHash).
 
 ```
-Block record (variable: 76 + 8*tx_count bytes):
+Block record (variable: 76 + 32*tx_count bytes):
   [0..4]    height        uint32 BE
   [4..8]    timestamp     uint32 BE
   [8..40]   blockHash     32B
   [40..72]  previousHash  32B
   [72..76]  tx_count      uint32 BE
-  [76..]    tx_count × txHash8   (8B each)
+  [76..]    tx_count × txid   (32B each, display order)
 ```
 
-Reader pattern: read 76 bytes, read `tx_count`, consume `8 * tx_count` more bytes, repeat.
+Reader pattern: read 76 bytes, read `tx_count`, consume `32 * tx_count` more bytes, repeat.
 When emitting to merger, the reader carries the current block's `blockHash` as context
-and pairs it with each `txHash8` to produce `T`-key records.
+and pairs it with each txid to produce `T`-key records.
 
 ## Parse-worker invariants
 
@@ -137,19 +162,20 @@ for that stream:
 
 | Target LevelUpDb keys | Sort key                             | Source stream   |
 |----------------------|--------------------------------------|-----------------|
-| O join cancellation  | `(txHash8, vout)`                    | outputs         |
-| spend cancellation   | `(prevTxHash8, prevVout)`            | spends          |
-| O (final key order)  | `(scriptPubKey, txHash8, vout)`      | live-utxos      |
-| H                    | `(txHash8, vout)`                    | live-utxos      |
-| I                    | `(prevTxHash8, prevVout)`            | spends          |
-| J                    | `(spenderTxHash8, prevTxHash8, v)`   | spends          |
+| O join cancellation  | `(txid, vout)`                       | outputs         |
+| spend cancellation   | `(prevTxid, prevVout)`               | spends          |
+| O (final key order)  | `(scriptPubKey, txid, vout)`         | live-utxos      |
+| H                    | `(txid, vout)`                       | live-utxos      |
+| I                    | `(prevTxid, prevVout)`               | spends          |
+| J                    | `(spenderTxid, prevTxid, v)`         | spends          |
 | S                    | `scriptPubKey` then `height`         | outputs (all)   |
 | Z                    | `scriptPubKey` then `height`         | outputs (all), first-seen blocks in the last undoBlocks only |
-| W                    | `(blockHash, txHash8, vout)`         | outputs (pre-cancel), last undoBlocks blocks only |
-| T                    | `txHash8`                            | meta (tx list)  |
+| W                    | `(blockHash, txid, vout)`            | outputs (pre-cancel), last undoBlocks blocks only |
+| T                    | `txid`                               | meta (tx list)  |
 | B / N                | `blockHash`                          | meta (blocks)   |
 | LAST_BLOCK_{HEIGHT,HASH} | max height                       | meta (blocks)   |
 | Q (0x51) undo-window watermark | seeded N window depth, decimal string, same batch as LAST_* | meta (blocks) |
+| LAYOUT_VERSION | store layout version, decimal string, same batch as LAST_* | constant |
 
 `Q` is seeded so a fresh seed carries the watermark a live tracker at the same tip holds;
 without it the first boot cannot tell a refilling window from an interrupted rollback. The
@@ -192,24 +218,22 @@ override and records its decision as `txIndex` in `L.json`; `loadKeys` defaults 
 recorded value and detects X/Y files only for an `L.json` without the field. `deriveKeys`
 first removes every prefix file and `L.json` an earlier run left in the keys dir, so a
 reused `--out` never loads another run's T/X/Y or I/J.
-The meta tx list carries only `txHash8`, so the full txids come from the
-pre-cancellation outputs stream, which names every transaction's full txid and
-block (every transaction has at least one output, and a transaction's outputs are
-adjacent). This pass runs before the outputs stream becomes eligible for
+The full txids and their blocks come from the pre-cancellation outputs stream, which
+names every transaction's txid and block (every transaction has at least one output,
+and a transaction's outputs are adjacent). This pass runs before the outputs stream becomes eligible for
 disk-pressure cleanup and emits:
 
-- `T.dat`, 77 B: `'T'+txHash8`, then `heightBE(4)+blockHash(32)+fullTxid(32)`. The
-  height only orders the sort so that, when two txids share a prefix, the one in the
-  higher block is loaded last and owns the single slot as the later live write would;
-  the loader drops those 4 bytes, leaving the live 64 B value.
+- `T.dat`, 101 B: `'T'+txid(32)`, then `heightBE(4)+blockHash(32)+fullTxid(32)`. The
+  height only orders the sort so that, when two blocks carry the same txid (a duplicate
+  coinbase), the higher block is loaded last and owns the slot as the later live write
+  would; the loader drops those 4 bytes, leaving the live 64 B value.
 - `X.dat`, 65 B: `0x58+fullTxid` then `blockHash(32)`, one per transaction.
-- `Y.dat`, 73 B: `0x59+blockHash+txHash8` then `fullTxid(32)`, only for the last
+- `Y.dat`, 97 B: `0x59+blockHash+txid(32)` then `fullTxid(32)`, only for the last
   `undoBlocks` seeded blocks (the same window as W and Z; the live tracker prunes Y
   past it).
 
 `txIndex` replaces the legacy 32 B `T` even when `removeSpent` is false. With a `Y` present, `deleteTxBlockRecord` clears `T`
-only when its value is at least 64 B and bytes 32..64 match the recovered txid, so
-`T` is always 64 B whenever `Y` is seeded. Without `txIndex`, `removeSpent: false`
+and `X` only while their block hash is the block being rolled back. Without `txIndex`, `removeSpent: false`
 still writes the legacy 32 B `T` (every T reader decodes only the first 32 bytes, and
 a rollback with no `Y` takes the blind T-delete fallback pinned in
 `test/unit/tx_block_index.test.js`). The parity of all three prefixes with

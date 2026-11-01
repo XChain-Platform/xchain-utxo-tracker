@@ -150,7 +150,7 @@ module.exports = {
         if (after != null) {
             const parsed = parseOutputCursor(after)
             if (!parsed) throw new InvalidCursorError(after)
-            options.gt = Buffer.concat([prefix, h2b(parsed.txHash8Hex), idxBuf(parsed.vout)])
+            options.gt = Buffer.concat([prefix, h2b(parsed.txidHex), idxBuf(parsed.vout)])
         } else {
             options.gte = prefix
         }
@@ -165,13 +165,13 @@ module.exports = {
             if (pageLimit == null && maxOutputs != null && outputs.length >= maxOutputs) {
                 throw new AddressTooLargeError(maxOutputs)
             }
-            // O key: [O(1)][scriptPubKey(32)][txHash8(8)][outputIndex(4)]
-            const txHash8Hex = b2h(key.slice(33, 41))
-            const n          = key.readUInt32BE(41)
-            const decoded    = decodeOutput(value)
+            // O key: [O(1)][scriptPubKey(32)][txid(32)][outputIndex(4)]
+            const txidHex = b2h(key.slice(33, 65))
+            const n       = key.readUInt32BE(65)
+            const decoded = decodeOutput(value)
 
             outputs.push({
-                txid:     txHash8Hex,
+                txid:     txidHex,
                 fullTxid: decoded.t || null,
                 vout:     n,
                 value:    decoded.v,

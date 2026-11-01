@@ -78,6 +78,8 @@ function createMockTracker(sinon) {
   return {
     getUtxosAddress: sinon.stub(),
     getFirstSeen: sinon.stub(),
+    // The locked first-seen read: the stubbed getFirstSeen answer, with no snapshot unless a test supplies one.
+    getFirstSeenAt: sinon.stub().callsFake(async function (address) { return { firstSeen: await this.getFirstSeen(address) }; }),
     getBalanceInfo: sinon.stub(),
     isSynced: sinon.stub().returns(true),
     isMempoolReconverged: sinon.stub().returns(true),

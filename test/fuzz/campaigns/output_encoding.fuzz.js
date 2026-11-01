@@ -12,9 +12,9 @@
 
 const { expect } = require('chai');
 const {
-  fc, FUZZ_RUNS, arbTxId, arbTxHash8, arbBlockHash, arbSatoshiValue,
+  fc, FUZZ_RUNS, arbTxId, arbBlockHash, arbSatoshiValue,
   arbSatoshiValueExtreme, arbConfirmedHeight, arbHeight, arbHexString,
-  createTestTracker, closeTracker, TEST_KEYS, randHash, randHash8
+  createTestTracker, closeTracker, TEST_KEYS, randHash
 } = require('../support/helpers');
 const LevelUpStore = require('../../../src/store/level_up_db');
 
@@ -40,12 +40,12 @@ function validOutputTests() {
         fc.integer({ min: 0, max: 100 }),
         async (value, height, fullTxHash, addrIdx, outputIndex) => {
           const scriptHash = TEST_KEYS[addrIdx].scriptHash;
-          const txHash8 = fullTxHash.substring(0, 16);
+          const txidHex = fullTxHash;
 
           await db.beginTransaction();
           await db.insertOutput({
             scriptPubKey: scriptHash,
-            txHash: txHash8,
+            txHash: txidHex,
             outputIndex,
             value,
             height,
@@ -56,7 +56,7 @@ function validOutputTests() {
           const outputs = await db.getOutputsScriptPubKey(scriptHash);
           expect(outputs.length).to.be.greaterThanOrEqual(1);
 
-          const match = outputs.find(o => o.txid === txHash8 && o.vout === outputIndex);
+          const match = outputs.find(o => o.txid === txidHex && o.vout === outputIndex);
           expect(match).to.exist;
           expect(match.value).to.equal(value.toString());
           expect(match.height).to.equal(height);
@@ -77,12 +77,12 @@ function mempoolHeightTests() {
         fc.integer({ min: 0, max: 9 }),
         async (value, fullTxHash, addrIdx) => {
           const scriptHash = TEST_KEYS[addrIdx].scriptHash;
-          const txHash8 = fullTxHash.substring(0, 16);
+          const txidHex = fullTxHash;
 
           await db.beginTransaction();
           await db.insertOutput({
             scriptPubKey: scriptHash,
-            txHash: txHash8,
+            txHash: txidHex,
             outputIndex: 0,
             value,
             height: -1,
@@ -91,7 +91,7 @@ function mempoolHeightTests() {
           await db.endTransaction(true);
 
           const outputs = await db.getOutputsScriptPubKey(scriptHash);
-          const match = outputs.find(o => o.txid === txHash8);
+          const match = outputs.find(o => o.txid === txidHex);
           expect(match).to.exist;
           expect(match.height).to.equal(-1);
         }
@@ -109,12 +109,12 @@ function extremeValueTests() {
         arbTxId(),
         async (value, fullTxHash) => {
           const scriptHash = TEST_KEYS[0].scriptHash;
-          const txHash8 = fullTxHash.substring(0, 16);
+          const txidHex = fullTxHash;
 
           await db.beginTransaction();
           await db.insertOutput({
             scriptPubKey: scriptHash,
-            txHash: txHash8,
+            txHash: txidHex,
             outputIndex: 0,
             value,
             height: 100,
@@ -123,7 +123,7 @@ function extremeValueTests() {
           await db.endTransaction(true);
 
           const outputs = await db.getOutputsScriptPubKey(scriptHash);
-          const match = outputs.find(o => o.txid === txHash8);
+          const match = outputs.find(o => o.txid === txidHex);
           expect(match).to.exist;
           expect(match.value).to.equal(value.toString());
         }
@@ -136,13 +136,13 @@ function extremeValueTests() {
 function zeroValueTests() {
   it('zero-value output round-trips correctly', async function () {
     const scriptHash = TEST_KEYS[0].scriptHash;
-    const txHash8 = randHash8();
-    const fullTxHash = txHash8 + randHash().substring(16);
+    const txidHex = randHash();
+    const fullTxHash = txidHex;
 
     await db.beginTransaction();
     await db.insertOutput({
       scriptPubKey: scriptHash,
-      txHash: txHash8,
+      txHash: txidHex,
       outputIndex: 0,
       value: 0n,
       height: 50,
@@ -151,7 +151,7 @@ function zeroValueTests() {
     await db.endTransaction(true);
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
-    const match = outputs.find(o => o.txid === txHash8);
+    const match = outputs.find(o => o.txid === txidHex);
     expect(match).to.exist;
     expect(match.value).to.equal('0');
   });
@@ -217,18 +217,18 @@ describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
               await freshDb.beginTransaction();
               const expected = [];
               for (let i = 0; i < count; i++) {
-                const txHash8 = randHash8();
-                const fullTxHash = txHash8 + randHash().substring(16);
+                const txidHex = randHash();
+                const fullTxHash = txidHex;
                 const value = BigInt(Math.floor(Math.random() * 1000000));
                 await freshDb.insertOutput({
                   scriptPubKey: scriptHash,
-                  txHash: txHash8,
+                  txHash: txidHex,
                   outputIndex: 0,
                   value,
                   height: i,
                   fullTxHash
                 });
-                expected.push({ txid: txHash8, value: value.toString() });
+                expected.push({ txid: txidHex, value: value.toString() });
               }
               await freshDb.endTransaction(true);
 
@@ -298,19 +298,19 @@ describe('Fuzz: Output Encoding / LevelDB Round-Trip (P0)', function () {
     it('input data round-trips through insertInput/getInput', async function () {
       await fc.assert(
         fc.asyncProperty(
-          arbTxHash8(),
+          arbTxId(),
           fc.integer({ min: 0, max: 1000 }),
-          arbTxHash8(),
+          arbTxId(),
           async (prevTxHash, prevOutputIndex, txHash) => {
             await db.beginTransaction();
             await db.insertInput({ prevTxHash, prevOutputIndex, txHash });
             await db.endTransaction(true);
 
-            // getInput returns raw Buffer (I value = [txHash8(8)])
+            // getInput returns raw Buffer (I value = [txidHex(8)])
             const input = await db.getInput(prevTxHash, prevOutputIndex);
             expect(input).to.not.be.null;
             expect(Buffer.isBuffer(input)).to.be.true;
-            expect(input.toString('hex').substring(0, 16)).to.equal(txHash);
+            expect(input.toString('hex')).to.equal(txHash);
           }
         ),
         { numRuns: FUZZ_RUNS }

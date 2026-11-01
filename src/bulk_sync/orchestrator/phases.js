@@ -24,7 +24,7 @@ const { HEADER_SIZE, OUTPUTS_RECORD_SIZE, SPENDS_RECORD_SIZE } = require('../wri
 const { networkToCodes, validateConcatArtifact, parseDatHeader,
         writeSortedManifest, checkSortedManifest } = require('../merger/resume_manifest.js')
 const { OUTPUTS_KEY_SIZE, SPENDS_KEY_SIZE, BULK_SYNC_DIR } = require('./constants.js')
-const { concatFilesWithHeader, readOutputsRecordSize, findFiles } = require('./file_ops.js')
+const { concatFilesWithHeader, readOutputsRecordSize, assertCurrentParseFormat, findFiles } = require('./file_ops.js')
 
 // The orchestrator entry owns the process output (log) and the child spawn
 // that inherits its environment (runChild), and passes both to each phase.
@@ -85,14 +85,18 @@ async function phaseMerge(args, dirs, cleanup, { log }) {
 
     const ramBudgetBytes = args.ramBudget * 1024 * 1024
 
-    // The dump header's record_size field (offset 28, u32 LE) is the explicit
-    // format discriminator: new dumps report 121 (trailing coinbase flag),
-    // legacy dumps report 120. Threading it through the sort, anti-join and
-    // deriveKeys lets both widths merge; a legacy dump carries no flag and its
-    // outputs are treated as non-coinbase. Fall back to the compiled constant if
-    // the field is absent (0), so a pre-record_size dump still parses.
+    // Parse streams from an older format (8-byte txid fields) are refused here,
+    // before any sort: their records would misframe, and a store seeded from
+    // them could not be read by the tracker.
+    assertCurrentParseFormat({ outputs: allOutputsPath, spends: allSpendsPath, meta: allMetaPath }, dirs)
+    // The dump header's record_size field (offset 28, u32 LE) is threaded through
+    // the sort, the anti-join and deriveKeys; a current dump reports 113 bytes,
+    // and any other width is refused rather than merged at the wrong framing.
     const outputsRecordSize = readOutputsRecordSize(allOutputsPath)
-    log('MERGE', `outputs record size = ${outputsRecordSize}B (${outputsRecordSize === OUTPUTS_RECORD_SIZE ? 'coinbase-flagged' : 'legacy'})`)
+    if (outputsRecordSize !== OUTPUTS_RECORD_SIZE) {
+        throw new Error(`${allOutputsPath}: outputs record size ${outputsRecordSize}B, expected ${OUTPUTS_RECORD_SIZE}B`)
+    }
+    log('MERGE', `outputs record size = ${outputsRecordSize}B`)
 
     const sortedOutputsPath = await sortOutputs(dirs, allOutputsPath, outputsRecordSize, ramBudgetBytes, log)
     const sortedSpendsPath = await sortSpends(dirs, allSpendsPath, ramBudgetBytes, log)
@@ -186,7 +190,7 @@ function sortedReusable(sortedPath, expSize, sourceHeader, log) {
     return check.ok
 }
 
-// Sort outputs by (txHash8 + vout); returns the sorted file's path.
+// Sort outputs by (txid + vout); returns the sorted file's path.
 async function sortOutputs(dirs, allOutputsPath, outputsRecordSize, ramBudgetBytes, log) {
     const sortedOutputsPath = path.join(dirs.merge, 'outputs-sorted.dat')
     const allOutputsHeader = parseDatHeader(allOutputsPath)
@@ -194,7 +198,7 @@ async function sortOutputs(dirs, allOutputsPath, outputsRecordSize, ramBudgetByt
     if (sortedReusable(sortedOutputsPath, expOutSize, allOutputsHeader, log)) {
         log('MERGE', `sort-outputs skipped (reusing ${(expOutSize / 1024 / 1024).toFixed(1)}MB)`)
     } else {
-        log('MERGE', 'sorting outputs by txHash8+vout')
+        log('MERGE', 'sorting outputs by txid+vout')
         const outSortResult = await externalSort({
             inputPath:   allOutputsPath,
             outputPath:  sortedOutputsPath,
@@ -215,7 +219,7 @@ async function sortOutputs(dirs, allOutputsPath, outputsRecordSize, ramBudgetByt
     return sortedOutputsPath
 }
 
-// Sort spends by (prevTxHash8 + prevVout); returns the sorted file's path.
+// Sort spends by (prevTxid + prevVout); returns the sorted file's path.
 async function sortSpends(dirs, allSpendsPath, ramBudgetBytes, log) {
     const sortedSpendsPath = path.join(dirs.merge, 'spends-sorted.dat')
     const allSpendsHeader = parseDatHeader(allSpendsPath)
@@ -223,7 +227,7 @@ async function sortSpends(dirs, allSpendsPath, ramBudgetBytes, log) {
     if (sortedReusable(sortedSpendsPath, expSpdSize, allSpendsHeader, log)) {
         log('MERGE', `sort-spends skipped (reusing ${(expSpdSize / 1024 / 1024).toFixed(1)}MB)`)
     } else {
-        log('MERGE', 'sorting spends by prevTxHash8+prevVout')
+        log('MERGE', 'sorting spends by prevTxid+prevVout')
         const spdSortResult = await externalSort({
             inputPath:   allSpendsPath,
             outputPath:  sortedSpendsPath,
@@ -263,7 +267,7 @@ async function antiJoinLiveUtxos(args, dirs, sortedOutputsPath, sortedSpendsPath
     })
     log('MERGE', `live UTXOs: ${joinResult.emitted} (orphan spends: ${joinResult.orphanSpends})`)
 
-    // An orphan spend is a spend whose (prevTxHash8, prevVout) matched no
+    // An orphan spend is a spend whose (prevTxid, prevVout) matched no
     // output. With --from > 0 these are expected (spends of pre-range
     // outputs); from genesis they mean the outputs stream is incomplete
     // (missing/partial parsed range) and the DB would silently lack UTXOs.

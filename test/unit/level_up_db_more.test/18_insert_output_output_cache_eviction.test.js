@@ -42,12 +42,12 @@ describe('LevelUpDb (extended coverage)', function () {
             LevelUpStore.outputCache = fakeCache;
 
             const scriptHash = randHash();
-            const txHash8 = randHash8();
+            const txidHex = randHash();
 
             // insertOutput checks cache.size > OUTPUT_CACHE_MAX → resets to new Map
             await db.insertOutput({
                 scriptPubKey: scriptHash,
-                txHash: txHash8,
+                txHash: txidHex,
                 outputIndex: 0,
                 value: BigInt(1),
                 height: 1

@@ -66,13 +66,13 @@ describe('XChainUtxoTracker (more)', function () {
             const scriptHash = createHash('sha256').update(script).digest('hex');
 
             const fullTxHash = randHash();
-            const txHash8 = fullTxHash.substring(0, 16);
+            const txidHex = fullTxHash;
 
             // Insert mempool output in one transaction
             await mempoolDb.beginTransaction();
             await mempoolDb.insertOutput({
                 scriptPubKey: scriptHash,
-                txHash: txHash8,
+                txHash: txidHex,
                 outputIndex: 0,
                 value: BigInt('75000000'),
                 height: -1,
@@ -82,7 +82,7 @@ describe('XChainUtxoTracker (more)', function () {
             await mempoolDb.insertInput({
                 prevTxHash: fullTxHash,
                 prevOutputIndex: 0,
-                txHash: randHash8()
+                txHash: randHash()
             });
             await mempoolDb.endTransaction(true);
 

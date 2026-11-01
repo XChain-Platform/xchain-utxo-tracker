@@ -25,6 +25,7 @@ const { RecordReader,
         RecordWriter }          = require('../streaming_join.js')
 const {
     P_SCRIPT_BLK, P_OUT_BLK, P_BLK_SCRIPT, OUTPUTS_HEADER_SIZE,
+    OUT_TXID, OUT_VOUT, OUT_HEIGHT, OUT_SCRIPT, OUT_BLOCK,
     LAYOUT, FlatWriter, sortByKey,
 } = require('./record_layout.js')
 
@@ -62,7 +63,7 @@ async function writeScriptCandidates(ctx, stats, lastHeight) {
     // the undoBlocks window, and the live tracker prunes W as blocks age out of
     // it (removeCreatedOutputsBlockIndexOnly). Seeded blocks below the
     // window never re-enter that aging path, so an unwindowed seed would leave
-    // one permanent 77B record per output ever created (~hundreds of GB on a
+    // one permanent 101B record per output ever created (~hundreds of GB on a
     // from-genesis BTC run). Only outputs created in the last undoBlocks seeded
     // blocks get a W record - byte parity with a live tracker at the same tip.
     const wMinHeight = Math.max(0, lastHeight - undoBlocks + 1)
@@ -79,7 +80,7 @@ async function writeScriptCandidates(ctx, stats, lastHeight) {
     try { fs.unlinkSync(candRawPath) } catch (_) {}
     onProgress({ phase: 'sort-cand-done' })
 
-    // Sort W by its 45-byte key so the loader streams it in key order (matching
+    // Sort W by its 69-byte key so the loader streams it in key order (matching
     // every other prefix file) and removeCreatedOutputsInBlock's prefix scan
     // sees a contiguous per-block run.
     await sortByKey(wRawPath, path.join(outDir, 'W.dat'), LAYOUT.W.recordSize, LAYOUT.W.keySize, path.join(tmpDir, 'sort-W'), ramBudgetBytes)
@@ -98,11 +99,11 @@ function writeCandidateAndWRecords(outputsReader, candRaw, wRaw, wMinHeight) {
         while (true) {
             const rec = outputsReader.next()
             if (!rec) break
-            const txHash8      = rec.subarray(0, 8)
-            const voutBE       = rec.subarray(8, 12)
-            const heightBE     = rec.subarray(20, 24)
-            const scriptPubKey = rec.subarray(56, 88)
-            const blockHash    = rec.subarray(88, 120)
+            const txid         = rec.subarray(OUT_TXID, OUT_TXID + 32)
+            const voutBE       = rec.subarray(OUT_VOUT, OUT_VOUT + 4)
+            const heightBE     = rec.subarray(OUT_HEIGHT, OUT_HEIGHT + 4)
+            const scriptPubKey = rec.subarray(OUT_SCRIPT, OUT_SCRIPT + 32)
+            const blockHash    = rec.subarray(OUT_BLOCK, OUT_BLOCK + 32)
             const rid          = rowId++
             if (rid > 0xFFFFFFFF) {
                 throw new Error('deriveKeys: output rowId exceeds u32 (' + rid + '); widen the script-candidate rowId field before bulk-syncing this range')
@@ -114,16 +115,16 @@ function writeCandidateAndWRecords(outputsReader, candRaw, wRaw, wMinHeight) {
                 heightBE    .copy(buf, off + 68, 0, 4)
             })
 
-            // W record: 'W' + blockHash(32) + txHash8(8) + voutBE(4) | script32.
+            // W record: 'W' + blockHash(32) + txid(32) + voutBE(4) | script32.
             // Byte-identical to LevelUpDb.kOutBlk / insertOutputBlock. Skipped
             // below the undo window (see wMinHeight above).
             if (heightBE.readUInt32BE(0) < wMinHeight) continue
             wRaw.write((buf, off) => {
                 buf[off] = P_OUT_BLK
                 blockHash   .copy(buf, off + 1,  0, 32)
-                txHash8     .copy(buf, off + 33, 0, 8)
-                voutBE      .copy(buf, off + 41, 0, 4)
-                scriptPubKey.copy(buf, off + 45, 0, 32)
+                txid        .copy(buf, off + 33, 0, 32)
+                voutBE      .copy(buf, off + 65, 0, 4)
+                scriptPubKey.copy(buf, off + 69, 0, 32)
             })
         }
     } finally {

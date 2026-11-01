@@ -35,7 +35,7 @@ function sha256(buf) {
     return crypto.createHash('sha256').update(buf).digest()
 }
 
-function appendOutputs(tx, txHash8, fullTxHash, height, blockHash, writer) {
+function appendOutputs(tx, txid, height, blockHash, writer) {
     const ins = tx.ins
     // Coinbase = the block's generation tx: exactly one input whose prevout
     // index is 0xFFFFFFFF (same marker the input loop below skips). Mirrors
@@ -48,11 +48,10 @@ function appendOutputs(tx, txHash8, fullTxHash, height, blockHash, writer) {
         const o = outs[vout]
         const scriptHash = sha256(o.script)
         writer.append(
-            txHash8,
+            txid,
             vout,
             o.value,
             height,
-            fullTxHash,
             scriptHash,
             blockHash,
             isCoinbase,
@@ -62,19 +61,16 @@ function appendOutputs(tx, txHash8, fullTxHash, height, blockHash, writer) {
     return emitted
 }
 
-function appendSpends(ins, txHash8, writer) {
+function appendSpends(ins, txid, writer) {
     let emitted = 0
     for (let k = 0; k < ins.length; k++) {
         const inp = ins[k]
         // Same spend rule as the live parseTxInputs: skip coinbase and any input with a falsy standard_input.
         const standardInput = ("standard_input" in inp ? inp["standard_input"] : true)
         if ((inp.index === 0xFFFFFFFF) || !standardInput) continue
-        // inp.hash is 32B LE internal. We need only the first 8 bytes of the
-        // display-order hash, so read the last 8 bytes of LE in reverse.
-        const prevLE  = inp.hash
-        const prevHash8 = Buffer.alloc(8)
-        for (let j = 0; j < 8; j++) prevHash8[j] = prevLE[31 - j]
-        writer.append(prevHash8, inp.index, txHash8)
+        // inp.hash is 32B LE internal; the record carries the display-order txid,
+        // the same bytes the live path reads as the input's prev txid.
+        writer.append(reverseBytes32(inp.hash), inp.index, txid)
         emitted++
     }
     return emitted
@@ -83,11 +79,10 @@ function appendSpends(ins, txHash8, writer) {
 function processTransaction(tx, height, blockHash, writers) {
     // The txid comes from bitcoinjs-lib getHash() (internal LE), reversed; the live
     // path reads tx.getId(), the same bytes in display order.
-    const fullTxHash = reverseBytes32(tx.getHash())
-    const txHash8 = fullTxHash.slice(0, 8)
-    const outputs = appendOutputs(tx, txHash8, fullTxHash, height, blockHash, writers.outputs)
-    const spends = appendSpends(tx.ins, txHash8, writers.spends)
-    return { txHash8, outputs, spends }
+    const txid = reverseBytes32(tx.getHash())
+    const outputs = appendOutputs(tx, txid, height, blockHash, writers.outputs)
+    const spends = appendSpends(tx.ins, txid, writers.spends)
+    return { txid, outputs, spends }
 }
 
 /**
@@ -102,16 +97,16 @@ function processBlock(block, height, blockHash, writers) {
     // Clone instead of mutating; defensive against the decoder reusing the block.
     const previousHash = reverseBytes32(block.prevHash)
     const txs = block.transactions
-    const txHash8List = new Array(txs.length)
+    const txidList = new Array(txs.length)
     let outputsEmitted = 0
     let spendsEmitted  = 0
     for (let i = 0; i < txs.length; i++) {
         const result = processTransaction(txs[i], height, blockHash, writers)
-        txHash8List[i] = result.txHash8
+        txidList[i] = result.txid
         outputsEmitted += result.outputs
         spendsEmitted += result.spends
     }
-    writers.meta.writeBlock(height, block.timestamp, blockHash, previousHash, txHash8List)
+    writers.meta.writeBlock(height, block.timestamp, blockHash, previousHash, txidList)
     return { txs: txs.length, outputs: outputsEmitted, spends: spendsEmitted }
 }
 

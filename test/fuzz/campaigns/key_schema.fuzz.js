@@ -25,7 +25,7 @@
 // from a sort-adjacent family or neighbor ever bleeds in.
 
 const { expect } = require('chai');
-const { fc, FUZZ_RUNS, arbBuffer, randHash, randHash8 } = require('../support/helpers');
+const { fc, FUZZ_RUNS, arbBuffer, randHash } = require('../support/helpers');
 const LevelUpStore = require('../../../src/store/level_up_db');
 
 const MAX_KEY_LEN = 77;   // K/P_OUT_DEL, the longest key in the schema
@@ -47,14 +47,14 @@ function arbHash32Buf() {
 }
 function arbHash32() { return arbHash32Buf().map((b) => b.toString('hex')); }
 
-// 8-byte txid prefix including sort-extreme shapes.
-function arbHash8() {
+// Full 32-byte txid including sort-extreme shapes.
+function arbTxid32() {
   return fc.oneof(
-    { weight: 3, arbitrary: arbBuffer(8).map((b) => b.toString('hex')) },
-    fc.constant('00'.repeat(8)),
-    fc.constant('ff'.repeat(8)),
-    fc.tuple(arbBuffer(8), fc.integer({ min: 1, max: 8 }))
-      .map(([b, k]) => { const c = Buffer.from(b); c.fill(0xFF, 8 - k); return c.toString('hex'); })
+    { weight: 3, arbitrary: arbBuffer(32).map((b) => b.toString('hex')) },
+    fc.constant('00'.repeat(32)),
+    fc.constant('ff'.repeat(32)),
+    fc.tuple(arbBuffer(32), fc.integer({ min: 1, max: 32 }))
+      .map(([b, k]) => { const c = Buffer.from(b); c.fill(0xFF, 32 - k); return c.toString('hex'); })
   );
 }
 
@@ -184,7 +184,7 @@ function outputClusterScanTests() {
               for (let i = 0; i < perScript; i++) {
                 // include vout boundary values in every cluster
                 const vout = i === 0 ? 0xFFFFFFFF : i;
-                const tx8 = i === 1 ? 'ff'.repeat(8) : randHash8();
+                const tx8 = i === 1 ? 'ff'.repeat(32) : randHash();
                 const entry = tx8 + ':' + vout;
                 if (expected.has(entry)) continue;
                 expected.add(entry);
@@ -194,7 +194,7 @@ function outputClusterScanTests() {
                   outputIndex: vout,
                   value: BigInt(i + 1),
                   height: 100 + i,
-                  fullTxHash: tx8 + randHash().substring(16)
+                  fullTxHash: tx8
                 });
               }
             }
@@ -239,7 +239,7 @@ function keyPatternScanTests() {
             for (const s of scripts) {
               const scriptHex = s.toString('hex');
               for (let i = 0; i < perScript; i++) {
-                const tx8 = randHash8();
+                const tx8 = randHash();
                 const vout = i === 0 ? 0xFFFFFFFF : i;
                 await db.insertOutput({
                   scriptPubKey: scriptHex,
@@ -247,7 +247,7 @@ function keyPatternScanTests() {
                   outputIndex: vout,
                   value: 1n,
                   height: 1,
-                  fullTxHash: tx8 + randHash().substring(16)
+                  fullTxHash: tx8
                 });
                 insertedKeys.add(LevelUpStore.kOutput(scriptHex, tx8, vout).toString('hex'));
               }
@@ -280,13 +280,13 @@ describe('Fuzz: key-schema over mainnet-scale distributions', function () {
   describe('builder field round-trip', function () {
     it('kOutput embeds scriptHash/txHash8/vout byte-exactly for any input shape', function () {
       fc.assert(
-        fc.property(arbHash32(), arbHash8(), arbVout(), (script, tx8, vout) => {
+        fc.property(arbHash32(), arbTxid32(), arbVout(), (script, tx8, vout) => {
           const key = LevelUpStore.kOutput(script, tx8, vout);
-          expect(key.length).to.equal(45);
+          expect(key.length).to.equal(69);
           expect(key[0]).to.equal(0x4F);
           expect(key.slice(1, 33).toString('hex')).to.equal(script);
-          expect(key.slice(33, 41).toString('hex')).to.equal(tx8);
-          expect(key.readUInt32BE(41)).to.equal(vout);
+          expect(key.slice(33, 65).toString('hex')).to.equal(tx8);
+          expect(key.readUInt32BE(65)).to.equal(vout);
         }),
         { numRuns: FUZZ_RUNS }
       );
@@ -294,14 +294,14 @@ describe('Fuzz: key-schema over mainnet-scale distributions', function () {
 
     it('kOutDel embeds blockHash/scriptHash/txHash8/vout byte-exactly for any input shape', function () {
       fc.assert(
-        fc.property(arbHash32(), arbHash32(), arbHash8(), arbVout(), (blk, script, tx8, vout) => {
+        fc.property(arbHash32(), arbHash32(), arbTxid32(), arbVout(), (blk, script, tx8, vout) => {
           const key = LevelUpStore.kOutDel(blk, script, tx8, vout);
-          expect(key.length).to.equal(77);
+          expect(key.length).to.equal(101);
           expect(key[0]).to.equal(0x4B);
           expect(key.slice(1, 33).toString('hex')).to.equal(blk);
           expect(key.slice(33, 65).toString('hex')).to.equal(script);
-          expect(key.slice(65, 73).toString('hex')).to.equal(tx8);
-          expect(key.readUInt32BE(73)).to.equal(vout);
+          expect(key.slice(65, 97).toString('hex')).to.equal(tx8);
+          expect(key.readUInt32BE(97)).to.equal(vout);
         }),
         { numRuns: FUZZ_RUNS }
       );
@@ -309,7 +309,7 @@ describe('Fuzz: key-schema over mainnet-scale distributions', function () {
 
     it('hex and Buffer builder pairs stay byte-identical for any input shape', function () {
       fc.assert(
-        fc.property(arbHash32Buf(), arbHash32(), arbHash8(), arbVout(), (scriptBuf, blk, tx8, vout) => {
+        fc.property(arbHash32Buf(), arbHash32(), arbTxid32(), arbVout(), (scriptBuf, blk, tx8, vout) => {
           const script = scriptBuf.toString('hex');
           expect(LevelUpStore.kOutputFromBuf(scriptBuf, tx8, vout)
             .equals(LevelUpStore.kOutput(script, tx8, vout))).to.equal(true);

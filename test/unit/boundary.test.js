@@ -90,10 +90,10 @@ describe('Boundary: Output value encoding/decoding', function () {
 
   it('round-trips zero value output', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 0, height: 100, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 0, height: 100, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -102,10 +102,10 @@ describe('Boundary: Output value encoding/decoding', function () {
   });
   it('round-trips one satoshi value', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 1, height: 100, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 1, height: 100, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -113,10 +113,10 @@ describe('Boundary: Output value encoding/decoding', function () {
   });
   it('round-trips 50 BTC (5,000,000,000 satoshis)', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 5000000000, height: 100, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 5000000000, height: 100, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -124,11 +124,11 @@ describe('Boundary: Output value encoding/decoding', function () {
   });
   it('round-trips Dogecoin-scale value (10^16 satoshis)', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
     const bigVal = '10000000000000000'; // 100M DOGE
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: bigVal, height: 100, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: bigVal, height: 100, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -150,11 +150,11 @@ describe('Boundary: Output value encoding/decoding', function () {
 
   it('round-trips uint64 max value', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
     const maxUint64 = '18446744073709551615'; // 2^64 - 1
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: maxUint64, height: 100, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: maxUint64, height: 100, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -186,10 +186,10 @@ describe('Boundary: Height encoding/decoding', function () {
   });
   it('encodes mempool height -1 correctly in output values', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 100000000, height: -1, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 100000000, height: -1, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -197,10 +197,10 @@ describe('Boundary: Height encoding/decoding', function () {
   });
   it('encodes null height as -1', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 100000000, height: null, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 100000000, height: null, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -208,10 +208,10 @@ describe('Boundary: Height encoding/decoding', function () {
   });
   it('does not confuse mempool -1 with large positive height', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 100000000, height: -1, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 100000000, height: -1, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -260,10 +260,10 @@ describe('Boundary: TxID and Vout encoding', function () {
 
   it('stores and retrieves output with vout = 0', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 100000000, height: 1, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 100000000, height: 1, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -271,10 +271,10 @@ describe('Boundary: TxID and Vout encoding', function () {
   });
   it('stores and retrieves output with large vout (2999)', async function () {
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 2999, value: 100000000, height: 1, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 2999, value: 100000000, height: 1, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -283,10 +283,10 @@ describe('Boundary: TxID and Vout encoding', function () {
   it('stores and retrieves output with vout at UInt32 max boundary (4294967294)', async function () {
     // 4294967295 (0xFFFFFFFF) is reserved for coinbase; test one below
     const scriptHash = randHash();
-    const txHash8 = randHash8();
+    const txidHex = randHash();
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 4294967294, value: 100000000, height: 1, fullTxHash: txHash8 + randHash().substring(16) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 4294967294, value: 100000000, height: 1, fullTxHash: txidHex });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
@@ -294,14 +294,14 @@ describe('Boundary: TxID and Vout encoding', function () {
   });
   it('stores all-zero txHash8 correctly', async function () {
     const scriptHash = randHash();
-    const txHash8 = '0'.repeat(16);
+    const txidHex = '0'.repeat(64);
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 100000000, height: 1, fullTxHash: '0'.repeat(64) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 100000000, height: 1, fullTxHash: '0'.repeat(64) });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
-    expect(outputs[0].txid).to.equal(txHash8);
+    expect(outputs[0].txid).to.equal(txidHex);
   });
 });
 
@@ -319,24 +319,25 @@ describe('Boundary: TxID and Vout encoding', function () {
 
   it('stores all-ff txHash8 correctly', async function () {
     const scriptHash = randHash();
-    const txHash8 = 'f'.repeat(16);
+    const txidHex = 'f'.repeat(64);
 
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txHash8, outputIndex: 0, value: 100000000, height: 1, fullTxHash: 'f'.repeat(64) });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: txidHex, outputIndex: 0, value: 100000000, height: 1, fullTxHash: 'f'.repeat(64) });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);
-    expect(outputs[0].txid).to.equal(txHash8);
+    expect(outputs[0].txid).to.equal(txidHex);
   });
   it('disambiguates two txids sharing the same txHash8 prefix', async function () {
     const scriptHash = randHash();
-    const sharedPrefix = randHash8();
+    const sharedPrefix = randHash().substring(0, 16);
     const fullTxid1 = sharedPrefix + 'a'.repeat(48);
     const fullTxid2 = sharedPrefix + 'b'.repeat(48);
 
+    // Same script and vout: only the txid bytes past the first 8 tell them apart.
     await db.beginTransaction();
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: sharedPrefix, outputIndex: 0, value: 100000000, height: 1, fullTxHash: fullTxid1 });
-    await db.insertOutput({ scriptPubKey: scriptHash, txHash: sharedPrefix, outputIndex: 1, value: 200000000, height: 1, fullTxHash: fullTxid2 });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: fullTxid1, outputIndex: 0, value: 100000000, height: 1, fullTxHash: fullTxid1 });
+    await db.insertOutput({ scriptPubKey: scriptHash, txHash: fullTxid2, outputIndex: 0, value: 200000000, height: 1, fullTxHash: fullTxid2 });
     await db.endTransaction();
 
     const outputs = await db.getOutputsScriptPubKey(scriptHash);

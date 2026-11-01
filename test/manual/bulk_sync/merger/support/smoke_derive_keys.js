@@ -56,15 +56,12 @@ function scriptBuf(tag) {
     Buffer.from(tag, 'utf8').copy(b, 0)
     return b
 }
-function txh8(full) { return full.subarray(0, 8) }
 
 const H0     = hashBuf('block0')
 const H1     = hashBuf('block1')
 const PREV0  = Buffer.alloc(32, 0)
 const T0_FULL = hashBuf('tx_zero______')
 const T1_FULL = hashBuf('tx_one_______')
-const T0_8    = txh8(T0_FULL)
-const T1_8    = txh8(T1_FULL)
 const SCRIPT_X = scriptBuf('script_X')
 const SCRIPT_Y = scriptBuf('script_Y')
 const SCRIPT_Z = scriptBuf('script_Z')
@@ -80,20 +77,20 @@ async function main() {
     // Write synthetic parse-worker outputs
     {
         const w = new OutputsWriter(outputsPath, 'bitcoin', 'regtest', 0, 1)
-        w.append(T0_8, 0, 100n, 0, T0_FULL, SCRIPT_X, H0)
-        w.append(T0_8, 1, 200n, 0, T0_FULL, SCRIPT_Y, H0)
-        w.append(T1_8, 0, 100n, 1, T1_FULL, SCRIPT_Z, H1)
+        w.append(T0_FULL, 0, 100n, 0, SCRIPT_X, H0)
+        w.append(T0_FULL, 1, 200n, 0, SCRIPT_Y, H0)
+        w.append(T1_FULL, 0, 100n, 1, SCRIPT_Z, H1)
         w.close()
     }
     {
         const w = new SpendsWriter(spendsPath, 'bitcoin', 'regtest', 0, 1)
-        w.append(T0_8, 0, T1_8)
+        w.append(T0_FULL, 0, T1_FULL)
         w.close()
     }
     {
         const w = new MetaWriter(metaPath, 'bitcoin', 'regtest', 0, 1)
-        w.writeBlock(0, 1_700_000_000, H0, PREV0, [T0_8])
-        w.writeBlock(1, 1_700_000_600, H1, H0,    [T1_8])
+        w.writeBlock(0, 1_700_000_000, H0, PREV0, [T0_FULL])
+        w.writeBlock(1, 1_700_000_600, H1, H0,    [T1_FULL])
         w.close()
     }
 
@@ -105,12 +102,12 @@ async function main() {
 
     await externalSort({
         inputPath: outputsPath, outputPath: outputsByTx,
-        headerSize: 64, recordSize: 121, keySize: 12,
+        headerSize: 64, recordSize: 113, keySize: 36,
         ramBudgetBytes: 1024 * 1024, tmpDir: path.join(sortTmp, 'o'),
     })
     await externalSort({
         inputPath: spendsPath, outputPath: spendsByPrevTx,
-        headerSize: 64, recordSize: 20, keySize: 12,
+        headerSize: 64, recordSize: 68, keySize: 36,
         ramBudgetBytes: 1024 * 1024, tmpDir: path.join(sortTmp, 's'),
     })
 
@@ -118,7 +115,7 @@ async function main() {
     const liveUtxos = path.join(TMP, 'live-utxos.dat')
     const joinRes = await leftAntiJoin({
         leftPath: outputsByTx, rightPath: spendsByPrevTx, outputPath: liveUtxos,
-        leftRecordSize: 121, rightRecordSize: 20, keySize: 12,
+        leftRecordSize: 113, rightRecordSize: 68, keySize: 36,
     })
     assert.strictEqual(joinRes.emitted, 2, 'expected 2 live UTXOs')
     assert.strictEqual(joinRes.canceled, 1)
@@ -132,7 +129,7 @@ async function main() {
         metaPath, outputsPath, liveUtxosPath: liveUtxos, spendsByPrevPath: spendsByPrevTx,
         outDir, tmpDir: derTmp,
         ramBudgetBytes: 1024 * 1024,
-        outputsRecordSize: 121,
+        outputsRecordSize: 113,
         // deriveKeys resolves the N-window through the canonical coin registry and
         // refuses an unnamed chain; the explicit window keeps the scenario's
         // "window of 10" expectations independent of the per-chain default.
@@ -237,84 +234,84 @@ async function main() {
     assert.ok(hasZ(H0, SCRIPT_Y), 'Z[H0, Y]')
     assert.ok(hasZ(H1, SCRIPT_Z), 'Z[H1, Z]')
 
-    // I has the one spend: I[T0,0] = T1_8
+    // I has the one spend: I[T0,0] = T1
     const I = fs.readFileSync(path.join(outDir, 'I.dat'))
     assert.strictEqual(I[0], 0x49)
-    assert.strictEqual(I.subarray(1, 9).compare(T0_8), 0, 'I key prevTxHash8')
-    assert.strictEqual(I.readUInt32BE(9), 0, 'I key prevVout')
-    assert.strictEqual(I.subarray(13, 21).compare(T1_8), 0, 'I val spenderTxHash8')
+    assert.strictEqual(I.subarray(1, 33).compare(T0_FULL), 0, 'I key prevTxid')
+    assert.strictEqual(I.readUInt32BE(33), 0, 'I key prevVout')
+    assert.strictEqual(I.subarray(37, 69).compare(T1_FULL), 0, 'I val spenderTxid')
 
     // J has the one matching input-hint: J[T1, T0, 0]
     const J = fs.readFileSync(path.join(outDir, 'J.dat'))
     assert.strictEqual(J[0], 0x4A)
-    assert.strictEqual(J.subarray(1, 9)  .compare(T1_8), 0, 'J key spenderTxHash8')
-    assert.strictEqual(J.subarray(9, 17) .compare(T0_8), 0, 'J key prevTxHash8')
-    assert.strictEqual(J.readUInt32BE(17),                0, 'J key prevVout')
+    assert.strictEqual(J.subarray(1, 33) .compare(T1_FULL), 0, 'J key spenderTxid')
+    assert.strictEqual(J.subarray(33, 65).compare(T0_FULL), 0, 'J key prevTxid')
+    assert.strictEqual(J.readUInt32BE(65),                   0, 'J key prevVout')
 
     // H records for live UTXOs only
     const H = fs.readFileSync(path.join(outDir, 'H.dat'))
-    function hasH(txHash8, vout) {
+    function hasH(txid, vout) {
         const rs = LAYOUT.H.recordSize
         for (let i = 0; i < H.length; i += rs) {
-            if (H.subarray(i + 1, i + 9).compare(txHash8) !== 0) continue
-            if (H.readUInt32BE(i + 9) !== vout) continue
+            if (H.subarray(i + 1, i + 33).compare(txid) !== 0) continue
+            if (H.readUInt32BE(i + 33) !== vout) continue
             return i
         }
         return -1
     }
-    assert.strictEqual(hasH(T0_8, 0), -1, 'H must NOT contain the spent output T0:0')
-    assert.ok(hasH(T0_8, 1) >= 0, 'H must contain T0:1')
-    assert.ok(hasH(T1_8, 0) >= 0, 'H must contain T1:0')
+    assert.strictEqual(hasH(T0_FULL, 0), -1, 'H must NOT contain the spent output T0:0')
+    assert.ok(hasH(T0_FULL, 1) >= 0, 'H must contain T0:1')
+    assert.ok(hasH(T1_FULL, 0) >= 0, 'H must contain T1:0')
     {
-        const off = hasH(T0_8, 1)
-        assert.strictEqual(H.subarray(off + 13, off + 45).compare(SCRIPT_Y), 0, 'H[T0:1] scriptY')
+        const off = hasH(T0_FULL, 1)
+        assert.strictEqual(H.subarray(off + 37, off + 69).compare(SCRIPT_Y), 0, 'H[T0:1] scriptY')
     }
 
     // O records for live UTXOs with expected values
     const O = fs.readFileSync(path.join(outDir, 'O.dat'))
-    function findO(script, txHash8, vout) {
+    function findO(script, txid, vout) {
         const rs = LAYOUT.O.recordSize
         for (let i = 0; i < O.length; i += rs) {
-            if (O.subarray(i + 1,  i + 33).compare(script)  !== 0) continue
-            if (O.subarray(i + 33, i + 41).compare(txHash8) !== 0) continue
-            if (O.readUInt32BE(i + 41) !== vout) continue
+            if (O.subarray(i + 1,  i + 33).compare(script) !== 0) continue
+            if (O.subarray(i + 33, i + 65).compare(txid)   !== 0) continue
+            if (O.readUInt32BE(i + 65) !== vout) continue
             return i
         }
         return -1
     }
     {
-        const off = findO(SCRIPT_Y, T0_8, 1)
+        const off = findO(SCRIPT_Y, T0_FULL, 1)
         assert.ok(off >= 0)
-        assert.strictEqual(O.readBigUInt64BE(off + 45), 200n, 'O[Y,T0,1] value')
-        assert.strictEqual(O.readInt32BE(off + 53),     0,    'O[Y,T0,1] height')
-        assert.strictEqual(O.subarray(off + 57, off + 89).compare(T0_FULL), 0, 'O[Y,T0,1] fullTx')
+        assert.strictEqual(O.readBigUInt64BE(off + 69), 200n, 'O[Y,T0,1] value')
+        assert.strictEqual(O.readInt32BE(off + 77),     0,    'O[Y,T0,1] height')
+        assert.strictEqual(O.subarray(off + 81, off + 113).compare(T0_FULL), 0, 'O[Y,T0,1] fullTx')
     }
     {
-        const off = findO(SCRIPT_Z, T1_8, 0)
+        const off = findO(SCRIPT_Z, T1_FULL, 0)
         assert.ok(off >= 0)
-        assert.strictEqual(O.readBigUInt64BE(off + 45), 100n)
-        assert.strictEqual(O.readInt32BE(off + 53),     1)
+        assert.strictEqual(O.readBigUInt64BE(off + 69), 100n)
+        assert.strictEqual(O.readInt32BE(off + 77),     1)
     }
-    assert.strictEqual(findO(SCRIPT_X, T0_8, 0), -1, 'O must NOT contain spent X')
+    assert.strictEqual(findO(SCRIPT_X, T0_FULL, 0), -1, 'O must NOT contain spent X')
 
     // T records
     // ── T records ──
     const T = fs.readFileSync(path.join(outDir, 'T.dat'))
-    function findT(txHash8) {
+    function findT(txid) {
         const rs = LAYOUT.T.recordSize
         for (let i = 0; i < T.length; i += rs) {
-            if (T.subarray(i + 1, i + 9).compare(txHash8) === 0) return i
+            if (T.subarray(i + 1, i + 33).compare(txid) === 0) return i
         }
         return -1
     }
     {
-        const off = findT(T0_8)
+        const off = findT(T0_FULL)
         assert.ok(off >= 0)
-        assert.strictEqual(T.subarray(off + 9, off + 41).compare(H0), 0, 'T[T0] blockHash=H0')
+        assert.strictEqual(T.subarray(off + 33, off + 65).compare(H0), 0, 'T[T0] blockHash=H0')
     }
     {
-        const off = findT(T1_8)
-        assert.strictEqual(T.subarray(off + 9, off + 41).compare(H1), 0, 'T[T1] blockHash=H1')
+        const off = findT(T1_FULL)
+        assert.strictEqual(T.subarray(off + 33, off + 65).compare(H1), 0, 'T[T1] blockHash=H1')
     }
 
     // N window has both blocks

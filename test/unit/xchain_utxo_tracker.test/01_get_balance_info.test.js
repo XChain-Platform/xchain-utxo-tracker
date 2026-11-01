@@ -60,13 +60,13 @@ describe('XChainUtxoTracker', function () {
       const script = bitcoin.address.toOutputScript(address, tracker.network);
       const scriptHash = createHash('sha256').update(script).digest('hex');
 
-      const txHash8 = randHash8();
+      const txidHex = randHash();
       const fullTxHash = randHash();
 
       // Insert a confirmed output
       await db.insertOutput({
         scriptPubKey: scriptHash,
-        txHash: txHash8,
+        txHash: txidHex,
         outputIndex: 0,
         value: BigInt('200000000'), // 2 BTC
         height: 500,
@@ -96,16 +96,16 @@ describe('XChainUtxoTracker', function () {
       const script = bitcoin.address.toOutputScript(address, tracker.network);
       const scriptHash = createHash('sha256').update(script).digest('hex');
 
-      const txHash8 = randHash8();
-      // A valid full txid whose first 8 bytes match the O-record key prefix, so
-      // the mempool-spend lookup (which keys on the 8-byte prefix) still matches.
-      // A pre-migration record without fullTxHash is now rejected by the
-      // fail-loud guard, so a migrated record is required to exercise this path.
-      const fullTxHash = txHash8 + '0'.repeat(48);
+      const txidHex = randHash();
+      // The O key and the O value carry the same full txid, as on the live path,
+      // so the mempool-spend lookup (keyed on the full prev txid) matches it.
+      // A value without fullTxHash would fall back to the key's txid; storing it
+      // keeps this case on the ordinary path.
+      const fullTxHash = txidHex;
 
       await db.insertOutput({
         scriptPubKey: scriptHash,
-        txHash: txHash8,
+        txHash: txidHex,
         outputIndex: 0,
         value: BigInt('100000000'), // 1 BTC
         height: 400,
@@ -113,11 +113,11 @@ describe('XChainUtxoTracker', function () {
       });
       await db.endTransaction(true);
 
-      // Insert mempool input spending it; insertInput keys on the 8-byte prefix
+      // Insert mempool input spending it; insertInput keys on the full prev txid
       await mempoolDb.insertInput({
         prevTxHash: fullTxHash,
         prevOutputIndex: 0,
-        txHash: randHash8()
+        txHash: randHash()
       });
       await mempoolDb.endTransaction(true);
 
@@ -143,7 +143,7 @@ describe('XChainUtxoTracker', function () {
       // Insert mempool output only
       await mempoolDb.insertOutput({
         scriptPubKey: scriptHash,
-        txHash: randHash8(),
+        txHash: randHash(),
         outputIndex: 0,
         value: BigInt('50000000'), // 0.5 BTC
         height: -1,

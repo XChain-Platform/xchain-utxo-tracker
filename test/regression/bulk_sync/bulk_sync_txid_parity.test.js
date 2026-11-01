@@ -35,7 +35,7 @@ function realTx() {
 function bulkTxids(tx) {
     const seen = new Set();
     const writers = {
-        outputs: { append(txHash8, vout, value, height, fullTxHash) { seen.add(Buffer.from(fullTxHash).toString('hex')); } },
+        outputs: { append(txid) { seen.add(Buffer.from(txid).toString('hex')); } },
         spends: { append() {} },
         meta: { writeBlock() {} },
     };

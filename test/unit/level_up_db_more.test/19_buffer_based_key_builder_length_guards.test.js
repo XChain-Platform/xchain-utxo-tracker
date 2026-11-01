@@ -37,36 +37,40 @@ describe('LevelUpDb (extended coverage)', function () {
         // their hex counterparts enforce (kOutput/kOutDel).
 
         it('kOutputFromBuf throws on a short scriptPubKey buffer', () => {
-            expect(() => LevelUpStore.kOutputFromBuf(crypto.randomBytes(31), randHash8(), 0))
+            expect(() => LevelUpStore.kOutputFromBuf(crypto.randomBytes(31), randHash(), 0))
                 .to.throw(/32-byte scriptPubKey buffer/);
         });
 
-        it('kOutputFromBuf throws on a wrong-length txHash8Hex', () => {
+        it('kOutputFromBuf throws on a wrong-length txid', () => {
             expect(() => LevelUpStore.kOutputFromBuf(randBuf32(), 'ab', 0))
-                .to.throw(/16-hex \(8-byte\) txid prefix/);
+                .to.throw(/64-hex \(32-byte\) txid/);
+            expect(() => LevelUpStore.kOutputFromBuf(randBuf32(), randHash8(), 0))
+                .to.throw(/64-hex \(32-byte\) txid/);
         });
 
         it('kOutputFromBuf succeeds with correctly-sized inputs', () => {
-            expect(() => LevelUpStore.kOutputFromBuf(randBuf32(), randHash8(), 0)).to.not.throw();
+            expect(() => LevelUpStore.kOutputFromBuf(randBuf32(), randHash(), 0)).to.not.throw();
         });
 
         it('kOutDelFromBuf throws on a short blockHashHex', () => {
-            expect(() => LevelUpStore.kOutDelFromBuf('ab', randBuf32(), randHash8(), 0))
+            expect(() => LevelUpStore.kOutDelFromBuf('ab', randBuf32(), randHash(), 0))
                 .to.throw(/64-hex \(32-byte\) blockHash/);
         });
 
         it('kOutDelFromBuf throws on a short scriptPubKey buffer', () => {
-            expect(() => LevelUpStore.kOutDelFromBuf(randHash(), crypto.randomBytes(10), randHash8(), 0))
+            expect(() => LevelUpStore.kOutDelFromBuf(randHash(), crypto.randomBytes(10), randHash(), 0))
                 .to.throw(/32-byte scriptPubKey buffer/);
         });
 
-        it('kOutDelFromBuf throws on a wrong-length txHash8Hex', () => {
+        it('kOutDelFromBuf throws on a wrong-length txid', () => {
             expect(() => LevelUpStore.kOutDelFromBuf(randHash(), randBuf32(), 'ab', 0))
-                .to.throw(/16-hex \(8-byte\) txid prefix/);
+                .to.throw(/64-hex \(32-byte\) txid/);
+            expect(() => LevelUpStore.kOutDelFromBuf(randHash(), randBuf32(), randHash8(), 0))
+                .to.throw(/64-hex \(32-byte\) txid/);
         });
 
         it('kOutDelFromBuf succeeds with correctly-sized inputs', () => {
-            expect(() => LevelUpStore.kOutDelFromBuf(randHash(), randBuf32(), randHash8(), 0)).to.not.throw();
+            expect(() => LevelUpStore.kOutDelFromBuf(randHash(), randBuf32(), randHash(), 0)).to.not.throw();
         });
     });
 

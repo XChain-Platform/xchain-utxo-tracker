@@ -17,9 +17,8 @@ const { h2b, pb, rangeEnd, toMapKey } = require('./key_codec')
 
 module.exports = {
     async deleteOutputsByHint(txid){
-        const txHash8Hex = txid.substring(0, 16)
-        const txHash8Buf = h2b(txHash8Hex)
-        const prefix     = Buffer.concat([pb(P_OUT_HINT), txHash8Buf])
+        const txidBuf = h2b(txid)
+        const prefix  = Buffer.concat([pb(P_OUT_HINT), txidBuf])
 
         const options = {
             gte: prefix,
@@ -31,11 +30,11 @@ module.exports = {
         let outputsCount = 0
 
         for await (const [key, value] of this.db.iterator(options)) {
-            // H key layout: [H(1)][txHash8(8)][outputIndex(4)]
-            const idxPart = key.slice(9, 13)   // 4-byte output index
+            // H key layout: [H(1)][txid(32)][outputIndex(4)]
+            const idxPart = key.slice(33, 37)  // 4-byte output index
             const scriptPubKeyBuf = value       // 32-byte Buffer
 
-            const oKey = Buffer.concat([pb(P_OUTPUT), scriptPubKeyBuf, txHash8Buf, idxPart])
+            const oKey = Buffer.concat([pb(P_OUTPUT), scriptPubKeyBuf, txidBuf, idxPart])
             await this.addTransaction("del", oKey, null)
             await this.addTransaction("del", key, null)
             outputsCount++
@@ -124,16 +123,16 @@ module.exports = {
         }
 
         for await (const [key, value] of this.db.iterator(options)) {
-            // W key:   [W(1)][blockHash(32)][txHash8(8)][outputIndex(4)]
+            // W key:   [W(1)][blockHash(32)][txid(32)][outputIndex(4)]
             // W value: [scriptPubKey(32)]
-            const txHash8Buf = key.slice(33, 41)
-            const idxBytes   = key.slice(41, 45)
-            const scriptBuf  = value
+            const txidBuf   = key.slice(33, 65)
+            const idxBytes  = key.slice(65, 69)
+            const scriptBuf = value
 
-            // O key: [O(1)][scriptPubKey(32)][txHash8(8)][outputIndex(4)]
-            const oKey = Buffer.concat([pb(P_OUTPUT), scriptBuf, txHash8Buf, idxBytes])
-            // H key: [H(1)][txHash8(8)][outputIndex(4)]
-            const hKey = Buffer.concat([pb(P_OUT_HINT), txHash8Buf, idxBytes])
+            // O key: [O(1)][scriptPubKey(32)][txid(32)][outputIndex(4)]
+            const oKey = Buffer.concat([pb(P_OUTPUT), scriptBuf, txidBuf, idxBytes])
+            // H key: [H(1)][txid(32)][outputIndex(4)]
+            const hKey = Buffer.concat([pb(P_OUT_HINT), txidBuf, idxBytes])
 
             await this.addTransaction("del", oKey)
             await this.addTransaction("del", hKey)
