@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-01
+
+### Changed
+- Tracker store layout 2 keys streams by full transaction IDs and refuses layout-1 stores at startup, so operators rebuild older stores.
+- Updated the Node base image to the pinned Node 22 patch.
+
+### Fixed
+- The tracker now waits for a falling or refused node tip to settle instead of walking back valid blocks.
+- Address queries, mempool refresh and block apply handle reorgs and node reads more safely.
+- Startup now checks archive identity before serving, and API error handling and restore validation are stricter.
+
 ## [0.26.2] - 2026-10-21
 
 ### Changed
