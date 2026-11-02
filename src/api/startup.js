@@ -52,7 +52,15 @@ function parsePageOpts(query, maxPageLimit){
         }
         opts.limit = Math.min(n, maxPageLimit)
     }
-    if (query && query.after != null && query.after !== '') opts.after = String(query.after)
+    if (query && query.after != null && query.after !== '') {
+        // A cursor only means something on a paged read; without a limit it would be dropped and the full set returned
+        if (opts.limit === undefined) {
+            const e = new Error('after requires limit')
+            e.code = 'BAD_REQUEST'
+            throw e
+        }
+        opts.after = String(query.after)
+    }
     return opts
 }
 
@@ -397,4 +405,4 @@ async function startApi(config){
     listen(app, tracker, trackerExited, config)
 }
 
-module.exports = { createApp, startApi, resolveRateLimitRpm, resolveTrustProxyHops, installBaseMiddleware }
+module.exports = { parsePageOpts, createApp, startApi, resolveRateLimitRpm, resolveTrustProxyHops, installBaseMiddleware }
