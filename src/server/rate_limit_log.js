@@ -34,7 +34,9 @@
 
 'use strict'
 
-function limitedHandler({ service, name, envVar, limit, windowMs, message, log = console.warn, now = Date.now }) {
+const { getLogger } = require('../observability')
+
+function limitedHandler({ service, name, envVar, limit, windowMs, message, log = (line) => getLogger().warn(line), now = Date.now }) {
     const windowSeconds = Math.round(windowMs / 1000)
     let count = 0
     let lastLogAt = null
