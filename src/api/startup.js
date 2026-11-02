@@ -10,6 +10,7 @@ const { installUtxoTrackerMetrics } = require('../server/utxo_tracker_metrics')
 const { createShutdown, createTrackerDrain } = require('../server/shutdown.js')
 const concurrencyGate = require('../server/concurrency_gate.js')
 const { parseCorsOrigin } = require('../server/cors_origin.js')
+const { limitedHandler } = require('../server/rate_limit_log.js')
 const { intKnob } = require('../config/env_int')
 const memoryBudget = require('../store/memory_budget')
 const { nodeReachabilityFields, isNodeRpcStale } = require('./sync_status.js')
@@ -173,15 +174,28 @@ function installBaseMiddleware(app, config) {
     // port could otherwise drive unbounded backing-DB work. Mirrors the per-IP
     // limiter every peer service front-loads (explorer/hub/decoder/encoder);
     // override the 500 rpm default with UTXO_TRACKER_RATE_LIMIT_RPM.
+    const rateLimitWindowMs = 60 * 1000
+    const rateLimitRpm = resolveRateLimitRpm(config.UTXO_TRACKER_RATE_LIMIT_RPM)
     app.use(rateLimit({
-        windowMs: 60 * 1000,
-        limit: resolveRateLimitRpm(config.UTXO_TRACKER_RATE_LIMIT_RPM),
+        windowMs: rateLimitWindowMs,
+        limit: rateLimitRpm,
         standardHeaders: true,
         legacyHeaders: false,
         // With no trusted hop, an X-Forwarded-For header is caller noise that is
         // ignored; skip the library's once-per-process warning about it.
         validate: { xForwardedForHeader: trustProxyHops > 0 },
-        message: { error: 'Too many requests', code: 'RATE_LIMITED' }
+        // A bare `message` option sends the 429 and logs nothing, so a caller
+        // the limiter starves leaves no trace here; the handler sends the same
+        // body and logs a refusal count once per window.
+        handler: limitedHandler({
+            service: 'UTXO tracker',
+            name: 'per-IP',
+            envVar: 'UTXO_TRACKER_RATE_LIMIT_RPM',
+            limit: rateLimitRpm,
+            windowMs: rateLimitWindowMs,
+            message: { error: 'Too many requests', code: 'RATE_LIMITED' },
+            log: (line) => logger.warn(line)
+        })
     }))
 }
 
