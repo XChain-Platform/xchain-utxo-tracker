@@ -346,6 +346,9 @@ function createJsonRpcController(context) {
     Object.defineProperty(instance, 'bootstrapGuard', { value: { busy: false } })
     for (const [name, method] of Object.entries(jsonRpcController)) {
         instance[name] = async (...args) => {
+            // params:null is a caller mistake like absent params, which the router defaults to {}.
+            // Without this the handlers destructure null and a TypeError leaves as -32603.
+            if (args[0] === null) args[0] = {}
             try { return await method.apply(instance, args) } catch (err) { throw toJsonRpcError(err) }
         }
     }
@@ -392,4 +395,4 @@ function registerRoutes(context){
         : jsonRpcController
     app.use(requestGate.hold(jsonRouter({methods: requestGate.trackMethods(methods)})))
 }
-module.exports = { registerRoutes }
+module.exports = { registerRoutes, createJsonRpcController }
