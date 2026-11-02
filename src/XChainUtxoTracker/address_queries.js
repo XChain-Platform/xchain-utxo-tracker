@@ -42,10 +42,23 @@ function addressToScript(address, network){
     throw Object.assign(new Error(reason), { code: 'BAD_REQUEST' })
 }
 
+// Pay-to-anchor (P2A): witness v1, 2-byte program 4e73, script 51024e73. Core
+// names it with a bech32m address but bitcoinjs-lib maps v1 only at 32 bytes.
+// Only that exact program on the network prefix is accepted (checksum verified).
+function decodePayToAnchor(address, network){
+    if (!network || typeof network.bech32 !== "string") return null
+    let d
+    try { d = bitcoin.address.fromBech32(address) } catch (_) { return null }
+    if (d.prefix !== network.bech32 || d.version !== 1 || d.data.toString("hex") !== "4e73") return null
+    return Buffer.from("51024e73", "hex")
+}
+
 function decodeAddressScript(address, network){
     try {
         return bitcoin.address.toOutputScript(address, network)
     } catch (err) {
+        const anchor = decodePayToAnchor(address, network)
+        if (anchor) return anchor
         if (!network || !LTC_TEST_BECH32.has(network.bech32)) throw err
         let decoded
         try { decoded = bitcoin.address.fromBase58Check(address) } catch (_) { throw err }
