@@ -43,8 +43,9 @@ async function getInfo(tracker, address){
 function parsePageOpts(query, maxPageLimit){
     const opts = {}
     if (query && query.limit != null && query.limit !== '') {
-        const n = Number(query.limit)
-        if (!Number.isInteger(n) || n <= 0) {
+        // Only a number or a plain digit string is a page size (Number() reads true as 1, [7] as 7)
+        const n = typeof query.limit === 'number' ? query.limit : (typeof query.limit === 'string' && /^[0-9]+$/.test(query.limit) ? Number(query.limit) : NaN)
+        if (!Number.isSafeInteger(n) || n <= 0) {
             const e = new Error('limit must be a positive integer')
             e.code = 'BAD_REQUEST'
             throw e
