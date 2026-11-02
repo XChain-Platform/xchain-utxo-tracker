@@ -169,7 +169,11 @@ async function pruneMempoolStore(rawMempool, counts, mayDelete){
         // Commit as the store-commit lock's writer so no address read sees half of it.
         await withStoreCommit(this, async () => {
             await this.mempoolDb.endTransaction()
-            this.mempoolEpoch++
+            // The epoch is a freshness token pagers compare between pages, so it moves
+            // only when the prune removed rows. An idle 60 s pass deletes nothing; bumping
+            // here made every long paged walk restart although nothing it reads changed.
+            // New txs bump it when their batch commits.
+            if (deletedInfo.transactionsDeleted || deletedInfo.inputsDeleted || deletedInfo.outputsDeleted) this.mempoolEpoch++
             if (rawMempool.length) this.mempoolReconverged = false
         })
         // rawMempool now holds only the txs the store still lacks, so the

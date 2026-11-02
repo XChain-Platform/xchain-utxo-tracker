@@ -111,7 +111,8 @@ describe('updateMempool transaction scope (write transaction must not span the f
     // commit at the very end.
     const committingCalls = commitSpy.getCalls().filter((c) => c.args[0] !== false);
     expect(committingCalls.length).to.be.greaterThan(2);
-    expect(tracker.mempoolEpoch - epochBefore).to.equal(committingCalls.length);
+    // The prune deleted nothing, so only the batch commits move the epoch.
+    expect(tracker.mempoolEpoch - epochBefore).to.equal(committingCalls.length - 1);
 
     // The pass reconverged and the busy flag was released.
     expect(tracker.mempoolReconverged).to.equal(true);
@@ -253,5 +254,35 @@ describe("updateMempool readiness during a multi-batch pass", function () {
       expect(s.published, "published mempool_ready during " + s.label).to.equal(false);
     }
     expect(tracker.mempoolReconverged, "asserted after the last batch").to.equal(true);
+  });
+});
+
+// Pagers compare mempool_epoch between pages, so an idle 60 s pass must not move it.
+describe("updateMempool epoch on idle and changing passes", function () {
+
+  beforeEach(async function () {
+    await setUpMempoolFixture("epoch", true);
+  });
+
+  afterEach(closeMempoolFixture);
+
+  it("leaves the epoch unchanged across empty-mempool passes", async function () {
+    sinon.stub(tracker.connector, "getRawMempool").resolves([]);
+    sinon.stub(tracker, "sleep").resolves();
+    const epochBefore = tracker.mempoolEpoch;
+    for (let pass = 0; pass < 3; pass++) {
+      await tracker.updateMempool();
+      expect(tracker.mempoolEpoch, "epoch after idle pass " + pass).to.equal(epochBefore);
+    }
+    expect(tracker.mempoolReconverged).to.equal(true);
+  });
+
+  it("moves the epoch when the prune removes transactions", async function () {
+    sinon.stub(tracker.connector, "getRawMempool").resolves([]);
+    sinon.stub(tracker, "sleep").resolves();
+    sinon.stub(mempoolDb, "deleteAndCompareTxsNotInList").resolves({ transactionsDeleted: 1, inputsDeleted: 1, outputsDeleted: 2 });
+    const epochBefore = tracker.mempoolEpoch;
+    await tracker.updateMempool();
+    expect(tracker.mempoolEpoch).to.equal(epochBefore + 1);
   });
 });
