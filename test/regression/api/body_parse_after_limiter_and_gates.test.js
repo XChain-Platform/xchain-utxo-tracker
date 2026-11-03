@@ -54,6 +54,9 @@ describe('tracker body parsing runs behind the limiter and gates', function () {
         expect(res[LIMIT].status).to.equal(429);
     });
 
+});
+
+describe('tracker body parsing runs behind the limiter and gates', function () {
     it('sheds a malformed-body POST with SERVER_BUSY while the concurrency cap is held', async function () {
         const tracker = createMockTracker(sinon);
         let release;
