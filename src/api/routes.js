@@ -358,8 +358,7 @@ function createJsonRpcController(context) {
 // address, limit or cursor) would leave as a null code and an uncoded one as
 // -32603. Re-throw it as -32602 (invalid params) with the string code in
 // data.code, as the store's coded errors carry it; real faults pass unchanged.
-// ADDRESS_TOO_LARGE is the caller omitting limit/after on an address past the
-// output ceiling, so it is invalid params too (REST answers it 413).
+// ADDRESS_TOO_LARGE (limit/after omitted past the output ceiling, REST 413) is one too.
 const CALLER_MISTAKE_CODES = new Set(['BAD_REQUEST', 'INVALID_CURSOR', 'ADDRESS_TOO_LARGE'])
 function toJsonRpcError(err){
     if (!err || !CALLER_MISTAKE_CODES.has(err.code)) return err
