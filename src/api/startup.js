@@ -156,8 +156,7 @@ function installBaseMiddleware(app, config) {
     config.installUnmatchedRouteLabel(app)
     // Use Helmet to increase security
     app.use(helmet())
-    // Allow JSON requests
-    app.use(express.json())
+    // The JSON body parser is NOT installed here: see createApp.
     // CORS disabled by default. CORS_ORIGIN is a comma-separated ALLOWLIST, not a
     // single origin: handing `cors` the raw string makes it echo that string
     // verbatim to every caller, a multi-value header no browser accepts, so every
@@ -363,6 +362,9 @@ function createApp(config){
     appTrackers.set(app, tracker)
     installBaseMiddleware(app, config)
     const { probeGate, requestGate } = installConcurrencyGates(app, config)
+    // After the limiter and gates: a bad (400) or oversize (413) body errors inside
+    // express.json and skips every middleware wired later, so parse behind them.
+    app.use(express.json())
     installMetrics(app, tracker, config, { request: requestGate, probe: probeGate })
     installAdminGuard(app, config)
     const routeContext = Object.freeze({
