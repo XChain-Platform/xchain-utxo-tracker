@@ -67,7 +67,20 @@ function decodeAddressScript(address, network){
     }
 }
 
+// The 0x3a P2SH form on an LTC test network rewritten to its 0xc4 twin; any other
+// address is returned unchanged. Lets type classification share decodeAddressScript's rule.
+function canonicalP2shAddress(address, network){
+    if (typeof address !== 'string' || !network || !LTC_TEST_BECH32.has(network.bech32)) return address
+    try {
+        const decoded = bitcoin.address.fromBase58Check(address)
+        if (decoded.version !== LTC_P2SH_V2_VERSION || decoded.hash.length !== 20) return address
+        return bitcoin.address.toBase58Check(decoded.hash, network.scriptHash)
+    } catch (_) { return address }
+}
+
 module.exports = {
+    canonicalP2shAddress,
+
     // Both store snapshots are taken under the store-commit lock (store_commit_lock.js).
     async getBalanceInfo(address){
         return withStoreRead(this, () => readBalanceInfo.call(this, address))

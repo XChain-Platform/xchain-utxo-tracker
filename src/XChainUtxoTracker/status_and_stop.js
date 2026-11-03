@@ -126,6 +126,7 @@ module.exports = {
     },
 
     getAddressType(address, network) {
+        address = this.canonicalP2shAddress(address, network)
         try {
             bitcoin.payments.p2pkh({ address, network })
             return 'p2pkh'
