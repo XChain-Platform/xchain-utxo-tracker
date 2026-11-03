@@ -21,11 +21,15 @@
  * and picks the status/body before calling a custom `handler`, so `message`
  * moves here and the handler sends it itself. A line per refusal would
  * flood the log under real abuse, so this logs once at the first refusal
- * of a window and again at the first refusal after a full windowMs has
- * elapsed since that line, carrying how many refusals happened since. The
- * count only advances on an actual refusal (no timer/interval), so an idle
- * limiter never holds the process open. With no timer the span a line covers
- * has no upper bound, so each line states the seconds since the previous one.
+ * of a burst, then once per windowMs while refusals keep coming, each line
+ * carrying how many refusals happened since the previous one.
+ *
+ * Refusals after a line are flushed by a one-shot timer at the end of that
+ * line's window. Without it the last refusals of a burst were never logged,
+ * and the next refusal, maybe hours later, folded them into a line spanning
+ * the whole gap. The timer is armed only while refusals are pending and is
+ * unref()'d, so an idle limiter never holds the process open. A refusal that
+ * starts a new burst (nothing pending, window over) logs as a fresh window.
  *
  * Same shape as the encoder's src/server/rate_limit_log.js, so the refusal
  * lines read alike across services.
@@ -36,23 +40,48 @@
 
 const { getLogger } = require('../observability')
 
-function limitedHandler({ service, name, envVar, limit, windowMs, message, log = (line) => getLogger().warn(line), now = Date.now }) {
+function limitedHandler({ service, name, envVar, limit, windowMs, message, log = (line) => getLogger().warn(line), now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
     const windowSeconds = Math.round(windowMs / 1000)
     let count = 0
     let lastLogAt = null
+    let timer = null
+
+    function writeLine(n, spanSeconds, ts) {
+        log(`${service} rate limit [${name}]: ${n} request${n === 1 ? '' : 's'} refused in the last ${spanSeconds} s (limit ${limit}/${windowSeconds} s); raise ${envVar} if this is legitimate traffic`)
+        count = 0
+        lastLogAt = ts
+    }
+
+    // End of a line's window: report what was refused since that line, so
+    // the refusals of a burst's tail are logged even if no refusal follows.
+    function flushPending() {
+        timer = null
+        if (count === 0) return
+        const ts = now()
+        writeLine(count, Math.round((ts - lastLogAt) / 1000), ts)
+    }
 
     return function (req, res, next, options) {
         res.status(429).json(message)
 
+        const pendingBefore = count
         count++
         const ts = now()
         const dueForLog = lastLogAt === null || (ts - lastLogAt >= windowMs)
         if (dueForLog) {
-            const n = count
-            const spanSeconds = lastLogAt === null ? windowSeconds : Math.round((ts - lastLogAt) / 1000)
-            log(`${service} rate limit [${name}]: ${n} request${n === 1 ? '' : 's'} refused in the last ${spanSeconds} s (limit ${limit}/${windowSeconds} s); raise ${envVar} if this is legitimate traffic`)
-            count = 0
-            lastLogAt = ts
+            if (timer !== null) {
+                clearTimer(timer)
+                timer = null
+            }
+            // Nothing pending means the flush already covered the previous
+            // window, so this refusal opens a new one rather than spanning
+            // the idle gap. Pending refusals here mean the flush has not run
+            // yet, so the line covers the real span since the last line.
+            const spanSeconds = (lastLogAt === null || pendingBefore === 0) ? windowSeconds : Math.round((ts - lastLogAt) / 1000)
+            writeLine(count, spanSeconds, ts)
+        } else if (timer === null) {
+            timer = setTimer(flushPending, Math.max(1, lastLogAt + windowMs - ts))
+            if (timer && typeof timer.unref === 'function') timer.unref()
         }
     }
 }
