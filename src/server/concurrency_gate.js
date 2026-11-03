@@ -225,4 +225,32 @@ function createConcurrencyGate(options){
     return middleware;
 }
 
-module.exports = { createConcurrencyGate, resolveLimit };
+/**
+ * Split a body parser around the gates: read the body ahead of them, raise its error behind them.
+ *
+ * A gate counts a request from its headers until its response, and Node keeps
+ * a slow upload open for its full requestTimeout (300 s by default). A body
+ * parsed behind the gates therefore holds a slot for the whole upload, and one
+ * client dripping bytes on a few sockets fills the cap (or the probe reserve)
+ * and sheds every other caller. Mount `parse` before the gates so an upload
+ * holds only its own socket.
+ *
+ * A parse failure (bad JSON, oversize body) is parked on the request instead of
+ * skipping the gates, and `raise`, mounted right after them, passes it on, so
+ * such a request is still counted and shed like any other before it is answered.
+ *
+ * @param {function} parser Body-parser middleware, such as express.json().
+ * @returns {{parse: function, raise: function}} The two halves, mounted around the gates.
+ */
+function splitBodyParser(parser){
+    const PARSE_ERROR = Symbol('bodyParseError');
+    return {
+        parse: (req, res, next) => parser(req, res, (err) => {
+            if(err) req[PARSE_ERROR] = err;
+            next();
+        }),
+        raise: (req, res, next) => next(req[PARSE_ERROR])
+    };
+}
+
+module.exports = { createConcurrencyGate, resolveLimit, splitBodyParser };

@@ -361,10 +361,11 @@ function createApp(config){
     const app = express()
     appTrackers.set(app, tracker)
     installBaseMiddleware(app, config)
+    // Parse ahead of the gates, raise parse errors behind them: see splitBodyParser.
+    const bodyParse = concurrencyGate.splitBodyParser(express.json())
+    app.use(bodyParse.parse)
     const { probeGate, requestGate } = installConcurrencyGates(app, config)
-    // After the limiter and gates: a bad (400) or oversize (413) body errors inside
-    // express.json and skips every middleware wired later, so parse behind them.
-    app.use(express.json())
+    app.use(bodyParse.raise)
     installMetrics(app, tracker, config, { request: requestGate, probe: probeGate })
     installAdminGuard(app, config)
     const routeContext = Object.freeze({
