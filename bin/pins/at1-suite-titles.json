@@ -879,6 +879,12 @@
       ".env.example does not drift from the defaults src/api.js resolves @regression finds the envInt knobs it is meant to check",
       ".env.example does not drift from the defaults src/api.js resolves @regression repeats a flat default exactly, and advertises no number for a derived one"
     ],
+    "62ac1aa8d8378ad8": [
+      "tracker body parsing runs behind the limiter and gates counts and eventually refuses malformed-JSON POSTs",
+      "tracker body parsing runs behind the limiter and gates counts and eventually refuses oversize POSTs, with RateLimit headers on the 413",
+      "tracker body parsing runs behind the limiter and gates sheds a malformed-body POST with SERVER_BUSY while the concurrency cap is held",
+      "tracker body parsing runs behind the limiter and gates still parses and routes a well-formed JSON-RPC call"
+    ],
     "62fe22b3afd26cca": [
       "XChainUtxoTracker (more) cleanupAgedBlocks clears pendingKMCleanup and processes each block",
       "XChainUtxoTracker (more) cleanupAgedBlocks is a no-op when pendingKMCleanup is empty"
@@ -1177,6 +1183,15 @@
       "BlockchainConnector getBlocksBatch returns empty array for empty heights",
       "BlockchainConnector getBlocksBatch throws when a block result in batch is null",
       "BlockchainConnector getBlocksBatch throws when a hash in batch is null"
+    ],
+    "7ec0e492e9575308": [
+      "tracker rate-limit refusal logger answers 429 with the RATE_LIMITED body",
+      "tracker rate-limit refusal logger logs the first refusal, stays quiet inside the window, then logs the accumulated count",
+      "tracker rate-limit refusal logger: burst tail flush a refusal long after a flushed burst logs a count of 1 over one window, not the idle gap",
+      "tracker rate-limit refusal logger: burst tail flush logs the refusals of a burst tail when the window ends, with no later refusal",
+      "tracker rate-limit refusal logger: steady refusals arms its flush timer unref()d so an idle limiter never holds the process open",
+      "tracker rate-limit refusal logger: steady refusals sustained refusals log once per window and every refusal is counted",
+      "tracker rate-limit refusal logger: wiring the real base middleware logs a rate limit line when it refuses a caller"
     ],
     "7f51cdc6b00d0861": [
       "config bounded caps resolve through the strict integer reader defaults each cap silently when its knob is unset",
@@ -2265,8 +2280,8 @@
   },
   "scripts": {
     "test": {
-      "fileCount": 152,
-      "titleCount": 1169,
+      "fileCount": 153,
+      "titleCount": 1176,
       "files": {
         "test/unit/XChainUtxoTracker/catch_up_helpers.test.js": "388772108787527a",
         "test/unit/api.test.js": "00c8e85fb76c02d0",
@@ -2379,6 +2394,7 @@
         "test/unit/restore_validation.test.js": "7e4885aae539add4",
         "test/unit/route_label_cardinality.test.js": "32ad84c6671c15f7",
         "test/unit/security/configuration/dependency_advisories.test.js": "0f2abe37f99c5a17",
+        "test/unit/server/rate_limit_log.test.js": "7ec0e492e9575308",
         "test/unit/shutdown.test.js": "43fa949bf3296a96",
         "test/unit/store/level_up_db/store_errors.test.js": "b38756e6cf747d2d",
         "test/unit/store_lifecycle.test/01_leveldb_file_limits_wiring.test.js": "7552abc5a1c6538e",
@@ -2423,8 +2439,8 @@
       }
     },
     "test:all": {
-      "fileCount": 214,
-      "titleCount": 1618,
+      "fileCount": 216,
+      "titleCount": 1630,
       "files": {
         "test/boundary/confirmations.test.js": "1435998dbed674e5",
         "test/boundary/key_range_scan.test.js": "6f265b450aa35233",
@@ -2447,6 +2463,7 @@
         "test/integration/core_indexing.test.js": "463d6c527ac8e468",
         "test/integration/mempool.test.js": "038f09d19d834299",
         "test/integration/reorg.test.js": "fd7902804f05b262",
+        "test/regression/api/body_parse_after_limiter_and_gates.test.js": "62ac1aa8d8378ad8",
         "test/regression/bootstrap/bootstrap_invalid_size_keeps_task.test.js": "dbfd454d56a43e97",
         "test/regression/bootstrap/bootstrap_snapshot_digest_flush.test.js": "bf3e0358e24c0283",
         "test/regression/bootstrap/delete_dir_error_keeps_cause.test.js": "1f86d54db8b00440",
@@ -2599,6 +2616,7 @@
         "test/unit/restore_validation.test.js": "7e4885aae539add4",
         "test/unit/route_label_cardinality.test.js": "32ad84c6671c15f7",
         "test/unit/security/configuration/dependency_advisories.test.js": "0f2abe37f99c5a17",
+        "test/unit/server/rate_limit_log.test.js": "7ec0e492e9575308",
         "test/unit/shutdown.test.js": "43fa949bf3296a96",
         "test/unit/store/level_up_db/store_errors.test.js": "b38756e6cf747d2d",
         "test/unit/store_lifecycle.test/01_leveldb_file_limits_wiring.test.js": "7552abc5a1c6538e",
@@ -2809,9 +2827,10 @@
       "skipped": "not a mocha command (runs node)"
     },
     "test:regression": {
-      "fileCount": 33,
-      "titleCount": 211,
+      "fileCount": 34,
+      "titleCount": 216,
       "files": {
+        "test/regression/api/body_parse_after_limiter_and_gates.test.js": "62ac1aa8d8378ad8",
         "test/regression/bootstrap/bootstrap_invalid_size_keeps_task.test.js": "dbfd454d56a43e97",
         "test/regression/bootstrap/bootstrap_snapshot_digest_flush.test.js": "bf3e0358e24c0283",
         "test/regression/bootstrap/delete_dir_error_keeps_cause.test.js": "1f86d54db8b00440",
@@ -2868,8 +2887,8 @@
       }
     },
     "test:unit:ondisk": {
-      "fileCount": 152,
-      "titleCount": 1169,
+      "fileCount": 153,
+      "titleCount": 1176,
       "files": {
         "test/unit/XChainUtxoTracker/catch_up_helpers.test.js": "388772108787527a",
         "test/unit/api.test.js": "00c8e85fb76c02d0",
@@ -2982,6 +3001,7 @@
         "test/unit/restore_validation.test.js": "7e4885aae539add4",
         "test/unit/route_label_cardinality.test.js": "32ad84c6671c15f7",
         "test/unit/security/configuration/dependency_advisories.test.js": "0f2abe37f99c5a17",
+        "test/unit/server/rate_limit_log.test.js": "7ec0e492e9575308",
         "test/unit/shutdown.test.js": "43fa949bf3296a96",
         "test/unit/store/level_up_db/store_errors.test.js": "b38756e6cf747d2d",
         "test/unit/store_lifecycle.test/01_leveldb_file_limits_wiring.test.js": "7552abc5a1c6538e",
