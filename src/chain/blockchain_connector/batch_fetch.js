@@ -12,7 +12,7 @@
  *
  **********************************************************************/
 
-const { orderBatchResults } = require('./rpc_helpers');
+const { isWholeHex, orderBatchResults } = require('./rpc_helpers');
 const { stripAuxPowFromBlockHex } = require('./auxpow_codec');
 
 async function getBatchHashes(heights) {
@@ -128,6 +128,14 @@ module.exports = {
         return heights.map((h, i) => {
             const headerHex = headers[i]
             let blockHex    = blocks[i]
+
+            if (!isWholeHex(headerHex) || !isWholeHex(blockHex)) {
+                const badMethod = !isWholeHex(headerHex) ? 'getblockheader' : 'getblock'
+                const badValue = badMethod === 'getblockheader' ? headerHex : blockHex
+                const shape = typeof badValue === 'string' ? 'string length ' + badValue.length : typeof badValue
+                throw new Error(badMethod + ' returned malformed block hex for block ' + h +
+                    ' (' + hashes[i] + ') in batch (' + shape + ')')
+            }
 
             try {
                 blockHex = stripAuxPowFromBlockHex(headerHex, blockHex)

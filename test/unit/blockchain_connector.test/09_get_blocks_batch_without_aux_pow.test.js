@@ -55,7 +55,7 @@ function registerBatchAuxPowSuccessTests() {
       ]});
       // call 2: getblock batch
       clientStub.onCall(2).resolves({ data: [
-        { id: 0, result: header0 + 'x'.repeat(40) + body0 },
+        { id: 0, result: header0 + 'c'.repeat(40) + body0 },
         { id: 1, result: header1 + body1 }
       ]});
 

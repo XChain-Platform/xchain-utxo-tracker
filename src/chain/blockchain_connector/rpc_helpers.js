@@ -35,6 +35,12 @@ function sanitizeRpcError(error){
     return (error && error.message) ? error.message : String(error)
 }
 
+// Accept only a non-empty, byte-aligned hex string from block RPCs.
+function isWholeHex(value){
+    return typeof value === 'string' && value.length > 0 && value.length % 2 === 0
+        && /^[0-9a-fA-F]+$/.test(value)
+}
+
 // Reorder a JSON-RPC batch response into an array indexed by request id (0..N-1).
 // The batch handlers below build requests with id:i, so sorting the response by id
 // and then reading the result POSITIONALLY corrects reordering and nothing else: a
@@ -96,4 +102,4 @@ function nodeReachabilityFrom(startedAt, lastNodeOkAt, lastNodeFailAt, now = Dat
     }
 }
 
-module.exports = { sanitizeRpcError, orderBatchResults, nodeReachabilityFrom }
+module.exports = { sanitizeRpcError, isWholeHex, orderBatchResults, nodeReachabilityFrom }

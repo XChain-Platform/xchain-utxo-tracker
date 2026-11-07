@@ -26,8 +26,6 @@ const { createTestApp, createMockTracker } = require('./support/test_app');
 const MAIN_CAP = 3;
 const PROBE_CAP = 2;
 
-function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
-
 // Headers plus the first byte of a 1000-byte JSON body, then nothing more.
 function openStalled(port, requestLine) {
     return new Promise((resolve, reject) => {
@@ -38,6 +36,25 @@ function openStalled(port, requestLine) {
         });
         socket.on('error', () => {});
         socket.once('error', reject);
+    });
+}
+
+async function untilRequestsSeen(ctx, target) {
+    if (ctx.requestsSeen < target) {
+        await new Promise((resolve) => ctx.requestWaiters.push({ target, resolve }));
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+}
+
+function waitForReplyHeaders(socket, getReply) {
+    return new Promise((resolve) => {
+        const finish = () => {
+            if (!getReply().includes('\r\n\r\n')) return;
+            socket.off('data', finish);
+            resolve();
+        };
+        socket.on('data', finish);
+        finish();
     });
 }
 
@@ -69,7 +86,14 @@ async function startServer() {
     });
     const server = app.listen(0, '127.0.0.1');
     await new Promise((resolve) => server.once('listening', resolve));
-    return { server, port: server.address().port, sockets: [] };
+    const ctx = { server, port: server.address().port, sockets: [], requestsSeen: 0, requestWaiters: [] };
+    server.on('request', () => {
+        ctx.requestsSeen++;
+        const ready = ctx.requestWaiters.filter(({ target }) => target <= ctx.requestsSeen);
+        ctx.requestWaiters = ctx.requestWaiters.filter(({ target }) => target > ctx.requestsSeen);
+        for (const waiter of ready) waiter.resolve();
+    });
+    return ctx;
 }
 
 async function stopServer({ server, sockets }) {
@@ -81,7 +105,7 @@ async function stopServer({ server, sockets }) {
 async function mainCapStaysFree(ctx) {
     const { port } = ctx;
     for (let i = 0; i < MAIN_CAP + 2; i++) ctx.sockets.push(await openStalled(port, 'POST / HTTP/1.1'));
-    await sleep(300);
+    await untilRequestsSeen(ctx, MAIN_CAP + 2);
 
     const utxos = await request(port, 'GET', '/utxos/addr');
     expect(utxos.status, 'REST read shed behind stalled uploads').to.equal(200);
@@ -100,7 +124,7 @@ async function mainCapStaysFree(ctx) {
 async function probeReserveStaysFree(ctx) {
     const { port } = ctx;
     for (let i = 0; i < PROBE_CAP + 2; i++) ctx.sockets.push(await openStalled(port, 'GET /status HTTP/1.1'));
-    await sleep(300);
+    await untilRequestsSeen(ctx, PROBE_CAP + 2);
 
     const status = await request(port, 'GET', '/status');
     expect(status.status, 'healthcheck shed behind stalled uploads').to.not.equal(429);
@@ -115,10 +139,10 @@ async function completedBodyIsServed(ctx) {
     ctx.sockets.push(socket);
     let reply = '';
     socket.on('data', (c) => { reply += c.toString('utf8'); });
-    await sleep(100);
+    await untilRequestsSeen(ctx, 1);
     // Finish the 1000-byte body: '{' plus padding plus '}' is a JSON object.
     socket.write(' '.repeat(998) + '}');
-    for (let i = 0; i < 100 && !reply.includes('\r\n\r\n'); i++) await sleep(20);
+    await waitForReplyHeaders(socket, () => reply);
     const statusLine = reply.split('\r\n')[0];
     expect(statusLine).to.match(/^HTTP\/1\.1 \d{3}/);
     expect(statusLine).to.not.match(/ (400|413|429) /);

@@ -14,7 +14,7 @@
 
 const util = require('node:util');
 const { logger } = require('./constants');
-const { sanitizeRpcError } = require('./rpc_helpers');
+const { sanitizeRpcError, isWholeHex } = require('./rpc_helpers');
 const { encodeVarintHex, stripAuxPowFromBlockHex } = require('./auxpow_codec');
 
 module.exports = {
@@ -169,7 +169,7 @@ module.exports = {
         }
     },
 
-    // The two RPC fetches are deliberately OUTSIDE the try, matching the decoder twin
+    // The two RPC fetches and malformed-reply check stay OUTSIDE the try, matching the decoder twin
     // (xchain-decoder/src/chain/blockchain_connector/block_queries.js getBlockWithoutAuxPow). A transport
     // fault (a Dogecoin 1.14 node dropping the connection when its RPC queue fills, a
     // restart, a network blip) must propagate unwrapped with error.code intact, because
@@ -178,8 +178,14 @@ module.exports = {
     // erased that distinction and let ~15s of node unavailability flip the tracker into
     // per-tx block reassembly aimed at the node that was already saturated.
     async getBlockWithoutAuxPow(blockhash) {
-        let blockHeaderHex = await this.getBlockHeader(blockhash, true)
-        let blockHex = await this.getBlock(blockhash, true)
+        const blockHeaderHex = await this.getBlockHeader(blockhash, true)
+        const blockHex = await this.getBlock(blockhash, true)
+        if (!isWholeHex(blockHeaderHex) || !isWholeHex(blockHex)) {
+            const badMethod = !isWholeHex(blockHeaderHex) ? 'getblockheader' : 'getblock'
+            const badValue = badMethod === 'getblockheader' ? blockHeaderHex : blockHex
+            const shape = typeof badValue === 'string' ? 'string length ' + badValue.length : typeof badValue
+            throw new Error(badMethod + ' returned malformed block hex for ' + blockhash + ' (' + shape + ')')
+        }
 
         try {
             // Dogecoin Core 1.14.x getblockheader always returns the pure 80-byte header
