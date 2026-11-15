@@ -17,6 +17,7 @@
  ********************************************************************/
 
 const { logger } = require('./constants.js')
+const { revokeMempoolReadiness } = require('./mempool_readiness.js')
 
 module.exports = {
     // The halted state itself, shared by the live halt and the boot-time resume
@@ -37,7 +38,7 @@ module.exports = {
         // Drop the readiness latches: with the loop gone and the mempool timer
         // stopped, neither claim holds, and get_sync_status already says unsynced.
         this.synced = false
-        this.mempoolReconverged = false
+        revokeMempoolReadiness.call(this)
     },
 
     // Write the R marker so the NEXT process boots straight into the halted state

@@ -67,10 +67,9 @@ function encodeOutput(value, height, fullTxHashHex, isCoinbase = false) {
     buf.writeInt32BE(height != null ? height : -1, 8)
     // A falsy fullTxHashHex leaves bytes 12..44 as the alloc-zeroed 0x00…00,
     // i.e. ZERO_HASH. decodeOutput maps that sentinel back to t: null, which
-    // callers (getUtxosAddress) treat as "no full txid available". All current
-    // insertion paths supply fullTxHash, so a zero hash on read means the record
-    // predates this field; such a LevelDB must be re-indexed before use, since
-    // the 8-byte O-key prefix is not a spendable txid.
+    // callers (getUtxosAddress) treat as "no txid in the value". Their fallback
+    // is the txid in the O key, which is the whole 32-byte txid, so a record
+    // stored without fullTxHash is still spendable.
     if (fullTxHashHex) {
         if (fullTxHashHex.length !== 64) {
             throw new Error(`encodeOutput expects a 64-hex (32-byte) fullTxHash, got ${fullTxHashHex.length} chars`)

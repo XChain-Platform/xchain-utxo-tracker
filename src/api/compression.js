@@ -1,3 +1,14 @@
+/*********************************************************************
+ *
+ * Copyright © 2025-2026 Dankest, LLC
+ * Based on XChain Platform by Dankest, LLC - https://dankest.llc
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * This file is part of XChain Platform. Licensed under the GNU Affero
+ * General Public License v3.0 or later; see LICENSE.md.
+ *
+ **********************************************************************/
 'use strict'
 
 const { spawn } = require('child_process')
@@ -10,6 +21,13 @@ const {
     validateBootstrapArchiveOrThrow,
     assertExtractedStoreOrThrow
 } = require('./errors.js')
+const {
+    STAGING_DIR_NAME,
+    prepareStagingDir,
+    discardStagingDir,
+    assertStagedLayoutOrThrow,
+    promoteStagedStore
+} = require('../bootstrap/staged_restore.js')
 
 const tasks = {}
 const logger = getLogger()
@@ -143,7 +161,7 @@ async function decompressPigz(taskId, source, destination) {
     // it (missing/invalid sidecar, checksum mismatch, wrapper unwrap failure) is a
     // recoverable abort, NOT the post-wipe fail-loud regime. Tag it so the caller's
     // failure handler resumes indexing instead of exiting the process (the /data
-    // store was never touched). Only decompressPigzInner, below, is post-wipe.
+    // store was never touched). Inside decompressPigzInner only the wipe and the move of the staged store are post-wipe.
     let effectiveSource, tmpDir
     try {
         ({ effectiveSource, tmpDir } = await validateBootstrapArchiveOrThrow(source))
@@ -159,12 +177,10 @@ async function decompressPigz(taskId, source, destination) {
     }
 }
 
+// Extracts into a staging directory inside `destination`, checks the store layout
+// there, and only then replaces the live store. Every failure up to and including
+// the layout check is tagged preWipe: the live store has not been touched yet.
 async function decompressPigzInner(taskId, source, destination) {
-    logger.info("Deleting data directory")
-    deleteFilesInDirectorySync(destination)
-    //fs.mkdirSync(destination, { recursive: true })
-    logger.info("Decompressing the data...")
-
     // Read the comment in the GZIP file
     const comment = await getGzipJsonMetadata(source)
     let totalUncompressedBytes = null
@@ -179,9 +195,23 @@ async function decompressPigzInner(taskId, source, destination) {
         logger.warn("WARNING: Couldn't find any metadata in the compressed file. There will be no progress to show.")
     }
 
-    logger.info(`Decompressing from "${source}" to "${destination}"...`)
+    logger.info(`Decompressing from "${source}" into a staging directory under "${destination}"...`)
 
-    return extractArchive(taskId, source, destination, totalUncompressedBytes)
+    try {
+        const staging = prepareStagingDir(destination)
+        await extractArchive(taskId, source, staging, totalUncompressedBytes)
+        await assertStagedLayoutOrThrow(staging)
+    } catch (err) {
+        try { discardStagingDir(destination) } catch (_) {}
+        if (err && typeof err === 'object') err.preWipe = true
+        throw err
+    }
+
+    logger.info("Deleting data directory")
+    deleteFilesInDirectorySync(destination, STAGING_DIR_NAME)
+    promoteStagedStore(destination)
+    logger.info(`Process completed. Dir "${destination}".`)
+    return destination
 }
 
 function trackExtractionProgress(pv, taskId) {
@@ -238,13 +268,12 @@ function extractArchive(taskId, source, destination, totalUncompressedBytes) {
                 // `destination`, never that they landed as a usable store at its root:
                 // extraction preserves the archive's own directories, so a store packed
                 // one level down lands at destination/<dir>/CURRENT and the tracker
-                // reopens onto an empty DB while this path reports success. Assert the
-                // ground truth on disk instead, after the wipe has already happened, so
-                // the restore fails loud through handleRestoreFailure rather than
-                // clearing the halt and relaunching over a database that is not there.
+                // would reopen onto an empty DB. Assert the ground truth on disk; the
+                // destination here is the staging directory, so a failure aborts the
+                // restore with the live store still in place.
                 try { assertExtractedStoreOrThrow(destination) }
                 catch (err) { return reject(err) }
-                logger.info(`Process completed. Dir "${destination}".`);
+                logger.info(`Extraction completed. Dir "${destination}".`);
                 resolve(destination)
             }
         })
@@ -255,11 +284,13 @@ function extractArchive(taskId, source, destination, totalUncompressedBytes) {
     })
 }
 
-function deleteFilesInDirectorySync(directoryPath) {
+// Empties `directoryPath`, leaving the entry named `keep` (a staged store) alone.
+function deleteFilesInDirectorySync(directoryPath, keep = null) {
     try {
         const files = fs.readdirSync(directoryPath, { withFileTypes: true })
 
         for (const file of files) {
+            if (file.name === keep) continue
             const filePath = path.join(directoryPath, file.name)
             if (file.isDirectory()) {
                 fs.rmSync(filePath, { recursive: true })

@@ -123,29 +123,39 @@ describe('XChainUtxoTracker sync loop: node tip parse gate off regtest', functio
         expect(seen.nodeRpcStale).to.equal(true);
         expect(seen.height).to.equal(-1);
     });
+
+    it('ages the usable-tip stamp when replies stop carrying an integer height', async function () {
+        const node = makeNode(buildChain(6));
+        const seen = await runPastStaleWindow(h, node, 'bitcoin-testnet', (n) => {
+            if (n === 1) node.infoReply = () => ({ blocks: '5', verificationprogress: 1 });
+        });
+        expect(seen).to.include({ status: 'stalled', nodeRpcStale: true, synced: false, height: 5 });
+        expect(h.tracker.blockchainInfoLastBlock).to.equal(5);
+        expect(h.tracker.latestKnownChainTip).to.equal(5);
+    });
 });
 
 // The edges the loop matrix cannot reach cheaply, read off the policy itself.
 describe('nodeTipIsParseable', function () {
 
     it('reads the progress estimate on every network but regtest', function () {
-        const decayed = { verificationprogress: DECAYED_PROGRESS, initialblockdownload: false };
+        const decayed = { blocks: 1, verificationprogress: DECAYED_PROGRESS, initialblockdownload: false };
         expect(nodeTipIsParseable(decayed, 'regtest')).to.equal(true);
         for (const net of ['mainnet', 'testnet']) {
             expect(nodeTipIsParseable(decayed, net), net).to.equal(false);
-            expect(nodeTipIsParseable({ verificationprogress: 0.99 }, net), net).to.equal(true);
-            expect(nodeTipIsParseable({ verificationprogress: 0.98999 }, net), net).to.equal(false);
+            expect(nodeTipIsParseable({ blocks: 1, verificationprogress: 0.99 }, net), net).to.equal(true);
+            expect(nodeTipIsParseable({ blocks: 1, verificationprogress: 0.98999 }, net), net).to.equal(false);
         }
     });
 
     it('ignores the progress estimate on regtest however far it has decayed', function () {
-        expect(nodeTipIsParseable({ verificationprogress: 0.0001 }, 'regtest')).to.equal(true);
+        expect(nodeTipIsParseable({ blocks: 1, verificationprogress: 0.0001 }, 'regtest')).to.equal(true);
     });
 
     it('leaves the IBD flag to the tip-below-ours wait on regtest', function () {
         // Reading it HERE would end the pass before reconcileRefreshedTip runs
         // and swallow the catch-up wait, so the gate must not consult it.
-        expect(nodeTipIsParseable({ verificationprogress: 1, initialblockdownload: true }, 'regtest')).to.equal(true);
+        expect(nodeTipIsParseable({ blocks: 1, verificationprogress: 1, initialblockdownload: true }, 'regtest')).to.equal(true);
     });
 
     it('keeps the pre-existing reading of a node that reports no progress field', function () {
@@ -163,10 +173,19 @@ describe('nodeTipIsParseable', function () {
         }
     });
 
+    it('refuses every reply without a valid height on every network', function () {
+        const invalid = [{}, { verificationprogress: 1 }, { blocks: null }, { blocks: '5' },
+            { blocks: 5.5 }, { blocks: NaN }, { blocks: -1 }];
+        for (const net of ['mainnet', 'testnet', 'regtest']) {
+            for (const info of invalid) expect(nodeTipIsParseable(info, net), net).to.equal(false);
+            expect(nodeTipIsParseable({ blocks: 0, verificationprogress: 1 }, net), net).to.equal(true);
+        }
+    });
+
     it('does not treat an unknown network name as regtest', function () {
         // The discriminator is an exact match on the net portion the tracker
         // derives, so nothing else can fall into the mined-on-demand branch.
-        const decayed = { verificationprogress: DECAYED_PROGRESS, initialblockdownload: false };
+        const decayed = { blocks: 1, verificationprogress: DECAYED_PROGRESS, initialblockdownload: false };
         for (const net of ['Regtest', 'bitcoin-regtest', 'regtest ', '', undefined]) {
             expect(nodeTipIsParseable(decayed, net), String(net)).to.equal(false);
         }

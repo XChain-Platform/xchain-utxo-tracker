@@ -79,6 +79,7 @@ function makeNode(chain) {
         async getBlockchainInfo() {
             node.infoCalls++;
             fault('info');
+            if (node.infoReply) return node.infoReply(node);
             return { blocks: node.chain.length - 1, verificationprogress: node.progress, initialblockdownload: node.ibd };
         },
         async getBlockHash(h) { fault('hash'); return at(h).hash; },

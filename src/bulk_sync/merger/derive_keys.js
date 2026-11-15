@@ -17,18 +17,30 @@
  * XChain UTXO Tracker - Bulk Sync Derive-Keys
  *
  * Consumes the merger's intermediate streams and emits one fixed-record
- * file per LevelUpDb prefix (B/T/I/O/H/J/N/S/W/Z) + a small L.json. The
- * loader streams each file and issues db.batch() writes.
+ * file per LevelUpDb prefix (B/T/I/O/H/J/N/S/W/Z, plus X/Y with the tx index) +
+ * a small L.json. The loader streams each file and issues db.batch() writes.
  *
  * Record layout per output file: concatenated (key || value) records, no
  * header, fixed size. Files are sorted ascending by key.
  *
  *   B.dat   33+40 =  73B  (key: 'B'+blockHash32;        val: heightBE(4)+tsBE(4)+prevHash32)
+ *   T.dat   33+68 = 101B  (key: 'T'+txid32;             val: heightBE(4)+blockHash32+fullTxid32)
+ *                           Tx-index shape, the default for non-Bitcoin networks
+ *                           (TX_INDEX_LAYOUT in derive_keys_pass.js). The height only
+ *                           orders colliding txids; the loader drops those 4 bytes,
+ *                           leaving the live 64B value.
  *   T.dat   33+32 =  65B  (key: 'T'+txid32;             val: blockHash32)
- *                           Legacy 32B shape (live T is blockHash32+fullTxid32);
- *                           removeSpent=false only. See SPEC.md "T value shape":
- *                           T must widen to 64B in any change that seeds Y.
+ *                           Legacy shape, written only when the tx index is off and
+ *                           removeSpent=false (fixtures and diagnostics, not the
+ *                           default parity seed). Live T is blockHash32+fullTxid32,
+ *                           so the legacy value is the first 32B of it.
+ *   X.dat   33+32 =  65B  (key: 'X'+fullTxid32;         val: blockHash32)
+ *                           Tx-index only: exact-txid lookup, one per transaction.
+ *   Y.dat   65+32 =  97B  (key: 'Y'+blockHash32+txid32; val: fullTxid32)
+ *                           Tx-index only: per-block recovery record, windowed to the
+ *                           last undoBlocks seeded blocks like W and Z.
  *   I.dat   37+32 =  69B  (key: 'I'+prevTxid32+voutBE;  val: spenderTxid32)
+ *                           Written only when removeSpent=false.
  *   O.dat   69+45 = 114B  (key: 'O'+script32+txid32+voutBE;
  *                           val: valueBE(8)+heightBE(4)+fullTxHash32+coinbase(1))
  *                           The coinbase byte is always present in this
@@ -37,6 +49,7 @@
  *                           path's optional-byte form (44B normal / 45B coinbase).
  *   H.dat   37+32 =  69B  (key: 'H'+txid32+voutBE;      val: script32)
  *   J.dat   69+ 0 =  69B  (key: 'J'+spenderTxid32+prevTxid32+prevVoutBE)
+ *                           Written only when removeSpent=false.
  *   N.dat   33+ 0 =  33B  (key: 'N'+blockHash32)
  *   S.dat   33+ 4 =  37B  (key: 'S'+script32;           val: heightBE(4))
  *   W.dat   69+32 = 101B  (key: 'W'+blockHash32+txid32+voutBE; val: script32)

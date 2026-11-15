@@ -165,11 +165,9 @@ class XChainUtxoTracker {
         const tracker_height = (typeof committedHeight === 'number') ? committedHeight : -1
         const node_height    = (typeof nodeTip === 'number') ? nodeTip : -1
         const lag = (node_height >= 0 && tracker_height >= 0) ? (node_height - tracker_height) : null
-        // Floor BOTH verdicts, as get_sync_status (src/api/sync_status.js) does, on the faults
-        // the raw latch cannot see: a negative lag (outputs in blocks a reset node no longer
-        // recognizes), a stale node tip (lag against a frozen cache) and a halt (frozen store,
-        // stopped mempool poller). create_tx gates on THIS sibling. A null lag and lag over
-        // SYNCED_THRESHOLD stay with the latch and the consumer's lag budget, so those can differ.
+        // Both verdicts carry the loop latch. This surface also floors a negative
+        // lag, a stale node tip and a halt. get_sync_status reads a live node tip,
+        // while this path uses the loop's cached tip for a query already in flight.
         const orphaned  = (lag !== null && lag < 0)
         const isSynced  = (synced === true) && !orphaned && nodeHeightStale !== true && halted !== true
         const freshness = {
@@ -204,6 +202,8 @@ function initSyncState(network){
     // restart the mempool is briefly empty while synced already reads true.
     // Readiness must gate on both so callers never see a synced-but-empty mempool.
     this.mempoolReconverged = false
+    // Moves on every readiness withdrawal outside a pass (mempool_readiness.js).
+    this.mempoolReadinessGen = 0
 
     this.blockchainInfoLastBlock = -1
     this.latestKnownChainTip = null

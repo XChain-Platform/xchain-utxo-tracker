@@ -20,6 +20,7 @@ const LevelUpStore = require('../store/level_up_db.js')
 const { BLOCKCHAIN_INFO_REFRESH_MS, P_PENDING_CLEANUP_KEY, logger } = require('./constants.js')
 const { refreshNodeTip, pollAtTipOrIndex } = require('./sync_loop_node_tip.js')
 const { warnIfTxIndexMissing } = require('../chain/txindex_check.js')
+const { revokeMempoolReadiness } = require('./mempool_readiness.js')
 
 module.exports = {
     async start(){
@@ -71,7 +72,7 @@ module.exports = {
                 // and restored) store is neither synced nor mempool ready, and a
                 // stopped loop waits on no catching-up node.
                 this.synced = false
-                this.mempoolReconverged = false
+                revokeMempoolReadiness.call(this)
                 this.nodeCatchingUp = null
                 await this.db.close()
                 this.parsingStopped = true
@@ -145,7 +146,7 @@ function newSyncLoopState({ lastProcessedBlockIndex, lastProcessedBlockHash }){
     // only pollAtChainTip and the mempool poller may raise these again. The
     // published catch-up wait goes with the run, like its nodeCatchingUpProblem twin.
     this.synced = false
-    this.mempoolReconverged = false
+    revokeMempoolReadiness.call(this)
     this.nodeCatchingUp = null
     return Object.assign(sync, {
         blocksQuantity: 0,

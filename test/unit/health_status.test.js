@@ -181,6 +181,7 @@ describe('sync verdict bounds', function () {
     const src = fs.readFileSync(path.join(__dirname, '../../src/api/sync_status.js'), 'utf8');
     const method = src.slice(src.indexOf('async function get_sync_status('));
     expect(method).to.match(/synced:\s*deriveSyncedVerdict\(\{ lag, nodeHeightStale \}\)/);
+    expect(method).to.match(/tracker\.isSynced\(\)\s*===\s*true/);
   });
 
   // get_sync_status is the ONLY tracker surface the encoder's serve-readiness
@@ -198,6 +199,48 @@ describe('sync verdict bounds', function () {
 
 });
 
+describe('get_sync_status tip and latch parity', function () {
+  const { get_sync_status } = require('../../src/api/sync_status.js');
+
+  function stubTracker(overrides = {}) {
+    return {
+      db: { getLastBlockHeight: async () => 480 },
+      connector: { getBlockchainInfo: async () => ({ blocks: 500 }) },
+      latestKnownChainTip: 500,
+      blockchainInfoLastBlock: 500,
+      isSynced: () => true,
+      isMempoolReconverged: () => true,
+      reorgCount: 0,
+      lastReorgDepth: 0,
+      undoBlocks: 10,
+      lastBlocks: [],
+      ...overrides
+    };
+  }
+
+  it('floors synced and mempool readiness on the loop latch', async function () {
+    const atTip = { db: { getLastBlockHeight: async () => 500 } };
+    const down = await get_sync_status(stubTracker({ ...atTip, isSynced: () => false }));
+    expect(down).to.include({ node_height: 500, lag: 0, synced: false, mempool_ready: false });
+    const up = await get_sync_status(stubTracker(atTip));
+    expect(up).to.include({ node_height: 500, lag: 0, synced: true, mempool_ready: true });
+    const missing = stubTracker();
+    delete missing.isSynced;
+    expect(await get_sync_status(missing)).to.include({ synced: false, mempool_ready: false });
+  });
+
+  it('falls back to the last valid tip on failed and malformed live reads', async function () {
+    const bad = { latestKnownChainTip: 'bad', blockchainInfoLastBlock: 500 };
+    const failed = await get_sync_status(stubTracker({ ...bad,
+      connector: { getBlockchainInfo: async () => { throw new Error('down'); } } }));
+    const malformed = await get_sync_status(stubTracker({ ...bad,
+      connector: { getBlockchainInfo: async () => ({ blocks: 'bad' }) } }));
+    for (const result of [failed, malformed]) {
+      expect(result).to.include({ node_height: 500, lag: 20, node_height_stale: true, synced: false });
+    }
+  });
+});
+
 // A monitor tells spent rollback depth from a refilling window only by comparing
 // undo_window_remaining against this mark, so it rides get_sync_status and health().
 describe('undo window watermark on get_sync_status', function () {
@@ -207,6 +250,7 @@ describe('undo window watermark on get_sync_status', function () {
     return {
       db: { getLastBlockHeight: async () => 500 },
       connector: { getBlockchainInfo: async () => ({ blocks: 500 }) },
+      isSynced: () => true,
       isMempoolReconverged: () => true,
       reorgCount: 0,
       lastReorgDepth: 0,

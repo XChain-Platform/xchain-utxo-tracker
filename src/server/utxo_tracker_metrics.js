@@ -35,6 +35,7 @@
 'use strict';
 
 const { isNodeRpcStale } = require('../api/sync_status.js');
+const { resolveNodeTip } = require('../XChainUtxoTracker/catch_up_helpers.js');
 
 function addTrackerCollector(registry, tracker, metrics){
     const {
@@ -62,9 +63,7 @@ function addTrackerCollector(registry, tracker, metrics){
             lastCommitTs.set({}, tracker.lastCommitAt / 1000);
         setIf(committedHeight, tracker.lastCommittedHeight);
 
-        const tip = Number.isFinite(tracker.latestKnownChainTip)
-            ? tracker.latestKnownChainTip
-            : tracker.blockchainInfoLastBlock;
+        const tip = resolveNodeTip(tracker);
         if(Number.isFinite(tip) && tip >= 0) nodeHeight.set({}, tip);
 
         synced.set({}, (typeof tracker.isSynced === 'function' && tracker.isSynced()) ? 1 : 0);

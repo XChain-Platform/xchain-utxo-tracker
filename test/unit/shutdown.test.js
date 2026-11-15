@@ -185,6 +185,18 @@ describe('graceful shutdown', function(){
                 'xchain-utxo-tracker drains for ' + DEFAULT_SHUTDOWN_TIMEOUT_MS + ' ms but xchain-node stops it after '
                 + budgetSeconds + ' s (' + NODE_STOP_BUDGET_SRC + '), so every overrun ends in the daemon\'s SIGKILL')
         })
+
+        // A compose-created container never gets xchain-node's stamped budget, so the
+        // compose file has to carry the wait itself or docker's 10 s default applies.
+        it('stays under the stop_grace_period the compose file gives the tracker service', function(){
+            const compose = fs.readFileSync(path.join(__dirname, '..', '..', 'docker-compose.yml'), 'utf8')
+            const service = /^  xchain_utxo_tracker:\n([\s\S]*?)(?=^\S|^  \S)/m.exec(compose)
+            assert.ok(service, 'docker-compose.yml has no xchain_utxo_tracker service block')
+            const grace = /^    stop_grace_period:\s*(\d+)s\s*$/m.exec(service[1])
+            assert.ok(grace, 'xchain_utxo_tracker sets no stop_grace_period, so compose stop SIGKILLs after docker\'s 10 s default')
+            assert.ok(DEFAULT_SHUTDOWN_TIMEOUT_MS < parseInt(grace[1], 10) * 1000,
+                'the drain bound of ' + DEFAULT_SHUTDOWN_TIMEOUT_MS + ' ms is not under the compose grace of ' + grace[1] + ' s')
+        })
     })
 
     describe('closeServer', function(){

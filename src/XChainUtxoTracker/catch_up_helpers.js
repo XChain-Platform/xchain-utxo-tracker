@@ -33,6 +33,32 @@ function satoshiToDecimalString(satoshis) {
 }
 
 
+function isValidHeight(value){
+    return Number.isSafeInteger(value) && value >= 0
+}
+
+
+// One fallback rule for every surface that reports the node tip.
+function resolveNodeTip(tracker){
+    if (!tracker) return -1
+    if (isValidHeight(tracker.latestKnownChainTip)) return tracker.latestKnownChainTip
+    if (isValidHeight(tracker.blockchainInfoLastBlock)) return tracker.blockchainInfoLastBlock
+    return -1
+}
+
+
+let NODE_RPC_STALE_MS = 150000
+
+function configureNodeRpcStaleMs(value){
+    NODE_RPC_STALE_MS = value
+}
+
+function isNodeRpcStale({ lastNodeRpcOkAt, now = Date.now(), windowMs = NODE_RPC_STALE_MS } = {}){
+    if (typeof lastNodeRpcOkAt !== 'number' || !Number.isFinite(lastNodeRpcOkAt)) return false
+    return (now - lastNodeRpcOkAt) > windowMs
+}
+
+
 // Whether this node's tip is worth parsing. Pure and exported so the policy is
 // testable without a loop or a node.
 
@@ -51,7 +77,7 @@ function satoshiToDecimalString(satoshis) {
 // The `< MIN` comparison keeps its original form so an ABSENT field (an older
 // node, a trimmed proxy) still reads usable instead of inverting to a refusal.
 function nodeTipIsParseable(info, consensusNetwork){
-    if (!info) return false
+    if (!info || !isValidHeight(info["blocks"])) return false
     if (consensusNetwork === 'regtest') return true
     return !(info["verificationprogress"] < MIN_VERIFICATION_PROGRESS_TO_PARSE)
 }
@@ -82,4 +108,14 @@ function catchUpWaitState(previous, nodeHeight, storedHeight){
     }
 }
 
-module.exports = { satoshiToDecimalString, nodeTipIsParseable, nodeStillCatchingUp, catchUpWaitState }
+module.exports = {
+    satoshiToDecimalString,
+    isValidHeight,
+    resolveNodeTip,
+    configureNodeRpcStaleMs,
+    isNodeRpcStale,
+    NODE_RPC_STALE_MS,
+    nodeTipIsParseable,
+    nodeStillCatchingUp,
+    catchUpWaitState
+}

@@ -35,6 +35,7 @@ function build(tips) {
   tracker.connector = {
     getBlockchainInfo: async () => {
       const t = tips[Math.min(reads++, tips.length - 1)];
+      if (t instanceof Error) throw t;
       return (typeof t === 'object') ? { ...t } : { blocks: t };
     }
   };
@@ -196,6 +197,26 @@ describe('tip-below settle refuses a reading still in initial block download @re
     expect(verifyCalls).to.deep.equal([COMMITTED - 5]);
     expect(store.deletes).to.equal(5);
   });
+
+  it('leaves tracker state unchanged when a re-read has no integer height', async function () {
+    const { tracker, sync, store, verifyCalls } = build([COMMITTED - 5, { blocks: '100664' }]);
+    await refreshNodeTip.call(tracker, sync);
+
+    expect(verifyCalls).to.deep.equal([]);
+    expect(store.deletes).to.equal(0);
+    expect(tracker.blockchainInfoLastBlock).to.equal(COMMITTED - 5);
+    expect(tracker.latestKnownChainTip).to.equal(COMMITTED - 5);
+  });
+
+  it('leaves tracker state unchanged when a re-read throws', async function () {
+    const { tracker, sync, store, verifyCalls } = build([COMMITTED - 5, new Error('tip read failed')]);
+    await refreshNodeTip.call(tracker, sync);
+
+    expect(verifyCalls).to.deep.equal([]);
+    expect(store.deletes).to.equal(0);
+    expect(tracker.blockchainInfoLastBlock).to.equal(COMMITTED - 5);
+    expect(tracker.latestKnownChainTip).to.equal(COMMITTED - 5);
+  });
 });
 
 describe('tip-below refusal counts the blocks it walked back @regression', function () {
@@ -205,6 +226,7 @@ describe('tip-below refusal counts the blocks it walked back @regression', funct
     const { tracker, sync, store } = build([COMMITTED - 40]);
     tracker.verifyReorg = async () => {
       store.top = COMMITTED - 3;
+      tracker.reorgRollbacksThisProcess = (tracker.reorgRollbacksThisProcess || 0) + 3;
       const err = new Error('refused with 3 block(s) already rolled back');
       err.tipBelowCommittedTip = true;
       throw err;
@@ -218,6 +240,7 @@ describe('tip-below refusal counts the blocks it walked back @regression', funct
 
   it('does not count a refusal that deleted nothing', async function () {
     const { tracker, sync } = build([COMMITTED - 40]);
+    tracker.db.getLastBlock = async () => ({ hash: 'orphan', height: COMMITTED + 5 });
     const before = tracker.reorgCount;
     await refreshNodeTip.call(tracker, sync);
 

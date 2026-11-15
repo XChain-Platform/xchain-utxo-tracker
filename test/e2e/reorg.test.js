@@ -47,6 +47,12 @@ async function closeTracker() {
   restoreLevelUp();
 }
 
+async function expectConfirmedBalance(addressIndex, balance, utxos) {
+  const info = await tracker.getBalanceInfo(TEST_KEYS[addressIndex].address);
+  expect(info.balances.confirmed).to.equal(balance);
+  expect(info.utxos.confirmed).to.equal(utxos);
+}
+
 function replaceThreeBlocks(state, blocks) {
   // Replace blocks 5, 6, 7 with new blocks to addr 1
   const newBlock5 = makeBlock(5, blocks[4].hash, [makeCoinbaseTx(1, 10 * SATOSHI)]);
@@ -92,6 +98,7 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       await waitForSynced(tracker);
 
       expect(await tracker.db.getLastBlockHeight()).to.equal(4);
+      await expectConfirmedBalance(0, '250.00000000', 5);
 
       // Replace block 4 with a different block to addr 1
       const replacementBlock4 = makeBlock(4, blocks[3].hash, [makeCoinbaseTx(1, 50 * SATOSHI)]);
@@ -129,6 +136,7 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('100.00000000'); // blocks 4+5
       expect(info1.utxos.confirmed).to.equal(2);
+      await expectConfirmedBalance(0, '200.00000000', 4);
     });
   });
 });
@@ -146,6 +154,7 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       await waitForSynced(tracker);
 
       expect(await tracker.db.getLastBlockHeight()).to.equal(7);
+      await expectConfirmedBalance(0, '80.00000000', 8);
 
       const { newBlock5, newBlock6, newBlock7, newBlock8 } = replaceThreeBlocks(state, blocks);
 
@@ -171,6 +180,7 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('40.00000000'); // 4 replacement blocks (5-8) x 10 BTC
       expect(info1.utxos.confirmed).to.equal(4);
+      await expectConfirmedBalance(0, '50.00000000', 5);
 
       // Blocks 0-4 remain intact
       for (let i = 0; i <= 4; i++) {
@@ -193,6 +203,7 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
 
       tracker.start();
       await waitForSynced(tracker);
+      await expectConfirmedBalance(0, '250.00000000', 5);
 
       // Replace block 4 and add blocks 5-6 on replacement chain
       const replacement4 = makeBlock(4, blocks[3].hash, [makeCoinbaseTx(1, 25 * SATOSHI)]);
@@ -208,6 +219,7 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       // After reorg + re-index, addr 1 has the replacement chain coinbases
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('55.00000000'); // 25 + 30
+      await expectConfirmedBalance(0, '200.00000000', 4);
 
       // Can still add more blocks and they index correctly
       const block6 = makeBlock(6, block5.hash, [makeCoinbaseTx(2, 15 * SATOSHI)]);
@@ -338,6 +350,7 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       await waitForSynced(tracker);
       expect(await tracker.db.getLastBlockHeight()).to.equal(4);
       expect(await tracker.db.getLastBlockHash()).to.equal(blocks[4].hash);
+      await expectConfirmedBalance(0, '250.00000000', 5);
 
       const reorgSpy = sinon.spy(tracker, 'verifyReorg');
 
@@ -365,6 +378,7 @@ describe('E2E: Chain Reorganization via start() Loop', function () {
       const info1 = await tracker.getBalanceInfo(TEST_KEYS[1].address);
       expect(info1.balances.confirmed).to.equal('50.00000000');
       expect(info1.utxos.confirmed).to.equal(1);
+      await expectConfirmedBalance(0, '200.00000000', 4);
     });
   });
 });

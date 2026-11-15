@@ -269,62 +269,15 @@ module.exports = {
     },
 
     async removeOutputWithInput(input) {
-        const hKey = kOutHint(input.prevTxHash, input.prevOutputIndex)
-        const mKey = kHintDel(input.blockHash, input.prevTxHash, input.prevOutputIndex)
-
-        // abstract-level .get returns undefined on a missing key (it does NOT
-        // throw). Real I/O errors still reject the promise and propagate up;
-        // we deliberately do NOT swallow them here, unlike the previous
-        // catch-all which treated every error as "not committed yet".
-        const scriptPubKeyBuf = await this.db.get(hKey)                            // 32-byte Buffer or undefined
-        let oVal = undefined
-        let oKey = null
-        if (scriptPubKeyBuf !== undefined) {
-            oKey = kOutputFromBuf(scriptPubKeyBuf, input.prevTxHash, input.prevOutputIndex)
-            oVal = await this.db.get(oKey)
-        }
-
-        if (scriptPubKeyBuf === undefined || oVal === undefined) {
-            // Output not yet committed: check in-memory transaction map
-            const inMemScript = this.getTransactionValue(hKey)
-            if (inMemScript != null){
-                const inMemOKey = kOutputFromBuf(inMemScript, input.prevTxHash, input.prevOutputIndex)
-                // Capture the staged output value BEFORE removal so a cross-block
-                // spend can write durable K/M restore records (see
-                // writeCrossBlockSpendRecovery). Same-block spends write nothing.
-                const inMemOVal = this.getTransactionValue(inMemOKey)
-                if (!this.removeTransaction(inMemOKey, input.blockHash)){
-                    throw Error("Missing output match for input "+JSON.stringify(input))
-                }
-                if (!this.removeTransaction(hKey, input.blockHash)){
-                    throw Error("Missing outputHintKey match for input "+JSON.stringify(input))
-                }
-                await this.writeCrossBlockSpendRecovery(input, inMemScript, inMemOVal)
-            } else if (scriptPubKeyBuf !== undefined && oVal === undefined) {
-                // H present on disk, O missing: a live-store divergence, NOT the benign
-                // pre-REMOVE_SPENT legacy case (the hint key is present, not missing). Mirror
-                // the batch path (delOutput) message VERBATIM so an operator grepping for the
-                // divergence signal catches occurrences on both code paths. Leave O/H intact -
-                // deleting H with no K/M undo record would be unrecoverable on reorg unwind.
-                logger.info("Warning: Missing output value for input " + JSON.stringify(input) + " while its outputHintKey is present - leaving O/H records intact, not deleting without an undo record")
-            } else {
-                logger.info("Warning: Missing outputHintKey for input "+JSON.stringify(input)+" - output may have been indexed before REMOVE_SPENT was enabled")
-            }
-            return true
-        }
-
-        const kKey = kOutDelFromBuf(input.blockHash, scriptPubKeyBuf, input.prevTxHash, input.prevOutputIndex)
-
-        // Stage for deferred deletion: will be purged after batch commit
-        await this.addTransaction("put", mKey, scriptPubKeyBuf)
-        await this.addTransaction("put", kKey, oVal)
-        await this.addTransaction("del", oKey)
-        await this.addTransaction("del", hKey)
+        // Keep the legacy single-input API for callers and tests, but route its
+        // behavior through the production batch implementation so spend and undo
+        // rules have one authority.
+        await this.removeOutputsWithInputsBatch([input])
         return true
     },
 
-    // Batch version of removeOutputWithInput: collects all inputs for a block,
-    // resolves hints and outputs with 2 getMany calls instead of N individual db.get().
+    // Canonical spend-removal implementation. Collects all inputs for a block and
+    // resolves hints and outputs with 2 getMany calls instead of N individual reads.
     async removeOutputsWithInputsBatch(inputs) {
         if (inputs.length === 0) return 0
 

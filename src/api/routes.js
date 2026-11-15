@@ -1,3 +1,4 @@
+/* Copyright © 2025-2026 Dankest, LLC; SPDX-License-Identifier: AGPL-3.0-or-later */
 'use strict'
 const jsonRouter = require('express-json-rpc-router')
 const XChainUtxoTracker = require('../XChainUtxoTracker')
@@ -8,7 +9,6 @@ const { compressDirPigz, decompressPigz, tasks } = require('./compression.js')
 const { sendAddressError, safeBootstrapFilename } = require('./errors.js')
 const { deriveHealthStatus, get_sync_status, registerStatusRoute } = require('./sync_status.js')
 const logger = getLogger()
-
 function registerUtxoRoute({ app, requestGate, getUtxos, parsePageOpts, setFreshnessHeaders }){
     app.get('/utxos/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
@@ -238,7 +238,7 @@ const jsonRpcController = {
             if (typeof txid !== 'string' || !/^[0-9a-fA-F]{64}$/.test(txid)) {
                 return { error: "txid must be a 64-hex-character string" }
             }
-            return await this.context.tracker.db.getTxBlock(txid)
+            return await this.context.tracker.getTxBlockAt(txid)
         },
         // Buffer.from(str, 'hex') silently truncates at the first non-hex
         // character, so e.g. 32 'g's would decode to an EMPTY prefix and scan the
@@ -300,11 +300,10 @@ const jsonRpcController = {
         // marker in place because the only recovery that changes the data is this
         // restore or `xchain-node reset`.
         //
-        // decompressPigz wipes /data BEFORE extracting, so a POST-wipe failure leaves
-        // the on-disk DB partially wiped and untrustworthy: fail loud so the
-        // supervisor restarts into a clean recovery path. A PRE-wipe validation
-        // abort (error.preWipe) never touched /data, so handleRestoreFailure resumes
-        // indexing via relaunch instead of killing the process.
+        // decompressPigz stages and layout-checks the archive before it wipes
+        // /data: a POST-wipe failure leaves the DB untrustworthy, so fail loud for
+        // a supervised restart; a PRE-wipe abort (error.preWipe) never touched
+        // /data, so handleRestoreFailure resumes indexing via relaunch.
         async restorebootstrap({filename}){
             logger.info("A bootstrap restore was requested")
             const { tracker, DB_NAME, launchTracker } = this.context

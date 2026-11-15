@@ -1,3 +1,14 @@
+/*********************************************************************
+ *
+ * Copyright © 2025-2026 Dankest, LLC
+ * Based on XChain Platform by Dankest, LLC - https://dankest.llc
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * This file is part of XChain Platform. Licensed under the GNU Affero
+ * General Public License v3.0 or later; see LICENSE.md.
+ *
+ **********************************************************************/
 'use strict'
 
 const { spawn, spawnSync } = require('child_process')
@@ -268,19 +279,18 @@ async function assertLevelDbArchiveOrThrow(archivePath, reportedSource) {
             + `from inside that directory (tar -cf - -C <store> .).`)
 }
 
-// Post-extraction ground truth: the store must be AT the database root, because that
-// is the only place ClassicLevel("/data/<DB_NAME>") will look for it. The pre-wipe
+// Post-extraction ground truth: the store must be AT the extraction root, because that
+// is the only place ClassicLevel looks for it once the files are in place. The pre-wipe
 // member gate predicts the same layout from the tar listing and refuses a nested store
-// before the wipe; this is the backstop for whatever the listing could not predict.
-// Throwing here routes the restore into handleRestoreFailure's fail-loud branch:
-// the DB is already gone either way, so the choice is between an operator who knows
-// the restore failed and a tracker that quietly serves an empty database.
+// before extraction; this is the backstop for whatever the listing could not predict.
+// The restore extracts into a staging directory first, so a throw here aborts it with
+// the live store untouched.
 function assertExtractedStoreOrThrow(destination) {
     let entries = []
     try { entries = fs.readdirSync(destination) }
     catch (err) {
         throw new Error(`Restore extracted to "${destination}" but that directory cannot be read `
-            + `(${err && err.message}); the database was wiped and must be resynced.`)
+            + `(${err && err.message}); the live database was left untouched.`)
     }
     const hasCurrent  = entries.includes('CURRENT')
     const hasManifest = entries.some(name => /^MANIFEST-\d+$/.test(name))
@@ -292,7 +302,7 @@ function assertExtractedStoreOrThrow(destination) {
         + `(CURRENT=${hasCurrent}, MANIFEST-<n>=${hasManifest})`
         + (nested.length ? `; the archive nests its store under ${nested.map(n => `"${n}"`).join(', ')}, `
             + `which must be repacked from inside the store directory (tar -cf - -C <store> .)` : '')
-        + `. The database was wiped by the restore and must be resynced.`)
+        + `. The live database was left untouched.`)
 }
 
 // Validate a restore archive BEFORE the destructive /data wipe. Returns the effective

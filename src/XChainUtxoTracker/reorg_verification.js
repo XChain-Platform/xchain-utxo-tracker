@@ -312,10 +312,11 @@ async function rollBackTipBlock(lastBlockHash, lastBlock, retryCount){
             // in this block (just re-staged above) is removed, not revived.
             await this.db.removeCreatedOutputsInBlock(lastBlockHash)
         }
-        // deleteBlock also purges the T/X (exact txid->block) records for
-        // every tx created in lastBlockHash, giving insertTransaction's
-        // confirmed-chain writes rollback symmetry even when a tx created in
-        // a later, still-live block shares its 8-byte T prefix.
+        // deleteBlock also purges the T/X (txid->block) records for every tx
+        // created in lastBlockHash, giving insertTransaction's confirmed-chain
+        // writes rollback symmetry. T and X are keyed on the full txid and go
+        // only while they still name this block (deleteTxBlockRecord), so a
+        // later, still-live block that carries the same txid keeps its records.
         await this.db.deleteBlock(lastBlockHash)
         await this.removeFromLastBlocks(lastBlockHash)
         await this.db.setLastBlockHash(lastBlock["ph"])

@@ -46,6 +46,12 @@ module.exports = {
         return { height: record.h }
     },
 
+    // The tx's block row labelled with the committed tip, both read under the
+    // store-commit lock so the label is the tip the row was read at.
+    async getTxBlockAt(txid){
+        return withStoreRead(this, () => this.db.getTxBlock(txid))
+    },
+
     // getFirstSeen's answer with the snapshot it was read at, under the store-commit lock.
     async getFirstSeenAt(address){
         const script = addressToScript(address, this.network)
@@ -91,10 +97,10 @@ async function readBalanceInfo(address){
     const confirmedKeys = new Set()
 
     for (let nextOutput of confirmedOutputs) {
-        // Same fail-loud guard as getUtxosAddress: a 16-char fallback means
-        // the O-record predates the fullTxHash field. get_utxos already throws
-        // here; get_info must too, or a pre-format DB silently returns balances
-        // while every spend path errors, masking the need for a re-index.
+        // Same fail-loud guard as getUtxosAddress: an output whose txid is not
+        // 64 chars is a corrupt record. get_utxos already throws here; get_info
+        // must too, or a damaged DB silently returns balances while every spend
+        // path errors.
         let txid = requireFullTxid(nextOutput)
 
         confirmedKeys.add(txid + ':' + nextOutput.vout)
@@ -113,8 +119,8 @@ async function readBalanceInfo(address){
     }
 
     for (let nextOutput of mempoolOutputs) {
-        // See the confirmed-output loop above: a 16-char fallback means the
-        // O-record predates the fullTxHash field and can never spend validly.
+        // See the confirmed-output loop above: a txid that is not 64 chars is a
+        // corrupt record and can never spend validly.
         let txid = requireFullTxid(nextOutput)
 
         // Skip an outpoint already counted from the confirmed store (just-mined
@@ -188,8 +194,8 @@ async function readUtxosAddress(address, { limit = null, after = null } = {}){
 // Adds the response entry for one mempool output, unless the confirmed store
 // already serves that outpoint or another mempool tx spends it.
 async function addServableMempoolUtxo(results, nextOutput, { confirmedKeys, paged, scriptPubKeyHex }){
-    // See the confirmed-output loop above: a 16-char fallback means the
-    // O-record predates the fullTxHash field and can never spend validly.
+    // See the confirmed-output loop above: a txid that is not 64 chars is a
+    // corrupt record and can never spend validly.
     let txid = requireFullTxid(nextOutput)
     // Skip an outpoint already emitted from the confirmed store (just-mined
     // tx still present in both stores during the cleanup window). confirmedKeys
@@ -223,7 +229,7 @@ function requireFullTxid(nextOutput){
     if (txid.length !== 64) {
         throw new Error(
             `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
-            ` This record predates the O-record fullTxHash field; re-index this LevelDB before use.` +
+            ` The O key must hold the whole 32-byte txid, so this record is corrupt; rebuild this LevelDB before use.` +
             ` UTXO key: ${nextOutput.txid}`
         )
     }

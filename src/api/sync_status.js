@@ -1,6 +1,24 @@
+/*********************************************************************
+ *
+ * Copyright © 2025-2026 Dankest, LLC
+ * Based on XChain Platform by Dankest, LLC - https://dankest.llc
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * This file is part of XChain Platform. Licensed under the GNU Affero
+ * General Public License v3.0 or later; see LICENSE.md.
+ *
+ **********************************************************************/
 'use strict'
 
 const XChainUtxoTracker = require('../XChainUtxoTracker')
+const {
+    configureNodeRpcStaleMs,
+    isNodeRpcStale,
+    NODE_RPC_STALE_MS,
+    isValidHeight,
+    resolveNodeTip
+} = require('../XChainUtxoTracker/catch_up_helpers.js')
 
 // Derives the `health` status word from reachability and halt state only, never
 // from lag. Consumers own their own lag budget (xchain-node's bootstrap gate
@@ -14,22 +32,6 @@ const XChainUtxoTracker = require('../XChainUtxoTracker')
 function deriveHealthStatus({ halted = false, dbOk = false } = {}) {
     if (halted) return 'halted'
     return dbOk ? 'healthy' : 'unhealthy'
-}
-
-// Staleness window for the tracker's last usable node-tip read. Five times the
-// loop's BLOCKCHAIN_INFO_REFRESH_MS (30s), so a slow or skipped poll never trips
-// it and only a sustained outage does.
-let NODE_RPC_STALE_MS = 150000
-
-function configureNodeRpcStaleMs(value) {
-    NODE_RPC_STALE_MS = value
-}
-
-// True when the loop has not read a usable node tip inside the window; an unset stamp reads not-stale.
-// Sets node_height_stale (so synced:false) on `health` and GET /status alike, never the status word.
-function isNodeRpcStale({ lastNodeRpcOkAt, now = Date.now(), windowMs = NODE_RPC_STALE_MS } = {}) {
-    if (typeof lastNodeRpcOkAt !== 'number' || !Number.isFinite(lastNodeRpcOkAt)) return false
-    return (now - lastNodeRpcOkAt) > windowMs
 }
 
 // The authoritative sync verdict get_sync_status publishes, bounded on BOTH sides.
@@ -135,10 +137,13 @@ async function get_sync_status(tracker) {
     let nodeHeightStale = false
     try {
         const info = await blockchainInfoWithDeadline(tracker)
-        nodeHeight = info['blocks']
+        if (isValidHeight(info && info['blocks'])) nodeHeight = info['blocks']
+        else {
+            nodeHeight = resolveNodeTip(tracker)
+            nodeHeightStale = true
+        }
     } catch (e) {
-        const rawTip = tracker.latestKnownChainTip ?? tracker.blockchainInfoLastBlock
-        nodeHeight = (typeof rawTip === 'number') ? rawTip : -1
+        nodeHeight = resolveNodeTip(tracker)
         nodeHeightStale = true
     }
 
@@ -152,11 +157,10 @@ async function get_sync_status(tracker) {
         tracker_height: committedHeight,
         node_height: nodeHeight,
         lag,
-        // Authoritative sync verdict computed against the tracker's own
-        // SYNCED_THRESHOLD so callers don't replicate the threshold. The policy
-        // (null lag, stale node height and negative lag are all not-synced) lives
-        // in deriveSyncedVerdict above, where it is unit-testable.
-        synced: deriveSyncedVerdict({ lag, nodeHeightStale }) && !tracker.halted
+        // Lag and staleness bound the verdict, while the loop latch covers reorg
+        // walks and refused tips whose lag alone cannot expose the unsafe view.
+        synced: deriveSyncedVerdict({ lag, nodeHeightStale }) && !tracker.halted &&
+            typeof tracker.isSynced === 'function' && tracker.isSynced() === true
     }
     if (loopStale) {
         result.node_rpc_stale = true

@@ -27,7 +27,7 @@ function makeContext() {
     getInfo: sinon.stub().callsFake(async (a) => { if (typeof a !== 'string') throw badRequest(); return {}; }),
     parsePageOpts: (o) => o,
     getFreshnessMeta: sinon.stub().resolves({}),
-    tracker: { db: { getTxBlock: sinon.stub().resolves(null) } }
+    tracker: { getTxBlockAt: sinon.stub().resolves(null), db: { getTxBlock: sinon.stub().resolves(null) } }
   };
 }
 

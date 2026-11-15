@@ -13,7 +13,7 @@
 // Regression: a mempool insertTransaction writes T only.
 //
 // The mempool store is created once per process and never reset. Its eviction
-// diff deletes T by 8-byte prefix and nothing scans a zero-hash Y range, so an
+// diff deletes T by txid and nothing scans a zero-hash Y range, so an
 // X or Y record written for a blockHash-less tx would outlive the tx and grow
 // the store by every mempool tx ever seen. Confirmed inserts keep T, X and Y.
 

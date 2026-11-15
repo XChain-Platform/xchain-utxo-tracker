@@ -25,6 +25,7 @@ function makeTracker(getBlockchainInfo) {
     db: { getLastBlockHeight: sinon.stub().resolves(100) },
     connector: { getBlockchainInfo },
     latestKnownChainTip: 100,
+    isSynced: () => true,
     isMempoolReconverged: () => true,
     undoBlocks: 10,
     lastBlocks: []

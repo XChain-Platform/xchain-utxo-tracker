@@ -71,7 +71,7 @@ function registerBlockchainInfoTests() {
 function registerBlockHashTests() {
   describe('getBlockHash', function () {
     it('returns hash for valid height', async function () {
-      const hash = '0000000000000000000abc123';
+      const hash = '0000000000000000' + 'ab12'.repeat(12);
       clientStub.resolves({ data: { result: hash } });
 
       const result = await connector.getBlockHash(0);

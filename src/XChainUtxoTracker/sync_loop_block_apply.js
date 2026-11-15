@@ -21,6 +21,7 @@ const { DB_TRANSACTION_BLOCKS_QUANTITY, HEAP_FLUSH_THRESHOLD_MB, P_PENDING_CLEAN
 const { fillPrefetchQueue, fetchNextBlock } = require('./sync_loop_block_fetch.js')
 const { withStoreCommit } = require('./store_commit_lock.js')
 const { logBatchTiming, recordSyncProgress, logSyncEta } = require('./sync_loop_progress.js')
+const { revokeMempoolReadiness } = require('./mempool_readiness.js')
 
 // Sync loop steps, called with the tracker as `this`; sync_loop.js says how.
 
@@ -33,7 +34,7 @@ async function indexNextBlock(sync){
         // Falling out of sync invalidates mempool readiness: the
         // mempool poller is torn down here and must reconverge once
         // before readiness is asserted again.
-        this.mempoolReconverged = false
+        revokeMempoolReadiness.call(this)
         if (this.mempoolInterval != null){
             logger.info("Mempool updates stopped!")
             clearInterval(this.mempoolInterval)
@@ -329,13 +330,14 @@ function resetBatchAfterReorg(sync){
 // get_utxos offers a prevout the node already spends, under mempool_ready true.
 // Drop readiness and run a pass now. Before the poller has started, its
 // first-start pass covers it; a pass already in flight predates the reorg, so
-// wait it out and run a fresh one.
+// wait it out and run a fresh one. The withdrawal also outdates that pass, so it
+// cannot assert readiness when it ends, even once this wait has given up; the
+// next interval pass then restores readiness.
 function resyncMempoolAfterReorg(){
+    revokeMempoolReadiness.call(this)
     if (this.mempoolInterval == null || typeof this.updateMempool !== "function") return
-    this.mempoolReconverged = false
     const pass = async () => {
         for (let i = 0; this.mempoolBusy && i < 600; i++) await new Promise(r => setTimeout(r, 100))
-        this.mempoolReconverged = false
         await this.updateMempool()
     }
     pass().catch(err => logger.error("Post-reorg mempool resync failed: " + err.message))

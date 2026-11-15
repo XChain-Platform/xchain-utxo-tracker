@@ -17,6 +17,8 @@ const { logger } = require('./constants');
 const { sanitizeRpcError, isWholeHex } = require('./rpc_helpers');
 const { encodeVarintHex, stripAuxPowFromBlockHex } = require('./auxpow_codec');
 
+const BLOCK_HASH_HEX = /^[0-9a-fA-F]{64}$/
+
 module.exports = {
     async getBlockchainInfo(){
         const data = {
@@ -55,11 +57,19 @@ module.exports = {
 
             const response = await this.rpcPost(data)
 
-            if (response.data.result) {
-                return response.data.result;
-            } else {
+            const result = response.data.result
+            if (!result) {
                 throw new Error('Error getting block hash');
             }
+            // Require a 64-hex block hash: the tip re-check and the reorg walk roll back
+            // on a mismatch with the stored hash, so a malformed answer (a proxy's object,
+            // number or short string) must fail into the caller's retry, never read as a fork.
+            if (typeof result !== 'string' || !BLOCK_HASH_HEX.test(result)) {
+                throw new Error('Error getting block hash: malformed result (' + typeof result + ' '
+                    + String(JSON.stringify(result)).slice(0, 80) + ')');
+            }
+            // Stored hashes are lowercase, so a case-changing hop must not read as a fork.
+            return result.toLowerCase();
         } catch (error) {
             // sanitizeRpcError scrubs error.config.auth (the node RPC password) in
             // place, so the rethrow cannot leak the credential through an upstream

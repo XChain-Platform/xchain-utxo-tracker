@@ -1,3 +1,4 @@
+/* Copyright © 2025-2026 Dankest, LLC; SPDX-License-Identifier: AGPL-3.0-or-later */
 'use strict'
 
 const express = require('express')
@@ -14,6 +15,7 @@ const { limitedHandler } = require('../server/rate_limit_log.js')
 const { intKnob } = require('../config/env_int')
 const memoryBudget = require('../store/memory_budget')
 const { nodeReachabilityFields, isNodeRpcStale } = require('./sync_status.js')
+const { resolveNodeTip } = require('../XChainUtxoTracker/catch_up_helpers.js')
 const { registerRoutes } = require('./routes.js')
 const { parsePageOpts } = require('./page_opts.js')
 const logger = getLogger()
@@ -60,9 +62,7 @@ async function getFreshnessMeta(tracker, knownCommittedHeight, readAt){
     let committedHeight = -1
     if (typeof knownCommittedHeight === 'number') committedHeight = knownCommittedHeight
     else { try { committedHeight = await tracker.db.getLastBlockHeight() } catch (e) {} }
-    const rawTip = (typeof tracker.latestKnownChainTip === 'number')
-        ? tracker.latestKnownChainTip
-        : (typeof tracker.blockchainInfoLastBlock === 'number' ? tracker.blockchainInfoLastBlock : -1)
+    const rawTip = resolveNodeTip(tracker)
     const page = readAt || {}
     const freshness = XChainUtxoTracker.computeFreshness(committedHeight, rawTip, tracker.isSynced(), {
         mempoolReconverged: typeof page.mempoolReconverged === 'boolean' ? page.mempoolReconverged : tracker.isMempoolReconverged(),
@@ -396,5 +396,4 @@ async function startApi(config){
     const trackerExited = config.launchTracker(tracker)
     listen(app, tracker, trackerExited, config)
 }
-
 module.exports = { parsePageOpts, createApp, startApi, resolveRateLimitRpm, resolveTrustProxyHops, installBaseMiddleware }

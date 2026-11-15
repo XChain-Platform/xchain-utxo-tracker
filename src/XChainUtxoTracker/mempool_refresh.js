@@ -21,12 +21,16 @@ const bs = require('binary-search')
 const XChainBlockDecoder = require('../chain/XChainBlockDecoder')
 const { MEMPOOL_BATCH_SIZE, MEMPOOL_INTER_BATCH_SLEEP, MEMPOOL_MAX_TX_FETCH_RETRIES, logger } = require('./constants.js')
 const { withStoreCommit } = require('./store_commit_lock.js')
+const { readinessGeneration, revokeMempoolReadiness } = require('./mempool_readiness.js')
 
 module.exports = {
     async updateMempool(){
         if (!this.mempoolBusy){
             let mempoolStartTime = Date.now()
             this.mempoolBusy = true
+            // Recorded before the listing: readiness withdrawn after this point
+            // outdates what the pass lists, so the pass must not assert it.
+            const generation = readinessGeneration.call(this)
             let rawMempool = []
             try {
                 let rawMempoolUnordered = await this.connector.getRawMempool()
@@ -43,7 +47,7 @@ module.exports = {
 
             // Read the tips after the listing, so a block mined since it shows as a mismatch.
             const mayDelete = await committedTipIsNodeTip.call(this)
-            await reconvergeMempool.call(this, rawMempool, mempoolStartTime, mayDelete)
+            await reconvergeMempool.call(this, rawMempool, mempoolStartTime, mayDelete, generation)
         } else {
             logger.info("Mempool is still busy")
         }
@@ -90,7 +94,7 @@ async function committedTipIsNodeTip(){
 // stages what is new one committed batch at a time. Readiness is asserted
 // once every batch has landed and withdrawn on any fault; the pass always
 // releases the busy flag.
-async function reconvergeMempool(rawMempool, mempoolStartTime, mayDelete){
+async function reconvergeMempool(rawMempool, mempoolStartTime, mayDelete, generation){
     const counts = { transactionsCount: 0, inputsCount: 0, outputsCount: 0,
         deletedTransactionsCount: 0, deletedInputsCount: 0, deletedOutputsCount: 0 }
 
@@ -140,7 +144,7 @@ async function reconvergeMempool(rawMempool, mempoolStartTime, mayDelete){
             }
         }
 
-        markMempoolReconverged.call(this, counts, mempoolStartTime)
+        markMempoolReconverged.call(this, counts, mempoolStartTime, generation)
     } catch (error){
         withdrawMempoolReadiness.call(this, error)
     } finally {
@@ -286,12 +290,16 @@ async function stageMempoolBatch(nextTxsHex, nodeTxids, rawMempool, counts){
     }
 }
 
-function markMempoolReconverged(counts, mempoolStartTime){
+function markMempoolReconverged(counts, mempoolStartTime, generation){
     // Every batch that was fetched has been committed, so the in-memory
-    // mempool DB now reflects the node mempool: readiness can be
-    // asserted. Reset to false on any synced=false transition (see
-    // above) and on mempool errors, which take the catch path below.
-    this.mempoolReconverged = true
+    // mempool DB now reflects the listing this pass took: readiness can be
+    // asserted unless it was withdrawn since the pass began, in which case
+    // the listing predates that event and the next pass asserts it. Reset to
+    // false on any synced=false transition and on mempool errors, which take
+    // the catch path below.
+    const outdated = readinessGeneration.call(this) !== generation
+    if (outdated) logger.info("Mempool readiness was withdrawn during this pass, so it stays withdrawn until a later pass ends")
+    else this.mempoolReconverged = true
     let mempoolEndTime = Date.now()
     let timeString = this.millisecondsToTimeString(mempoolEndTime-mempoolStartTime)
 
@@ -314,5 +322,5 @@ function withdrawMempoolReadiness(error){
     // missing some advertised mempool txs, so readiness must be withdrawn
     // rather than left asserted from an earlier good pass. The
     // next successful pass re-asserts it at the end of the try block.
-    this.mempoolReconverged = false
+    revokeMempoolReadiness.call(this)
 }

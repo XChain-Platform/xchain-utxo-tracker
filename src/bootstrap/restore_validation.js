@@ -15,7 +15,8 @@
  * XChain UTXO Tracker - restore archive validation (pure decision logic)
  *
  * The `restorebootstrap` flow (api/compression.js decompressPigz) wipes /data
- * BEFORE it extracts, so an archive that fails its provenance signature, fails
+ * as soon as the archive has been extracted and its store layout checked in a
+ * staging directory (bootstrap/staged_restore.js), so an archive that fails its provenance signature, fails
  * its published checksum, names another module, coin or network in its
  * bootstrap.json, or holds no LevelDB store at the archive root (none at all,
  * or one nested under a subdirectory) must be rejected up front or the live DB
