@@ -16,7 +16,7 @@
  *
  ********************************************************************/
 
-const { SATOSHI_BIGINT, MIN_VERIFICATION_PROGRESS_TO_PARSE } = require('./constants.js')
+const { SATOSHI_BIGINT, MIN_VERIFICATION_PROGRESS_TO_PARSE, SYNCED_THRESHOLD } = require('./constants.js')
 
 
 // Exact satoshi -> decimal-string conversion: takes SATOSHIS, returns COIN units
@@ -56,6 +56,14 @@ function configureNodeRpcStaleMs(value){
 function isNodeRpcStale({ lastNodeRpcOkAt, now = Date.now(), windowMs = NODE_RPC_STALE_MS } = {}){
     if (typeof lastNodeRpcOkAt !== 'number' || !Number.isFinite(lastNodeRpcOkAt)) return false
     return (now - lastNodeRpcOkAt) > windowMs
+}
+
+
+// One bounded sync verdict for both the live status probe and per-response metadata.
+function deriveSyncedVerdict({ lag, nodeHeightStale = false, threshold = SYNCED_THRESHOLD } = {}){
+    if (nodeHeightStale) return false
+    if (typeof lag !== 'number' || !Number.isFinite(lag)) return false
+    return lag >= 0 && lag <= threshold
 }
 
 
@@ -114,6 +122,7 @@ module.exports = {
     resolveNodeTip,
     configureNodeRpcStaleMs,
     isNodeRpcStale,
+    deriveSyncedVerdict,
     NODE_RPC_STALE_MS,
     nodeTipIsParseable,
     nodeStillCatchingUp,

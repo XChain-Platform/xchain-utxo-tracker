@@ -14,6 +14,7 @@ const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker');
+const { deriveSyncedVerdict } = require('../../../src/XChainUtxoTracker/catch_up_helpers.js');
 const { handleBootstrapFailure, handleRestoreFailure } = require('../../../src/bootstrap/bootstrap_recovery');
 
 // Regression: per-query freshness surface.
@@ -37,14 +38,15 @@ describe('computeFreshness', function () {
 
   it('returns null lag (not 0) when nothing is indexed yet', function () {
     // committedHeight -1 means the tracker has indexed nothing; lag is unknown.
-    const f = XChainUtxoTracker.computeFreshness(-1, 500, false);
+    const f = XChainUtxoTracker.computeFreshness(-1, 500, true);
     expect(f.lag).to.equal(null);
     expect(f.synced).to.equal(false);
   });
 
   it('returns null lag when the node tip is unknown', function () {
-    const f = XChainUtxoTracker.computeFreshness(300, -1, false);
+    const f = XChainUtxoTracker.computeFreshness(300, -1, true);
     expect(f.lag).to.equal(null);
+    expect(f.synced).to.equal(false);
   });
 
   it('coerces non-numeric inputs to the -1 sentinel and a boolean synced', function () {
@@ -87,11 +89,17 @@ describe('computeFreshness', function () {
     expect(oneAhead.synced).to.equal(false);
     expect(oneAhead.mempool_ready).to.equal(false);
 
-    // The floor must not disturb the normal direction of lag.
-    const behind = XChainUtxoTracker.computeFreshness(100, 105, true, { mempoolReconverged: true });
-    expect(behind.lag).to.equal(5);
+    // The threshold boundary remains synced, while larger positive lag does not.
+    const behind = XChainUtxoTracker.computeFreshness(100, 103, true, { mempoolReconverged: true });
+    expect(behind.lag).to.equal(3);
     expect(behind.synced).to.equal(true);
     expect(behind.mempool_ready).to.equal(true);
+    for (let lag = -2; lag <= 6; lag++) {
+      for (const nodeHeightStale of [false, true]) {
+        const actual = XChainUtxoTracker.computeFreshness(100, 100 + lag, true, { nodeHeightStale });
+        expect(actual.synced).to.equal(deriveSyncedVerdict({ lag, nodeHeightStale }));
+      }
+    }
   });
 });
 

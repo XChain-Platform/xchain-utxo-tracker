@@ -66,7 +66,7 @@ const { resolveCoinbaseMaturity } = require('./chain/coinbase_maturity.js')
 const { WIRE_FORMAT } = require('./coins')
 
 const { SYNCED_THRESHOLD, DEBUG_TRACE, logger, MAX_ADDRESS_OUTPUTS, MAX_BLOCK_FETCH_RETRIES, AUXPOW_REASSEMBLE_AFTER } = require('./XChainUtxoTracker/constants.js')
-const { satoshiToDecimalString, nodeStillCatchingUp, catchUpWaitState } = require('./XChainUtxoTracker/catch_up_helpers.js')
+const { satoshiToDecimalString, nodeStillCatchingUp, catchUpWaitState, deriveSyncedVerdict } = require('./XChainUtxoTracker/catch_up_helpers.js')
 
 class XChainUtxoTracker {
     static parseOutBuckets = { hash: 0, ins: 0, sb: 0 }
@@ -165,11 +165,10 @@ class XChainUtxoTracker {
         const tracker_height = (typeof committedHeight === 'number') ? committedHeight : -1
         const node_height    = (typeof nodeTip === 'number') ? nodeTip : -1
         const lag = (node_height >= 0 && tracker_height >= 0) ? (node_height - tracker_height) : null
-        // Both verdicts carry the loop latch. This surface also floors a negative
-        // lag, a stale node tip and a halt. get_sync_status reads a live node tip,
-        // while this path uses the loop's cached tip for a query already in flight.
-        const orphaned  = (lag !== null && lag < 0)
-        const isSynced  = (synced === true) && !orphaned && nodeHeightStale !== true && halted !== true
+        // Both surfaces apply the same bounded verdict; only their tip source differs.
+        // get_sync_status reads live while this path uses the loop's cached tip.
+        const isSynced = deriveSyncedVerdict({ lag, nodeHeightStale })
+            && synced === true && halted !== true
         const freshness = {
             tracker_height, node_height, lag,
             synced: isSynced,

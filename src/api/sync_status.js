@@ -15,6 +15,7 @@ const XChainUtxoTracker = require('../XChainUtxoTracker')
 const {
     configureNodeRpcStaleMs,
     isNodeRpcStale,
+    deriveSyncedVerdict,
     NODE_RPC_STALE_MS,
     isValidHeight,
     resolveNodeTip
@@ -32,21 +33,6 @@ const {
 function deriveHealthStatus({ halted = false, dbOk = false } = {}) {
     if (halted) return 'halted'
     return dbOk ? 'healthy' : 'unhealthy'
-}
-
-// The authoritative sync verdict get_sync_status publishes, bounded on BOTH sides.
-// A null lag (nothing indexed yet) and a stale node height (RPC down, lag measured
-// against a frozen cached tip) are never synced. Neither is a NEGATIVE lag: our
-// committed tip sits above the node's, the node-reset/reindex regression
-// XChainUtxoTracker rolls back from, so the outputs we would authorize live in
-// blocks the node no longer recognizes. The check was upper-bounded only, so
-// lag -100 read synced:true and both encoder gates, which delegate this verdict,
-// let orphaned UTXOs reach PSBT selection. Pure and exported so the
-// bound is unit-testable without a running server.
-function deriveSyncedVerdict({ lag, nodeHeightStale = false, threshold = XChainUtxoTracker.SYNCED_THRESHOLD } = {}) {
-    if (nodeHeightStale) return false
-    if (typeof lag !== 'number' || !Number.isFinite(lag)) return false
-    return lag >= 0 && lag <= threshold
 }
 
 // Node reachability for the health payloads: `node_last_ok_at` (the last successful
