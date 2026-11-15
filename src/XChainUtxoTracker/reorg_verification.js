@@ -194,7 +194,7 @@ function logCommittedTip(lastBlockIndex, lastBlockHash, lastBlock){
 // repaired pointer, returning that tip; throws when the store cannot repair it.
 async function repairLastBlockPointerFromScan(lastBlockIndex, lastBlock){
     //This shouldn't happen, but let's try to find the real lastBlockIndex
-    logger.info("The blocks height for the same hash are not equal. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
+    logger.warn("The blocks height for the same hash are not equal. Trying to fix the lastBlockIndex stored in db. This could take some minutes...")
     let lastBlockDb = await this.db.getLastBlock()
     logger.info("Last block from db is "+(lastBlockDb?lastBlockDb:"null"))
 
@@ -219,6 +219,9 @@ async function repairLastBlockPointerFromScan(lastBlockIndex, lastBlock){
         // commitLastBlockPointerRepair(); all verifyReorg callers discard
         // any prior batch first, so opening a fresh one here strands nothing.
         await this.commitLastBlockPointerRepair(lastBlockDb.hash, lastBlockDb.height)
+        // Always a move: the pointer named a missing block, or a height its block
+        // does not carry, and the scanned tip is an existing block at that height.
+        this.countLastBlockPointerRepair()
     }
     return lastBlockDb
 }

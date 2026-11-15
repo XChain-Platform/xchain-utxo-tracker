@@ -47,7 +47,7 @@ const PARSE_MODE_BULK_INSERTS = 1
 // stays comfortably above that chain's cross-chain confirmation gate (an ordinary
 // reorg inside the trust window is auto-recovered, never a manual resync). On
 // 1-minute DOGE blocks the old flat value of 10 was only ~10 minutes of headroom.
-// Single-sourced in undo-blocks.js so the live worker and the bulk seeder can never drift.
+// Single-sourced in src/chain/undo_blocks.js so the live worker and the bulk seeder can never drift.
 // Import the RESOLVER only, never the table or the MAX_SAFE_UNDO_BLOCKS ceiling: this
 // worker consults neither, and naming them here reads as a second clamp that does not
 // exist. Both live inside resolveUndoBlocks, which is the one place they may live.
@@ -257,6 +257,7 @@ function initStatusCounters(){
     // detect chains that reorg frequently and know how deep the last one was.
     this.reorgCount = 0
     this.lastReorgDepth = 0
+    this.lastBlockPointerRepairCount = 0
     this.mempoolEpoch = Date.now()
 
     // Forward-progress heartbeat, stamped when a block batch is committed.

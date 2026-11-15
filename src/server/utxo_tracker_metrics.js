@@ -46,6 +46,7 @@ function addTrackerCollector(registry, tracker, metrics){
         halted,
         lastReorgDepth,
         reorgs,
+        pointerRepairs,
         undoWindowBlocks,
         undoWindowDepth,
         lastNodeRpcOkTs,
@@ -70,6 +71,8 @@ function addTrackerCollector(registry, tracker, metrics){
         halted.set({}, tracker.halted ? 1 : 0);
         setIf(lastReorgDepth, tracker.lastReorgDepth);
         if(Number.isFinite(tracker.reorgCount)) reorgs.setMonotonic({}, tracker.reorgCount);
+        if(Number.isFinite(tracker.lastBlockPointerRepairCount))
+            pointerRepairs.setMonotonic({}, tracker.lastBlockPointerRepairCount);
         setIf(undoWindowBlocks, tracker.undoBlocks);
         if(Array.isArray(tracker.lastBlocks)) undoWindowDepth.set({}, tracker.lastBlocks.length);
 
@@ -91,6 +94,20 @@ function registerNodeRpcGauges(registry){
         help: '1 when the sync loop has not read a usable node tip inside UTXO_TRACKER_NODE_RPC_STALE_MS (the node_rpc_stale verdict of GET /status)'
     });
     return { lastNodeRpcOkTs, nodeRpcStale };
+}
+
+// setMonotonic, not inc: these mirror lifetime counters the tracker already
+// keeps, so a re-read must not double-count what the last scrape saw.
+function registerRecoveryCounters(registry){
+    const reorgs = registry.counter({
+        name: 'xchain_utxo_tracker_reorgs_total',
+        help: 'Reorgs the tracker has rolled back since process start'
+    });
+    const pointerRepairs = registry.counter({
+        name: 'xchain_utxo_tracker_pointer_repairs_total',
+        help: 'Stored last-block pointers rewritten because they disagreed with the block index, since process start'
+    });
+    return { reorgs, pointerRepairs };
 }
 
 function registerUndoWindowGauges(registry){
@@ -158,13 +175,7 @@ function installUtxoTrackerMetrics(observability, tracker, gates){
         name: 'xchain_utxo_tracker_last_reorg_depth',
         help: 'Blocks rolled back by the most recent reorg'
     });
-    // setMonotonic, not inc: this mirrors a lifetime counter the tracker already
-    // keeps, so a re-read must not double-count what the last scrape saw.
-    const reorgs = registry.counter({
-        name: 'xchain_utxo_tracker_reorgs_total',
-        help: 'Reorgs the tracker has rolled back since process start'
-    });
-
+    const { reorgs, pointerRepairs } = registerRecoveryCounters(registry);
     const { undoWindowBlocks, undoWindowDepth } = registerUndoWindowGauges(registry);
     const { lastNodeRpcOkTs, nodeRpcStale } = registerNodeRpcGauges(registry);
 
@@ -176,6 +187,7 @@ function installUtxoTrackerMetrics(observability, tracker, gates){
         halted,
         lastReorgDepth,
         reorgs,
+        pointerRepairs,
         undoWindowBlocks,
         undoWindowDepth,
         lastNodeRpcOkTs,

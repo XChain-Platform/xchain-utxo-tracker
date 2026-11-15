@@ -212,6 +212,7 @@ describe('get_sync_status tip and latch parity', function () {
       isMempoolReconverged: () => true,
       reorgCount: 0,
       lastReorgDepth: 0,
+      lastBlockPointerRepairCount: 3,
       undoBlocks: 10,
       lastBlocks: [],
       ...overrides
@@ -223,7 +224,10 @@ describe('get_sync_status tip and latch parity', function () {
     const down = await get_sync_status(stubTracker({ ...atTip, isSynced: () => false }));
     expect(down).to.include({ node_height: 500, lag: 0, synced: false, mempool_ready: false });
     const up = await get_sync_status(stubTracker(atTip));
-    expect(up).to.include({ node_height: 500, lag: 0, synced: true, mempool_ready: true });
+    expect(up).to.include({
+      node_height: 500, lag: 0, synced: true, mempool_ready: true,
+      pointer_repair_count: 3
+    });
     const missing = stubTracker();
     delete missing.isSynced;
     expect(await get_sync_status(missing)).to.include({ synced: false, mempool_ready: false });

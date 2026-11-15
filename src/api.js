@@ -126,7 +126,7 @@ const MAX_PAGE_LIMIT = cfg.MAX_PAGE_LIMIT
 
 // Validate-or-fall-back resolver for the bulk-sync numeric env knobs. The reader
 // itself now lives in src/config/env_int.js and is the SAME function resolveUndoBlocks
-// (undo-blocks.js) and resolveCoinbaseMaturity call, so the parity is true by
+// (src/chain/undo_blocks.js) and resolveCoinbaseMaturity call, so the parity is true by
 // construction rather than by hand-copy; before that extraction those two sites
 // were still on parseInt while this comment asserted otherwise.
 // Number() rather than parseInt() because parseInt happily truncates '10abc' to 10

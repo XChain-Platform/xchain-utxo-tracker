@@ -109,6 +109,17 @@ function registerMetricEdgeTests({ realObservability, fakeTracker }) {
         assert.match(out, /xchain_utxo_tracker_last_reorg_depth 7\b/);
     });
 
+    it('mirrors pointer repairs without double-counting across scrapes', function () {
+        const observability = realObservability();
+        const tracker = fakeTracker({ lastBlockPointerRepairCount: 2 });
+        installUtxoTrackerMetrics(observability, tracker);
+
+        observability.registry.render();
+        const out = observability.registry.render();
+        assert.match(out, /xchain_utxo_tracker_pointer_repairs_total 2\b/,
+            'a re-scrape must not add the counter to itself');
+    });
+
     it('survives a tracker whose fields are still null or -1', function () {
         const observability = realObservability();
         installUtxoTrackerMetrics(observability, {

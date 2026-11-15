@@ -111,6 +111,23 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
             expect(await connector.getBlockReassembled('hash')).to.equal(HEADER_HEX + '01' + TX_HEX);
         });
 
+        it('rejects a malformed getblockheader reply before any per-tx fetch', async function () {
+            const badHeaders = [{}, 123, 'abc', HEADER_HEX.slice(0, -2), HEADER_HEX.slice(0, -1) + 'z'];
+            for (const bad of badHeaders) {
+                let verboseCalls = 0;
+                let rawCalls = 0;
+                const connector = makeConnector({
+                    getBlockHeader: async () => bad,
+                    getBlockVerbose: async () => { verboseCalls++; return { tx: [TXID] }; },
+                    getRawTransaction: async () => { rawCalls++; return TX_HEX; },
+                });
+                const err = await caught(() => connector.getBlockReassembled('hash'));
+                expectMalformedReply(err, 'getblockheader');
+                expect(verboseCalls).to.equal(0);
+                expect(rawCalls).to.equal(0);
+            }
+        });
+
         it('fails loudly when an in-block tx cannot be fetched', async function () {
             const connector = makeConnector({
                 getBlockHeader: async () => HEADER_HEX,

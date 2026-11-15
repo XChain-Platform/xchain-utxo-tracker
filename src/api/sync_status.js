@@ -175,6 +175,7 @@ function addOperationalStatus(result, tracker, nodeHeightStale) {
     // frequent reorganizations and know the depth of the last one.
     result.reorg_count = tracker.reorgCount
     result.last_reorg_depth = tracker.lastReorgDepth
+    result.pointer_repair_count = tracker.lastBlockPointerRepairCount
     // Non-null ({node_height, stored_height, since}) while the sync loop is
     // waiting out a node in initial block download whose tip is below our
     // committed tip: a deliberate wait, not a stall and not a rollback. Always

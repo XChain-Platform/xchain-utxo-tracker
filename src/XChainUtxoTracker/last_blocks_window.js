@@ -244,6 +244,20 @@ module.exports = {
         await this.db.setLastBlockHeight(height)
         // Commit as the store-commit lock's writer: the repair moves the height a page reports.
         await withStoreCommit(this, () => this.db.endTransaction())
+    },
+
+    // True when the durable LAST_BLOCK_* pointer already names this block. The
+    // tip-drop recovery after a discarded batch rewrites a pointer that is
+    // already right; that is ordinary recovery, not a store inconsistency.
+    async lastBlockPointerNames(hash, height){
+        return (await this.db.getLastBlockHash()) === hash &&
+            (await this.db.getLastBlockHeight()) === height
+    },
+
+    // Counts one committed repair of a pointer that named another block. Callers
+    // count after the commit resolves, so a failed commit is never counted.
+    countLastBlockPointerRepair(){
+        this.lastBlockPointerRepairCount = (this.lastBlockPointerRepairCount || 0) + 1
     }
 }
 

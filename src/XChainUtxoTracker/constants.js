@@ -90,8 +90,8 @@ const MAX_ADDRESS_OUTPUTS = config.MAX_ADDRESS_OUTPUTS
 const logger = getLogger();
 
 
-// coinFromNetwork and resolveUndoBlocks are single-sourced in undo-blocks.js
-// (imported above) so the live worker, seeder, orchestrator, and api.js share
+// coinFromNetwork and resolveUndoBlocks are single-sourced in
+// src/chain/undo_blocks.js so the live worker, seeder, orchestrator, and api.js share
 // one env-override resolution semantics and can never drift (uuid:65309b82).
 const PREFETCH_SIZE = 10 //Number of blocks to pre-fetch concurrently while processing the current one
 
@@ -111,7 +111,8 @@ const P_PENDING_CLEANUP_KEY = Buffer.from([0x50])
 // window that was never that deep yet, because UNDO_BLOCKS was RAISED under an
 // existing store: the on-disk N index keeps the entries the old depth allowed
 // and only grows back one per forward-synced block. LTC mainnet booted "48 of
-// 120" the day after its per-chain default went 48 -> 120 (undo-blocks.js) and
+// 120" the day after its per-chain default went 48 -> 120
+// (src/chain/undo_blocks.js) and
 // the boot line called it a 72-block rollback that never happened. The mark is
 // what the second boot has that the first did not: a record of how deep the
 // window ever got, so a window at or above it never shrank.

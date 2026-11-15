@@ -19,6 +19,9 @@ const { encodeVarintHex, stripAuxPowFromBlockHex } = require('./auxpow_codec');
 
 const BLOCK_HASH_HEX = /^[0-9a-fA-F]{64}$/
 
+// The pure block header is 80 bytes.
+const HEADER_HEX_LENGTH = 160
+
 module.exports = {
     async getBlockchainInfo(){
         const data = {
@@ -130,7 +133,14 @@ module.exports = {
         try {
             // Older daemons append the AuxPoW bytes to getblockheader; the pure
             // header is always the first 80 bytes either way.
-            const headerHex = (await this.getBlockHeader(blockhash, true)).substring(0, 160)
+            const rawHeader = await this.getBlockHeader(blockhash, true)
+            // Check before the per-tx fan-out. A short or non-hex header would
+            // otherwise build a truncated block after every raw-tx fetch.
+            if (!isWholeHex(rawHeader) || rawHeader.length < HEADER_HEX_LENGTH) {
+                const shape = typeof rawHeader === 'string' ? 'string length ' + rawHeader.length : typeof rawHeader
+                throw new Error('getblockheader returned malformed block hex for ' + blockhash + ' (' + shape + ')')
+            }
+            const headerHex = rawHeader.substring(0, HEADER_HEX_LENGTH)
             const verboseBlock = await this.getBlockVerbose(blockhash)
             if (!verboseBlock || !Array.isArray(verboseBlock.tx)) {
                 throw new Error('verbose getblock returned no tx array')

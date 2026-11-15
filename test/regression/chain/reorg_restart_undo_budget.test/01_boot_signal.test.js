@@ -86,7 +86,8 @@ function registerBootSignalRefillTest() {
         registerLogHooks();
         // The second cause. LTC mainnet booted "48 of 120 blocks, so a
         // previous process was interrupted mid-reorg after rolling back 72" the
-        // day after LTC's per-chain window went 48 -> 120 in undo-blocks.js. No
+        // day after LTC's per-chain window went 48 -> 120 in
+        // src/chain/undo_blocks.js. No
         // 72-block rollback happened, or could have: the window had simply never
         // been deeper than the 48 the old setting allowed.
         it('does not call a window still refilling after a raised UNDO_BLOCKS an interrupted rollback', function () {

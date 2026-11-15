@@ -265,7 +265,15 @@ async function repairLastBlockPointer(sync, lastBlockDb){
     // below claim a fix that never reaches disk. The
     // discardInflightBatchForReorg() call above satisfies the
     // precondition. Rationale at commitLastBlockPointerRepair().
+    const moved = !(await this.lastBlockPointerNames(lastBlockDb.hash, lastBlockDb.height))
     await this.commitLastBlockPointerRepair(lastBlockDb.hash, lastBlockDb.height)
+    // Count and warn only when the durable pointer named another block: a drop
+    // that discarded staged blocks leaves it already on the committed tip.
+    if (moved){
+        this.countLastBlockPointerRepair()
+        logger.warn("Repaired the stored last-block pointer to height " + lastBlockDb.height +
+            " and hash " + lastBlockDb.hash + ".")
+    }
     return () => {
         sync.lastProcessedBlockIndex = lastBlockDb.height
         sync.lastProcessedBlockHash = lastBlockDb.hash
