@@ -16,6 +16,7 @@ const path = require('path');
 
 const { deriveHealthStatus, isNodeRpcStale, deriveSyncedVerdict, NODE_RPC_STALE_MS } = require('../../src/api.js');
 const XChainUtxoTracker = require('../../src/XChainUtxoTracker.js');
+const { BLOCKCHAIN_INFO_REFRESH_MS } = require('../../src/XChainUtxoTracker/constants.js');
 
 // xchain-node's BootstrapHealthGate.evaluateStatusPayload refuses any payload
 // whose `status` is outside this set, so a status word the tracker invents
@@ -104,10 +105,11 @@ describe('node-RPC staleness policy', function () {
     expect(isNodeRpcStale({ lastNodeRpcOkAt: 'soon' })).to.equal(false);
   });
 
-  // Five refresh cycles (BLOCKCHAIN_INFO_REFRESH_MS is 30s in XChainUtxoTracker.js),
-  // so one slow or skipped poll never trips the probe.
+  // The default window is five refresh cycles of the constant in constants.js.
+  // Keep a four-cycle floor so one slow or skipped poll never trips the probe.
   it('defaults to a window several refresh cycles wide', function () {
-    expect(NODE_RPC_STALE_MS).to.be.at.least(120000);
+    expect(BLOCKCHAIN_INFO_REFRESH_MS).to.be.a('number').and.to.be.above(0);
+    expect(NODE_RPC_STALE_MS).to.be.at.least(4 * BLOCKCHAIN_INFO_REFRESH_MS);
   });
 
   // Wiring guard: the /status route is registered inside startApi()'s closure and
