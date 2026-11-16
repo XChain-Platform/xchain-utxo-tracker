@@ -36,6 +36,9 @@
  *   W: [0x57][blockHash(32)][txid(32)][outputIndex(4)]                =  69 B
  *   X: [0x58][txid(32)]                                               =  33 B
  *   Y: [0x59][blockHash(32)][txid(32)]                                =  65 B
+ *   A: [0x41][scriptPubKey(32)][~height(4)][txid(32)]                 =  69 B
+ *   V: [0x56][blockHash(32)][scriptPubKey(32)][txid(32)]              =  97 B
+ *   U: [0x55][scriptPubKey(32)][field(1)]                             =  34 B
  *   R: [0x52]                                                         =   1 B
  *   LAYOUT_VERSION (UTF-8 string key, reserved 'L' byte): decimal version
  *
@@ -55,6 +58,10 @@
  *   W: [scriptPubKey(32)]                                             = 32 B
  *   X: [blockHash(32)]                                                = 32 B
  *   Y: [fullTxid(32)]                                                 = 32 B
+ *   A: [received(8)][sent(8)][blockTime(4)], ~height = 0xFFFFFFFF-h   = 20 B
+ *   V: [height(4)]                                                    =  4 B
+ *   U: [0x55][scriptPubKey(32)][field(1)]: START [from(4)], LIVE [liveFrom(4)],
+ *      PROGRESS UTF-8 JSON {next, done, open}; A, V and U exist only for watched addresses
  *   R: UTF-8 JSON {"reason","height","at"}                            = variable
  *
  ********************************************************************/
@@ -65,6 +72,7 @@ const loadPart = require
 const { AddressTooLargeError, InvalidCursorError } = require('./level_up_db/store_errors')
 const { encodeOutput, decodeOutput, encodeBlock, encodeTx, encodeInputVal, encodeOutHint } = require('./level_up_db/value_codec')
 const { kOutBlk, kOutputFromBuf, kOutDelFromBuf, kScriptBlkFromBuf, kBlkScriptFromBuf, kBlock, kTx, kScriptBlk, kBlkScript, kInput, kOutput, kOutHint, kInHint, kOutDel, kHintDel, kStoredBlk, kTxExact, kTxBlockRecovery, rangeEnd } = require('./level_up_db/key_codec')
+const { kHistory, kHistoryBlock, kHistoryWatch } = require('./level_up_db/history_keys')
 
 // A class split into part modules has to put the moved methods back on its
 // prototype. Object.assign would do that as ENUMERABLE own properties, while
@@ -194,6 +202,7 @@ installMethods(LevelUpStore.prototype,
     loadPart('./level_up_db/output_cleanup.js'),
     loadPart('./level_up_db/output_scripts.js'),
     loadPart('./level_up_db/store_layout.js'),
+    loadPart('./level_up_db/history.js'),
 )
 
 // Attached to the class rather than exported one line at a time: one export
@@ -243,6 +252,9 @@ Object.assign(module.exports, {
     kStoredBlk,
     kTxExact,
     kTxBlockRecovery,
+    kHistory,
+    kHistoryBlock,
+    kHistoryWatch,
     rangeEnd,
     // Exported so the halt-marker tests can assert the record sits under the one
     // reserved byte and collides with no k* builder.

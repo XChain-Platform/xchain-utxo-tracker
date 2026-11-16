@@ -312,30 +312,38 @@ module.exports = {
         // Phase 3: stage all deletes
         const _tStage = Date.now()
         for (let i = 0; i < inputs.length; i++) {
-            if (!resolved[i]) continue
-            const inp = inputs[i]
-            const r = resolved[i]
-            if (r.inMem) {
-                const inMemOVal = unstageInMemorySpend(this, inp, r)
-                await this.writeCrossBlockSpendRecovery(inp, r.scriptPubKeyBuf, inMemOVal)
-                continue
-            }
-            if (r.oVal == null) {
-                warnMissingOutputValue(this, inp, r)
-                continue
-            }
-
-            const mKey = kHintDel(inp.blockHash, inp.prevTxHash, inp.prevOutputIndex)
-            const kKey = kOutDelFromBuf(inp.blockHash, r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
-            if (DEBUG_TRACE) {
-                logger.info(`TRACE delOutput db=${this.dbName} path=archive sh=${r.scriptPubKeyBuf.toString('hex')} tx=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
-            }
-            await this.addTransaction("put", mKey, r.scriptPubKeyBuf)
-            await this.addTransaction("put", kKey, r.oVal)
-            await this.addTransaction("del", r.oKey)
-            await this.addTransaction("del", r.hKey)
+            if (resolved[i]) await stageSpend(this, inputs[i], resolved[i])
         }
         this.constructor.parseInBuckets.stage += Date.now() - _tStage
         return inputs.length
     },
+}
+
+// Phase 3 for one resolved input: unstage a same-batch output or archive an
+// on-disk one into K/M, then record the spend in the address's native history.
+// The history write needs the spending txid (input.txHash), which the block
+// apply path carries; a caller without it records the spend in the UTXO set only.
+async function stageSpend(store, inp, r) {
+    let spentVal
+    if (r.inMem) {
+        spentVal = unstageInMemorySpend(store, inp, r)
+        await store.writeCrossBlockSpendRecovery(inp, r.scriptPubKeyBuf, spentVal)
+    } else if (r.oVal == null) {
+        // No value means no spend was staged, so there is nothing to record either.
+        return warnMissingOutputValue(store, inp, r)
+    } else {
+        spentVal = r.oVal
+        const mKey = kHintDel(inp.blockHash, inp.prevTxHash, inp.prevOutputIndex)
+        const kKey = kOutDelFromBuf(inp.blockHash, r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
+        if (DEBUG_TRACE) {
+            logger.info(`TRACE delOutput db=${store.dbName} path=archive sh=${r.scriptPubKeyBuf.toString('hex')} tx=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+        }
+        await store.addTransaction("put", mKey, r.scriptPubKeyBuf)
+        await store.addTransaction("put", kKey, r.oVal)
+        await store.addTransaction("del", r.oKey)
+        await store.addTransaction("del", r.hKey)
+    }
+    if (inp.txHash && spentVal != null) {
+        await store.addHistoryMovement({ script: r.scriptPubKeyBuf, blockHash: inp.blockHash, txid: inp.txHash, sent: spentVal.readBigUInt64BE(0) })
+    }
 }

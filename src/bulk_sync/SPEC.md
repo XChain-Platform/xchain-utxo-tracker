@@ -206,6 +206,11 @@ fall inside the active reorg window. If this invariant is broken (tip-safety bel
 `UNDO_BLOCKS`), a reorg into the bulk range finds no K/M and leaves missing (spent,
 never-restored) UTXOs until a full re-index.
 
+**Native history (A, V, U).** The seed writes none of these, and never will: the
+tracker keeps native history only for addresses a wallet asks about (the U watch list),
+writing their A rows live and rebuilding each one's past from the coin node in a
+per-address backfill job. Nothing here is chain-wide, so a bulk load has nothing to seed.
+
 **T value shape.** The live confirmed path writes, per tx, a `T` record whose value is
 `[blockHash(32)][fullTxid(32)]` (64 B) plus an exact-txid `X` (0x58) and a per-block
 recovery `Y` (0x59) record (`insertTransaction`); like W and Z, a block's `Y` records are

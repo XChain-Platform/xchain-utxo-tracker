@@ -338,6 +338,7 @@ const transactionParsingMethods = require('./XChainUtxoTracker/transaction_parsi
 const reorgVerificationMethods = require('./XChainUtxoTracker/reorg_verification.js')
 const syncLoopMethods = require('./XChainUtxoTracker/sync_loop.js')
 const mempoolRefreshMethods = require('./XChainUtxoTracker/mempool_refresh.js')
+const nativeHistoryMethods = require('./native_history/tracker_methods.js')
 
 // A class split into part modules has to put the moved methods back on its
 // prototype. Object.assign would do that as ENUMERABLE own properties, while
@@ -365,7 +366,7 @@ function installMethods(target, ...sources) {
 installMethods(XChainUtxoTracker.prototype, haltMarkerMethods, lastBlocksWindowMethods,
     fetchFailuresAndHaltMethods, statusAndStopMethods, addressQueryMethods,
     transactionParsingMethods, reorgVerificationMethods, syncLoopMethods,
-    mempoolRefreshMethods)
+    mempoolRefreshMethods, nativeHistoryMethods)
 
 // Attached to the class rather than exported one line at a time: one export
 // shape per file, and every call site already reaches these through the module

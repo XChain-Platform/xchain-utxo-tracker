@@ -120,6 +120,7 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
         removeOutputScriptsInBlock: async () => {},
         processDeletedOutputs: async () => {},
         removeCreatedOutputsInBlock: async () => {},
+        removeHistoryInBlock: async () => {},
         deleteBlock: async (hash) => { const h = heightOf(hash); deleted.push(h); top = h - 1; },
         setLastBlockHash: async () => {},
         setLastBlockHeight: async () => {}
@@ -171,6 +172,7 @@ describe('XChainUtxoTracker unrecoverable-reorg tagging + halt', function () {
         removeOutputScriptsInBlock: async () => {},
         processDeletedOutputs: async () => {},
         removeCreatedOutputsInBlock: async () => {},
+        removeHistoryInBlock: async () => {},
         deleteBlock: async () => { deleteCalls++; },
         setLastBlockHash: async () => {},
         setLastBlockHeight: async () => {}

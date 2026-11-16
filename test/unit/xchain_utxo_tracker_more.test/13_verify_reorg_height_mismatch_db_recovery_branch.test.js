@@ -209,6 +209,7 @@ describe('XChainUtxoTracker (more)', function () {
                 removeOutputScriptsInBlock: sinon.stub().resolves(),
                 processDeletedOutputs: sinon.stub().resolves(),
                 removeCreatedOutputsInBlock: sinon.stub().resolves(),
+                removeHistoryInBlock: sinon.stub().resolves(),
                 deleteBlock: sinon.stub().resolves(),
                 setLastBlockHash: sinon.stub().resolves(),
                 setLastBlockHeight: sinon.stub().resolves()

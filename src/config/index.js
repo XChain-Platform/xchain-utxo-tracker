@@ -143,6 +143,27 @@ module.exports = {
         return intKnob('UTXO_MAX_PAGE_LIMIT', process.env.UTXO_MAX_PAGE_LIMIT, { fallback: 10000, min: 1 });
     },
 
+    // Native history (POST /history) keeps rows only for watched addresses.
+    // Most addresses the watch list may hold.
+    get HISTORY_WATCH_MAX() {
+        return intKnob('UTXO_TRACKER_HISTORY_WATCH_MAX', process.env.UTXO_TRACKER_HISTORY_WATCH_MAX, { fallback: 100000, min: 1 });
+    },
+
+    // Backfill passes that may rebuild watched addresses' past at once.
+    get HISTORY_BACKFILL_CONCURRENCY() {
+        return intKnob('UTXO_TRACKER_HISTORY_BACKFILL_CONCURRENCY', process.env.UTXO_TRACKER_HISTORY_BACKFILL_CONCURRENCY, { fallback: 1, min: 1 });
+    },
+
+    // New addresses one source IP may add to the watch list per hour.
+    get HISTORY_NEW_PER_IP() {
+        return intKnob('UTXO_TRACKER_HISTORY_NEW_PER_IP', process.env.UTXO_TRACKER_HISTORY_NEW_PER_IP, { fallback: 200, min: 1 });
+    },
+
+    // How long an address refused a watch slot stays refused, for every caller.
+    get HISTORY_COOLDOWN_SECONDS() {
+        return intKnob('UTXO_TRACKER_HISTORY_COOLDOWN_SECONDS', process.env.UTXO_TRACKER_HISTORY_COOLDOWN_SECONDS, { fallback: 600, min: 1 });
+    },
+
     get BULK_SYNC_WORK_DIR() { return process.env.BULK_SYNC_WORK_DIR; },
 
     get CORS_ORIGIN() { return process.env.CORS_ORIGIN; },

@@ -83,6 +83,7 @@ module.exports = {
             // a second stop call falls through to the resolve path below.
             if (this.parsingAborted && !this.parsingStopped){
                 try {
+                    await this.stopNativeHistory()
                     await this.db.close()
                 } catch (err) {
                     // Reject explicitly: a throw inside this executor never reaches the

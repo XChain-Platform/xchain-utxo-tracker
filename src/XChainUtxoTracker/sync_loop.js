@@ -37,6 +37,7 @@ module.exports = {
         // time and height on /status, and never re-enters the loop: the window it
         // would roll back through is the drained one the marker was written over.
         if (await this.resumeHaltFromMarker()) return
+        await this.initNativeHistory()
 
         // Only an AuxPoW chain can reach getBlockReassembled (shouldReassembleBlock), so
         // unlike the decoder's unconditional probe this one skips Bitcoin and Litecoin,
@@ -57,6 +58,7 @@ module.exports = {
 
         while (true){
             if (this.keepParsing){
+                await claimIdleHistory.call(this, sync)
                 // A pass whose last node or store call leaves bookkeeping behind
                 // hands it back as `finish`, which runs here before the loop goes
                 // round, so no await separates the two.
@@ -74,6 +76,7 @@ module.exports = {
                 this.synced = false
                 revokeMempoolReadiness.call(this)
                 this.nodeCatchingUp = null
+                await this.stopNativeHistory()
                 await this.db.close()
                 this.parsingStopped = true
                 break
@@ -88,6 +91,14 @@ module.exports = {
 // store call or a sleep: an async step returns only right after such an await,
 // a step whose work runs on synchronously hands the pass to the next step by
 // returning that step's call, and the synchronous stretches are plain functions.
+
+// With no batch open, an address that joined the history watch list is live from
+// the next block this loop stages, so its liveFrom is claimed here between passes.
+async function claimIdleHistory(sync){
+    if (sync.blocksQuantity === 0 && this.historyWatch.unclaimedCount > 0) {
+        await this.claimHistoryLiveFrom(sync.lastProcessedBlockIndex + 1, { staged: false })
+    }
+}
 
 // Loads the committed cursor and the in-memory windows the loop starts from:
 // the tip height and hash, the last-blocks window and the undo watermark, and

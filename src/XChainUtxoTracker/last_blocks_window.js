@@ -282,4 +282,6 @@ async function pruneAgedBlockRecords(blockHash){
     // unwind (deleteTxBlockRecord) reads them. T and X stay, since getTxBlock
     // and the tx list read those for the life of the store.
     await this.db.removeTxBlockRecoveryIndexOnly(blockHash)
+    // And the V reverse index of its native history rows; the A rows stay.
+    await this.db.removeHistoryBlockIndexOnly(blockHash)
 }

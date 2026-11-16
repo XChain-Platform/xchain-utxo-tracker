@@ -130,6 +130,10 @@ async function stageBlock(sync, block, nextBlockHash, nextBlockHeight, previousB
     await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp, previousHash:previousBlockHash})
     sync.blocksCount = sync.blocksCount + 1
 
+    // The history watch snapshot for this whole block: addresses that joined since
+    // the last block are live from this one.
+    if (this.historyWatch) this.db.historyScripts = await this.claimHistoryLiveFrom(nextBlockHeight, { staged: true })
+
     //Parse the transactions (two-pass approach to allow full parallelism):
     //  Pass 1: insert all outputs for every tx concurrently
     //  Pass 2: process all inputs concurrently (same-block outputs are
@@ -182,12 +186,14 @@ async function parseBlockTransactions(sync, transactions, nextBlockHash, nextBlo
     const _tParseIn = Date.now()
     const removeInputs = []
     for (const tx of transactions) {
+        // The spender's txid, so each spend lands in its address's native history.
+        const txHash = tx.ins.length > 0 ? tx.getId() : null
         for (const nextInput of tx.ins) {
             const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
             // A coinbase input spends nothing, so there is no previous output to remove.
             if ((nextInput.index === 4294967295) || !standardInput) continue
             const prevTxHash = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse())
-            removeInputs.push({ prevTxHash, prevOutputIndex: nextInput.index, blockHash: nextBlockHash })
+            removeInputs.push({ prevTxHash, prevOutputIndex: nextInput.index, blockHash: nextBlockHash, txHash })
         }
     }
     let blockInputTotal = removeInputs.length

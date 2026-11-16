@@ -8,6 +8,7 @@ const { getLogger } = require('../observability')
 const { compressDirPigz, decompressPigz, tasks } = require('./compression.js')
 const { sendAddressError, safeBootstrapFilename } = require('./errors.js')
 const { deriveHealthStatus, get_sync_status, registerStatusRoute } = require('./sync_status.js')
+const { registerHistoryRoute } = require('./history_route.js')
 const logger = getLogger()
 function registerUtxoRoute({ app, requestGate, getUtxos, parsePageOpts, setFreshnessHeaders }){
     app.get('/utxos/:address', requestGate.hold(async (req, res) => {
@@ -363,19 +364,19 @@ function toJsonRpcError(err){
     if (!err || !CALLER_MISTAKE_CODES.has(err.code)) return err
     return Object.assign(new Error(err.message), { code: -32602, data: { code: err.code } })
 }
-// Every route registered here that awaits a LevelDB read is wrapped in the gate's
-// hold(): the slot then spans the read instead of the client's socket, so a
-// client that hangs up mid-scan cannot free capacity for the next request
-// while its own scan is still running. Adding a route here without the
-// wrapper puts it back outside the cap. REST and JSON-RPC routes hold on
-// requestGate; GET /status alone (registerStatusRoute) holds on probeGate, the
-// gate that admitted it, since hold() on any other gate silently does nothing.
+// Every route registered here that awaits a LevelDB read is wrapped in the gate's hold(): the slot
+// then spans the read instead of the client's socket, so a client that hangs up mid-scan cannot free
+// capacity for the next request while its own scan is still running. Adding a route here without the
+// wrapper puts it back outside the cap. REST and JSON-RPC routes hold on requestGate; GET /status alone
+// (registerStatusRoute) holds on probeGate, the gate that admitted it, since hold() on any other gate
+// silently does nothing.
 function registerRoutes(context){
     const { app, tracker, probeGate, requestGate, getFreshnessMeta } = context
     registerUtxoRoute(context)
     registerFirstSeenRoute(context)
     registerBalanceRoute(context)
     registerInfoRoute(context)
+    registerHistoryRoute(context)
     registerStatusRoute({ app, tracker, probeGate, requestGate, getFreshnessMeta })
     // Express 5 / body-parser 2.x leaves req.body undefined when a request carries
     // no JSON body (a GET, or a POST without application/json), whereas body-parser

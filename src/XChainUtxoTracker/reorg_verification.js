@@ -21,6 +21,7 @@ const { REMOVE_SPENT, logger } = require('./constants.js')
 const XChainUtxoTracker = require('../XChainUtxoTracker.js')
 const { RETRY_WALK, nodeBlockHashOrRetry } = require('./reorg_node_reads.js')
 const { withStoreCommit } = require('./store_commit_lock.js')
+const { withHistoryWrite } = require('../native_history/write_lock.js')
 
 module.exports = {
     async verifyReorg(nodeTipHeight = null){
@@ -60,7 +61,9 @@ module.exports = {
 
                 if (aboveNodeTip || lastBlockHash != blockHashFromNode){
                     refuseRollbackPastWindow.call(this, undoWindow, lastBlockIndex, blocksDeleted)
-                    if (!(await rollBackTipBlock.call(this, lastBlockHash, lastBlock, retryCount))){
+                    // Inside the history write section, so a backfill chunk cannot land between this
+                    // block's V listing and its commit (native_history/write_lock.js).
+                    if (!(await withHistoryWrite(this, () => rollBackTipBlock.call(this, lastBlockHash, lastBlock, retryCount)))){
                         retryCount++
                         continue
                     }
@@ -315,6 +318,10 @@ async function rollBackTipBlock(lastBlockHash, lastBlock, retryCount){
             // in this block (just re-staged above) is removed, not revived.
             await this.db.removeCreatedOutputsInBlock(lastBlockHash)
         }
+        // The block's native history rows go with it (V names every one it wrote), and
+        // any backfill that scanned it restarts below it.
+        await this.db.removeHistoryInBlock(lastBlockHash)
+        await this.resetHistoryBackfillsAbove(lastBlock.h)
         // deleteBlock also purges the T/X (txid->block) records for every tx
         // created in lastBlockHash, giving insertTransaction's confirmed-chain
         // writes rollback symmetry. T and X are keyed on the full txid and go
