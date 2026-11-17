@@ -45,5 +45,10 @@
     "test/unit/utxoTrackerMetrics.test.js": "test/unit/utxo_tracker_metrics.test.js",
     "test/unit/verifyReorgRetry.test.js": "test/unit/verify_reorg_retry.test.js"
   },
-  "titles": {}
+  "titles": {
+    "test/unit/security/configuration/dependency_advisories.test.js": {
+      "Security: remediated dependency advisories @regression @tier4 ADV-1: package.json pins minimatch at or above 10.2.5": "Security: remediated dependency advisories @regression @tier4 ADV-1: package.json pins minimatch at or above 11.0.9",
+      "Security: remediated dependency advisories @regression @tier4 ADV-2: every minimatch entry in package-lock.json is at or above 10.2.5": "Security: remediated dependency advisories @regression @tier4 ADV-2: every minimatch entry in package-lock.json is at or above 11.0.9"
+    }
+  }
 }
