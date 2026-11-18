@@ -252,27 +252,27 @@ describe('bulk-sync boot stop drain', function(){
     })
 })
 
+function tempRoot(){
+    return fs.mkdtempSync(path.join(require('os').tmpdir(), 'bulk-boot-'))
+}
+
+async function stopWith(options){
+    const proc = child()
+    const lines = []
+    const boot = createBulkBoot({
+        ...options,
+        signalChild(){},
+        waitForProcessGroup: () => Promise.resolve(),
+        log: { log: (line) => lines.push(line), warn(){}, error(){} }
+    })
+    const running = boot.trackChild(proc).catch(() => {})
+    const stopping = boot.stop()
+    proc.emit('exit', null, 'SIGTERM')
+    await Promise.all([running, stopping])
+    return lines
+}
+
 describe('bulk-sync boot default target cleanup', function(){
-    function tempRoot(){
-        return fs.mkdtempSync(path.join(require('os').tmpdir(), 'bulk-boot-'))
-    }
-
-    async function stopWith(options){
-        const proc = child()
-        const lines = []
-        const boot = createBulkBoot({
-            ...options,
-            signalChild(){},
-            waitForProcessGroup: () => Promise.resolve(),
-            log: { log: (line) => lines.push(line), warn(){}, error(){} }
-        })
-        const running = boot.trackChild(proc).catch(() => {})
-        const stopping = boot.stop()
-        proc.emit('exit', null, 'SIGTERM')
-        await Promise.all([running, stopping])
-        return lines
-    }
-
     it('removes the real target without a synchronous delete that blocks the hard-exit timer', async function(){
         const root = tempRoot()
         const dbPath = path.join(root, 'store')

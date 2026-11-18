@@ -170,16 +170,19 @@ class LevelUpStore {
 
 module.exports = LevelUpStore
 
-installMethods(LevelUpStore.prototype,
-    require('./level_up_db/store_lifecycle.js'),
-    require('./level_up_db/blocks_and_transactions.js'),
-    require('./level_up_db/inputs.js'),
-    require('./level_up_db/outputs.js'),
-    require('./level_up_db/output_cleanup.js'),
-    require('./level_up_db/output_scripts.js'),
-    require('./level_up_db/store_layout.js'),
-    require('./level_up_db/history.js'),
-)
+// Load the part modules after the export is set: they require this file back.
+const storeLifecycleMethods = require('./level_up_db/store_lifecycle.js')
+const blocksAndTransactionsMethods = require('./level_up_db/blocks_and_transactions.js')
+const inputMethods = require('./level_up_db/inputs.js')
+const outputMethods = require('./level_up_db/outputs.js')
+const outputCleanupMethods = require('./level_up_db/output_cleanup.js')
+const outputScriptMethods = require('./level_up_db/output_scripts.js')
+const storeLayoutMethods = require('./level_up_db/store_layout.js')
+const historyMethods = require('./level_up_db/history.js')
+
+installMethods(LevelUpStore.prototype, storeLifecycleMethods, blocksAndTransactionsMethods,
+    inputMethods, outputMethods, outputCleanupMethods, outputScriptMethods,
+    storeLayoutMethods, historyMethods)
 
 // Attached to the class rather than exported one line at a time: one export
 // shape per file, and every call site already reaches these through the module

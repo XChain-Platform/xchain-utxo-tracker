@@ -51,6 +51,10 @@ describe('XChainUtxoTracker sync loop: reorgs', function () {
         expect(seen.height).to.equal(12);
         expect(h.tracker.reorgCount).to.equal(0);
     });
+});
+
+describe('XChainUtxoTracker sync loop: reorgs and the synced latch', function () {
+    const h = useSyncLoopHarness();
 
     it('keeps a lowered latch down while re-checking the committed tip hash fails', async function () {
         const node = makeNode(buildChain(13));

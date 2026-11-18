@@ -63,14 +63,6 @@ describe('native history backfill: rebuilding a newly watched address\'s past', 
         expect(h.tracker.historyBackfill.passesStarted).to.equal(1);
         expect(live.rows[addresses[0]]).to.have.length(2);
         expect(rebuilt.rows).to.deep.equal(live.rows);
-        const node = makeNode(buildChain(3));
-        node.faults.batch = [taggedStripError('batch strip failed')];
-        node.faults.strip = [taggedStripError('block strip failed')];
-        const runner = new HistoryBackfill({ connector: node.connector, auxPow: true }, null, {});
-        const fetched = await runner.fetchBlocks([0, 1, 2]);
-        expect(node.reassembled).to.equal(1);
-        expect(fetched.map((block) => block.height)).to.deep.equal([0, 1, 2]);
-        expect(fetched.map((block) => block.hash)).to.deep.equal(node.chain.map((block) => block.hash));
     });
 
     it('lets a reorg unwind rebuilt rows and records the replacement blocks live', async function () {
@@ -102,6 +94,19 @@ describe('native history backfill: rebuilding a newly watched address\'s past', 
         expect(seen.spent.transactions.map((t) => [t.height, t.txid])).to.deep.equal([
             [11, spendTxid(node.chain[11])], [9, node.chain[9].coinbase],
         ]);
+    });
+});
+
+describe('native history backfill: fetching blocks', function () {
+    it('reassembles a block whose batch and strip fetches both fail on a parse fault', async function () {
+        const node = makeNode(buildChain(3));
+        node.faults.batch = [taggedStripError('batch strip failed')];
+        node.faults.strip = [taggedStripError('block strip failed')];
+        const runner = new HistoryBackfill({ connector: node.connector, auxPow: true }, null, {});
+        const fetched = await runner.fetchBlocks([0, 1, 2]);
+        expect(node.reassembled).to.equal(1);
+        expect(fetched.map((block) => block.height)).to.deep.equal([0, 1, 2]);
+        expect(fetched.map((block) => block.hash)).to.deep.equal(node.chain.map((block) => block.hash));
     });
 });
 
