@@ -32,6 +32,12 @@ function allComplete(tracker, addresses) {
         .then((read) => addresses.every((a) => read.addressStatus[a].history_status === 'complete'));
 }
 
+function taggedStripError(message) {
+    const err = new Error(message);
+    err.auxPowParseFailure = true;
+    return err;
+}
+
 describe('native history backfill: rebuilding a newly watched address\'s past', function () {
     const h = useSyncLoopHarness();
     this.timeout(30000);
@@ -57,6 +63,14 @@ describe('native history backfill: rebuilding a newly watched address\'s past', 
         expect(h.tracker.historyBackfill.passesStarted).to.equal(1);
         expect(live.rows[addresses[0]]).to.have.length(2);
         expect(rebuilt.rows).to.deep.equal(live.rows);
+        const node = makeNode(buildChain(3));
+        node.faults.batch = [taggedStripError('batch strip failed')];
+        node.faults.strip = [taggedStripError('block strip failed')];
+        const runner = new HistoryBackfill({ connector: node.connector, auxPow: true }, null, {});
+        const fetched = await runner.fetchBlocks([0, 1, 2]);
+        expect(node.reassembled).to.equal(1);
+        expect(fetched.map((block) => block.height)).to.deep.equal([0, 1, 2]);
+        expect(fetched.map((block) => block.hash)).to.deep.equal(node.chain.map((block) => block.hash));
     });
 
     it('lets a reorg unwind rebuilt rows and records the replacement blocks live', async function () {

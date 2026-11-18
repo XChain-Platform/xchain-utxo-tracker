@@ -68,35 +68,11 @@
 
 // Load required libraries
 const util = require('../common/util')
-const loadPart = require
+const { installMethods } = require('../common/install_methods')
 const { AddressTooLargeError, InvalidCursorError } = require('./level_up_db/store_errors')
 const { encodeOutput, decodeOutput, encodeBlock, encodeTx, encodeInputVal, encodeOutHint } = require('./level_up_db/value_codec')
 const { kOutBlk, kOutputFromBuf, kOutDelFromBuf, kScriptBlkFromBuf, kBlkScriptFromBuf, kBlock, kTx, kScriptBlk, kBlkScript, kInput, kOutput, kOutHint, kInHint, kOutDel, kHintDel, kStoredBlk, kTxExact, kTxBlockRecovery, rangeEnd } = require('./level_up_db/key_codec')
 const { kHistory, kHistoryBlock, kHistoryWatch } = require('./level_up_db/history_keys')
-
-// A class split into part modules has to put the moved methods back on its
-// prototype. Object.assign would do that as ENUMERABLE own properties, while
-// a method written in the class body is non-enumerable, so the split would
-// change what for...in over an instance, Object.keys of the prototype and a
-// spread of it return. installMethods defines each moved method with the
-// flags class syntax gives (writable, configurable, not enumerable), so a
-// split prototype reads the same as the original class. Byte-identical
-// private copy of the one exported from XChainUtxoTracker.js.
-function installMethods(target, ...sources) {
-    for (const source of sources) {
-        for (const key of Reflect.ownKeys(source)) {
-            if (!Object.prototype.propertyIsEnumerable.call(source, key)) continue
-            Object.defineProperty(target, key, {
-                value: source[key],
-                writable: true,
-                enumerable: false,
-                configurable: true,
-            })
-        }
-    }
-    return target
-}
-
 
 // Whole key of the halt marker: the one record that says this store was declared
 // unrecoverable (rolled back past its undo window) and why. 0x52 ('R') is unused
@@ -195,14 +171,14 @@ class LevelUpStore {
 module.exports = LevelUpStore
 
 installMethods(LevelUpStore.prototype,
-    loadPart('./level_up_db/store_lifecycle.js'),
-    loadPart('./level_up_db/blocks_and_transactions.js'),
-    loadPart('./level_up_db/inputs.js'),
-    loadPart('./level_up_db/outputs.js'),
-    loadPart('./level_up_db/output_cleanup.js'),
-    loadPart('./level_up_db/output_scripts.js'),
-    loadPart('./level_up_db/store_layout.js'),
-    loadPart('./level_up_db/history.js'),
+    require('./level_up_db/store_lifecycle.js'),
+    require('./level_up_db/blocks_and_transactions.js'),
+    require('./level_up_db/inputs.js'),
+    require('./level_up_db/outputs.js'),
+    require('./level_up_db/output_cleanup.js'),
+    require('./level_up_db/output_scripts.js'),
+    require('./level_up_db/store_layout.js'),
+    require('./level_up_db/history.js'),
 )
 
 // Attached to the class rather than exported one line at a time: one export

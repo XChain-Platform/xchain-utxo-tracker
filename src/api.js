@@ -27,12 +27,14 @@ const cfg = require('./config');
 // is exactly the line an operator needs levelled and timestamped, and
 // installObservability does not run until ~390 lines further down.
 const { patchConsole } = require('./observability');
-patchConsole({
+const { registerLogFlush, exitAfterFlush } = require('./server/exit_flush.js');
+const logPatch = patchConsole({
     service: 'xchain-utxo-tracker',
     version: require('../package.json').version,
     coin:    cfg.COIN || '',
     network: cfg.NETWORK || ''
 });
+registerLogFlush(() => logPatch.logger.stop && logPatch.logger.stop());
 
 const { spawn } = require('child_process');
 const LevelUpStore = require('./store/level_up_db.js')
@@ -191,7 +193,7 @@ function launchTracker(tracker){
             return
         }
         noteCrash('pollingLoopTerminated', err)
-        process.exit(1)
+        await exitAfterFlush(1)
     })
 }
 
@@ -342,8 +344,8 @@ if (require.main === module) {
     // Ahead of the bulk-sync boot, so a throw anywhere in it is a CRASH record
     // rather than node's bare stderr dump.
     installCrashHandlers()
-    const bulkBoot = createBulkBoot({ dbPath: DB_PATH })
-    const bootShutdown = createShutdown({ drain: () => bulkBoot.stop() })
+    const bulkBoot = createBulkBoot({ dbPath: DB_PATH, workDir: BULK_SYNC_WORK_DIR })
+    const bootShutdown = createShutdown({ drain: () => bulkBoot.stop(), exit: (code) => exitAfterFlush(code) })
     const removeBootSignals = registerShutdownSignals(bootShutdown)
     runBulkSyncIfEmpty(bulkBoot)
         .then(() => {
@@ -368,7 +370,7 @@ if (require.main === module) {
             if (bulkBoot.stopping) return
             if (err && err.crashKind === 'oomKilled') noteCrash('oomKilled', err)
             else noteCrash('bootFailed', err)
-            process.exit(1)
+            return exitAfterFlush(1)
         })
 }
 

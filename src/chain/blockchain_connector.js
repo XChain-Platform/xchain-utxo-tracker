@@ -25,32 +25,10 @@ const config = require('../config');
 const { envInt } = require('../config/env_int');
 const { encodeVarintHex } = require('./blockchain_connector/auxpow_codec');
 const { nodeReachabilityFrom } = require('./blockchain_connector/rpc_helpers');
+const { installMethods } = require('../common/install_methods');
 const transportAndMempool = require('./blockchain_connector/transport_and_mempool');
 const blockQueries = require('./blockchain_connector/block_queries');
 const batchFetch = require('./blockchain_connector/batch_fetch');
-
-// A class split into part modules has to put the moved methods back on its
-// prototype. Object.assign would do that as ENUMERABLE own properties, while
-// a method written in the class body is non-enumerable, so the split would
-// change what for...in over an instance, Object.keys of the prototype and a
-// spread of it return. installMethods defines each moved method with the
-// flags class syntax gives (writable, configurable, not enumerable), so a
-// split prototype reads the same as the original class. Byte-identical
-// private copy of the one exported from XChainUtxoTracker.js.
-function installMethods(target, ...sources) {
-    for (const source of sources) {
-        for (const key of Reflect.ownKeys(source)) {
-            if (!Object.prototype.propertyIsEnumerable.call(source, key)) continue;
-            Object.defineProperty(target, key, {
-                value: source[key],
-                writable: true,
-                enumerable: false,
-                configurable: true,
-            });
-        }
-    }
-    return target;
-}
 
 function normalizeEndpoint(entry, defaultPort) {
     const match = String(entry).trim().match(/^(https?:\/\/)?([^:/]+)(?::(\d+))?$/)

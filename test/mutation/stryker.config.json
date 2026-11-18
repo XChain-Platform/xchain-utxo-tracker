@@ -31,7 +31,8 @@
     "src/chain/blockchain_connector/transport_and_mempool.js",
     "src/chain/XChainBlockDecoder.js",
     "src/chain/crypto_networks.js",
-    "src/common/util.js"
+    "src/common/util.js",
+    "src/common/install_methods.js"
   ],
   "reporters": [
     "html",

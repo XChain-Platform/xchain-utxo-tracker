@@ -47,14 +47,14 @@ function registerSuccessfulBatchTests() {
 
       // Second call: batch getblock
       clientStub.onCall(1).resolves({
-        data: hashes.map((hash, i) => ({ id: i, result: 'hex' + i }))
+        data: hashes.map((hash, i) => ({ id: i, result: '0' + i + 'ab' }))
       });
 
       const results = await connector.getBlocksBatch(heights);
       expect(clientStub.callCount).to.equal(2);
       expect(results).to.have.length(3);
-      expect(results[0]).to.deep.equal({ height: 100, hash: 'hash100', hex: 'hex0' });
-      expect(results[2]).to.deep.equal({ height: 102, hash: 'hash102', hex: 'hex2' });
+      expect(results[0]).to.deep.equal({ height: 100, hash: 'hash100', hex: '00ab' });
+      expect(results[2]).to.deep.equal({ height: 102, hash: 'hash102', hex: '02ab' });
     });
 
     it('handles out-of-order batch responses', async function () {
@@ -66,8 +66,8 @@ function registerSuccessfulBatchTests() {
       });
       clientStub.onCall(1).resolves({
         data: [
-          { id: 1, result: 'hex_b' },
-          { id: 0, result: 'hex_a' }
+          { id: 1, result: 'bbbb' },
+          { id: 0, result: 'aaaa' }
         ]
       });
 

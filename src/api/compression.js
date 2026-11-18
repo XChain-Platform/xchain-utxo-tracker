@@ -70,7 +70,9 @@ async function compressDirPigz(taskId, source, destination) {
 }
 
 function compressToDestination(taskId, source, destination, totalBytes) {
-    const tar = spawn('tar', ['-cf', '-', '-C', source, '.']) // -c: create, -f -: output to stdout
+    // -c: create, -f -: output to stdout. A staging directory left by an interrupted
+    // restore sits in the same directory but is not part of the store, so it is not packed.
+    const tar = spawn('tar', ['-cf', '-', '--exclude=./' + STAGING_DIR_NAME, '-C', source, '.'])
     const pv = spawn('pv', [
         '-s', totalBytes.toString(), // -s: expected total size,
         '-n', '-f' //-n: progress in number -f: force output

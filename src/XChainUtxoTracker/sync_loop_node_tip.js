@@ -242,9 +242,13 @@ async function rollBackToNodeTip(sync, lastBlockDb){
             sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
             sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
             sync.lastBlockchainInfo = null
+            // Blocks deleted before the refusal return their spends to the node
+            // mempool, so withdraw readiness and rerun the pass as the success
+            // path does. A refusal before any delete leaves the store as it was.
+            const walkedBack = (this.reorgRollbacksThisProcess || 0) - rollbacksBefore
+            if (walkedBack > 0) resyncMempoolAfterReorg.call(this)
             await this.sleep(5000)
-            return countRefusedWalk.call(this,
-                (this.reorgRollbacksThisProcess || 0) - rollbacksBefore)
+            return countRefusedWalk.call(this, walkedBack)
         }
         throw err
     }
@@ -301,7 +305,13 @@ async function pollAtChainTip(sync){
         } catch (err){
             logger.error(nodeUtil.format('Error re-checking the committed tip hash from node: ' + err.message, err))
         }
-        if (tipHashFromNode && tipHashFromNode != sync.lastProcessedBlockHash){
+        // No compare ran, so the pass confirmed nothing: leave the latch, the
+        // staged batch and the mempool poller as they are and ask again.
+        if (!tipHashFromNode){
+            await this.sleep(CHECK_BLOCK_DELAY_MS)
+            return
+        }
+        if (tipHashFromNode != sync.lastProcessedBlockHash){
             return rollBackSameHeightTipSwap.call(this, sync)
         }
     }
@@ -311,8 +321,8 @@ async function pollAtChainTip(sync){
     // staged, reports synced.
     if (pending) return flushPendingAtTip.call(this, sync)
 
-    // The committed tip is the node's (or the re-check could not ask) and
-    // nothing is staged: the one place the latch rises.
+    // The committed tip is the node's and nothing is staged: the one place the
+    // latch rises.
     this.synced = true
 
     if (this.mempoolInterval == null){
@@ -355,7 +365,7 @@ async function rollBackSameHeightTipSwap(sync){
         await this.db.db.put(P_PENDING_CLEANUP_KEY,
             Buffer.from(JSON.stringify(this.pendingKMCleanup)))
     }
-    this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+    await this.reloadUndoWindow()
     await verifyReorgHandingBackTipRefusal.call(this, sync)
     sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
     sync.lastProcessedBlockHash = await this.db.getLastBlockHash()

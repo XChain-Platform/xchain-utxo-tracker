@@ -74,18 +74,47 @@ module.exports = {
     async loadUndoWindowWatermark(){
         let stored = 0
         try {
-            const raw = await this.db.db.get(Q_UNDO_WATERMARK_KEY)
-            if (raw !== undefined){
-                const parsed = parseInt(raw.toString(), 10)
-                if (Number.isInteger(parsed) && parsed > 0) stored = parsed
-            }
+            stored = await this.readStoredUndoWatermark()
         } catch (_) {
             // A store that cannot answer for this one diagnostic key must not stop
             // the tracker from booting: 0 (unknown) is the safe reading.
         }
+        return this.adoptStoredUndoWatermark(stored)
+    },
+
+    // The stored Q depth: 0 when the key is absent or unreadable as a depth.
+    // A store fault throws.
+    async readStoredUndoWatermark(){
+        const raw = await this.db.db.get(Q_UNDO_WATERMARK_KEY)
+        if (raw === undefined) return 0
+        const parsed = parseInt(raw.toString(), 10)
+        return (Number.isInteger(parsed) && parsed > 0) ? parsed : 0
+    },
+
+    adoptStoredUndoWatermark(stored){
         this.undoWindowWatermarkPersisted = stored > 0 ? stored : null
         this.undoWindowWatermark = Math.min(stored, this.undoBlocks)
         return this.undoWindowWatermark
+    },
+
+    // Put the in-memory undo window back to what the store holds. A discarded batch
+    // takes the staged N records and the staged Q mark with it, but both were
+    // already counted in memory (the window by addToLastBlocks, the mark by
+    // recordUndoWindowWatermark, which also records it as persisted). Left alone the
+    // mark reads deeper than disk, so status and the rollback budget count blocks as
+    // spent that never were, and a refilling window never rewrites Q because memory
+    // already says it did. A store fault on the Q read keeps the marks as they were:
+    // the mark is a diagnostic, and resetting it to unknown would let the next write
+    // lower Q below a deeper window that was already spent.
+    async reloadUndoWindow(){
+        this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+        let stored
+        try {
+            stored = await this.readStoredUndoWatermark()
+        } catch (_) {
+            return
+        }
+        this.adoptStoredUndoWatermark(stored)
     },
 
     async cleanupAgedBlocks(){
@@ -149,7 +178,8 @@ module.exports = {
     // unprocessed, stranding those blocks' undo records for good.
     //
     // The in-memory window also counted the discarded staged blocks, so reload
-    // it from the store. Left stale, re-indexing the same heights pushes their
+    // it, and the watermark staged beside it, from the store
+    // (reloadUndoWindow). Left stale, re-indexing the same heights pushes their
     // hashes in a second time and ages real committed blocks out early, and
     // cleanupAgedBlocks then prunes undo records still inside the window, so a
     // later deep reorg meets a hole it cannot walk back through. Returns true
@@ -162,7 +192,7 @@ module.exports = {
             await this.db.db.put(P_PENDING_CLEANUP_KEY,
                 Buffer.from(JSON.stringify(this.pendingKMCleanup)))
         }
-        this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+        await this.reloadUndoWindow()
         return true
     },
 

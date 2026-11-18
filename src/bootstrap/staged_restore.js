@@ -70,12 +70,18 @@ async function assertStagedLayoutOrThrow(stagingDir) {
 }
 
 // Moves the verified store's files up into `destination`, which the caller has
-// already emptied of everything but the staging directory.
+// already emptied of everything but the staging directory. An archive cut from a
+// data directory that still held an interrupted restore's staging directory
+// carries that name at its root; it is not part of the store, and renaming it
+// onto the staging directory itself would fail once the live store is gone, so
+// it is dropped instead of moved.
 function promoteStagedStore(destination) {
     const staging = path.join(destination, STAGING_DIR_NAME)
     for (const name of fs.readdirSync(staging)) {
+        if (name === STAGING_DIR_NAME) continue
         fs.renameSync(path.join(staging, name), path.join(destination, name))
     }
+    fs.rmSync(path.join(staging, STAGING_DIR_NAME), { recursive: true, force: true })
     fs.rmdirSync(staging)
 }
 

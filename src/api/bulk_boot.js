@@ -20,7 +20,8 @@
  * killed by the container runtime, the next boot sees the partial target as
  * empty and the loader then refuses to overlay it. This controller lets the
  * API entry point own the child process tree and restore an interrupted target
- * to the empty state while retaining the resumable work directory.
+ * to the empty state. A work directory that lives outside the target survives
+ * the stop; one nested inside the target is removed with it.
  *
  ********************************************************************/
 
@@ -60,6 +61,26 @@ function defaultProcessGroupAlive(child){
         if (err && err.code === 'EPERM') return true
         throw err
     }
+}
+
+function isInside(parent, child){
+    const rel = path.relative(parent, child)
+    return rel !== '' && rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)
+}
+
+// The removal is asynchronous so the shutdown hard-exit timer can still fire
+// while a large store is being deleted.
+function removeTarget(dbPath){
+    return fs.promises.rm(dbPath, { recursive: true, force: true })
+}
+
+function interruptedTargetNote(state){
+    if (!state.workDir) return `removed interrupted target ${state.dbPath}`
+    if (isInside(state.dbPath, state.workDir)) {
+        return `removed interrupted target ${state.dbPath}, including the work directory ${state.workDir}; ` +
+            'the next boot starts the bulk sync over'
+    }
+    return `removed interrupted target ${state.dbPath}; resumable work files retained in ${state.workDir}`
 }
 
 function pause(ms){
@@ -143,7 +164,7 @@ function stopBulkBoot(state){
         try { await interrupted.promise } catch (_) {}
         await state.waitForGroup(interrupted.child)
         await state.cleanup()
-        state.logger.log(`[bulk-sync] removed interrupted target ${state.dbPath}; resumable work files retained`)
+        state.logger.log(`[bulk-sync] ${interruptedTargetNote(state)}`)
     })()
     return state.stopPromise
 }
@@ -153,18 +174,20 @@ function stopBulkBoot(state){
  *
  * @param {object} opts
  * @param {string} opts.dbPath final LevelDB directory
+ * @param {string} [opts.workDir] bulk-sync work directory, named in the stop log
  * @param {function} [opts.signalChild] process-tree signal seam
  * @param {function} [opts.waitForProcessGroup] process-group drain seam
  * @param {function} [opts.removeDb] interrupted-target cleanup seam
  * @param {object} [opts.log] console-shaped logger
  */
-function createBulkBoot({ dbPath, signalChild, waitForProcessGroup, removeDb, log } = {}){
+function createBulkBoot({ dbPath, workDir, signalChild, waitForProcessGroup, removeDb, log } = {}){
     assertSafeDbPath(dbPath)
     const state = {
         dbPath,
+        workDir: typeof workDir === 'string' && path.isAbsolute(workDir) ? path.resolve(workDir) : null,
         signal: signalChild || defaultSignalChild,
         waitForGroup: waitForProcessGroup || waitForProcessGroupExit,
-        cleanup: removeDb || (() => fs.rmSync(dbPath, { recursive: true, force: true })),
+        cleanup: removeDb || (() => removeTarget(dbPath)),
         logger: log || console,
         active: null,
         stopping: false,

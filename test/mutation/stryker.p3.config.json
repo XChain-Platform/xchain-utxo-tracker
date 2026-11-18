@@ -12,7 +12,8 @@
   },
   "mutate": [
     "src/chain/crypto_networks.js",
-    "src/common/util.js"
+    "src/common/util.js",
+    "src/common/install_methods.js"
   ],
   "reporters": ["html", "clear-text", "progress"],
   "htmlReporter": {

@@ -37,7 +37,7 @@ const KEY_OPTS = { keyEncoding: 'buffer', valueEncoding: 'buffer' };
 
 // A store with a tip, so an unstamped one reads as layout 1; `layout` null leaves
 // the stamp out, `empty` leaves the whole store without keys.
-async function buildStore(dir, { layout, empty = false }) {
+async function buildStore(dir, { layout, empty = false, leftover = false }) {
     const db = new ClassicLevel(dir, KEY_OPTS);
     await db.open();
     if (!empty) {
@@ -46,6 +46,10 @@ async function buildStore(dir, { layout, empty = false }) {
         if (layout !== null) await db.put(Buffer.from('LAYOUT_VERSION'), Buffer.from(String(layout)));
     }
     await db.close();
+    if (leftover) {
+        fs.mkdirSync(path.join(dir, STAGING_DIR_NAME));
+        fs.writeFileSync(path.join(dir, STAGING_DIR_NAME, "partial-extract"), "old");
+    }
     return dir;
 }
 
@@ -148,5 +152,17 @@ describe('staged restore', function () {
         expect(error).to.equal(undefined);
         expect(fs.existsSync(path.join(live, STAGING_DIR_NAME))).to.equal(false);
         expect(fs.existsSync(path.join(live, 'stale-file'))).to.equal(false);
+    });
+});
+
+describe('staged restore', function () {
+    useStagedRestoreFixture();
+
+    it('restores an archive that carries a leftover staging directory in its root', async function () {
+        const { error } = await restoreFrom({ layout: 2, leftover: true });
+        expect(error, error && error.message).to.equal(undefined);
+        expect(fs.existsSync(path.join(live, 'LIVE_STORE_MARKER'))).to.equal(false);
+        expect(fs.existsSync(path.join(live, STAGING_DIR_NAME))).to.equal(false);
+        expect(await layoutOf(live)).to.equal(2);
     });
 });

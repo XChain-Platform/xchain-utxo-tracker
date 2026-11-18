@@ -41,6 +41,15 @@ function isWholeHex(value){
         && /^[0-9a-fA-F]+$/.test(value)
 }
 
+// Throws unless a hex-mode block RPC answer is whole hex. The error is deliberately
+// untagged: it is a wire fault, so the caller retries it as a fetch error rather
+// than reading it as evidence about the block's own bytes.
+function assertWholeBlockHex(method, where, value){
+    if (isWholeHex(value)) return
+    const shape = typeof value === 'string' ? 'string length ' + value.length : typeof value
+    throw new Error(method + ' returned malformed block hex for ' + where + ' (' + shape + ')')
+}
+
 // Reorder a JSON-RPC batch response into an array indexed by request id (0..N-1).
 // The batch handlers below build requests with id:i, so sorting the response by id
 // and then reading the result POSITIONALLY corrects reordering and nothing else: a
@@ -102,4 +111,4 @@ function nodeReachabilityFrom(startedAt, lastNodeOkAt, lastNodeFailAt, now = Dat
     }
 }
 
-module.exports = { sanitizeRpcError, isWholeHex, orderBatchResults, nodeReachabilityFrom }
+module.exports = { sanitizeRpcError, isWholeHex, assertWholeBlockHex, orderBatchResults, nodeReachabilityFrom }

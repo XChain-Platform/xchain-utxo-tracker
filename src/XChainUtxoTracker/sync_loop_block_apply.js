@@ -94,8 +94,9 @@ async function rollBackOnPrevHashMismatch(sync){
     }
     // Reload in ascending height order (tip last); the raw
     // getLastStoredBlocks() order is lexicographic by hash,
-    // which makes verifyReorg's removeFromLastBlocks throw.
-    this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+    // which makes verifyReorg's removeFromLastBlocks throw. The undo watermark
+    // staged with the batch went with it, so it reloads alongside the window.
+    await this.reloadUndoWindow()
     // console.warn: the prev-hash-mismatch path is the ordinary reorg
     // trigger, so leaving it at info is what makes a routine reorg
     // invisible to a warn+ filter.

@@ -246,8 +246,71 @@ describe('bulk-sync boot stop drain', function(){
 
     it('spawns the orchestrator as a process group and wires the early drain', function(){
         assert.match(API_SRC, /detached:\s*process\.platform !== 'win32'/)
-        assert.match(API_SRC, /createBulkBoot\(\{ dbPath: DB_PATH \}\)/)
+        assert.match(API_SRC, /createBulkBoot\(\{ dbPath: DB_PATH, workDir: BULK_SYNC_WORK_DIR \}\)/)
         assert.match(API_SRC, /registerShutdownSignals\(bootShutdown\)/)
         assert.match(API_SRC, /runBulkSyncIfEmpty\(bulkBoot\)/)
+    })
+})
+
+describe('bulk-sync boot default target cleanup', function(){
+    function tempRoot(){
+        return fs.mkdtempSync(path.join(require('os').tmpdir(), 'bulk-boot-'))
+    }
+
+    async function stopWith(options){
+        const proc = child()
+        const lines = []
+        const boot = createBulkBoot({
+            ...options,
+            signalChild(){},
+            waitForProcessGroup: () => Promise.resolve(),
+            log: { log: (line) => lines.push(line), warn(){}, error(){} }
+        })
+        const running = boot.trackChild(proc).catch(() => {})
+        const stopping = boot.stop()
+        proc.emit('exit', null, 'SIGTERM')
+        await Promise.all([running, stopping])
+        return lines
+    }
+
+    it('removes the real target without a synchronous delete that blocks the hard-exit timer', async function(){
+        const root = tempRoot()
+        const dbPath = path.join(root, 'store')
+        fs.mkdirSync(path.join(dbPath, 'nested'), { recursive: true })
+        fs.writeFileSync(path.join(dbPath, 'nested', '000001.ldb'), 'x')
+        const rmSync = sinon.spy(fs, 'rmSync')
+        let ticks = 0
+        const timer = setInterval(() => { ticks++ }, 1)
+        try {
+            await stopWith({ dbPath })
+        } finally {
+            clearInterval(timer)
+            rmSync.restore()
+        }
+        assert.strictEqual(fs.existsSync(dbPath), false)
+        assert.strictEqual(rmSync.called, false, 'the drain must not call the synchronous fs.rmSync')
+        fs.rmSync(root, { recursive: true, force: true })
+    })
+
+    it('names a nested work directory as removed and an outside one as retained', async function(){
+        const root = tempRoot()
+        const dbPath = path.join(root, 'store')
+        const nested = await stopWith({ dbPath, workDir: path.join(dbPath, '_bulk-sync-work'), removeDb(){} })
+        assert.strictEqual(nested.length, 2)
+        assert.match(nested[1], /including the work directory .*_bulk-sync-work; the next boot starts the bulk sync over/)
+        assert.doesNotMatch(nested[1], /retained/)
+        const outside = await stopWith({ dbPath, workDir: path.join(root, 'work'), removeDb(){} })
+        assert.match(outside[1], /resumable work files retained in .*work$/)
+        const unnamed = await stopWith({ dbPath, removeDb(){} })
+        assert.doesNotMatch(unnamed[1], /retained|work directory/)
+        fs.rmSync(root, { recursive: true, force: true })
+    })
+
+    it('does not treat a sibling that shares the target name prefix as nested', async function(){
+        const root = tempRoot()
+        const dbPath = path.join(root, 'store')
+        const lines = await stopWith({ dbPath, workDir: path.join(root, 'store-work'), removeDb(){} })
+        assert.match(lines[1], /retained in .*store-work$/)
+        fs.rmSync(root, { recursive: true, force: true })
     })
 })

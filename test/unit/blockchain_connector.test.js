@@ -106,7 +106,7 @@ function registerBlockHashTests() {
 function registerBlockTests() {
   describe('getBlock', function () {
     it('returns hex when hexFormat=true (default)', async function () {
-      clientStub.resolves({ data: { result: '0100000000000000...' } });
+      clientStub.resolves({ data: { result: '0100000000000000' } });
       const hex = await connector.getBlock('abc123');
       expect(hex).to.be.a('string');
 
@@ -131,10 +131,10 @@ function registerBlockTests() {
 
       clientStub.onCall(0).rejects(timeoutErr);
       clientStub.onCall(1).rejects(timeoutErr);
-      clientStub.onCall(2).resolves({ data: { result: 'blockhex' } });
+      clientStub.onCall(2).resolves({ data: { result: 'ab12cd34' } });
 
       const result = await connector.getBlock('abc');
-      expect(result).to.equal('blockhex');
+      expect(result).to.equal('ab12cd34');
       expect(clientStub.callCount).to.equal(3);
     });
 

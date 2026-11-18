@@ -84,7 +84,7 @@ function makeNode(chain) {
         },
         async getBlockHash(h) { fault('hash'); return at(h).hash; },
         async getBlock(hash) { return byHash(hash).hex; },
-        async getBlockWithoutAuxPow(hash) { return byHash(hash).hex; },
+        async getBlockWithoutAuxPow(hash) { fault('strip'); return byHash(hash).hex; },
         async getBlocksBatch(hs) { if (node.onBatch) node.onBatch(hs); fault('batch'); return hs.map((h) => at(h)); },
         async getBlocksBatchWithoutAuxPow(hs) { fault('batch'); return hs.map((h) => at(h)); },
         async getBlockReassembled(hash) { node.reassembled++; return byHash(hash).hex; },

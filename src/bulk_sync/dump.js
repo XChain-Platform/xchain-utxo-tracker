@@ -40,7 +40,6 @@
 const dotenv = require('dotenv')
 dotenv.config()
 
-const crypto = require('crypto')
 const fs     = require('fs')
 const path   = require('path')
 const BlockchainConnector = require('../chain/blockchain_connector.js')
@@ -50,6 +49,7 @@ const coins = require('../coins')
 const config = require('../config')
 const { resolveUndoBlocks } = require('../chain/undo_blocks.js')
 const { warnIfTxIndexMissing } = require('../chain/txindex_check.js')
+const { fetchBlocksWithAuxPowFallback } = require('../chain/auxpow_block_fetch.js')
 
 const DEFAULT_CHUNK_SIZE  = 10000
 const DEFAULT_TIP_SAFETY  = 10
@@ -166,47 +166,9 @@ function batchHeights(cursor, batchEnd) {
     return heights
 }
 
-// Refuse a rebuilt block whose 80-byte header does not hash to the requested hash,
-// so a bad reassembly fails at its own height instead of being written to the dump.
-function assertHeaderMatchesHash(height, hash, hex) {
-    const header = Buffer.from(hex.slice(0, 160), 'hex')
-    const once   = crypto.createHash('sha256').update(header).digest()
-    const actual = Buffer.from(crypto.createHash('sha256').update(once).digest()).reverse().toString('hex')
-    if (header.length !== 80 || actual !== String(hash).toLowerCase()) {
-        throw new Error(`reassembled block ${height} header hashes to ${actual}, expected ${hash}`)
-    }
-}
-
-// Fetch one AuxPoW block for the dump: strip it, or rebuild it from RPC parts when
-// the strip cannot traverse its AuxPoW section (the live tracker's recovery path).
-// Only a tagged strip failure falls back; a transport fault propagates untouched.
-async function fetchAuxPowBlockForDump(connector, height) {
-    const hash = await connector.getBlockHash(height)
-    try {
-        return { height, hash, hex: await connector.getBlockWithoutAuxPow(hash) }
-    } catch (err) {
-        if (!err || !err.auxPowParseFailure) throw err
-        console.log(`[dump] AuxPoW strip failed at height ${height} (${hash}); reassembling from RPC parts`)
-        const hex = await connector.getBlockReassembled(hash)
-        assertHeaderMatchesHash(height, hash, hex)
-        return { height, hash, hex }
-    }
-}
-
-// Fetch one RPC batch of blocks in height order. On an AuxPoW chain a tagged strip
-// failure refetches the batch block by block so only the bad block is reassembled;
-// a confirmed block's bytes fail the same way every time, so no retry streak is kept.
 async function fetchDumpBatch(connector, heights, auxPow) {
-    if (!auxPow) return connector.getBlocksBatch(heights)
-    try {
-        return await connector.getBlocksBatchWithoutAuxPow(heights)
-    } catch (err) {
-        if (!err || !err.auxPowParseFailure) throw err
-        console.log(`[dump] AuxPoW strip failed in batch ${heights[0]}..${heights[heights.length - 1]}; refetching per block`)
-        const blocks = []
-        for (const height of heights) blocks.push(await fetchAuxPowBlockForDump(connector, height))
-        return blocks
-    }
+    return fetchBlocksWithAuxPowFallback(connector, heights, auxPow,
+        (message) => console.log(`[dump] ${message}`))
 }
 
 function openDumpFile(tmpPath) {

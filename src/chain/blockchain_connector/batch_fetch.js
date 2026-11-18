@@ -12,7 +12,7 @@
  *
  **********************************************************************/
 
-const { isWholeHex, orderBatchResults } = require('./rpc_helpers');
+const { isWholeHex, assertWholeBlockHex, orderBatchResults } = require('./rpc_helpers');
 const { stripAuxPowFromBlockHex } = require('./auxpow_codec');
 
 async function getBatchHashes(heights) {
@@ -97,9 +97,12 @@ module.exports = {
 
         // Guard matches the hash batch above and the AuxPoW path: a JSON-RPC error
         // element returns result=null and would produce hex:undefined, causing an
-        // opaque decode failure later instead of a clear error here.
+        // opaque decode failure later instead of a clear error here. A reply that is
+        // present but not whole hex is refused here too, so the fetch retries it
+        // instead of the parser meeting a silently truncated buffer.
         return heights.map((h, i) => {
             if (!blockResults[i].result) throw new Error('Error getting block in batch for id ' + blockResults[i].id)
+            assertWholeBlockHex('getblock', 'block ' + h + ' (' + hashes[i] + ') in batch', blockResults[i].result)
             return {
                 height: h,
                 hash:   hashes[i],

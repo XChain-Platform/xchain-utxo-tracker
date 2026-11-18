@@ -9,6 +9,7 @@ const XChainUtxoTracker = require('../XChainUtxoTracker')
 const { installObservability, getLogger } = require('../observability')
 const { installUtxoTrackerMetrics } = require('../server/utxo_tracker_metrics')
 const { createShutdown, createTrackerDrain } = require('../server/shutdown.js')
+const { exitAfterFlush } = require('../server/exit_flush.js')
 const concurrencyGate = require('../server/concurrency_gate.js')
 const { parseCorsOrigin } = require('../server/cors_origin.js')
 const { limitedHandler } = require('../server/rate_limit_log.js')
@@ -18,6 +19,7 @@ const { nodeReachabilityFields, isNodeRpcStale } = require('./sync_status.js')
 const { resolveNodeTip } = require('../XChainUtxoTracker/catch_up_helpers.js')
 const { registerRoutes } = require('./routes.js')
 const { parsePageOpts } = require('./page_opts.js')
+const { installAdminGuard } = require('./admin_guard.js')
 const logger = getLogger()
 const appTrackers = new WeakMap()
 
@@ -270,44 +272,6 @@ function installMetrics(app, tracker, config, gates) {
     installUtxoTrackerMetrics(observability, tracker, gates)
 }
 
-// API key enforcement for admin JSON-RPC methods. Fails closed: without a
-// configured key these methods are rejected, never left open.
-//
-// Both a single request (body is an object) and a JSON-RPC batch (body is
-// an array) reach the router registered after this guard, and the router executes every entry of
-// a batch. So the guard must inspect EVERY method in the request, not just
-// req.body.method: for an array body req.body.method is undefined, so without
-// this guard an admin method smuggled inside a batch (e.g.
-// [{"method":"restorebootstrap",...}]) skips the key check entirely and runs
-// unauthenticated. Gate the whole request when ANY entry is an admin method.
-function installAdminGuard(app, config) {
-    app.use((req, res, next) => {
-        const body = req.body
-        // Bound batch fan-out BEFORE the router's uncapped Promise.all executes every
-        // entry: an over-cap array is an amplification vector, not a legitimate request.
-        if(Array.isArray(body) && body.length > config.MAX_JSONRPC_BATCH){
-            return res.status(400).json({
-                jsonrpc: '2.0', id: null,
-                error: { code: -32600, message: 'Batch too large (max ' + config.MAX_JSONRPC_BATCH + ' requests per call)' }
-            })
-        }
-        const entries = Array.isArray(body) ? body : [body]
-        const wantsAdmin = entries.some(e =>
-            e && typeof e.method === 'string' && config.ADMIN_METHODS.has(e.method.toLowerCase()))
-        if(wantsAdmin){
-            const header = req.headers['authorization']
-            if(!config.UTXO_TRACKER_API_KEY || !header
-                || !config.keyEquals(header, 'Bearer ' + config.UTXO_TRACKER_API_KEY)){
-                return res.status(401).json({
-                    jsonrpc: '2.0', id: (!Array.isArray(body) && body && body.id) || null,
-                    error: { code: -32001, message: 'Unauthorized' }
-                })
-            }
-        }
-        next()
-    })
-}
-
 // Last middleware: body-parser failures (bad JSON, oversize body) and router
 // param-decode failures (bad percent-escape) carry a 4xx status and would
 // otherwise reach Express's default handler, which renders an HTML page with the
@@ -339,7 +303,8 @@ function listen(app, tracker, trackerExited, config) {
         logger.info(memoryBudget.describe(config.BULK_SYNC_RAM_BUDGET))
     })
     const shutdown = createShutdown({
-        drain: createTrackerDrain({ tracker, server, loopSettled: trackerExited })
+        drain: createTrackerDrain({ tracker, server, loopSettled: trackerExited }),
+        exit: (code) => exitAfterFlush(code)
     })
     process.on('SIGTERM', () => shutdown('SIGTERM'))
     process.on('SIGINT', () => shutdown('SIGINT'))

@@ -25,7 +25,7 @@ describe('rollBackToNodeTip refusal after deletes', function () {
   const H = 100;
   const DELETED_TO = H - 12;
 
-  function build() {
+  function build(walked = 0) {
     const tracker = new XChainUtxoTracker(
       'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false
     );
@@ -44,6 +44,7 @@ describe('rollBackToNodeTip refusal after deletes', function () {
     // The walk deletes down to DELETED_TO, then refuses with the tagged error.
     tracker.verifyReorg = async () => {
       top = DELETED_TO;
+      tracker.reorgRollbacksThisProcess = (tracker.reorgRollbacksThisProcess || 0) + walked;
       const err = new Error('node tip below committed tip with 12 block(s) already rolled back');
       err.tipBelowCommittedTip = true;
       throw err;
@@ -74,5 +75,43 @@ describe('rollBackToNodeTip refusal after deletes', function () {
     // Node tip restored to H: the cursor must lag it, so the loop indexes
     // forward instead of taking the equal-height idle branch.
     expect(sync.lastProcessedBlockIndex).to.be.lessThan(H);
+  });
+
+  describe('mempool readiness', function () {
+    function armed(walked) {
+      const built = build(walked);
+      built.tracker.mempoolReconverged = true;
+      built.tracker.mempoolReadinessGen = 4;
+      built.tracker.mempoolInterval = setInterval(() => {}, 1e6);
+      built.passes = 0;
+      built.tracker.updateMempool = async () => { built.passes++; };
+      return built;
+    }
+
+    async function refuse(built) {
+      try {
+        await refreshNodeTip.call(built.tracker, built.sync);
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        clearInterval(built.tracker.mempoolInterval);
+      }
+    }
+
+    it('withdraws readiness and runs a fresh pass after a refusal that followed deletes', async function () {
+      const built = armed(1);
+      await refuse(built);
+      expect(built.tracker.mempoolReconverged).to.equal(false);
+      expect(built.tracker.mempoolReadinessGen).to.equal(5);
+      expect(built.passes).to.equal(1);
+      expect(built.tracker.reorgCount).to.equal(1);
+    });
+
+    it('leaves readiness alone after a refusal that deleted nothing', async function () {
+      const built = armed(0);
+      await refuse(built);
+      expect(built.tracker.mempoolReconverged).to.equal(true);
+      expect(built.tracker.mempoolReadinessGen).to.equal(4);
+      expect(built.passes).to.equal(0);
+    });
   });
 });

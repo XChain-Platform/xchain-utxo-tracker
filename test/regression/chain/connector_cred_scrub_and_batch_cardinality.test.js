@@ -82,11 +82,11 @@ describe('getBlocksBatch trusts id bijection, not positional sort', function () 
 
   it('returns hex aligned to the requested height on a well-formed response', async function () {
     clientStub.onFirstCall().resolves({ data: [ { id: 1, result: 'hash11' }, { id: 0, result: 'hash10' } ] }); // deliberately reordered
-    clientStub.onSecondCall().resolves({ data: [ { id: 0, result: 'hex10' }, { id: 1, result: 'hex11' } ] });
+    clientStub.onSecondCall().resolves({ data: [ { id: 0, result: 'a10a' }, { id: 1, result: 'b11b' } ] });
     const out = await connector.getBlocksBatch([10, 11]);
     expect(out).to.deep.equal([
-      { height: 10, hash: 'hash10', hex: 'hex10' },
-      { height: 11, hash: 'hash11', hex: 'hex11' },
+      { height: 10, hash: 'hash10', hex: 'a10a' },
+      { height: 11, hash: 'hash11', hex: 'b11b' },
     ]);
   });
 

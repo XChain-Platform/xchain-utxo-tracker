@@ -138,10 +138,6 @@ class XChainUtxoTracker {
         return !!(err && err.unrecoverableReorg === true)
     }
 
-    // A coinbase transaction is the block's generation tx: exactly one input
-    // whose prevout index is 0xFFFFFFFF (the same marker the input passes use to
-    // skip tracing it). Its outputs are unspendable until this chain's coinbase
-    // maturity depth (this.coinbaseMaturity), so they must be marked at insert time.
     // Pure freshness computation shared by the API's per-query freshness surface
     // and its regression test, so the lag/synced contract cannot drift.
     // lag is null when nothing is indexed yet or the node tip is unknown; callers
@@ -183,6 +179,10 @@ class XChainUtxoTracker {
         return freshness
     }
 
+    // A coinbase transaction is the block's generation tx: exactly one input
+    // whose prevout index is 0xFFFFFFFF (the same marker the input passes use to
+    // skip tracing it). Its outputs are unspendable until this chain's coinbase
+    // maturity depth (this.coinbaseMaturity), so they must be marked at insert time.
     static isCoinbaseTransaction(transaction){
         return Array.isArray(transaction.ins) && transaction.ins.length === 1
             && transaction.ins[0] && transaction.ins[0].index === 4294967295
@@ -339,29 +339,7 @@ const reorgVerificationMethods = require('./XChainUtxoTracker/reorg_verification
 const syncLoopMethods = require('./XChainUtxoTracker/sync_loop.js')
 const mempoolRefreshMethods = require('./XChainUtxoTracker/mempool_refresh.js')
 const nativeHistoryMethods = require('./native_history/tracker_methods.js')
-
-// A class split into part modules has to put the moved methods back on its
-// prototype. Object.assign would do that as ENUMERABLE own properties, while
-// a method written in the class body is non-enumerable, so the split would
-// change what for...in over an instance, Object.keys of the prototype and a
-// spread of it return. installMethods defines each moved method with the
-// flags class syntax gives (writable, configurable, not enumerable), so a
-// split prototype reads the same as the original class. blockchain_connector.js
-// and level_up_db.js carry byte-identical private copies of this function.
-function installMethods(target, ...sources) {
-    for (const source of sources) {
-        for (const key of Reflect.ownKeys(source)) {
-            if (!Object.prototype.propertyIsEnumerable.call(source, key)) continue
-            Object.defineProperty(target, key, {
-                value: source[key],
-                writable: true,
-                enumerable: false,
-                configurable: true,
-            })
-        }
-    }
-    return target
-}
+const { installMethods } = require('./common/install_methods.js')
 
 installMethods(XChainUtxoTracker.prototype, haltMarkerMethods, lastBlocksWindowMethods,
     fetchFailuresAndHaltMethods, statusAndStopMethods, addressQueryMethods,
@@ -386,8 +364,7 @@ Object.assign(module.exports, {
     // only be right for one chain. Callers that need the depth read
     // tracker.coinbaseMaturity, or resolve it per network through this resolver.
     resolveCoinbaseMaturity,
-    // Exported so the descriptor test can exercise the installer's generic
-    // contract once; blockchain_connector.js and level_up_db.js carry their
-    // own private copies, checked indirectly through their own prototypes.
+    // Re-exported so the descriptor test can exercise the shared installer's
+    // generic contract once.
     installMethods,
 })

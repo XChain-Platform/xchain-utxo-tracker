@@ -32,6 +32,7 @@
 const { withStoreCommit } = require('../XChainUtxoTracker/store_commit_lock.js')
 const { withHistoryWrite } = require('./write_lock.js')
 const { scanBlock } = require('./block_scan.js')
+const { fetchBlocksWithAuxPowFallback } = require('../chain/auxpow_block_fetch.js')
 const { getLogger } = require('../observability')
 
 const logger = getLogger()
@@ -200,8 +201,12 @@ class HistoryBackfill {
     }
 
     fetchBlocks(heights){
-        const connector = this.tracker.connector
-        return this.tracker.auxPow ? connector.getBlocksBatchWithoutAuxPow(heights) : connector.getBlocksBatch(heights)
+        return fetchBlocksWithAuxPowFallback(
+            this.tracker.connector,
+            heights,
+            this.tracker.auxPow,
+            (message) => logger.warn('History backfill: ' + message)
+        )
     }
 
     // Writes the chunk if every block in it is still the one this store committed

@@ -14,7 +14,7 @@
 
 const util = require('node:util');
 const { logger } = require('./constants');
-const { sanitizeRpcError, isWholeHex } = require('./rpc_helpers');
+const { sanitizeRpcError, isWholeHex, assertWholeBlockHex } = require('./rpc_helpers');
 const { encodeVarintHex, stripAuxPowFromBlockHex } = require('./auxpow_codec');
 
 const BLOCK_HASH_HEX = /^[0-9a-fA-F]{64}$/
@@ -239,6 +239,8 @@ module.exports = {
             const response = await this.postWithRetry(data)
 
             if (response.data.result) {
+                // Only hex mode: verbose mode answers a JSON object.
+                if (hexFormat) assertWholeBlockHex('getblock', blockhash, response.data.result)
                 return response.data.result;
             } else {
                 throw new Error('Error getting block hex');

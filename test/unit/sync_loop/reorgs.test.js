@@ -51,4 +51,29 @@ describe('XChainUtxoTracker sync loop: reorgs', function () {
         expect(seen.height).to.equal(12);
         expect(h.tracker.reorgCount).to.equal(0);
     });
+
+    it('keeps a lowered latch down while re-checking the committed tip hash fails', async function () {
+        const node = makeNode(buildChain(13));
+        const seen = await h.run(node, (n, s) => {
+            if (n === 1) {
+                h.tracker.synced = false;
+                node.faults.hash = [new Error('tip hash unavailable')];
+            }
+            if (n === 2) s.afterFailure = h.tracker.isSynced();
+            if (n === 3) s.afterCompare = h.tracker.isSynced();
+            return n >= 3 ? 'stop' : null;
+        });
+        expect(seen.afterFailure, 'the latch rose with no hash compare').to.equal(false);
+        expect(seen.afterCompare, 'the next compare raises it').to.equal(true);
+    });
+
+    it('keeps a raised latch up while re-checking the committed tip hash fails', async function () {
+        const node = makeNode(buildChain(13));
+        const seen = await h.run(node, (n, s) => {
+            if (n === 1) node.faults.hash = [new Error('tip hash unavailable')];
+            if (n === 2) s.afterFailure = h.tracker.isSynced();
+            return n >= 2 ? 'stop' : null;
+        });
+        expect(seen.afterFailure).to.equal(true);
+    });
 });
