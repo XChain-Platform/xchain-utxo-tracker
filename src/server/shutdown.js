@@ -86,12 +86,14 @@ async function closeStores(handles, log){
  * @param {object}   opts
  * @param {function} opts.drain      async work to finish before exiting
  * @param {number}   [opts.timeoutMs] hard-exit budget (default SHUTDOWN_TIMEOUT_MS / 100000)
- * @param {function} [opts.exit]     process-exit seam (tests pass their own)
+ * @param {function} [opts.exit]     graceful exit, called with (code, remainingMs)
+ * @param {function} [opts.forceExit] deadline exit that must not flush or wait
  * @param {object}   [opts.log]      console-shaped logger
  * @returns {function(string): void} handler to register on SIGTERM / SIGINT
  */
-function createShutdown({ drain, timeoutMs, exit, log } = {}){
+function createShutdown({ drain, timeoutMs, exit, forceExit, log } = {}){
     const onExit  = exit || ((code) => process.exit(code))
+    const onForceExit = forceExit || onExit
     const logger  = log || console
     const budget  = resolveTimeoutMs(timeoutMs)
     let signalled = false
@@ -106,30 +108,45 @@ function createShutdown({ drain, timeoutMs, exit, log } = {}){
         signalled = true
         logger.log('Received ' + (signal || 'signal') + ', draining (hard exit in ' + budget + 'ms)...')
 
+        const deadline = Date.now() + budget
         let finished = false
         const timer = setTimeout(() => {
             if (finished) return
             finished = true
             // Non-zero: the drain did NOT complete, so work was cut off exactly as a
             // SIGKILL would have cut it. A clean drain below exits 0.
-            logger.error('Shutdown drain exceeded ' + budget + 'ms; exiting hard.')
-            onExit(1)
+            logger.error('Shutdown deadline exceeded ' + budget + 'ms; exiting hard.')
+            onForceExit(1)
         }, budget)
+
+        const finish = (code) => {
+            if (finished) return
+            const remainingMs = Math.max(0, deadline - Date.now())
+            Promise.resolve().then(() => onExit(code, remainingMs, () => !finished)).then(
+                () => {
+                    if (finished) return
+                    finished = true
+                    clearTimeout(timer)
+                },
+                () => {
+                    if (finished) return
+                    finished = true
+                    clearTimeout(timer)
+                    onForceExit(1)
+                }
+            )
+        }
 
         Promise.resolve().then(() => drain()).then(
             () => {
                 if (finished) return
-                finished = true
-                clearTimeout(timer)
                 logger.log('Shutdown drain complete; exiting.')
-                onExit(0)
+                finish(0)
             },
             (err) => {
                 if (finished) return
-                finished = true
-                clearTimeout(timer)
                 logger.error('Shutdown drain failed:', err)
-                onExit(1)
+                finish(1)
             }
         )
     }

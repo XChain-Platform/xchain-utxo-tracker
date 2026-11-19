@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { expect } = require('chai');
 const { createLogShipper } = require('../../../src/observability/logShipper');
-const { registerLogFlush, flushLogs, exitAfterFlush } = require('../../../src/server/exit_flush');
+const { registerLogFlush, shipperFlusher, flushLogs, exitAfterFlush } = require('../../../src/server/exit_flush');
 const { createShutdown } = require('../../../src/server/shutdown');
 
 const quiet = { log() {}, warn() {}, error() {} };
@@ -64,9 +64,38 @@ describe('exit flush', function () {
         expect(bodies.join('')).to.include('"msg":"c"');
     });
 
+    it('drains every buffered batch before exit while the collector makes progress', async function () {
+        const bodies = [];
+        const codes = [];
+        const shipper = makeShipper(async (body) => { bodies.push(body); });
+        registerLogFlush(shipperFlusher(shipper));
+        for (let i = 0; i < 250; i++) shipper.info('line ' + i);
+        shipper.error('CRASH', { kind: 'pollingLoopTerminated' });
+
+        await exitAfterFlush(1, { exit: (code) => codes.push(code) });
+
+        expect(bodies.join('')).to.include('pollingLoopTerminated');
+        expect(shipper.buffer).to.have.length(0);
+        expect(shipper.stats.shipped).to.equal(251);
+        expect(codes).to.deep.equal([1]);
+    });
+
+    it('stops draining after a transport failure requeues the batch', async function () {
+        let calls = 0;
+        const shipper = makeShipper(async () => { calls++; throw new Error('offline'); });
+        registerLogFlush(shipperFlusher(shipper));
+        for (let i = 0; i < 250; i++) shipper.info('line ' + i);
+
+        await flushLogs(2000);
+
+        expect(calls).to.equal(1);
+        expect(shipper.stats.failures).to.equal(1);
+        expect(shipper.buffer).to.have.length(250);
+    });
+
     it('exits after the bound when the collector never answers', async function () {
         const shipper = makeShipper(() => new Promise(() => {}));
-        registerLogFlush(() => shipper.stop());
+        registerLogFlush(shipperFlusher(shipper));
         shipper.info('held');
         const started = Date.now();
         const codes = [];
@@ -97,12 +126,30 @@ describe('exit flush wiring', function () {
             const shutdown = createShutdown({
                 drain: async () => {},
                 log: { log: (m) => shipper.info(m), error: (m) => shipper.error(m) },
-                exit: (code) => exitAfterFlush(code, { exit: resolve })
+                exit: (code, remainingMs, shouldExit) => exitAfterFlush(code, { exit: resolve, timeoutMs: remainingMs, shouldExit })
             });
             shutdown('SIGTERM');
         });
         expect(await exited).to.equal(0);
         expect(bodies.join('')).to.include('Shutdown drain complete; exiting.');
+    });
+
+    it('forces exit at the shutdown deadline when log flushing stalls', async function () {
+        const clock = require('sinon').useFakeTimers();
+        const codes = [];
+        try {
+            registerLogFlush(() => new Promise(() => {}));
+            const shutdown = createShutdown({
+                drain: async () => {}, timeoutMs: 500,
+                exit: (code, remainingMs, shouldExit) => exitAfterFlush(code, { exit: (c) => codes.push(c), timeoutMs: remainingMs, shouldExit }),
+                forceExit: (code) => codes.push(code), log: quiet,
+            });
+            shutdown('SIGTERM');
+            await clock.tickAsync(499);
+            expect(codes).to.deep.equal([]);
+            await clock.tickAsync(1);
+            expect(codes).to.deep.equal([1]);
+        } finally { clock.restore(); }
     });
 
     it('is the exit path of the entry point and of the steady-state drain', function () {
@@ -111,6 +158,8 @@ describe('exit flush wiring', function () {
         expect(entry).to.match(/noteCrash\('pollingLoopTerminated', err\)\s+await exitAfterFlush\(1\)/);
         expect(entry).to.match(/noteCrash\('bootFailed', err\)\s+return exitAfterFlush\(1\)/);
         expect(entry).to.not.match(/process\.exit\(1\)/);
-        expect(startup).to.match(/exit: \(code\) => exitAfterFlush\(code\)/);
+        expect(entry).to.match(/registerLogFlush\(shipperFlusher\(logPatch\.logger\)\)/);
+        expect(startup).to.match(/exit: \(code, remainingMs, shouldExit\) => exitAfterFlush\(code, \{ timeoutMs: remainingMs, shouldExit \}\)/);
+        expect(startup).to.match(/forceExit: \(code\) => process\.exit\(code\)/);
     });
 });

@@ -66,6 +66,7 @@ function addTrackerCollector(registry, tracker, metrics){
 
         const tip = resolveNodeTip(tracker);
         if(Number.isFinite(tip) && tip >= 0) nodeHeight.set({}, tip);
+        else nodeHeight.reset();
 
         synced.set({}, (typeof tracker.isSynced === 'function' && tracker.isSynced()) ? 1 : 0);
         halted.set({}, tracker.halted ? 1 : 0);

@@ -323,7 +323,8 @@ function listen(app, tracker, loops, config) {
     const drain = createTrackerDrain({ tracker, server, loopSettled: () => loops.current })
     const shutdown = createShutdown({
         drain: () => { loops.closing = true; return drain() },
-        exit: (code) => exitAfterFlush(code)
+        exit: (code, remainingMs, shouldExit) => exitAfterFlush(code, { timeoutMs: remainingMs, shouldExit }),
+        forceExit: (code) => process.exit(code)
     })
     process.on('SIGTERM', () => shutdown('SIGTERM'))
     process.on('SIGINT', () => shutdown('SIGINT'))

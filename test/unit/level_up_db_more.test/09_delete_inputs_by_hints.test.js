@@ -57,6 +57,41 @@ describe('LevelUpDb (extended coverage)', function () {
             expect(await db.getInput(prev1, 0)).to.be.null;
             expect(await db.getInput(prev2, 0)).to.be.null;
         });
+
+        it('preserves a spend marker owned by a surviving replacement', async function () {
+            const prev = randHash();
+            const original = randHash();
+            const replacement = randHash();
+            await db.insertInput({ prevTxHash: prev, prevOutputIndex: 0, txHash: replacement });
+            await db.insertInputHint({ prevTxHash: prev, prevOutputIndex: 0, txHash: original });
+            await db.insertInputHint({ prevTxHash: prev, prevOutputIndex: 0, txHash: replacement });
+            await db.endTransaction(true);
+
+            await db.beginTransaction();
+            expect(await db.deleteInputsByHint(original)).to.equal(1);
+            await db.endTransaction(true);
+            expect(Buffer.from(await db.getInput(prev, 0)).equals(Buffer.from(replacement, 'hex'))).to.equal(true);
+
+            await db.beginTransaction();
+            expect(await db.deleteInputsByHint(replacement)).to.equal(1);
+            await db.endTransaction(true);
+            expect(await db.getInput(prev, 0)).to.be.null;
+        });
+
+        it('deletes a shared spend marker when its owner is pruned in the same batch', async function () {
+            const prev = randHash();
+            const original = randHash();
+            const replacement = randHash();
+            await db.insertInput({ prevTxHash: prev, prevOutputIndex: 0, txHash: replacement });
+            await db.insertInputHint({ prevTxHash: prev, prevOutputIndex: 0, txHash: original });
+            await db.insertInputHint({ prevTxHash: prev, prevOutputIndex: 0, txHash: replacement });
+            await db.endTransaction(true);
+
+            await db.beginTransaction();
+            expect(await db.deleteInputsByHints([original, replacement])).to.equal(2);
+            await db.endTransaction(true);
+            expect(await db.getInput(prev, 0)).to.be.null;
+        });
     });
 
 });

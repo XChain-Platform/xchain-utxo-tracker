@@ -64,4 +64,30 @@ describe('mempool replacement and reorg invariants', function () {
     await rewindTip(tracker, 1, block1.hash);
     await checkInvariants(tracker, confirmedSet(coinbase0, coinbase1));
   });
+
+  it('keeps a replacement spend marker when the original is retained off tip and pruned later', async function () {
+    const { coinbase0, coinbase1 } = await seedTwoCoinbases(tracker);
+    const { original, replacement } = originalAndReplacement(coinbase0, coinbase1);
+    const node = installMempoolNode(tracker, [original, replacement]);
+    const atTip = tracker.connector.getBlockchainInfo;
+
+    node.set([original.getId()]);
+    await tracker.updateMempool();
+    tracker.connector.getBlockchainInfo = async () => ({
+      blocks: 2,
+      bestblockhash: fixedHash('unrelated-new-block')
+    });
+    node.set([replacement.getId()]);
+    await tracker.updateMempool();
+
+    tracker.connector.getBlockchainInfo = atTip;
+    await tracker.updateMempool();
+    const spender = await tracker.mempoolDb.getInput(coinbase0.getId(), 0);
+    expect(Buffer.from(spender).equals(Buffer.from(replacement.getId(), 'hex'))).to.equal(true);
+    await checkInvariants(tracker, new Map([
+      [outpoint(coinbase1.getId(), 0), { addressIndex: 1, value: 3000000000n }],
+      [outpoint(replacement.getId(), 0), { addressIndex: 3, value: 4500000000n }]
+    ]));
+    expect(tracker.mempoolReconverged).to.equal(true);
+  });
 });
