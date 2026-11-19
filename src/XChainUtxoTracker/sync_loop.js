@@ -142,23 +142,19 @@ function recoverPendingCleanup(pVal){
 // The loop's working state: the in-memory cursor, the open batch's counters and
 // timings, the prefetch queue, and the latches and streaks that keep a fault to
 // one log line per transition. Also seeds the node-RPC stamps /status reads.
-function newSyncLoopState({ lastProcessedBlockIndex, lastProcessedBlockHash }){
-    const sync = { lastProcessedBlockIndex, lastProcessedBlockHash, lastBlockchainInfo: null, lastBlockchainInfoRefreshAt: 0 }
-    // Instance-visible twin of lastBlockchainInfoRefreshAt, read by GET /status.
-    // The sync loop retries a failing getBlockchainInfo forever, so a coin node
-    // that is down or unsynced stalls block tracking while LevelDB stays perfectly
-    // readable and the DB-only probe kept reporting 'ok'. Seeded here
-    // rather than in the constructor so the window starts when tracking starts.
+function initializeSyncLoopReadiness(){
+    // Seed the status window when tracking starts instead of at construction.
     this.lastNodeRpcOkAt = Date.now()
     this.blockchainInfoLastBlock = -1
-    // The previous run's tip, which every tip consumer reads first, goes with it.
     this.latestKnownChainTip = null
-    // A relaunched loop re-earns readiness against the store it just opened:
-    // only pollAtChainTip and the mempool poller may raise these again. The
-    // published catch-up wait goes with the run, like its nodeCatchingUpProblem twin.
     this.synced = false
     revokeMempoolReadiness.call(this)
     this.nodeCatchingUp = null
+}
+
+function newSyncLoopState({ lastProcessedBlockIndex, lastProcessedBlockHash }){
+    const sync = { lastProcessedBlockIndex, lastProcessedBlockHash, lastBlockchainInfo: null, lastBlockchainInfoRefreshAt: 0 }
+    initializeSyncLoopReadiness.call(this)
     return Object.assign(sync, {
         blocksQuantity: 0,
         // Transactions confirmed in this batch that need their mempool records
