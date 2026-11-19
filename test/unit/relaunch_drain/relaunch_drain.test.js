@@ -37,8 +37,7 @@ function makeTracker(){
 
 const idleServer = { close(cb){ setImmediate(cb) }, closeIdleConnections(){} }
 
-describe('shutdown drain after an in-process relaunch', function(){
-
+function registerRelaunchDrainAwaitTests(){
     it('keeps the stores open until the relaunched loop settles', async function(){
         const first = deferred()
         const second = deferred()
@@ -81,7 +80,9 @@ describe('shutdown drain after an in-process relaunch', function(){
         await running
         assert.strictEqual(tracker.db.closed, true)
     })
+}
 
+function registerLoopRecorderTests(){
     it('still accepts a fixed loop promise', async function(){
         const tracker = makeTracker()
         const drain = createTrackerDrain({ tracker, server: idleServer, loopSettled: Promise.reject(new Error('fatal')), log: silentLog })
@@ -112,4 +113,9 @@ describe('shutdown drain after an in-process relaunch', function(){
     it('leaves an absent launcher absent', function(){
         assert.strictEqual(createLoopRecorder(undefined).launch, undefined)
     })
+}
+
+describe('shutdown drain after an in-process relaunch', function(){
+    registerRelaunchDrainAwaitTests()
+    registerLoopRecorderTests()
 })

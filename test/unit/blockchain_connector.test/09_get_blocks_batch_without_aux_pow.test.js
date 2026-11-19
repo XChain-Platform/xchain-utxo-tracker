@@ -73,8 +73,7 @@ function registerBatchAuxPowSuccessTests() {
   });
 }
 
-function registerBatchAuxPowFailureTests() {
-  describe('getBlocksBatchWithoutAuxPow', function () {
+function registerBatchHashValidationTests() {
     it('returns an uppercase getblockhash answer lowercased', async function () {
       const body = oneTxBlockBody('a2');
       const header = withMerkleRoot('02000000' + 'b'.repeat(152), body);
@@ -104,7 +103,9 @@ function registerBatchAuxPowFailureTests() {
         expect(clientStub.callCount).to.equal(1);
       });
     }
+}
 
+function registerBatchNullResultTests() {
     it('throws when a hash batch entry is null', async function () {
       clientStub.onCall(0).resolves({ data: [{ id: 0, result: null }] });
       try {
@@ -137,7 +138,9 @@ function registerBatchAuxPowFailureTests() {
         expect(err.message).to.include('block in batch');
       }
     });
+}
 
+function registerBatchStructuralParseTest() {
     it('strips AuxPoW by structural parse when getblockheader returns 160 chars but AuxPoW bit is set (Dogecoin Core 1.14)', async function () {
       // Mirrors the single-block test: header always 160 chars, strip from block hex.
       const txBodyHex = oneTxBlockBody('ff')
@@ -154,6 +157,13 @@ function registerBatchAuxPowFailureTests() {
       expect(results[0].hex.substring(0, 160)).to.equal(fullBlockHex.substring(0, 160))
       expect(results[0].hex.substring(160)).to.equal(txBodyHex)
     });
+}
+
+function registerBatchAuxPowFailureTests() {
+  describe('getBlocksBatchWithoutAuxPow', function () {
+    registerBatchHashValidationTests();
+    registerBatchNullResultTests();
+    registerBatchStructuralParseTest();
   });
 }
 
