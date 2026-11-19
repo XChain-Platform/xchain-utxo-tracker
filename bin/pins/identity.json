@@ -5,7 +5,7 @@
   ],
   "fileCounts": {
     "src/coins/": 5,
-    "src/observability/": 6
+    "src/observability/": 4
   },
   "files": {
     "src/coins/BTC.js": "ec37a13d1be3375c18fb77dd162ddd2047e598410de6c8050c12cff2766bde81",
@@ -13,11 +13,9 @@
     "src/coins/LTC.js": "6155195bfa5fdfeab77dec3802ce67b5cc47a77695e81a4a5545d980e4c421dd",
     "src/coins/consensus_pin.js": "342bf7af224a19ea0a98ff9cfb2c9a70b3fd5be75de7ecef2db05936f82baa63",
     "src/coins/index.js": "c76c079e3c0e2793f57120c5450ca3a6b7050cd4d4373c207fc9655715c092dc",
-    "src/observability/README.md": "ed3e77caf41f634d0b7e60ef3d762927708710b17191d03e26ff64508412ea62",
-    "src/observability/index.js": "c94cb9e831eaaee0cc0a2697f08dde4c632ec56ce59c8a6e3882f8f0c1b59f0e",
+    "src/observability/README.md": "4f58f8e59d21121ddd794f68f1fe2a6318484c5c868b158a5b7311c9a0e1166a",
+    "src/observability/index.js": "b14bc67d3ae19e28bd0e25fef6e34661fe2032715b3271f14246ec664e904fbf",
     "src/observability/logShipper.js": "61417fe54844edbc83f22ab4b949b86e9e667bbecea7acae7209838a9f825a75",
-    "src/observability/metrics.js": "b29a0f2855e0dc4d8d97dde22c36daa6ab0408391945eda1b47b47398c0cd261",
-    "src/observability/sql_timing.js": "be5db5dc3a39862668ddd25223d63e1e6c1566f7e4b981cbae4115bf675bfcf5",
-    "src/observability/sql_timing_shipper.js": "a669e2a44c0916db899321968ce4e6e0684841481ec7daf713376a63c487646f"
+    "src/observability/metrics.js": "b29a0f2855e0dc4d8d97dde22c36daa6ab0408391945eda1b47b47398c0cd261"
   }
 }
