@@ -24,17 +24,9 @@ const {
   originalAndReplacement
 } = require('./support/invariants');
 
-describe('mempool replacement and reorg invariants', function () {
-  let tracker;
+let tracker;
 
-  beforeEach(async function () {
-    tracker = await createTestTracker();
-  });
-
-  afterEach(async function () {
-    await closeTracker(tracker);
-  });
-
+function registerModeledUtxoLifecycleTest() {
   it('preserves the modeled UTXO set through add, replace, confirm, cleanup, and rewind', async function () {
     const { coinbase0, coinbase1, block1 } = await seedTwoCoinbases(tracker);
     await checkInvariants(tracker, confirmedSet(coinbase0, coinbase1));
@@ -64,7 +56,9 @@ describe('mempool replacement and reorg invariants', function () {
     await rewindTip(tracker, 1, block1.hash);
     await checkInvariants(tracker, confirmedSet(coinbase0, coinbase1));
   });
+}
 
+function registerRetainedOriginalTest() {
   it('keeps a replacement spend marker when the original is retained off tip and pruned later', async function () {
     const { coinbase0, coinbase1 } = await seedTwoCoinbases(tracker);
     const { original, replacement } = originalAndReplacement(coinbase0, coinbase1);
@@ -90,4 +84,15 @@ describe('mempool replacement and reorg invariants', function () {
     ]));
     expect(tracker.mempoolReconverged).to.equal(true);
   });
+}
+
+describe('mempool replacement and reorg invariants', function () {
+  beforeEach(async function () {
+    tracker = await createTestTracker();
+  });
+  afterEach(async function () {
+    await closeTracker(tracker);
+  });
+  registerModeledUtxoLifecycleTest();
+  registerRetainedOriginalTest();
 });

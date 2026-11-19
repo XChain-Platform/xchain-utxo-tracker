@@ -31,9 +31,7 @@ function resetFlush() {
     afterEach(function () { registerLogFlush(null); });
 }
 
-describe('exit flush', function () {
-    resetFlush();
-
+function registerSuccessfulFlushTests() {
     it('ships buffered lines before the exit seam runs', async function () {
         const bodies = [];
         const events = [];
@@ -79,7 +77,9 @@ describe('exit flush', function () {
         expect(shipper.stats.shipped).to.equal(251);
         expect(codes).to.deep.equal([1]);
     });
+}
 
+function registerFailedFlushTests() {
     it('stops draining after a transport failure requeues the batch', async function () {
         let calls = 0;
         const shipper = makeShipper(async () => { calls++; throw new Error('offline'); });
@@ -112,7 +112,12 @@ describe('exit flush', function () {
         await exitAfterFlush(0, { exit: (code) => codes.push(code) });
         expect(codes).to.deep.equal([1, 0]);
     });
+}
 
+describe('exit flush', function () {
+    resetFlush();
+    registerSuccessfulFlushTests();
+    registerFailedFlushTests();
 });
 
 describe('exit flush wiring', function () {

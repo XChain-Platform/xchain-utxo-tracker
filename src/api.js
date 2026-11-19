@@ -201,7 +201,6 @@ function launchTracker(tracker){
 // unmatched request by its first path segment, so caller-invented paths mint one
 // series each and fill the per-metric cap, dropping real routes from the scrape.
 const UNMATCHED_ROUTE_LABEL = '/*unmatched';
-
 // Mounts FIRST, ahead of every layer that can shed a request, so a shed request
 // is labelled too; a specific route later in the stack overwrites the label, and
 // bare `/` matches no wildcard segment and keeps its own single series.
@@ -209,8 +208,6 @@ function installUnmatchedRouteLabel(app){
     app.all(UNMATCHED_ROUTE_LABEL, (req, res, next) => next());
     return app;
 }
-
-
 async function isDbEmpty() {
     const store = new LevelUpStore(DB_NAME)
     try {
@@ -377,7 +374,6 @@ if (require.main === module) {
             return exitAfterFlush(1)
         })
 }
-
 module.exports = {
     deriveHealthStatus,
     isNodeRpcStale,
