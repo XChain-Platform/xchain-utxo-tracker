@@ -364,8 +364,7 @@ function createSqlTiming(opts = {}) {
     /** Wraps each JSON-RPC method in an independently emitted child span. */
     function wrapRpcMethods(methods) {
         if (!config.enabled || !methods || typeof methods !== 'object') return methods;
-        // Keep the table prototype-free so a router never dispatches inherited names like "constructor".
-        const wrapped = Object.create(null);
+        const wrapped = {};
         for (const [name, method] of Object.entries(methods)) {
             if (typeof method !== 'function') {
                 wrapped[name] = method;
