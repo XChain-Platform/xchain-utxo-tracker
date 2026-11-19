@@ -32,6 +32,12 @@ const {
 const tasks = {}
 const logger = getLogger()
 
+function setTaskProgress(taskId, progress) {
+    const task = tasks[taskId]
+    if (!task || task.progress === -1 || task.error) return
+    task.progress = progress
+}
+
 async function compressDirPigz(taskId, source, destination) {
     tasks[taskId] = {progress: 0, filename: destination}
 
@@ -90,7 +96,7 @@ function compressToDestination(taskId, source, destination, totalBytes) {
         const currentPercentage = parseInt(percentageString, 10);
 
         if (!isNaN(currentPercentage)) { // Check if the percentage is a valid number
-            tasks[taskId]["progress"] = currentPercentage
+            setTaskProgress(taskId, currentPercentage)
         }
     })
 
@@ -223,7 +229,7 @@ function trackExtractionProgress(pv, taskId) {
         const currentPercentage = parseInt(percentageString, 10);
 
         if (!isNaN(currentPercentage)) {
-            tasks[taskId]["progress"] = currentPercentage
+            setTaskProgress(taskId, currentPercentage)
         }
     })
 }

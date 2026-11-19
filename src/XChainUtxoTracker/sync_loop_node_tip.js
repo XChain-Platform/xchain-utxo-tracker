@@ -305,12 +305,24 @@ async function pollAtChainTip(sync){
         } catch (err){
             logger.error(nodeUtil.format('Error re-checking the committed tip hash from node: ' + err.message, err))
         }
-        // No compare ran, so the pass confirmed nothing: leave the latch, the
-        // staged batch and the mempool poller as they are and ask again.
+        // A brief failure preserves readiness. A sustained run cannot confirm
+        // that the committed tip is still canonical, so withdraw readiness
+        // until a hash comparison succeeds.
         if (!tipHashFromNode){
+            if (sync.tipHashFailingSince === null) sync.tipHashFailingSince = Date.now()
+            if (isNodeRpcStale({ lastNodeRpcOkAt: sync.tipHashFailingSince })){
+                this.synced = false
+                revokeMempoolReadiness.call(this)
+                if (!sync.tipHashStaleProblem){
+                    logger.warn('Committed tip hash checks have remained unavailable; readiness is withdrawn until a comparison succeeds.')
+                    sync.tipHashStaleProblem = true
+                }
+            }
             await this.sleep(CHECK_BLOCK_DELAY_MS)
             return
         }
+        sync.tipHashFailingSince = null
+        sync.tipHashStaleProblem = false
         if (tipHashFromNode != sync.lastProcessedBlockHash){
             return rollBackSameHeightTipSwap.call(this, sync)
         }

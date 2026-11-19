@@ -37,6 +37,9 @@ module.exports = {
                 insertSortedTxids(rawMempool, rawMempoolUnordered)
             } catch (error){
                 logger.error(nodeUtil.format('Error updating mempool: ' + error.message, error))
+                // No replacement listing was committed, so readiness from an
+                // earlier pass no longer describes the node's mempool.
+                revokeMempoolReadiness.call(this)
                 // Reset the busy flag: without this, a single transient
                 // getRawMempool failure permanently locks out further mempool
                 // updates for the lifetime of the process (next setInterval

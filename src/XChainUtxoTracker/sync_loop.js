@@ -175,6 +175,11 @@ function newSyncLoopState({ lastProcessedBlockIndex, lastProcessedBlockHash }){
         // Prefetch queue: each entry is { height, promise } where promise resolves to { hash, hex }
         prefetchQueue: [],
         nodeSyncedProblem: false,
+        // A usable height response does not prove that the committed tip is
+        // still canonical. Bound how long hash-check failures may preserve
+        // readiness, while tolerating a brief RPC fault.
+        tipHashFailingSince: null,
+        tipHashStaleProblem: false,
         // Node-tip-below-ours latches, one line per transition each: the node is
         // still in initial block download (wait, never reconcile), or the gap is
         // too deep to walk back and verifyReorg refused before deleting (wait,

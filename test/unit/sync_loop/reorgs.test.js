@@ -80,4 +80,27 @@ describe('XChainUtxoTracker sync loop: reorgs and the synced latch', function ()
         });
         expect(seen.afterFailure).to.equal(true);
     });
+
+    it('withdraws readiness when committed tip hash checks stay unavailable', async function () {
+        const node = makeNode(buildChain(13));
+        const seen = await h.run(node, (n, s) => {
+            if (n === 1) {
+                h.tracker.mempoolReconverged = true;
+                node.faults.hash = new Array(170).fill(new Error('tip hash unavailable'));
+            }
+            if (n === 2) {
+                s.briefFailureSynced = h.tracker.isSynced();
+                s.briefFailureMempoolReady = h.tracker.isMempoolReconverged();
+            }
+            if (n === 154) {
+                s.longFailureSynced = h.tracker.isSynced();
+                s.longFailureMempoolReady = h.tracker.isMempoolReconverged();
+            }
+            return n >= 154 ? 'stop' : null;
+        });
+        expect(seen.briefFailureSynced).to.equal(true);
+        expect(seen.briefFailureMempoolReady).to.equal(true);
+        expect(seen.longFailureSynced).to.equal(false);
+        expect(seen.longFailureMempoolReady).to.equal(false);
+    });
 });
