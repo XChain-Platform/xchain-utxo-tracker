@@ -22,6 +22,7 @@ const { parsePageOpts } = require('./page_opts.js')
 const { installAdminGuard } = require('./admin_guard.js')
 const logger = getLogger()
 const appTrackers = new WeakMap()
+const appLoops = new WeakMap()
 
 async function getUtxos(tracker, address, opts){
     return await tracker.getUtxosAddress(address, opts)
@@ -297,13 +298,31 @@ function installErrorHandler(app) {
     })
 }
 
-function listen(app, tracker, trackerExited, config) {
+// Records the block loop each launch starts. The admin RPCs relaunch the loop and
+// drop the promise they get back, so the shutdown drain reads the current one from
+// here. Once shutdown has begun a relaunch is refused, since a loop started then
+// would run on past the stores the drain is about to close.
+function createLoopRecorder(launchTracker) {
+    const recorder = { current: undefined, closing: false }
+    recorder.launch = typeof launchTracker !== 'function' ? launchTracker : (tracker) => {
+        if (recorder.closing) {
+            logger.info('Shutdown in progress: not relaunching the tracker')
+            return Promise.resolve()
+        }
+        recorder.current = launchTracker(tracker)
+        return recorder.current
+    }
+    return recorder
+}
+
+function listen(app, tracker, loops, config) {
     const server = app.listen(config.UTXO_TRACKER_API_PORT, () => {
         logger.info('API listening on port ' + config.UTXO_TRACKER_API_PORT)
         logger.info(memoryBudget.describe(config.BULK_SYNC_RAM_BUDGET))
     })
+    const drain = createTrackerDrain({ tracker, server, loopSettled: () => loops.current })
     const shutdown = createShutdown({
-        drain: createTrackerDrain({ tracker, server, loopSettled: trackerExited }),
+        drain: () => { loops.closing = true; return drain() },
         exit: (code) => exitAfterFlush(code)
     })
     process.on('SIGTERM', () => shutdown('SIGTERM'))
@@ -325,6 +344,8 @@ function createApp(config){
     // Create the app
     const app = express()
     appTrackers.set(app, tracker)
+    const loops = createLoopRecorder(config.launchTracker)
+    appLoops.set(app, loops)
     installBaseMiddleware(app, config)
     // Parse ahead of the gates, raise parse errors behind them: see splitBodyParser.
     const bodyParse = concurrencyGate.splitBodyParser(express.json())
@@ -346,7 +367,7 @@ function createApp(config){
         getFreshnessMeta: (height, readAt) => getFreshnessMeta(tracker, height, readAt),
         setFreshnessHeaders: (res, height, readAt) => setFreshnessHeaders(tracker, res, height, readAt),
         DB_NAME: config.DB_NAME,
-        launchTracker: config.launchTracker,
+        launchTracker: loops.launch,
         jsonRpcMethods: config.jsonRpcMethods
     })
     registerRoutes(routeContext)
@@ -358,7 +379,8 @@ function createApp(config){
 async function startApi(config){
     const app = createApp(config)
     const tracker = appTrackers.get(app)
-    const trackerExited = config.launchTracker(tracker)
-    listen(app, tracker, trackerExited, config)
+    const loops = appLoops.get(app)
+    loops.launch(tracker)
+    listen(app, tracker, loops, config)
 }
-module.exports = { parsePageOpts, createApp, startApi, resolveRateLimitRpm, resolveTrustProxyHops, installBaseMiddleware }
+module.exports = { parsePageOpts, createApp, startApi, resolveRateLimitRpm, resolveTrustProxyHops, installBaseMiddleware, createLoopRecorder }

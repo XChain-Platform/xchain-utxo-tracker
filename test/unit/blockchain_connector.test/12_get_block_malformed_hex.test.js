@@ -29,6 +29,9 @@ const MALFORMED = [
 let connector;
 let clientStub;
 
+const H10 = 'a0'.repeat(32);
+const H11 = 'b1'.repeat(32);
+
 describe('BlockchainConnector malformed getblock hex', function () {
   beforeEach(function () {
     connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
@@ -42,21 +45,21 @@ describe('BlockchainConnector malformed getblock hex', function () {
   describe('getBlocksBatch', function () {
     for (const [label, bad] of MALFORMED) {
       it('refuses a batched reply that is ' + label + ', naming the height and hash', async function () {
-        clientStub.onCall(0).resolves({ data: [{ id: 0, result: 'h10' }, { id: 1, result: 'h11' }] });
+        clientStub.onCall(0).resolves({ data: [{ id: 0, result: H10 }, { id: 1, result: H11 }] });
         clientStub.onCall(1).resolves({ data: [{ id: 0, result: GOOD }, { id: 1, result: bad }] });
         let caught = null;
         try { await connector.getBlocksBatch([10, 11]); } catch (e) { caught = e; }
         expect(caught).to.be.an('error');
-        expect(caught.message).to.match(/^getblock returned malformed block hex for block 11 \(h11\) in batch/);
+        expect(caught.message).to.match(new RegExp('^getblock returned malformed block hex for block 11 \\(' + H11 + '\\) in batch'));
         expect(caught.auxPowParseFailure).to.equal(undefined);
       });
     }
 
     it('still returns whole hex untouched', async function () {
-      clientStub.onCall(0).resolves({ data: [{ id: 0, result: 'h10' }] });
+      clientStub.onCall(0).resolves({ data: [{ id: 0, result: H10 }] });
       clientStub.onCall(1).resolves({ data: [{ id: 0, result: GOOD }] });
       const out = await connector.getBlocksBatch([10]);
-      expect(out).to.deep.equal([{ height: 10, hash: 'h10', hex: GOOD }]);
+      expect(out).to.deep.equal([{ height: 10, hash: H10, hex: GOOD }]);
     });
   });
 

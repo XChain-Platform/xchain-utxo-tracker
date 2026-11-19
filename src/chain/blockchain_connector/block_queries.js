@@ -14,10 +14,8 @@
 
 const util = require('node:util');
 const { logger } = require('./constants');
-const { sanitizeRpcError, isWholeHex, assertWholeBlockHex } = require('./rpc_helpers');
+const { sanitizeRpcError, isWholeHex, assertWholeBlockHex, BLOCK_HASH_HEX } = require('./rpc_helpers');
 const { encodeVarintHex, stripAuxPowFromBlockHex } = require('./auxpow_codec');
-
-const BLOCK_HASH_HEX = /^[0-9a-fA-F]{64}$/
 
 // The pure block header is 80 bytes.
 const HEADER_HEX_LENGTH = 160

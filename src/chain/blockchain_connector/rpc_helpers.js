@@ -41,6 +41,21 @@ function isWholeHex(value){
         && /^[0-9a-fA-F]+$/.test(value)
 }
 
+const BLOCK_HASH_HEX = /^[0-9a-fA-F]{64}$/
+
+// Returns a getblockhash answer as lowercase 64-hex, or throws. Stored hashes and the
+// decoded headers' prev-hash links are lowercase and compared as strings, so a
+// malformed or case-changed answer must fail into the fetch retry, never read as a
+// fork. The error is deliberately untagged: it is a wire fault, not evidence about
+// the block's own bytes, so the AuxPoW reassembly recovery must not fire on it.
+function normalizeBlockHash(value, where){
+    if (typeof value !== 'string' || !BLOCK_HASH_HEX.test(value)){
+        throw new Error('Error getting block hash: malformed result for ' + where + ' ('
+            + typeof value + ' ' + String(JSON.stringify(value)).slice(0, 80) + ')')
+    }
+    return value.toLowerCase()
+}
+
 // Throws unless a hex-mode block RPC answer is whole hex. The error is deliberately
 // untagged: it is a wire fault, so the caller retries it as a fetch error rather
 // than reading it as evidence about the block's own bytes.
@@ -111,4 +126,7 @@ function nodeReachabilityFrom(startedAt, lastNodeOkAt, lastNodeFailAt, now = Dat
     }
 }
 
-module.exports = { sanitizeRpcError, isWholeHex, assertWholeBlockHex, orderBatchResults, nodeReachabilityFrom }
+module.exports = {
+    sanitizeRpcError, isWholeHex, assertWholeBlockHex, orderBatchResults, nodeReachabilityFrom,
+    BLOCK_HASH_HEX, normalizeBlockHash
+}

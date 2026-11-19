@@ -68,7 +68,7 @@ function malformedBatchReply(method, value) {
         data: payload.map((request, id) => ({
             id,
             result: request.method === 'getblockhash'
-                ? 'h'.repeat(64)
+                ? 'ab'.repeat(32)
                 : (request.method === method ? value : HEADER_HEX),
         })),
     });
@@ -322,7 +322,7 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
             const batchOk = async (payload) => ({
                 data: payload.map((p, i) => ({
                     id: i,
-                    result: p.method === 'getblockhash' ? 'h'.repeat(64)
+                    result: p.method === 'getblockhash' ? 'ab'.repeat(32)
                         : (p.method === 'getblockheader' ? HEADER_HEX : UNSTRIPPABLE_BLOCK)
                 }))
             });

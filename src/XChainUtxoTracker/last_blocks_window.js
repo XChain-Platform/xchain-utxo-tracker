@@ -19,6 +19,7 @@
 const { Q_UNDO_WATERMARK_KEY, P_PENDING_CLEANUP_KEY } = require('./constants.js')
 const XChainUtxoTracker = require('../XChainUtxoTracker.js')
 const { withStoreCommit } = require('./store_commit_lock.js')
+const { withHistoryWrite } = require('../native_history/write_lock.js')
 
 // What an operator does once this index cannot be walked back.
 const REBUILD_REMEDY = "This index cannot be walked back onto the node's chain and has to be rebuilt. Under "
@@ -148,17 +149,25 @@ module.exports = {
             toClean.push(blockHash)
         }
 
-        await this.db.beginTransaction()
+        // The prune lists each block's V keys and commits later, with awaits between.
+        // A backfill chunk decides whether to write a block's V rows from its N record,
+        // which stays on disk until this commit, so a chunk landing in that gap would
+        // add V rows after they were listed and they would outlive the block. Holding
+        // the history write section across list and commit makes the chunk either
+        // land first, and get listed, or find the N record gone and skip the V rows.
+        await withHistoryWrite(this, async () => {
+            await this.db.beginTransaction()
 
-        for (let blockHash of toClean){
-            await pruneAgedBlockRecords.call(this, blockHash)
-        }
+            for (let blockHash of toClean){
+                await pruneAgedBlockRecords.call(this, blockHash)
+            }
 
-        // Remove the crash-recovery marker atomically with the cleanup writes so
-        // a crash here causes a harmless idempotent re-run on the next restart.
-        await this.db.addTransaction("del", P_PENDING_CLEANUP_KEY)
+            // Remove the crash-recovery marker atomically with the cleanup writes so
+            // a crash here causes a harmless idempotent re-run on the next restart.
+            await this.db.addTransaction("del", P_PENDING_CLEANUP_KEY)
 
-        await this.db.endTransaction()
+            await this.db.endTransaction()
+        })
         this.pendingKMCleanup = []
     },
 

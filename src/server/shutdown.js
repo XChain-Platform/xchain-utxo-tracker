@@ -171,22 +171,30 @@ function registerShutdownSignals(shutdown, proc = process){
  * @param {object}   opts
  * @param {object}   opts.tracker      XChainUtxoTracker instance
  * @param {object}   opts.server       http.Server returned by app.listen()
- * @param {Promise}  [opts.loopSettled] promise that settles when start()'s loop exits
+ * @param {Promise|Function} [opts.loopSettled] promise that settles when start()'s loop
+ *        exits, or a getter returning the loop running now: an admin relaunch replaces
+ *        the loop, so the getter is read at drain time and again after each wait
  * @param {object}   [opts.log]        console-shaped logger
  */
 function createTrackerDrain({ tracker, server, loopSettled, log } = {}){
     const logger = log || console
+    const currentLoop = typeof loopSettled === 'function' ? loopSettled : () => loopSettled
+    // start() resolves when the block loop breaks on keepParsing. It is already
+    // .catch()'d at the call site (a fatal error exits 1 there, a halt keeps the
+    // process up), so a rejection here is that same handled error and must not
+    // fail the drain. A loop launched while an earlier one was being awaited is
+    // awaited too, so the stores never close under a running loop.
+    async function waitForLoops(){
+        let waited
+        do {
+            waited = currentLoop()
+            await Promise.resolve(waited).catch(() => {})
+        } while (currentLoop() !== waited)
+    }
     return async function drain(){
         if (tracker && typeof tracker.stop === 'function') tracker.stop()
 
-        await Promise.all([
-            closeServer(server),
-            // start() resolves when the block loop breaks on keepParsing. It is
-            // already .catch()'d at the call site (a fatal error exits 1 there, a
-            // halt keeps the process up), so a rejection here is that same handled
-            // error and must not fail the drain.
-            Promise.resolve(loopSettled).catch(() => {})
-        ])
+        await Promise.all([closeServer(server), waitForLoops()])
 
         await closeStores(tracker ? [tracker.db, tracker.mempoolDb] : [], logger)
     }

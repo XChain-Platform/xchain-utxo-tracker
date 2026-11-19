@@ -12,7 +12,7 @@
  *
  **********************************************************************/
 
-const { isWholeHex, assertWholeBlockHex, orderBatchResults } = require('./rpc_helpers');
+const { isWholeHex, assertWholeBlockHex, orderBatchResults, normalizeBlockHash } = require('./rpc_helpers');
 const { stripAuxPowFromBlockHex } = require('./auxpow_codec');
 
 async function getBatchHashes(heights) {
@@ -26,7 +26,7 @@ async function getBatchHashes(heights) {
     const hashResponse = await this.postWithRetry(hashBatch)
     const hashes = orderBatchResults(hashResponse.data, heights.length, 'getblockhash').map(r => {
         if (!r.result) throw new Error('Error getting block hash in batch for id ' + r.id)
-        return r.result
+        return normalizeBlockHash(r.result, 'block hash in batch for id ' + r.id)
     })
     return hashes
 }
@@ -82,7 +82,7 @@ module.exports = {
         const hashResults  = orderBatchResults(hashResponse.data, heights.length, 'getblockhash')
         const hashes = hashResults.map(r => {
             if (!r.result) throw new Error('Error getting block hash in batch for id ' + r.id)
-            return r.result
+            return normalizeBlockHash(r.result, 'block hash in batch for id ' + r.id)
         })
 
         // Batch 2: all getblock calls in one HTTP request

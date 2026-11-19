@@ -9,6 +9,7 @@ const { compressDirPigz, decompressPigz, tasks } = require('./compression.js')
 const { sendAddressError, safeBootstrapFilename } = require('./errors.js')
 const { deriveHealthStatus, get_sync_status, registerStatusRoute } = require('./sync_status.js')
 const { registerHistoryRoute } = require('./history_route.js')
+const { isQuiescent } = require('./quiescence.js')
 const logger = getLogger()
 function registerUtxoRoute({ app, requestGate, getUtxos, parsePageOpts, setFreshnessHeaders }){
     app.get('/utxos/:address', requestGate.hold(async (req, res) => {
@@ -86,46 +87,6 @@ function registerInfoRoute({ app, requestGate, getInfo, setFreshnessHeaders }){
             sendAddressError(res, err);
         }
     }))
-}
-// Readiness contract: the tracker's height fields all report the LAST
-// COMMITTED state, not in-flight processing. The tracker buffers up to
-// DB_TRANSACTION_BLOCKS_QUANTITY blocks before flushing via endTransaction()
-// and getLastBlockHeight() reads from disk, so getLastBlockHeight() returning
-// N guarantees every output in blocks 0..N is queryable via get_utxos /
-// get_balance. `tracker_height` and `committed_height` are aliases for the
-// last committed block; `committed_height` is canonical and `tracker_height`
-// is retained for existing callers.
-//
-// Quiescence probe: ready=true iff the node-side mempool is empty (no unmined
-// txs the tracker is blind to until the next MEMPOOL_INTERVAL poll) and the
-// node tip equals the tracker's last-committed height (which is naturally
-// false mid-batch). Callers poll it between e2e tests as a barrier so the next
-// test starts from a fully-settled stack.
-async function isQuiescent(tracker) {
-    let mempoolSize = -1;
-    let trackerHeight = -1;
-    let nodeHeight = -1;
-    try {
-        const mempool = await tracker.connector.getRawMempool();
-        mempoolSize = Array.isArray(mempool) ? mempool.length
-                    : (mempool && typeof mempool === 'object') ? Object.keys(mempool).length
-                    : 0;
-    } catch (e) { /* leave -1; caller treats as not-ready */ }
-    try { trackerHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
-    try {
-        const info = await tracker.connector.getBlockchainInfo();
-        nodeHeight = (info && typeof info.blocks === 'number') ? info.blocks : -1;
-    } catch (e) {}
-    const heightAligned = (nodeHeight >= 0 && trackerHeight >= 0 && nodeHeight === trackerHeight);
-    const mempoolEmpty  = (mempoolSize === 0);
-    return {
-        ready:            heightAligned && mempoolEmpty,
-        mempool_size:     mempoolSize,
-        committed_height: trackerHeight,
-        tracker_height:   trackerHeight,
-        node_height:      nodeHeight,
-        lag:              (nodeHeight >= 0 && trackerHeight >= 0) ? (nodeHeight - trackerHeight) : null
-    };
 }
 // Begins a bootstrap or restore: rejects a second op while one is in flight,
 // validates the filename, then pauses the tracker. stopParsing leaves the
