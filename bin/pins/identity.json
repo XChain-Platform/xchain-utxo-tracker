@@ -13,8 +13,8 @@
     "src/coins/LTC.js": "6155195bfa5fdfeab77dec3802ce67b5cc47a77695e81a4a5545d980e4c421dd",
     "src/coins/consensus_pin.js": "342bf7af224a19ea0a98ff9cfb2c9a70b3fd5be75de7ecef2db05936f82baa63",
     "src/coins/index.js": "c76c079e3c0e2793f57120c5450ca3a6b7050cd4d4373c207fc9655715c092dc",
-    "src/observability/README.md": "4f58f8e59d21121ddd794f68f1fe2a6318484c5c868b158a5b7311c9a0e1166a",
-    "src/observability/index.js": "b14bc67d3ae19e28bd0e25fef6e34661fe2032715b3271f14246ec664e904fbf",
+    "src/observability/README.md": "e797cb8d46dc601c3a256d7ef066b80b42cdc2fcd22f1f9f33859b288e1f0a06",
+    "src/observability/index.js": "913ba5cf8e1d06cefbfda448f6aec5738f2e630efc75f36bff09b17f5c04b3f6",
     "src/observability/logShipper.js": "61417fe54844edbc83f22ab4b949b86e9e667bbecea7acae7209838a9f825a75",
     "src/observability/metrics.js": "b29a0f2855e0dc4d8d97dde22c36daa6ab0408391945eda1b47b47398c0cd261"
   }
