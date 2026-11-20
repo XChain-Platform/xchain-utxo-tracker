@@ -17,6 +17,7 @@
 const { expect } = require('chai');
 const fs = require('fs');
 const path = require('path');
+const { logger } = require('../../../src/chain/blockchain_connector/constants.js');
 const transport = require('../../../src/chain/blockchain_connector/transport_and_mempool.js');
 
 const DECODER_DIR = process.env.XCHAIN_DECODER_DIR || path.join(__dirname, '../../../../xchain-decoder');
@@ -41,8 +42,12 @@ const SCENARIOS = {
     'backs off 5s on ECONNRESET':        { steps: [fault({ code: 'ECONNRESET' }), fault({ code: 'ECONNRESET' }), ok({ result: 'aa' })], kind: 'value', calls: 3, sleeps: [5000, 5000] },
     'backs off 5s on ECONNREFUSED':      { steps: [fault({ code: 'ECONNREFUSED' }), ok({ result: 'aa' })], kind: 'value', calls: 2, sleeps: [5000] },
     'backs off 5s on an HTTP-500 -429':  { steps: [rpc500(-429), ok({ result: 'aa' })], kind: 'value', calls: 2, sleeps: [5000] },
+    'backs off 5s on an HTTP 503':        { steps: [fault({ response: { status: 503, data: 'Work queue depth exceeded' } }), ok({ result: 'aa' })], kind: 'value', calls: 2, sleeps: [5000] },
+    'backs off 5s on an HTTP 429':        { steps: [fault({ response: { status: 429, data: 'Too Many Requests' } }), ok({ result: 'aa' })], kind: 'value', calls: 2, sleeps: [5000] },
     'retries a timeout at 500ms':        { steps: [fault({ code: 'ECONNABORTED' }), ok({ result: 'aa' })], kind: 'value', calls: 2, sleeps: [500] },
     'rejects after 10 plain faults':     { steps: [fault({}, 'getaddrinfo ENOTFOUND node')], kind: 'reject', calls: 10, sleeps: times(10, 500) },
+    'rejects after 10 HTTP 503s':        { steps: [fault({ response: { status: 503, data: 'Work queue depth exceeded' } })], kind: 'reject', calls: 10, sleeps: times(10, 5000) },
+    'rejects after 10 ECONNRESETs':      { steps: [fault({ code: 'ECONNRESET' })], kind: 'reject', calls: 10, sleeps: times(10, 5000) },
     'retries a non-string 200 result':   { steps: [ok({ result: { hex: 'aa' } }), ok({ result: 'aa' })], kind: 'value', calls: 2, sleeps: [500] },
     'retries an odd-length hex result':  { steps: [ok({ result: 'aaa' }), ok({ result: 'aa' })], kind: 'value', calls: 2, sleeps: [500] },
     'rejects a non-hex result after 10': { steps: [ok({ result: '<html>busy</html>' })], kind: 'reject', calls: 10, sleeps: times(10, 500) },
@@ -65,7 +70,7 @@ async function drive(getRawTransaction, steps) {
         const value = await getRawTransaction.call(connector, 'txid-under-test');
         return { kind: value === null ? 'null' : 'value', calls, sleeps };
     } catch (err) {
-        return { kind: 'reject', calls, sleeps, message: err.message };
+        return { kind: 'reject', calls, sleeps, message: err.message, code: err.code };
     }
 }
 
@@ -81,6 +86,23 @@ describe('getRawTransaction fault classification', function () {
     it('names the txid and the last cause when it gives up', async function () {
         const got = await drive(transport.getRawTransaction, SCENARIOS['rejects after 10 plain faults'].steps);
         expect(got.message).to.contain('txid-under-test').and.to.contain('ENOTFOUND');
+    });
+
+    it('keeps the last transport code when retries run out', async function () {
+        const got = await drive(transport.getRawTransaction, SCENARIOS['rejects after 10 ECONNRESETs'].steps);
+        expect(got.code).to.equal('ECONNRESET');
+    });
+
+    it('does not log HTTP 503 queue pressure as a fixed fault', async function () {
+        const errors = [];
+        const originalError = logger.error;
+        logger.error = (...args) => { errors.push(args.join(' ')); };
+        try {
+            await drive(transport.getRawTransaction, SCENARIOS['rejects after 10 HTTP 503s'].steps);
+        } finally {
+            logger.error = originalError;
+        }
+        expect(errors.filter((message) => /attempt \d+\/10/.test(message))).to.have.length(0);
     });
 });
 

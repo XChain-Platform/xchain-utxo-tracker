@@ -172,10 +172,9 @@ function registerShutdownSignals(shutdown, proc = process){
  * The tracker's drain, as its own function so the exit path is unit-testable.
  *
  * Order is load-bearing:
- *   1. stop() the tracker: keepParsing goes false and the mempool poller is
- *      cleared. The block loop takes its else branch at its next check, which
- *      is a block boundary, closes the main store and breaks, so start()
- *      resolves.
+ *   1. stop() the tracker: a sticky drain request makes keepParsing false and
+ *      clears the mempool poller. Boot and stopParsing cannot restore the loop;
+ *      its next check closes the main store and resolves start().
  *   2. drain the HTTP server and the block loop together.
  *   3. close the stores LAST (the main store is normally closed by the loop
  *      already; the halted-for-resync case, where the loop is gone and never

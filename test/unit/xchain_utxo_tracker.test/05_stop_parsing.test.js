@@ -73,5 +73,21 @@ describe('XChainUtxoTracker', function () {
         if (tracker.mempoolInterval) { clearInterval(tracker.mempoolInterval); tracker.mempoolInterval = null; }
       }
     });
+
+    it('does not restore parsing or the mempool poller after a drain request', async function () {
+      tracker.parsingStopped = false;
+      sinon.stub(tracker, 'sleep').resolves();
+      tracker.stop();
+
+      try {
+        await tracker.stopParsing();
+        expect.fail('should have rejected');
+      } catch (err) {
+        expect(err.message).to.include('error trying to stop');
+        expect(tracker.drainRequested).to.be.true;
+        expect(tracker.keepParsing).to.be.false;
+        expect(tracker.mempoolInterval).to.equal(null);
+      }
+    });
   });
 });

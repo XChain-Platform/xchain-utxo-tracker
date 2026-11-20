@@ -59,8 +59,12 @@ function rawTransactionResponse(response, txid) {
 function rawTransactionFailureDetails(error) {
     const httpStatus = error.response?.status
     const rpcCode = error.response?.data?.error?.code
-    // Core signals a full work queue as -429; Dogecoin 1.14 drops the socket instead.
-    const isQueueFull = rpcCode === -429 || error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED'
+    // A full work queue can arrive as JSON -429, HTTP 503/429, or a dropped socket.
+    const isQueueFull = rpcCode === -429
+        || httpStatus === 503
+        || httpStatus === 429
+        || error.code === 'ECONNRESET'
+        || error.code === 'ECONNREFUSED'
     const isTimeout = error.code === 'ECONNABORTED'
     return { httpStatus, rpcCode, isQueueFull, isTimeout, lastErrorSummary: sanitizeRpcError(error) }
 }
@@ -81,13 +85,14 @@ async function handleRawTransactionFailure(connector, error, txid, tries, maxTri
         logger.error(`getRawTransaction: attempt ${tries}/${maxTries} for txid ${txid} failed: HTTP ${status} rpcCode ${code}: ${details.lastErrorSummary}`)
     }
     await connector.sleep(details.isQueueFull ? 5000 : 500)
-    return { resolved: false, lastErrorSummary: details.lastErrorSummary }
+    return { resolved: false, lastErrorSummary: details.lastErrorSummary, lastError: error }
 }
 
 // Run up to 10 attempts; the tracker keeps no rpcErrors counter, so none is bumped here.
 async function runRawTransactionRetries(connector, txid, resolve, reject) {
     const maxTries = 10
     let lastErrorSummary = null
+    let lastError = null
     for (let tries = 1; tries <= maxTries; tries++){
         try {
             const data = { jsonrpc: '2.0', method: 'getrawtransaction', params: [txid], id: 1 }
@@ -101,9 +106,12 @@ async function runRawTransactionRetries(connector, txid, resolve, reject) {
                 return
             }
             lastErrorSummary = outcome.lastErrorSummary
+            lastError = outcome.lastError
         }
     }
-    reject(new Error(`getRawTransaction failed after ${maxTries} attempts for txid ${txid}${lastErrorSummary ? ': ' + lastErrorSummary : ''}`))
+    const finalError = new Error(`getRawTransaction failed after ${maxTries} attempts for txid ${txid}${lastErrorSummary ? ': ' + lastErrorSummary : ''}`)
+    if (lastError?.code !== undefined) finalError.code = lastError.code
+    reject(finalError)
 }
 
 module.exports = {

@@ -242,6 +242,7 @@ function initSyncState(network){
     this.undoWindowWatermarkPersisted = null
 
     this.keepParsing = true
+    this.drainRequested = false
     this.pendingKMCleanup = []
 }
 

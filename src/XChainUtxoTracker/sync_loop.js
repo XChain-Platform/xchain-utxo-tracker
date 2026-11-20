@@ -50,7 +50,8 @@ module.exports = {
         recoverPendingCleanup.call(this, cursor.pendingCleanup)
         const sync = newSyncLoopState.call(this, cursor)
 
-        this.keepParsing = true
+        // A shutdown requested during the awaited boot steps must remain sticky.
+        this.keepParsing = !this.drainRequested
         this.parsingStopped = false
         // A relaunched loop is running again, so the previous abort no longer
         // describes it; leaving this set would let stopParsing close a live store.
