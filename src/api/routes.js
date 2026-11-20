@@ -277,7 +277,9 @@ const jsonRpcController = {
             try {
                 let source = "/bootstrap/xchain-utxo-tracker/"+filename
                 tasks[taskId] = {"progress": 0, "filename": filename}
-                decompressPigz(taskId, source, "/data/"+DB_NAME).then((finished) =>{
+                decompressPigz(taskId, source, "/data/"+DB_NAME, {
+                    readNodeTip: () => tracker.connector.getBlockchainInfo()
+                }).then((finished) =>{
                     tasks[taskId]["progress"] = 100
                     logger.info("Starting the parsing")
                     guard.busy = false

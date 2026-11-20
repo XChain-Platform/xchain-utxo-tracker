@@ -27,7 +27,7 @@ const fs = require('fs')
 const path = require('path')
 const { ClassicLevel } = require('classic-level')
 const { getLayoutVersion } = require('../store/level_up_db/store_layout')
-const { STORE_LAYOUT_VERSION } = require('../store/level_up_db/constants')
+const { STORE_LAYOUT_VERSION, PREFIX_LAST_BLOCK_HEIGHT } = require('../store/level_up_db/constants')
 
 const STAGING_DIR_NAME = '.restore-staging'
 
@@ -54,17 +54,22 @@ function discardStagingDir(destination) {
 // returning so its files can be moved.
 async function assertStagedLayoutOrThrow(stagingDir) {
     const db = new ClassicLevel(stagingDir, { createIfMissing: false, keyEncoding: 'buffer', valueEncoding: 'buffer' })
-    let version
+    let version, height = null
     try {
         await db.open()
         version = await getLayoutVersion.call({ db })
+        const storedHeight = await db.get(PREFIX_LAST_BLOCK_HEIGHT)
+        if (storedHeight !== undefined) {
+            const parsed = parseInt(storedHeight.toString(), 16)
+            if (Number.isInteger(parsed) && parsed >= 0) height = parsed
+        }
     } catch (err) {
         throw new Error(`Refusing to restore: the extracted archive could not be opened as a LevelDB store `
             + `(${err && err.message}). The live database was left untouched.`, { cause: err })
     } finally {
         try { await db.close() } catch (_) {}
     }
-    if (version === STORE_LAYOUT_VERSION) return
+    if (version === STORE_LAYOUT_VERSION) return height
     throw new Error(`Refusing to restore: the archive holds a store with ${describeLayout(version)} but this tracker `
         + `reads layout ${STORE_LAYOUT_VERSION}. The live database was left untouched.`)
 }

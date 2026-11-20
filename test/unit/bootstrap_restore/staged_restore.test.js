@@ -24,7 +24,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { createHash } = require('crypto');
+const { createHash, generateKeyPairSync, sign: signAsymmetric } = require('crypto');
 const { ClassicLevel } = require('classic-level');
 
 require('../../../src/api.js');
@@ -61,6 +61,32 @@ function archiveOf(storeDir, archive) {
     return archive;
 }
 
+function signedWrapperOf(innerArchive, height) {
+    const stage = path.join(root, 'wrapper-stage');
+    fs.mkdirSync(stage);
+    const inner = path.join(stage, 'data.tar.gz');
+    fs.copyFileSync(innerArchive, inner);
+    const digest = createHash('sha256').update(fs.readFileSync(inner)).digest('hex');
+    fs.writeFileSync(path.join(stage, 'data.sha256'), `${digest}  data.tar.gz\n`);
+    fs.writeFileSync(path.join(stage, 'bootstrap.json'), JSON.stringify({
+        format: 1, module: 'xchain-utxo-tracker', coin: null, network: null, height,
+    }));
+    const wrapper = path.join(root, 'signed-wrapper.tar.gz');
+    const packed = spawnSync('tar', ['-czf', wrapper, '-C', stage,
+        'bootstrap.json', 'data.tar.gz', 'data.sha256']);
+    if (packed.status !== 0) throw new Error('tar failed building the wrapper fixture');
+
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+    const pubkey = path.join(root, 'restore-pubkey.pem');
+    fs.writeFileSync(pubkey, publicKey.export({ type: 'spki', format: 'pem' }));
+    process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY = pubkey;
+    delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED;
+    const outerDigest = createHash('sha256').update(fs.readFileSync(wrapper)).digest();
+    const signature = signAsymmetric(null, outerDigest, privateKey);
+    fs.writeFileSync(wrapper + '.sig', `v1 ed25519 ${signature.toString('base64')}\n`);
+    return wrapper;
+}
+
 async function layoutOf(dir) {
     const db = new ClassicLevel(dir, { ...KEY_OPTS, createIfMissing: false });
     await db.open();
@@ -87,15 +113,16 @@ function useStagedRestoreFixture() {
     afterEach(function () {
         process.env.PATH = savedPath;
         delete process.env.BOOTSTRAP_RESTORE_ALLOW_UNSIGNED;
+        delete process.env.UTXO_TRACKER_BOOTSTRAP_PUBKEY;
         fs.rmSync(root, { recursive: true, force: true });
     });
 }
 
-async function restoreFrom(opts) {
+async function restoreFrom(opts, readNodeTip) {
     const archive = archiveOf(await buildStore(path.join(root, 'src-store'), opts), path.join(root, 'bootstrap.tar.gz'));
     const taskId = `staged-${Date.now()}-${Math.random()}`;
     tasks[taskId] = { progress: 0, filename: 'bootstrap.tar.gz' };
-    try { await decompressPigz(taskId, archive, live); return { taskId }; }
+    try { await decompressPigz(taskId, archive, live, { readNodeTip }); return { taskId }; }
     catch (error) { return { taskId, error }; }
 }
 
@@ -123,6 +150,50 @@ describe('staged restore', function () {
         handleRestoreFailure({ tasks, taskId, error, failLoud: () => { failedLoud++; }, relaunch: () => { relaunched++; }, log: () => {} });
         expect(tasks[taskId].progress).to.equal(-1);
         expect([relaunched, failedLoud]).to.deep.equal([1, 0]);
+    });
+});
+
+describe('staged restore node-tip guard', function () {
+    useStagedRestoreFixture();
+
+    it('refuses a staged store above a non-IBD node before touching the live store', async function () {
+        const { error } = await restoreFrom({ layout: 2 }, async () => ({ blocks: 5, initialblockdownload: false }));
+        expect(error).to.be.instanceOf(Error);
+        expect(error.message).to.include('5 blocks below archive height 10');
+        expect(error.preWipe).to.equal(true);
+        expect(fs.readFileSync(path.join(live, 'LIVE_STORE_MARKER'), 'utf8')).to.equal('keep me');
+        expect(fs.existsSync(path.join(live, STAGING_DIR_NAME))).to.equal(false);
+    });
+
+    it('refuses signed metadata above a non-IBD node before extraction', async function () {
+        const store = await buildStore(path.join(root, 'signed-store'), { layout: 2 });
+        const inner = archiveOf(store, path.join(root, 'signed-inner.tar.gz'));
+        const wrapper = signedWrapperOf(inner, 100);
+        let reads = 0;
+        let error;
+        try {
+            await decompressPigz('signed-metadata', wrapper, live, {
+                readNodeTip: async () => { reads++; return { blocks: 95, initialblockdownload: false }; },
+            });
+        } catch (err) { error = err; }
+        expect(error).to.be.instanceOf(Error);
+        expect(error.message).to.include('5 blocks below archive height 100');
+        expect(error.preWipe).to.equal(true);
+        expect(reads).to.equal(1);
+        expect(fs.existsSync(path.join(live, STAGING_DIR_NAME))).to.equal(false);
+        expect(fs.readFileSync(path.join(live, 'LIVE_STORE_MARKER'), 'utf8')).to.equal('keep me');
+    });
+
+    it('restores above a node in initial block download because the tracker waits', async function () {
+        const { error } = await restoreFrom({ layout: 2 }, async () => ({ blocks: 5, initialblockdownload: true }));
+        expect(error).to.equal(undefined);
+        expect(await layoutOf(live)).to.equal(2);
+    });
+
+    it('preserves prior behavior when the node tip cannot be read', async function () {
+        const { error } = await restoreFrom({ layout: 2 }, async () => { throw new Error('node unavailable'); });
+        expect(error).to.equal(undefined);
+        expect(await layoutOf(live)).to.equal(2);
     });
 });
 

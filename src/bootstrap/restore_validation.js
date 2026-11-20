@@ -144,7 +144,7 @@ function trackerArchiveIdentity(network) {
     return { module: TRACKER_MODULE, coin: splits ? n.slice(0, i) : null, network: splits ? n.slice(i + 1) : null };
 }
 
-// Parse bootstrap.json text into { module, coin, network }. Null when the text is
+// Parse bootstrap.json text into { module, coin, network, height }. Null when the text is
 // absent, not JSON, or not format 1: an archive published before the member existed
 // reads as "identity unknown", never as an error.
 function parseArchiveMeta(text) {
@@ -152,7 +152,8 @@ function parseArchiveMeta(text) {
     let parsed;
     try { parsed = JSON.parse(text); } catch (_) { return null; }
     if (!parsed || typeof parsed !== 'object' || parsed.format !== BOOTSTRAP_META_FORMAT) return null;
-    return { module: identityValue(parsed.module), coin: identityValue(parsed.coin), network: identityValue(parsed.network) };
+    const height = Number.isInteger(parsed.height) && parsed.height >= 0 ? parsed.height : null;
+    return { module: identityValue(parsed.module), coin: identityValue(parsed.coin), network: identityValue(parsed.network), height };
 }
 
 // Compare an archive's declared identity with the restore target, case-insensitively.

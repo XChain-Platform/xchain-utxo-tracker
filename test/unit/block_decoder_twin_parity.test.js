@@ -105,8 +105,20 @@ function loadTwinDecoder() {
     if (TwinDecoder === null) TwinDecoder = require(TWIN_FILE);
 }
 
+function bufferutilsRequire(source) {
+    const match = source.match(/^const bufferutils_js_1 = require\([^\n]+$/m);
+    expect(match, 'bufferutils require line not found').to.not.equal(null);
+    return match[0];
+}
+
 describe('XChainBlockDecoder twin parity with xchain-decoder @regression', function () {
     before(loadTwinDecoder);
+
+    it('loads the same bufferutils compatibility module in both twins', function () {
+        const local = fs.readFileSync(path.join(__dirname, '../../src/chain/XChainBlockDecoder.js'), 'utf8');
+        const twin = fs.readFileSync(TWIN_FILE, 'utf8');
+        expect(bufferutilsRequire(local)).to.equal(bufferutilsRequire(twin));
+    });
 
     it('each twin exposes exactly one tx-parse entry point, from the known pair', function () {
         const local = new LocalDecoder('litecoin-mainnet');

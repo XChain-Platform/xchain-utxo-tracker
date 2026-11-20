@@ -10,8 +10,8 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// src/chain/apply_bufferutils_patch.js and src/chain/bufferutils.js are byte-identical
-// twins of the xchain-decoder files at the same paths. Both services decode the same
+// The bufferutils patch files and v7 compatibility shim are byte-identical twins of
+// the xchain-decoder files at the same paths. Both services decode the same
 // blocks, so a one-sided edit (the verifuint bounds, the unsigned 64-bit read, the
 // writer's Number/BigInt acceptance) splits UTXO-set and action-record output values at
 // the same height. Change both copies together; the decoder carries the mirror guard.
@@ -27,7 +27,11 @@ const path = require('path');
 const REPO_ROOT = path.join(__dirname, '../../..');
 const DECODER_DIR = process.env.XCHAIN_DECODER_DIR ||
     path.join(__dirname, '../../../../xchain-decoder');
-const TWIN_FILES = ['src/chain/apply_bufferutils_patch.js', 'src/chain/bufferutils.js'];
+const TWIN_FILES = [
+    'src/chain/apply_bufferutils_patch.js',
+    'src/chain/bufferutils.js',
+    'src/chain/bitcoinjs_v7_compat.js',
+];
 const REQUIRE_SIBLINGS = process.env.XCHAIN_REQUIRE_SIBLINGS === '1';
 
 // Names the first differing line so a drift report points at the edit.

@@ -53,7 +53,8 @@ function readUnwrappedArchiveMeta(tmpDir) {
 // refuse a wrapper whose bootstrap.json names another module, coin or network, or a real
 // signed archive for another combo passes every gate and installs a foreign chain's store.
 function assertArchiveIdentityOrThrow(tmpDir, source, target) {
-    const identity = compareArchiveIdentity(readUnwrappedArchiveMeta(tmpDir), target)
+    const meta = readUnwrappedArchiveMeta(tmpDir)
+    const identity = compareArchiveIdentity(meta, target)
     const label = (id) => `${id.module || '?'} ${id.coin || '?'}/${id.network || '?'}`
     if (identity.status === 'mismatch') {
         const found = identity.mismatches.map(m => `${m.field} "${m.archive}"`).join(', ')
@@ -67,6 +68,7 @@ function assertArchiveIdentityOrThrow(tmpDir, source, target) {
         logger.warn(`Bootstrap archive identity not checked for ${identity.unchecked.join('/')} `
             + `(archive does not declare it); restore target is ${label(target)}.`)
     else logger.info(`Restore archive identity matches this tracker (${label(target)})`)
+    return meta
 }
 
 module.exports = { findMemberByBasename, assertArchiveIdentityOrThrow }
