@@ -27,7 +27,7 @@ Module._resolveFilename = function (request, parent, ...rest) {
   }
   return origResolve.call(this, request, parent, ...rest);
 };
-const localBufferutils = require('../../../src/chain/bufferutils');
+const localBufferutils = require('../../../src/chain/bitcoinjs_v7_compat');
 Module._resolveFilename = origResolve;
 
 // Local bufferutils.js: the patched file that lives in the repo root.
@@ -119,15 +119,15 @@ describe('bufferutils (local patched copy)', function () {
       writer.writeInt32(-1);
       const buf = writer.end();
       expect(buf.length).to.equal(9);
-      expect(buf.readUInt8(0)).to.equal(0xFF);
-      expect(buf.readUInt32LE(1)).to.equal(0x12345678);
-      expect(buf.readInt32LE(5)).to.equal(-1);
+      expect(Buffer.from(buf).readUInt8(0)).to.equal(0xFF);
+      expect(Buffer.from(buf).readUInt32LE(1)).to.equal(0x12345678);
+      expect(Buffer.from(buf).readInt32LE(5)).to.equal(-1);
     });
     it('writeUInt64 writes a BigInt value', function () {
       const writer = localBufferutils.BufferWriter.withCapacity(8);
       writer.writeUInt64(BigInt(256));
       const buf = writer.end();
-      expect(buf.readBigInt64LE(0)).to.equal(BigInt(256));
+      expect(Buffer.from(buf).readBigInt64LE(0)).to.equal(BigInt(256));
     });
     it('writeVarInt + writeVarSlice + writeVector encode length-prefixed data', function () {
       const a = Buffer.from([0xAA]);
@@ -137,7 +137,7 @@ describe('bufferutils (local patched copy)', function () {
       writer.writeVector([a, b]);
       const buf = writer.end();
       const reader = new localBufferutils.BufferReader(buf);
-      expect(reader.readVarInt()).to.equal(2);          // count
+      expect(reader.readVarInt()).to.equal(2n);          // count
       expect(reader.readVarSlice()).to.deep.equal(a);
       expect(reader.readVarSlice()).to.deep.equal(b);
     });
@@ -190,10 +190,10 @@ describe('bufferutils (local patched copy)', function () {
       expect(() => reader.readSlice(5)).to.throw(/out of bounds/);
     });
     it('readVarInt decodes a single-byte and a 0xFD-prefixed value', function () {
-      expect(new localBufferutils.BufferReader(Buffer.from([0x10])).readVarInt()).to.equal(16);
+      expect(new localBufferutils.BufferReader(Buffer.from([0x10])).readVarInt()).to.equal(16n);
       // 0xFD marks a 2-byte little-endian value (300 = 0x012C)
       const r = new localBufferutils.BufferReader(Buffer.from([0xFD, 0x2C, 0x01]));
-      expect(r.readVarInt()).to.equal(300);
+      expect(r.readVarInt()).to.equal(300n);
       expect(r.offset).to.equal(3);
     });
     it('readVarSlice reads length-prefixed data', function () {

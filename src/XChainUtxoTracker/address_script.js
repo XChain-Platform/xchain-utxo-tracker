@@ -44,7 +44,7 @@ function decodePayToAnchor(address, network){
     if (!network || typeof network.bech32 !== "string") return null
     let d
     try { d = bitcoin.address.fromBech32(address) } catch (_) { return null }
-    if (d.prefix !== network.bech32 || d.version !== 1 || d.data.toString("hex") !== "4e73") return null
+    if (d.prefix !== network.bech32 || d.version !== 1 || Buffer.from(d.data).toString("hex") !== "4e73") return null
     return Buffer.from("51024e73", "hex")
 }
 

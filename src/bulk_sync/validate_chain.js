@@ -90,7 +90,7 @@ const MERKLE_OFF = 36           // merkleRoot field offset inside the 80-byte he
  */
 function computeMerkleRoot(txHashes) {
     let mutated = false
-    let level = txHashes
+    let level = txHashes.map(hash => Buffer.from(hash))
     while (level.length > 1) {
         const next = []
         for (let i = 0; i < level.length; i += 2) {

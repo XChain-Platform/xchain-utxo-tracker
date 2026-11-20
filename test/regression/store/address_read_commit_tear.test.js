@@ -304,7 +304,7 @@ async function makeStageScenario() {
     const fund = randHash();
     const tx = new bitcoin.Transaction();
     tx.addInput(Buffer.from(fund, 'hex').reverse(), 0);
-    tx.addOutput(bitcoin.address.toOutputScript(ADDR_W, bitcoin.networks.regtest), Number(CHANGE_VALUE));
+    tx.addOutput(bitcoin.address.toOutputScript(ADDR_W, bitcoin.networks.regtest), CHANGE_VALUE);
     const scenario = await makeRefreshTracker(fund, [tx.getId()], [tx.toHex()]);
     const sides = [{ keys: [fund + ':0'], total: FUND_VALUE }, { keys: [tx.getId() + ':0'], total: CHANGE_VALUE }];
     return { ...scenario, sides };

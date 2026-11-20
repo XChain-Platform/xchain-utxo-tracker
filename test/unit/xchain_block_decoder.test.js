@@ -301,7 +301,7 @@ describe('XChainBlockDecoder', function () {
     function header(){
       const h = Buffer.alloc(80);
       h.writeInt32LE(1, 0);        // version
-      bitcoinjs.Transaction.fromHex('01000000' + txAfterVersion).getHash().copy(h, 36);
+      Buffer.from(bitcoinjs.Transaction.fromHex('01000000' + txAfterVersion).getHash()).copy(h, 36);
       h.writeUInt32LE(12345, 68);  // timestamp
       return h.toString('hex');
     }

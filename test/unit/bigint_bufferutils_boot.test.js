@@ -40,7 +40,7 @@ function makeTracker(networkKey) {
 // Emulate a stock (unpatched) 64-bit reader: the exact throw the patch exists to
 // remove. Restored by sinon.restore() in afterEach.
 function breakReader() {
-    sinon.stub(bufferutils.BufferReader.prototype, 'readUInt64')
+    sinon.stub(bufferutils.BufferReader.prototype, 'readInt64')
         .throws(new Error('RangeError: value out of range'));
 }
 

@@ -21,7 +21,6 @@ const config = require('./config')
 const coins = require('./coins')
 const { assertBigIntBufferutils } = require('./chain/assert_bigint_bufferutils')
 const crypto = require('crypto');
-const bs58check = require('bs58check')
 const bitcoin = require('bitcoinjs-lib')
 const ecc = require('tiny-secp256k1')
 const fs = require('fs')
@@ -30,7 +29,7 @@ const CryptoNetworks = require('./chain/crypto_networks')
 const XChainBlockDecoder = require('./chain/XChainBlockDecoder')
 const { hrtime } = require('node:process');
 
-// bitcoinjs-lib v6 needs an ECC backend registered before it can parse/validate
+// bitcoinjs-lib needs an ECC backend registered before it can parse/validate
 // Taproot (P2TR, witness v1) addresses. Without this, payments.p2tr() throws
 // "No ECC Library provided" and getAddressType() silently classified every
 // taproot address as 'unknown' (and any taproot balance/UTXO query mislabelled

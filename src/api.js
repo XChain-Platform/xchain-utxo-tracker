@@ -20,7 +20,7 @@
 
 // Load required libraries
 const dotenv = require('dotenv')
-dotenv.config()
+dotenv.config({ quiet: true })
 const cfg = require('./config');
 
 // Before anything else logs. The UTXO_TRACKER_API_KEY notice immediately below

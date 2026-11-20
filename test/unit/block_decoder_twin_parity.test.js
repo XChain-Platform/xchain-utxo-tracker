@@ -175,7 +175,7 @@ function blockVerdict(instance, hex) {
         return JSON.stringify({
             id: block.getId(),
             txids: block.transactions === undefined ? null : block.transactions.map(t => t.getId()),
-            witnessCommit: block.witnessCommit ? block.witnessCommit.toString('hex') : null,
+            witnessCommit: block.witnessCommit ? Buffer.from(block.witnessCommit).toString('hex') : null,
         });
     } catch (err) {
         return 'throw:' + (err && err.name) + ':' + (err && err.code);
@@ -199,7 +199,7 @@ const hogexTx = (flag, version = '01000000') => mwebShaped(version, '00', flag);
 function headerFor(plainTxHexes) {
     const txs = plainTxHexes.map(hex => bitcoinjs.Transaction.fromBuffer(Buffer.from(hex, 'hex'), true));
     const header = Buffer.from(HEADER_HEX, 'hex');
-    bitcoinjs.Block.calculateMerkleRoot(txs).copy(header, 36);
+    Buffer.from(bitcoinjs.Block.calculateMerkleRoot(txs)).copy(header, 36);
     return header.toString('hex');
 }
 

@@ -1,15 +1,9 @@
 {
   "$schema": "node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "testRunner": "mocha",
-  "plugins": [
-    "@stryker-mutator/mocha-runner"
-  ],
-  "mochaOptions": {
-    "spec": [
-      "test/unit/**/*.test.js",
-      "test/integration/**/*.test.js"
-    ],
-    "config": "test/mutation/.mocharc.stryker.yml"
+  "testRunner": "command",
+  "plugins": [],
+  "commandRunner": {
+    "command": "node node_modules/mocha/bin/mocha.js --config test/mutation/.mocharc.stryker.yml --reporter dot 'test/unit/**/*.test.js' 'test/integration/**/*.test.js'"
   },
   "mutate": [
     "src/store/level_up_db.js",
@@ -29,7 +23,7 @@
   "concurrency": 4,
   "timeoutMS": 60000,
   "timeoutFactor": 1.5,
-  "coverageAnalysis": "perTest",
+  "coverageAnalysis": "off",
   "incremental": false,
   "incrementalFile": "stryker-incremental.json",
   "ignoreStatic": false,

@@ -34,7 +34,7 @@ function withMerkleRoot(headerHex, txBodyHex) {
   try { txs = bitcoinjs.Block.fromHex(headerHex + txBodyHex).transactions } catch (_) { return headerHex }
   if (!txs || txs.length === 0) return headerHex
   const header = Buffer.from(headerHex, 'hex')
-  bitcoinjs.Block.calculateMerkleRoot(txs).copy(header, 36)
+  Buffer.from(bitcoinjs.Block.calculateMerkleRoot(txs)).copy(header, 36)
   return header.toString('hex')
 }
 

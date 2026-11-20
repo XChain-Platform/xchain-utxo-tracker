@@ -106,8 +106,8 @@ describe('native history ingest: data outputs', function () {
         tx.addInput(Buffer.alloc(32, 1), 0);
         const payee = coinbaseAddress(500, 0);
         const dataScript = bitcoin.payments.embed({ data: [Buffer.from('xchain')] }).output;
-        tx.addOutput(bitcoin.address.toOutputScript(payee, bitcoin.networks.regtest), 7000);
-        tx.addOutput(dataScript, 0);
+        tx.addOutput(bitcoin.address.toOutputScript(payee, bitcoin.networks.regtest), 7000n);
+        tx.addOutput(dataScript, 0n);
         const blockHash = 'cd'.repeat(32);
         db.historyScripts = new Set([scriptOf(payee), require('crypto').createHash('sha256').update(dataScript).digest()]
             .map((b) => b.toString('latin1')));

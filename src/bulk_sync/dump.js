@@ -38,7 +38,7 @@
  ********************************************************************/
 
 const dotenv = require('dotenv')
-dotenv.config()
+dotenv.config({ quiet: true })
 
 const fs     = require('fs')
 const path   = require('path')

@@ -21,7 +21,7 @@ const {
   cloneBuffer,
   BufferWriter,
   BufferReader
-} = require('bitcoinjs-lib/src/bufferutils');
+} = require('../../src/chain/bitcoinjs_v7_compat');
 
 // The local bufferutils.js is the patched version that Docker copies over the
 // installed bitcoinjs-lib copy. Its require('./types') resolves relative to
@@ -38,7 +38,7 @@ Module._resolveFilename = function (request, parent, ...rest) {
   }
   return origResolve.call(this, request, parent, ...rest);
 };
-const localBufferutils = require('../../src/chain/bufferutils');
+const localBufferutils = require('../../src/chain/bitcoinjs_v7_compat');
 Module._resolveFilename = origResolve;
 
 describe('bufferutils', function () {
@@ -128,9 +128,10 @@ describe('bufferutils', function () {
       writer.writeInt32(-1);
       const buf = writer.end();
       expect(buf.length).to.equal(9);
-      expect(buf.readUInt8(0)).to.equal(0xFF);
-      expect(buf.readUInt32LE(1)).to.equal(0x12345678);
-      expect(buf.readInt32LE(5)).to.equal(-1);
+      const view = Buffer.from(buf);
+      expect(view.readUInt8(0)).to.equal(0xFF);
+      expect(view.readUInt32LE(1)).to.equal(0x12345678);
+      expect(view.readInt32LE(5)).to.equal(-1);
     });
     it('end() throws if buffer is not fully written', function () {
       const writer = BufferWriter.withCapacity(10);
@@ -154,7 +155,7 @@ describe('bufferutils', function () {
       try {
         writer.writeUInt64(BigInt(256));
         const buf = writer.end();
-        expect(buf.readBigInt64LE(0)).to.equal(BigInt(256));
+        expect(Buffer.from(buf).readBigInt64LE(0)).to.equal(BigInt(256));
       } catch (e) {
         // Stock version: skip BigInt test
         this.skip();
@@ -245,7 +246,7 @@ describe('bufferutils', function () {
     });
     it('readVarInt decodes single-byte value', function () {
       const reader = new BufferReader(Buffer.from([0xFC]));
-      expect(reader.readVarInt()).to.equal(252);
+      expect(reader.readVarInt()).to.equal(252n);
     });
   });
 
@@ -259,7 +260,7 @@ describe('bufferutils', function () {
       buf[0] = 0xFD;
       buf.writeUInt16LE(300, 1);
       const reader = new BufferReader(buf);
-      expect(reader.readVarInt()).to.equal(300);
+      expect(reader.readVarInt()).to.equal(300n);
     });
     it('readVarSlice reads length-prefixed data', function () {
       const buf = Buffer.from([0x03, 0xAA, 0xBB, 0xCC]);

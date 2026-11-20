@@ -167,7 +167,7 @@ function assertWholeBlock(blockHex) {
     if (used !== buf.length) {
         throw new Error('AuxPoW parse: stripped block has ' + (buf.length - used) + ' bytes after its last transaction')
     }
-    if (!bitcoinjs.Block.calculateMerkleRoot(txs).equals(block.merkleRoot)) {
+    if (!Buffer.from(bitcoinjs.Block.calculateMerkleRoot(txs)).equals(Buffer.from(block.merkleRoot))) {
         throw new Error('AuxPoW parse: stripped block merkle root does not match its transactions')
     }
 }
