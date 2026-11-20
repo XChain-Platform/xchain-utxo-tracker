@@ -66,20 +66,7 @@ module.exports = {
                 const finish = await pollSyncLoop.call(this, sync)
                 if (finish) finish()
             } else {
-                logger.info("Stopping the parsing...")
-                if (this.mempoolInterval) {
-                    clearInterval(this.mempoolInterval)
-                    this.mempoolInterval = null
-                }
-                // Drop the readiness latches with the store: a closed (or soon wiped
-                // and restored) store is neither synced nor mempool ready, and a
-                // stopped loop waits on no catching-up node.
-                this.synced = false
-                revokeMempoolReadiness.call(this)
-                this.nodeCatchingUp = null
-                await this.stopNativeHistory()
-                await this.db.close()
-                this.parsingStopped = true
+                await stopSyncLoop.call(this)
                 break
             }
         }
@@ -92,6 +79,23 @@ module.exports = {
 // store call or a sleep: an async step returns only right after such an await,
 // a step whose work runs on synchronously hands the pass to the next step by
 // returning that step's call, and the synchronous stretches are plain functions.
+
+async function stopSyncLoop(){
+    logger.info("Stopping the parsing...")
+    if (this.mempoolInterval) {
+        clearInterval(this.mempoolInterval)
+        this.mempoolInterval = null
+    }
+    // Drop the readiness latches with the store: a closed (or soon wiped
+    // and restored) store is neither synced nor mempool ready, and a
+    // stopped loop waits on no catching-up node.
+    this.synced = false
+    revokeMempoolReadiness.call(this)
+    this.nodeCatchingUp = null
+    await this.stopNativeHistory()
+    await this.db.close()
+    this.parsingStopped = true
+}
 
 // With no batch open, an address that joined the history watch list is live from
 // the next block this loop stages, so its liveFrom is claimed here between passes.
