@@ -10,11 +10,10 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// The synced latch drops whenever the node's tip sits below ours, so the
-// xchain_utxo_tracker_synced gauge (which publishes the raw latch) and the
-// GET /status verdict (which floors a negative lag) agree on every branch of
-// the tip-below-ours path, and the latch rises again once the loop is back at
-// the node's tip.
+// The synced latch drops whenever the node's tip sits below ours. The
+// xchain_utxo_tracker_synced gauge and GET /status also floor that latch, so
+// all three agree on every branch of the tip-below-ours path, and the latch
+// rises again once the loop is back at the node's tip.
 
 const { expect } = require('chai');
 const { buildChain, makeNode, useSyncLoopHarness } = require('./support/harness');

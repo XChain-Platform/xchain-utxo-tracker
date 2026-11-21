@@ -155,8 +155,8 @@ async function waitAfterRefusedTipBelow(sync){
 async function recoverFromTipBelowOurs(sync){
     const { lastBlockchainInfo, lastProcessedBlockIndex } = sync
     // Clear the latch on every branch below (wait, refusal, rollback, repair) so
-    // isSynced(), the synced gauge and GET /status agree without a floor; the
-    // next pass at the node's tip sets it again.
+    // isSynced(), the synced gauge and GET /status agree here because the latch
+    // itself is cleared; the next pass at the node's tip sets it again.
     this.synced = false
     if (nodeStillCatchingUp(lastBlockchainInfo)) return waitOnCatchingUpNode.call(this, sync)
     if (sync.nodeCatchingUpProblem){

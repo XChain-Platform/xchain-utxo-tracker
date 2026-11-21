@@ -68,7 +68,9 @@ function addTrackerCollector(registry, tracker, metrics){
         if(Number.isFinite(tip) && tip >= 0) nodeHeight.set({}, tip);
         else nodeHeight.reset();
 
-        synced.set({}, (typeof tracker.isSynced === 'function' && tracker.isSynced()) ? 1 : 0);
+        const loopStale = isNodeRpcStale({ lastNodeRpcOkAt: tracker.lastNodeRpcOkAt });
+        const latch = typeof tracker.isSynced === 'function' && tracker.isSynced() === true;
+        synced.set({}, latch && !loopStale && tracker.halted !== true ? 1 : 0);
         halted.set({}, tracker.halted ? 1 : 0);
         setIf(lastReorgDepth, tracker.lastReorgDepth);
         if(Number.isFinite(tracker.reorgCount)) reorgs.setMonotonic({}, tracker.reorgCount);
@@ -77,11 +79,10 @@ function addTrackerCollector(registry, tracker, metrics){
         setIf(undoWindowBlocks, tracker.undoBlocks);
         if(Array.isArray(tracker.lastBlocks)) undoWindowDepth.set({}, tracker.lastBlocks.length);
 
-        // Judge staleness against the scrape clock with the same verdict GET /status uses,
-        // so a loop hung inside an await while caught up still flips this to 1.
+        // Judge staleness against the scrape clock with the same verdict GET /status uses.
         if(Number.isFinite(tracker.lastNodeRpcOkAt) && tracker.lastNodeRpcOkAt > 0)
             lastNodeRpcOkTs.set({}, tracker.lastNodeRpcOkAt / 1000);
-        nodeRpcStale.set({}, isNodeRpcStale({ lastNodeRpcOkAt: tracker.lastNodeRpcOkAt }) ? 1 : 0);
+        nodeRpcStale.set({}, loopStale ? 1 : 0);
     });
 }
 
@@ -166,7 +167,7 @@ function installUtxoTrackerMetrics(observability, tracker, gates){
     });
     const synced = registry.gauge({
         name: 'xchain_utxo_tracker_synced',
-        help: '1 when the tracker considers itself caught up to the node tip'
+        help: '1 when the sync latch is raised, its node-tip read is fresh, and the tracker is not halted'
     });
     const halted = registry.gauge({
         name: 'xchain_utxo_tracker_halted',

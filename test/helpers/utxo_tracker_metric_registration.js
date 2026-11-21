@@ -184,13 +184,21 @@ function registerMetricNodeRpcTests({ realObservability, fakeTracker }) {
         const lastNodeRpcOkAt = Date.now() - 3600000;
         installUtxoTrackerMetrics(observability, fakeTracker({ lastNodeRpcOkAt }));
         const out = observability.registry.render();
-        // Lag, synced and halted all freeze with the loop, so only this series tells the stall apart.
+        // Lag and halted freeze with the loop; node_rpc_stale names why synced is floored.
         assert.match(out, /^xchain_utxo_tracker_node_rpc_stale 1$/m);
-        assert.match(out, /^xchain_utxo_tracker_synced 1$/m);
+        assert.match(out, /^xchain_utxo_tracker_synced 0$/m);
         assert.match(out, /^xchain_utxo_tracker_halted 0$/m);
         assert.match(out, new RegExp('^xchain_utxo_tracker_last_node_rpc_ok_timestamp_seconds '
             + String(lastNodeRpcOkAt / 1000).replace('.', '\\.') + '$', 'm'),
             'the heartbeat must render epoch seconds, not the raw epoch-ms the tracker stores');
+    });
+
+    it('floors synced when the tracker is halted with its latch still raised', function () {
+        const observability = realObservability();
+        installUtxoTrackerMetrics(observability, fakeTracker({ halted: true }));
+        const out = observability.registry.render();
+        assert.match(out, /^xchain_utxo_tracker_synced 0$/m);
+        assert.match(out, /^xchain_utxo_tracker_halted 1$/m);
     });
 
     it('judges node-RPC staleness at scrape time, not at registration', function () {
