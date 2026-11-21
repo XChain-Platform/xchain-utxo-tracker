@@ -113,13 +113,15 @@ describe('XChainUtxoTracker sync loop: synced latch through a node RPC outage', 
             }
             if (n === 2) s.inside = await sample(h.tracker, reg());
             const stale = isNodeRpcStale({ lastNodeRpcOkAt: h.tracker.lastNodeRpcOkAt });
-            if (staleAt === null && stale && gaugeNow(reg()) === '0') {
-                const committed = await h.tracker.db.getLastBlockHeight();
-                const freshness = XChainUtxoTracker.computeFreshness(
-                    committed, h.tracker.blockchainInfoLastBlock, h.tracker.isSynced(),
-                    { nodeHeightStale: true });
+            if (!s.floored && stale && h.tracker.isSynced()) {
+                const status = await get_sync_status(h.tracker);
+                s.floored = { gauge: Number(gaugeNow(reg())), synced: h.tracker.isSynced(),
+                    mempool: h.tracker.isMempoolReconverged(), status: status.synced };
+            }
+            if (staleAt === null && stale && !h.tracker.isSynced()) {
+                const status = await get_sync_status(h.tracker);
                 s.stale = { gauge: 0, synced: h.tracker.isSynced(),
-                    mempool: h.tracker.isMempoolReconverged(), status: freshness.synced };
+                    mempool: h.tracker.isMempoolReconverged(), status: status.synced };
                 staleAt = n;
                 node.faults.info = [];
             } else if (staleAt !== null && n > staleAt) {
@@ -131,6 +133,7 @@ describe('XChainUtxoTracker sync loop: synced latch through a node RPC outage', 
         expect(NODE_RPC_STALE_MS).to.be.greaterThan(0);
         expect(seen.atTip).to.include({ gauge: 1, status: true });
         expect(seen.inside).to.include({ gauge: 1, status: true });
+        expect(seen.floored).to.deep.equal({ gauge: 0, synced: true, mempool: true, status: false });
         expect(seen.stale).to.deep.equal({ gauge: 0, synced: false, mempool: false, status: false });
         expect(seen.back).to.include({ gauge: 1, status: true });
     });
