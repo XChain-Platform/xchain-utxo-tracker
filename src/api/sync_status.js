@@ -118,6 +118,12 @@ function blockchainInfoWithDeadline(tracker, deadlineMs = SYNC_STATUS_NODE_DEADL
 async function get_sync_status(tracker) {
     let committedHeight = -1
     try { committedHeight = await tracker.db.getLastBlockHeight() } catch (e) {}
+    let committedHash
+    try {
+        if (typeof tracker.db.getLastBlockHash === 'function') {
+            committedHash = await tracker.db.getLastBlockHash()
+        }
+    } catch (e) {}
 
     let nodeHeight = -1
     let nodeHeightStale = false
@@ -148,6 +154,9 @@ async function get_sync_status(tracker) {
         synced: deriveSyncedVerdict({ lag, nodeHeightStale }) && !tracker.halted &&
             typeof tracker.isSynced === 'function' && tracker.isSynced() === true
     }
+    // Height and hash commit in one batch. A read crossing that batch can only
+    // make a consumer retry; it cannot conceal a tip change spanning its lookup.
+    if (typeof committedHash === 'string') result.committed_hash = committedHash
     if (loopStale) {
         result.node_rpc_stale = true
         result.stale_for_ms = Date.now() - tracker.lastNodeRpcOkAt

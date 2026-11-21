@@ -115,3 +115,33 @@ describe('rollBackToNodeTip refusal after deletes', function () {
     });
   });
 });
+
+// Record the reorg counters at the moment the refusal sleep starts.
+function observeSleep(built) {
+  const seen = {};
+  built.tracker.sleep = async () => {
+    seen.at = {
+      reorgCount: built.tracker.reorgCount,
+      lastReorgDepth: built.tracker.lastReorgDepth
+    };
+  };
+  return seen;
+}
+
+describe('rollBackToNodeTip refused-walk accounting order', function () {
+  this.timeout(0);
+
+  it('publishes a completed walk before entering the refusal sleep', async function () {
+    const built = armed(3);
+    const seen = observeSleep(built);
+    await refuse(built);
+    expect(seen.at).to.deep.equal({ reorgCount: 1, lastReorgDepth: 3 });
+  });
+
+  it('does not count a refusal that deleted no blocks', async function () {
+    const built = armed(0);
+    const seen = observeSleep(built);
+    await refuse(built);
+    expect(seen.at).to.deep.equal({ reorgCount: 0, lastReorgDepth: 0 });
+  });
+});

@@ -247,8 +247,9 @@ async function rollBackToNodeTip(sync, lastBlockDb){
             // path does. A refusal before any delete leaves the store as it was.
             const walkedBack = (this.reorgRollbacksThisProcess || 0) - rollbacksBefore
             if (walkedBack > 0) resyncMempoolAfterReorg.call(this)
+            countRefusedWalk.call(this, walkedBack)
             await this.sleep(5000)
-            return countRefusedWalk.call(this, walkedBack)
+            return
         }
         throw err
     }
