@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-22
+
+### Added
+- Added watched-address native history with backfill support and a dedicated history endpoint.
+
+### Fixed
+- Serialized heavy JSON-RPC batch entries on each gate slot to prevent one request from multiplying memory pressure.
+- Stabilized address pagination epochs and tightened cursor, limit and null-parameter validation.
+- Recognized pay-to-anchor and Litecoin Q-prefixed P2SH addresses in address queries and type reports.
+- Parsed JSON bodies behind the rate limiter and concurrency gates and logged rate-limit refusals through the service logger.
+
+### Security
+- Updated bitcoinjs-lib for merkle-root validation, tiny-secp256k1 and vulnerable dependencies including zod, qs and minimatch.
+
 ## [0.27.0] - 2026-11-01
 
 ### Changed
