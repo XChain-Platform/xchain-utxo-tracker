@@ -12,7 +12,7 @@
  *
  **********************************************************************/
 
-const { orderBatchResults } = require('./rpc_helpers');
+const { isWholeHex, assertWholeBlockHex, orderBatchResults, normalizeBlockHash } = require('./rpc_helpers');
 const { stripAuxPowFromBlockHex } = require('./auxpow_codec');
 
 async function getBatchHashes(heights) {
@@ -26,7 +26,7 @@ async function getBatchHashes(heights) {
     const hashResponse = await this.postWithRetry(hashBatch)
     const hashes = orderBatchResults(hashResponse.data, heights.length, 'getblockhash').map(r => {
         if (!r.result) throw new Error('Error getting block hash in batch for id ' + r.id)
-        return r.result
+        return normalizeBlockHash(r.result, 'block hash in batch for id ' + r.id)
     })
     return hashes
 }
@@ -82,7 +82,7 @@ module.exports = {
         const hashResults  = orderBatchResults(hashResponse.data, heights.length, 'getblockhash')
         const hashes = hashResults.map(r => {
             if (!r.result) throw new Error('Error getting block hash in batch for id ' + r.id)
-            return r.result
+            return normalizeBlockHash(r.result, 'block hash in batch for id ' + r.id)
         })
 
         // Batch 2: all getblock calls in one HTTP request
@@ -97,9 +97,12 @@ module.exports = {
 
         // Guard matches the hash batch above and the AuxPoW path: a JSON-RPC error
         // element returns result=null and would produce hex:undefined, causing an
-        // opaque decode failure later instead of a clear error here.
+        // opaque decode failure later instead of a clear error here. A reply that is
+        // present but not whole hex is refused here too, so the fetch retries it
+        // instead of the parser meeting a silently truncated buffer.
         return heights.map((h, i) => {
             if (!blockResults[i].result) throw new Error('Error getting block in batch for id ' + blockResults[i].id)
+            assertWholeBlockHex('getblock', 'block ' + h + ' (' + hashes[i] + ') in batch', blockResults[i].result)
             return {
                 height: h,
                 hash:   hashes[i],
@@ -128,6 +131,14 @@ module.exports = {
         return heights.map((h, i) => {
             const headerHex = headers[i]
             let blockHex    = blocks[i]
+
+            if (!isWholeHex(headerHex) || !isWholeHex(blockHex)) {
+                const badMethod = !isWholeHex(headerHex) ? 'getblockheader' : 'getblock'
+                const badValue = badMethod === 'getblockheader' ? headerHex : blockHex
+                const shape = typeof badValue === 'string' ? 'string length ' + badValue.length : typeof badValue
+                throw new Error(badMethod + ' returned malformed block hex for block ' + h +
+                    ' (' + hashes[i] + ') in batch (' + shape + ')')
+            }
 
             try {
                 blockHex = stripAuxPowFromBlockHex(headerHex, blockHex)

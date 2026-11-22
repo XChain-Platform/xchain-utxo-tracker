@@ -68,6 +68,12 @@ const P_TX_EXACT   = 0x58  // 'X' - exact full-txid -> blockHash index
 
 const P_TX_BLOCK_RECOVERY = 0x59  // 'Y' - per-block full txid recovery index
 
+const P_HISTORY    = 0x41  // 'A' - confirmed native history of watched addresses
+
+const P_HIST_BLK   = 0x56  // 'V' - per-block reverse index of A records (undo window only)
+
+const P_HIST_WATCH = 0x55  // 'U' - the history watch list and each address's backfill progress
+
 // O value: [value(8)][height(4)][fullTxHash(32)] = 44 bytes, plus an OPTIONAL
 // 45th coinbase-flag byte (0x01) appended only for coinbase outputs.
 // height = -1 stored as 0xFFFFFFFF (twos-complement Int32)
@@ -87,4 +93,4 @@ const OUTPUT_CACHE_MAX = 2_000_000
 
 const KNOWN_SCRIPTS_MAX = 2_000_000
 
-module.exports = { DEBUG_TRACE, logger, PREFIX_LAST_BLOCK_HEIGHT, PREFIX_LAST_BLOCK_HASH, PREFIX_LAYOUT_VERSION, STORE_LAYOUT_VERSION, P_BLOCK, P_TX, P_INPUT, P_OUTPUT, P_OUT_HINT, P_IN_HINT, P_SCRIPT_BLK, P_BLK_SCRIPT, P_OUT_DEL, P_HINT_DEL, P_STORED_BLK, P_OUT_BLK, P_TX_EXACT, P_TX_BLOCK_RECOVERY, ZERO_HASH, EMPTY, OUTPUT_CACHE_MAX, KNOWN_SCRIPTS_MAX }
+module.exports = { DEBUG_TRACE, logger, PREFIX_LAST_BLOCK_HEIGHT, PREFIX_LAST_BLOCK_HASH, PREFIX_LAYOUT_VERSION, STORE_LAYOUT_VERSION, P_HISTORY, P_HIST_BLK, P_HIST_WATCH, P_BLOCK, P_TX, P_INPUT, P_OUTPUT, P_OUT_HINT, P_IN_HINT, P_SCRIPT_BLK, P_BLK_SCRIPT, P_OUT_DEL, P_HINT_DEL, P_STORED_BLK, P_OUT_BLK, P_TX_EXACT, P_TX_BLOCK_RECOVERY, ZERO_HASH, EMPTY, OUTPUT_CACHE_MAX, KNOWN_SCRIPTS_MAX }

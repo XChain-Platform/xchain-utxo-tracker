@@ -105,8 +105,20 @@ function loadTwinDecoder() {
     if (TwinDecoder === null) TwinDecoder = require(TWIN_FILE);
 }
 
+function bufferutilsRequire(source) {
+    const match = source.match(/^const bufferutils_js_1 = require\([^\n]+$/m);
+    expect(match, 'bufferutils require line not found').to.not.equal(null);
+    return match[0];
+}
+
 describe('XChainBlockDecoder twin parity with xchain-decoder @regression', function () {
     before(loadTwinDecoder);
+
+    it('loads the same bufferutils compatibility module in both twins', function () {
+        const local = fs.readFileSync(path.join(__dirname, '../../src/chain/XChainBlockDecoder.js'), 'utf8');
+        const twin = fs.readFileSync(TWIN_FILE, 'utf8');
+        expect(bufferutilsRequire(local)).to.equal(bufferutilsRequire(twin));
+    });
 
     it('each twin exposes exactly one tx-parse entry point, from the known pair', function () {
         const local = new LocalDecoder('litecoin-mainnet');
@@ -175,7 +187,7 @@ function blockVerdict(instance, hex) {
         return JSON.stringify({
             id: block.getId(),
             txids: block.transactions === undefined ? null : block.transactions.map(t => t.getId()),
-            witnessCommit: block.witnessCommit ? block.witnessCommit.toString('hex') : null,
+            witnessCommit: block.witnessCommit ? Buffer.from(block.witnessCommit).toString('hex') : null,
         });
     } catch (err) {
         return 'throw:' + (err && err.name) + ':' + (err && err.code);
@@ -199,7 +211,7 @@ const hogexTx = (flag, version = '01000000') => mwebShaped(version, '00', flag);
 function headerFor(plainTxHexes) {
     const txs = plainTxHexes.map(hex => bitcoinjs.Transaction.fromBuffer(Buffer.from(hex, 'hex'), true));
     const header = Buffer.from(HEADER_HEX, 'hex');
-    bitcoinjs.Block.calculateMerkleRoot(txs).copy(header, 36);
+    Buffer.from(bitcoinjs.Block.calculateMerkleRoot(txs)).copy(header, 36);
     return header.toString('hex');
 }
 

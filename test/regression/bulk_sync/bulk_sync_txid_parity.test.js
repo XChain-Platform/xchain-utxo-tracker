@@ -27,8 +27,8 @@ function realTx() {
     const tx = new Transaction();
     tx.version = 2;
     tx.addInput(crypto.randomBytes(32), 1);
-    tx.addOutput(Buffer.concat([Buffer.from([0x76, 0xa9, 0x14]), crypto.randomBytes(20), Buffer.from([0x88, 0xac])]), 5000);
-    tx.addOutput(Buffer.concat([Buffer.from([0x00, 0x14]), crypto.randomBytes(20)]), 7000);
+    tx.addOutput(Buffer.concat([Buffer.from([0x76, 0xa9, 0x14]), crypto.randomBytes(20), Buffer.from([0x88, 0xac])]), 5000n);
+    tx.addOutput(Buffer.concat([Buffer.from([0x00, 0x14]), crypto.randomBytes(20)]), 7000n);
     return tx;
 }
 

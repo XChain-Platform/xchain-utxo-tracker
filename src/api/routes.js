@@ -1,3 +1,4 @@
+/* Copyright © 2025-2026 Dankest, LLC; SPDX-License-Identifier: AGPL-3.0-or-later */
 'use strict'
 const jsonRouter = require('express-json-rpc-router')
 const XChainUtxoTracker = require('../XChainUtxoTracker')
@@ -7,8 +8,9 @@ const { getLogger } = require('../observability')
 const { compressDirPigz, decompressPigz, tasks } = require('./compression.js')
 const { sendAddressError, safeBootstrapFilename } = require('./errors.js')
 const { deriveHealthStatus, get_sync_status, registerStatusRoute } = require('./sync_status.js')
+const { registerHistoryRoute } = require('./history_route.js')
+const { isQuiescent } = require('./quiescence.js')
 const logger = getLogger()
-
 function registerUtxoRoute({ app, requestGate, getUtxos, parsePageOpts, setFreshnessHeaders }){
     app.get('/utxos/:address', requestGate.hold(async (req, res) => {
         const address = req.params.address;
@@ -85,46 +87,6 @@ function registerInfoRoute({ app, requestGate, getInfo, setFreshnessHeaders }){
             sendAddressError(res, err);
         }
     }))
-}
-// Readiness contract: the tracker's height fields all report the LAST
-// COMMITTED state, not in-flight processing. The tracker buffers up to
-// DB_TRANSACTION_BLOCKS_QUANTITY blocks before flushing via endTransaction()
-// and getLastBlockHeight() reads from disk, so getLastBlockHeight() returning
-// N guarantees every output in blocks 0..N is queryable via get_utxos /
-// get_balance. `tracker_height` and `committed_height` are aliases for the
-// last committed block; `committed_height` is canonical and `tracker_height`
-// is retained for existing callers.
-//
-// Quiescence probe: ready=true iff the node-side mempool is empty (no unmined
-// txs the tracker is blind to until the next MEMPOOL_INTERVAL poll) and the
-// node tip equals the tracker's last-committed height (which is naturally
-// false mid-batch). Callers poll it between e2e tests as a barrier so the next
-// test starts from a fully-settled stack.
-async function isQuiescent(tracker) {
-    let mempoolSize = -1;
-    let trackerHeight = -1;
-    let nodeHeight = -1;
-    try {
-        const mempool = await tracker.connector.getRawMempool();
-        mempoolSize = Array.isArray(mempool) ? mempool.length
-                    : (mempool && typeof mempool === 'object') ? Object.keys(mempool).length
-                    : 0;
-    } catch (e) { /* leave -1; caller treats as not-ready */ }
-    try { trackerHeight = await tracker.db.getLastBlockHeight(); } catch (e) {}
-    try {
-        const info = await tracker.connector.getBlockchainInfo();
-        nodeHeight = (info && typeof info.blocks === 'number') ? info.blocks : -1;
-    } catch (e) {}
-    const heightAligned = (nodeHeight >= 0 && trackerHeight >= 0 && nodeHeight === trackerHeight);
-    const mempoolEmpty  = (mempoolSize === 0);
-    return {
-        ready:            heightAligned && mempoolEmpty,
-        mempool_size:     mempoolSize,
-        committed_height: trackerHeight,
-        tracker_height:   trackerHeight,
-        node_height:      nodeHeight,
-        lag:              (nodeHeight >= 0 && trackerHeight >= 0) ? (nodeHeight - trackerHeight) : null
-    };
 }
 // Begins a bootstrap or restore: rejects a second op while one is in flight,
 // validates the filename, then pauses the tracker. stopParsing leaves the
@@ -238,7 +200,7 @@ const jsonRpcController = {
             if (typeof txid !== 'string' || !/^[0-9a-fA-F]{64}$/.test(txid)) {
                 return { error: "txid must be a 64-hex-character string" }
             }
-            return await this.context.tracker.db.getTxBlock(txid)
+            return await this.context.tracker.getTxBlockAt(txid)
         },
         // Buffer.from(str, 'hex') silently truncates at the first non-hex
         // character, so e.g. 32 'g's would decode to an EMPTY prefix and scan the
@@ -300,11 +262,10 @@ const jsonRpcController = {
         // marker in place because the only recovery that changes the data is this
         // restore or `xchain-node reset`.
         //
-        // decompressPigz wipes /data BEFORE extracting, so a POST-wipe failure leaves
-        // the on-disk DB partially wiped and untrustworthy: fail loud so the
-        // supervisor restarts into a clean recovery path. A PRE-wipe validation
-        // abort (error.preWipe) never touched /data, so handleRestoreFailure resumes
-        // indexing via relaunch instead of killing the process.
+        // decompressPigz stages and layout-checks the archive before it wipes
+        // /data: a POST-wipe failure leaves the DB untrustworthy, so fail loud for
+        // a supervised restart; a PRE-wipe abort (error.preWipe) never touched
+        // /data, so handleRestoreFailure resumes indexing via relaunch.
         async restorebootstrap({filename}){
             logger.info("A bootstrap restore was requested")
             const { tracker, DB_NAME, launchTracker } = this.context
@@ -316,7 +277,9 @@ const jsonRpcController = {
             try {
                 let source = "/bootstrap/xchain-utxo-tracker/"+filename
                 tasks[taskId] = {"progress": 0, "filename": filename}
-                decompressPigz(taskId, source, "/data/"+DB_NAME).then((finished) =>{
+                decompressPigz(taskId, source, "/data/"+DB_NAME, {
+                    readNodeTip: () => tracker.connector.getBlockchainInfo()
+                }).then((finished) =>{
                     tasks[taskId]["progress"] = 100
                     logger.info("Starting the parsing")
                     guard.busy = false
@@ -346,6 +309,9 @@ function createJsonRpcController(context) {
     Object.defineProperty(instance, 'bootstrapGuard', { value: { busy: false } })
     for (const [name, method] of Object.entries(jsonRpcController)) {
         instance[name] = async (...args) => {
+            // params:null is a caller mistake like absent params, which the router defaults to {}.
+            // Without this the handlers destructure null and a TypeError leaves as -32603.
+            if (args[0] === null) args[0] = {}
             try { return await method.apply(instance, args) } catch (err) { throw toJsonRpcError(err) }
         }
     }
@@ -355,23 +321,25 @@ function createJsonRpcController(context) {
 // address, limit or cursor) would leave as a null code and an uncoded one as
 // -32603. Re-throw it as -32602 (invalid params) with the string code in
 // data.code, as the store's coded errors carry it; real faults pass unchanged.
+// ADDRESS_TOO_LARGE (limit/after omitted past the output ceiling, REST 413) is one too.
+const CALLER_MISTAKE_CODES = new Set(['BAD_REQUEST', 'INVALID_CURSOR', 'ADDRESS_TOO_LARGE'])
 function toJsonRpcError(err){
-    if (!err || (err.code !== 'BAD_REQUEST' && err.code !== 'INVALID_CURSOR')) return err
+    if (!err || !CALLER_MISTAKE_CODES.has(err.code)) return err
     return Object.assign(new Error(err.message), { code: -32602, data: { code: err.code } })
 }
-// Every route registered here that awaits a LevelDB read is wrapped in the gate's
-// hold(): the slot then spans the read instead of the client's socket, so a
-// client that hangs up mid-scan cannot free capacity for the next request
-// while its own scan is still running. Adding a route here without the
-// wrapper puts it back outside the cap. REST and JSON-RPC routes hold on
-// requestGate; GET /status alone (registerStatusRoute) holds on probeGate, the
-// gate that admitted it, since hold() on any other gate silently does nothing.
+// Every route registered here that awaits a LevelDB read is wrapped in the gate's hold(): the slot
+// then spans the read instead of the client's socket, so a client that hangs up mid-scan cannot free
+// capacity for the next request while its own scan is still running. Adding a route here without the
+// wrapper puts it back outside the cap. REST and JSON-RPC routes hold on requestGate; GET /status alone
+// (registerStatusRoute) holds on probeGate, the gate that admitted it, since hold() on any other gate
+// silently does nothing.
 function registerRoutes(context){
     const { app, tracker, probeGate, requestGate, getFreshnessMeta } = context
     registerUtxoRoute(context)
     registerFirstSeenRoute(context)
     registerBalanceRoute(context)
     registerInfoRoute(context)
+    registerHistoryRoute(context)
     registerStatusRoute({ app, tracker, probeGate, requestGate, getFreshnessMeta })
     // Express 5 / body-parser 2.x leaves req.body undefined when a request carries
     // no JSON body (a GET, or a POST without application/json), whereas body-parser
@@ -392,4 +360,4 @@ function registerRoutes(context){
         : jsonRpcController
     app.use(requestGate.hold(jsonRouter({methods: requestGate.trackMethods(methods)})))
 }
-module.exports = { registerRoutes }
+module.exports = { registerRoutes, createJsonRpcController }

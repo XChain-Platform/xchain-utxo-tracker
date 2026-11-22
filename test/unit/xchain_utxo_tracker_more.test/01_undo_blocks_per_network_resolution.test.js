@@ -62,7 +62,7 @@ describe('XChainUtxoTracker (more)', function () {
         it('litecoin-mainnet resolves to LTC default', function () {
             const t = new XChainUtxoTracker('litecoin-mainnet', '127.0.0.1', '9332', 'u', 'p', 'db', false);
             // Raised from 48 on 2026-09-01 after a litecoin testnet fork outran
-            // that window; see DEFAULT_UNDO_BLOCKS in src/undo-blocks.js.
+            // that window; see DEFAULT_UNDO_BLOCKS in src/chain/undo_blocks.js.
             expect(t.undoBlocks).to.equal(120);
         });
 

@@ -19,6 +19,7 @@
 const { Q_UNDO_WATERMARK_KEY, P_PENDING_CLEANUP_KEY } = require('./constants.js')
 const XChainUtxoTracker = require('../XChainUtxoTracker.js')
 const { withStoreCommit } = require('./store_commit_lock.js')
+const { withHistoryWrite } = require('../native_history/write_lock.js')
 
 // What an operator does once this index cannot be walked back.
 const REBUILD_REMEDY = "This index cannot be walked back onto the node's chain and has to be rebuilt. Under "
@@ -74,18 +75,47 @@ module.exports = {
     async loadUndoWindowWatermark(){
         let stored = 0
         try {
-            const raw = await this.db.db.get(Q_UNDO_WATERMARK_KEY)
-            if (raw !== undefined){
-                const parsed = parseInt(raw.toString(), 10)
-                if (Number.isInteger(parsed) && parsed > 0) stored = parsed
-            }
+            stored = await this.readStoredUndoWatermark()
         } catch (_) {
             // A store that cannot answer for this one diagnostic key must not stop
             // the tracker from booting: 0 (unknown) is the safe reading.
         }
+        return this.adoptStoredUndoWatermark(stored)
+    },
+
+    // The stored Q depth: 0 when the key is absent or unreadable as a depth.
+    // A store fault throws.
+    async readStoredUndoWatermark(){
+        const raw = await this.db.db.get(Q_UNDO_WATERMARK_KEY)
+        if (raw === undefined) return 0
+        const parsed = parseInt(raw.toString(), 10)
+        return (Number.isInteger(parsed) && parsed > 0) ? parsed : 0
+    },
+
+    adoptStoredUndoWatermark(stored){
         this.undoWindowWatermarkPersisted = stored > 0 ? stored : null
         this.undoWindowWatermark = Math.min(stored, this.undoBlocks)
         return this.undoWindowWatermark
+    },
+
+    // Put the in-memory undo window back to what the store holds. A discarded batch
+    // takes the staged N records and the staged Q mark with it, but both were
+    // already counted in memory (the window by addToLastBlocks, the mark by
+    // recordUndoWindowWatermark, which also records it as persisted). Left alone the
+    // mark reads deeper than disk, so status and the rollback budget count blocks as
+    // spent that never were, and a refilling window never rewrites Q because memory
+    // already says it did. A store fault on the Q read keeps the marks as they were:
+    // the mark is a diagnostic, and resetting it to unknown would let the next write
+    // lower Q below a deeper window that was already spent.
+    async reloadUndoWindow(){
+        this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+        let stored
+        try {
+            stored = await this.readStoredUndoWatermark()
+        } catch (_) {
+            return
+        }
+        this.adoptStoredUndoWatermark(stored)
     },
 
     async cleanupAgedBlocks(){
@@ -119,17 +149,25 @@ module.exports = {
             toClean.push(blockHash)
         }
 
-        await this.db.beginTransaction()
+        // The prune lists each block's V keys and commits later, with awaits between.
+        // A backfill chunk decides whether to write a block's V rows from its N record,
+        // which stays on disk until this commit, so a chunk landing in that gap would
+        // add V rows after they were listed and they would outlive the block. Holding
+        // the history write section across list and commit makes the chunk either
+        // land first, and get listed, or find the N record gone and skip the V rows.
+        await withHistoryWrite(this, async () => {
+            await this.db.beginTransaction()
 
-        for (let blockHash of toClean){
-            await pruneAgedBlockRecords.call(this, blockHash)
-        }
+            for (let blockHash of toClean){
+                await pruneAgedBlockRecords.call(this, blockHash)
+            }
 
-        // Remove the crash-recovery marker atomically with the cleanup writes so
-        // a crash here causes a harmless idempotent re-run on the next restart.
-        await this.db.addTransaction("del", P_PENDING_CLEANUP_KEY)
+            // Remove the crash-recovery marker atomically with the cleanup writes so
+            // a crash here causes a harmless idempotent re-run on the next restart.
+            await this.db.addTransaction("del", P_PENDING_CLEANUP_KEY)
 
-        await this.db.endTransaction()
+            await this.db.endTransaction()
+        })
         this.pendingKMCleanup = []
     },
 
@@ -149,7 +187,8 @@ module.exports = {
     // unprocessed, stranding those blocks' undo records for good.
     //
     // The in-memory window also counted the discarded staged blocks, so reload
-    // it from the store. Left stale, re-indexing the same heights pushes their
+    // it, and the watermark staged beside it, from the store
+    // (reloadUndoWindow). Left stale, re-indexing the same heights pushes their
     // hashes in a second time and ages real committed blocks out early, and
     // cleanupAgedBlocks then prunes undo records still inside the window, so a
     // later deep reorg meets a hole it cannot walk back through. Returns true
@@ -162,7 +201,7 @@ module.exports = {
             await this.db.db.put(P_PENDING_CLEANUP_KEY,
                 Buffer.from(JSON.stringify(this.pendingKMCleanup)))
         }
-        this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+        await this.reloadUndoWindow()
         return true
     },
 
@@ -244,6 +283,20 @@ module.exports = {
         await this.db.setLastBlockHeight(height)
         // Commit as the store-commit lock's writer: the repair moves the height a page reports.
         await withStoreCommit(this, () => this.db.endTransaction())
+    },
+
+    // True when the durable LAST_BLOCK_* pointer already names this block. The
+    // tip-drop recovery after a discarded batch rewrites a pointer that is
+    // already right; that is ordinary recovery, not a store inconsistency.
+    async lastBlockPointerNames(hash, height){
+        return (await this.db.getLastBlockHash()) === hash &&
+            (await this.db.getLastBlockHeight()) === height
+    },
+
+    // Counts one committed repair of a pointer that named another block. Callers
+    // count after the commit resolves, so a failed commit is never counted.
+    countLastBlockPointerRepair(){
+        this.lastBlockPointerRepairCount = (this.lastBlockPointerRepairCount || 0) + 1
     }
 }
 
@@ -268,4 +321,6 @@ async function pruneAgedBlockRecords(blockHash){
     // unwind (deleteTxBlockRecord) reads them. T and X stay, since getTxBlock
     // and the tx list read those for the life of the store.
     await this.db.removeTxBlockRecoveryIndexOnly(blockHash)
+    // And the V reverse index of its native history rows; the A rows stay.
+    await this.db.removeHistoryBlockIndexOnly(blockHash)
 }

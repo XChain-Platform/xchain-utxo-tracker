@@ -53,7 +53,10 @@ function readVarint(buf, offset) {
     return { value: hi * 0x100000000 + lo, bytes: 9 }
 }
 
-function skipCoinbaseInputs(buf, start) {
+// Skip the coinbase transaction at the head of the AuxPoW section and return the
+// offset just past its locktime.
+// Keep in sync with xchain-decoder/src/chain/blockchain_connector/auxpow_codec.js skipCoinbaseTransaction.
+function skipCoinbaseTransaction(buf, start) {
     let offset = start
 
     // Skip the coinbase transaction (a full serialized Bitcoin tx).
@@ -77,11 +80,6 @@ function skipCoinbaseInputs(buf, start) {
         if (offset + 4 > buf.length) throw new Error('AuxPoW parse: buffer too short for coinbase input sequence')
         offset += 4  // sequence
     }
-    return { offset, hasSegwit, nIns }
-}
-
-function skipCoinbaseOutputs(buf, start, hasSegwit, nIns) {
-    let offset = start
 
     // Outputs
     const outsVI = readVarint(buf, offset)
@@ -108,8 +106,7 @@ function skipCoinbaseOutputs(buf, start, hasSegwit, nIns) {
     }
 
     if (offset + 4 > buf.length) throw new Error('AuxPoW parse: buffer too short for coinbase locktime')
-    offset += 4  // locktime
-    return offset
+    return offset + 4  // locktime
 }
 
 // Parse the AuxPoW section from a raw block Buffer starting at byte offset `start`
@@ -122,8 +119,7 @@ function skipCoinbaseOutputs(buf, start, hasSegwit, nIns) {
 // Throws if the buffer is too short or structurally invalid.
 // Keep in sync with xchain-decoder/src/chain/blockchain_connector/auxpow_codec.js skipAuxPow.
 function skipAuxPow(buf, start) {
-    const coinbase = skipCoinbaseInputs(buf, start)
-    let offset = skipCoinbaseOutputs(buf, coinbase.offset, coinbase.hasSegwit, coinbase.nIns)
+    let offset = skipCoinbaseTransaction(buf, start)
 
     // Parent block hash (32 bytes)
     if (offset + 32 > buf.length) throw new Error('AuxPoW parse: buffer too short for parent block hash')
@@ -171,7 +167,7 @@ function assertWholeBlock(blockHex) {
     if (used !== buf.length) {
         throw new Error('AuxPoW parse: stripped block has ' + (buf.length - used) + ' bytes after its last transaction')
     }
-    if (!bitcoinjs.Block.calculateMerkleRoot(txs).equals(block.merkleRoot)) {
+    if (!Buffer.from(bitcoinjs.Block.calculateMerkleRoot(txs)).equals(Buffer.from(block.merkleRoot))) {
         throw new Error('AuxPoW parse: stripped block merkle root does not match its transactions')
     }
 }
@@ -213,4 +209,4 @@ function stripAuxPowFromBlockHex(headerHex, blockHex) {
     return blockHex
 }
 
-module.exports = { encodeVarintHex, readVarint, skipAuxPow, assertWholeBlock, stripAuxPowFromBlockHex }
+module.exports = { encodeVarintHex, readVarint, skipAuxPow, stripAuxPowFromBlockHex }

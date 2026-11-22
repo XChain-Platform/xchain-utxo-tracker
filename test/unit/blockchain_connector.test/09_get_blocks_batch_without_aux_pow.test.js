@@ -18,6 +18,9 @@ const { buildAuxPowBlockHex, buildAuxPowBlockHexEx, oneTxBlockBody, withMerkleRo
 let connector;
 let clientStub;
 
+const HASH0 = 'a1'.repeat(32);
+const HASH1 = 'b2'.repeat(32);
+
 function registerConnectorHooks() {
   beforeEach(function () {
     connector = new BlockchainConnector('127.0.0.1', '8332', 'user', 'pass');
@@ -47,7 +50,7 @@ function registerBatchAuxPowSuccessTests() {
       // Version 2, AuxPoW bit clear: this block passes through unstripped.
       const header1 = withMerkleRoot('02000000' + 'b'.repeat(152), body1);
       // call 0: getblockhash batch
-      clientStub.onCall(0).resolves({ data: heights.map((h, i) => ({ id: i, result: 'hash' + i })) });
+      clientStub.onCall(0).resolves({ data: heights.map((h, i) => ({ id: i, result: [HASH0, HASH1][i] })) });
       // call 1: getblockheader batch: index 0 header longer than 160 hex chars (AuxPoW), index 1 exactly 160
       clientStub.onCall(1).resolves({ data: [
         { id: 0, result: header0 + 'a'.repeat(40) },  // 40 extra hex chars of AuxPoW
@@ -55,7 +58,7 @@ function registerBatchAuxPowSuccessTests() {
       ]});
       // call 2: getblock batch
       clientStub.onCall(2).resolves({ data: [
-        { id: 0, result: header0 + 'x'.repeat(40) + body0 },
+        { id: 0, result: header0 + 'c'.repeat(40) + body0 },
         { id: 1, result: header1 + body1 }
       ]});
 
@@ -63,15 +66,46 @@ function registerBatchAuxPowSuccessTests() {
       expect(clientStub.callCount).to.equal(3);
       expect(results).to.have.length(2);
       // index 0: 40 auxpow hex chars removed → header(160) + body0
-      expect(results[0]).to.deep.equal({ height: 200, hash: 'hash0', hex: header0 + body0 });
+      expect(results[0]).to.deep.equal({ height: 200, hash: HASH0, hex: header0 + body0 });
       // index 1: nothing stripped
-      expect(results[1]).to.deep.equal({ height: 201, hash: 'hash1', hex: header1 + body1 });
+      expect(results[1]).to.deep.equal({ height: 201, hash: HASH1, hex: header1 + body1 });
     });
   });
 }
 
-function registerBatchAuxPowFailureTests() {
-  describe('getBlocksBatchWithoutAuxPow', function () {
+function registerBatchHashValidationTests() {
+    it('returns an uppercase getblockhash answer lowercased', async function () {
+      const body = oneTxBlockBody('a2');
+      const header = withMerkleRoot('02000000' + 'b'.repeat(152), body);
+      clientStub.onCall(0).resolves({ data: [{ id: 0, result: HASH0.toUpperCase() }] });
+      clientStub.onCall(1).resolves({ data: [{ id: 0, result: header }] });
+      clientStub.onCall(2).resolves({ data: [{ id: 0, result: header + body }] });
+
+      const results = await connector.getBlocksBatchWithoutAuxPow([7]);
+      expect(results[0].hash).to.equal(HASH0);
+      expect(clientStub.getCall(1).args[1][0].params[0]).to.equal(HASH0);
+    });
+
+    for (const [label, bad] of [['a short string', 'hash0'], ['a number', 12345], ['an object', { hash: HASH0 }],
+      ['a non-hex 64-char string', 'h'.repeat(64)]]) {
+      it('rejects ' + label + ' as a batch block hash with an untagged error before getblockheader', async function () {
+        clientStub.onCall(0).resolves({ data: [{ id: 0, result: bad }] });
+
+        let caught;
+        try {
+          await connector.getBlocksBatchWithoutAuxPow([5]);
+        } catch (err) {
+          caught = err;
+        }
+        expect(caught, 'should have thrown').to.be.an('error');
+        expect(caught.message).to.include('malformed result');
+        expect(caught.auxPowParseFailure).to.equal(undefined);
+        expect(clientStub.callCount).to.equal(1);
+      });
+    }
+}
+
+function registerBatchNullResultTests() {
     it('throws when a hash batch entry is null', async function () {
       clientStub.onCall(0).resolves({ data: [{ id: 0, result: null }] });
       try {
@@ -83,7 +117,7 @@ function registerBatchAuxPowFailureTests() {
     });
 
     it('throws when a header batch entry is null', async function () {
-      clientStub.onCall(0).resolves({ data: [{ id: 0, result: 'hash0' }] });
+      clientStub.onCall(0).resolves({ data: [{ id: 0, result: HASH0 }] });
       clientStub.onCall(1).resolves({ data: [{ id: 0, result: null }] });
       try {
         await connector.getBlocksBatchWithoutAuxPow([5]);
@@ -94,7 +128,7 @@ function registerBatchAuxPowFailureTests() {
     });
 
     it('throws when a block batch entry is null', async function () {
-      clientStub.onCall(0).resolves({ data: [{ id: 0, result: 'hash0' }] });
+      clientStub.onCall(0).resolves({ data: [{ id: 0, result: HASH0 }] });
       clientStub.onCall(1).resolves({ data: [{ id: 0, result: 'h'.repeat(160) }] });
       clientStub.onCall(2).resolves({ data: [{ id: 0, result: null }] });
       try {
@@ -104,14 +138,16 @@ function registerBatchAuxPowFailureTests() {
         expect(err.message).to.include('block in batch');
       }
     });
+}
 
+function registerBatchStructuralParseTest() {
     it('strips AuxPoW by structural parse when getblockheader returns 160 chars but AuxPoW bit is set (Dogecoin Core 1.14)', async function () {
       // Mirrors the single-block test: header always 160 chars, strip from block hex.
       const txBodyHex = oneTxBlockBody('ff')
       const fullBlockHex = buildAuxPowBlockHex(txBodyHex)
       const pureHeader = '0'.repeat(160)
 
-      clientStub.onCall(0).resolves({ data: [{ id: 0, result: 'hash0' }] })
+      clientStub.onCall(0).resolves({ data: [{ id: 0, result: HASH0 }] })
       clientStub.onCall(1).resolves({ data: [{ id: 0, result: pureHeader }] })
       clientStub.onCall(2).resolves({ data: [{ id: 0, result: fullBlockHex }] })
 
@@ -121,6 +157,13 @@ function registerBatchAuxPowFailureTests() {
       expect(results[0].hex.substring(0, 160)).to.equal(fullBlockHex.substring(0, 160))
       expect(results[0].hex.substring(160)).to.equal(txBodyHex)
     });
+}
+
+function registerBatchAuxPowFailureTests() {
+  describe('getBlocksBatchWithoutAuxPow', function () {
+    registerBatchHashValidationTests();
+    registerBatchNullResultTests();
+    registerBatchStructuralParseTest();
   });
 }
 

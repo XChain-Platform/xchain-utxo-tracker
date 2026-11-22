@@ -25,6 +25,7 @@
 
 const { expect } = require('chai');
 const { buildChain, makeNode, useSyncLoopHarness } = require('./support/harness');
+const { PREFIX_LAST_BLOCK_HASH } = require('../../../src/store/level_up_db/constants');
 
 const WINDOW = 12;
 // The batch has staged a few blocks past the drop height when this height is
@@ -172,6 +173,55 @@ async function realDropThenRestored(h) {
     expectExactWindow(seen, node);
 }
 
+// The same drop, watched for the pointer-repair signal. The repair helper runs,
+// but the durable pointer already names the committed tip, so it is not a store
+// inconsistency and must not move the counter an alert keys on.
+async function realDropCountsNoRepair(h) {
+    const node = makeNode(buildChain(40));
+    const full = buildChain(70, 0, node.chain, 40);
+    const calls = { repairs: 0 };
+    const watchRepairs = () => {
+        const commit = h.tracker.commitLastBlockPointerRepair;
+        h.tracker.commitLastBlockPointerRepair = function (...args) {
+            calls.repairs++;
+            return commit.apply(this, args);
+        };
+        actMidBatch(h, node, full, () => { node.chain = full.slice(0, DROP_TO + 1); });
+    };
+    const seen = await h.run(node, phased(h, [
+        { at: 39, run: watchRepairs },
+        { at: DROP_TO, run: () => { node.chain = full; } },
+        { at: 69 },
+    ]));
+    expect(seen.discards).to.equal(1);
+    expect(calls.repairs).to.be.at.least(1);
+    expect(h.tracker.lastBlockPointerRepairCount).to.equal(0);
+    expect(seen.hash).to.equal(full[69].hash);
+}
+
+// The same drop over a torn store: the durable hash pointer is written straight
+// to disk, outside the open batch, so after the discard it still names no block
+// and the tip-below repair has to move it. That one is counted.
+async function tornPointerCountsRepair(h) {
+    const node = makeNode(buildChain(40));
+    const full = buildChain(70, 0, node.chain, 40);
+    let torn = null;
+    const tear = () => actMidBatch(h, node, full, () => {
+        node.chain = full.slice(0, DROP_TO + 1);
+        torn = h.tracker.db.db.put(PREFIX_LAST_BLOCK_HASH, Buffer.from('f'.repeat(64)));
+    });
+    const seen = await h.run(node, phased(h, [
+        { at: 39, run: tear },
+        { at: DROP_TO, run: () => { node.chain = full; } },
+        { at: 69 },
+    ]));
+    expect(torn, 'the tear never ran').to.not.equal(null);
+    await torn;
+    expect(seen.discards).to.equal(1);
+    expect(h.tracker.lastBlockPointerRepairCount).to.equal(1);
+    expect(seen.hash).to.equal(full[69].hash);
+}
+
 describe('XChainUtxoTracker sync loop: node tip drops below the cursor mid-batch', function () {
     const h = useSyncLoopHarness();
 
@@ -184,4 +234,6 @@ describe('XChainUtxoTracker sync loop: node tip drops below the cursor mid-batch
     it('leaks no undo records after one stale tip reading mid-batch', () => staleReadingNoLeak(h));
     it('discards the batch once two readings agree on the drop, and keeps the window whole after',
         () => realDropThenRestored(h));
+    it('counts no pointer repair when a drop only discards staged blocks', () => realDropCountsNoRepair(h));
+    it('counts the pointer repair when the drop finds a torn durable pointer', () => tornPointerCountsRepair(h));
 });

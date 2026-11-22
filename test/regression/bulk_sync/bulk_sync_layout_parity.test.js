@@ -91,6 +91,9 @@ const UNSEEDED = {
     M: 'reorg-recovery reverse index for deleted hints, skipped entirely by the seed',
     P: 'transient pending-cleanup marker that exists only across a crash',
     R: 'halt marker that exists only on an unrecoverable store',
+    A: 'native history of watched addresses only, written live and by the per-address backfill, never chain-wide',
+    V: 'reverse index of A, written only beside A records for blocks inside the undo window',
+    U: 'the history watch list, written only when a caller asks for an address',
 };
 
 // Keyspaces the loader writes outside the prefix files: the LAST_* markers and Q.

@@ -15,8 +15,7 @@
  * Fail-closed boot check for the BigInt-safe bufferutils patch.
  *
  * src/chain/apply_bufferutils_patch.js rewrites bitcoinjs-lib's 64-bit reader in
- * process, because the stock one throws above 2^53-1 sat and a Dogecoin
- * output over ~90.07M DOGE would wedge block decode. That patch is applied,
+ * process so the uint64 wire field keeps its unsigned interpretation. That patch is applied,
  * not verified: a shadowed bitcoinjs-lib copy, a node_modules dedup change or
  * a reordered require can leave it inert with no boot-time signal. The tracker
  * then starts normally and either throws mid-parse on the first oversized
@@ -40,8 +39,8 @@ function bigIntBufferutilsActive(bufferutils){
     try {
         const bu = bufferutils || require('bitcoinjs-lib/src/bufferutils')
         if (!bu.BufferReader) return false
-        new bu.BufferReader(Buffer.from([0, 0, 0, 0, 0, 0, 0x20, 0])).readUInt64()
-        return true
+        const max = new bu.BufferReader(Buffer.from('ffffffffffffffff', 'hex')).readInt64()
+        return max === 18446744073709551615n
     } catch(_){
         return false
     }

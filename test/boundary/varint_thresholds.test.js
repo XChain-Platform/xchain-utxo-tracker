@@ -35,7 +35,7 @@ const {
   BufferReader,
   writeUInt64LE,
   readUInt64LE,
-} = require('bitcoinjs-lib/src/bufferutils');
+} = require('../../src/chain/bitcoinjs_v7_compat');
 
 // Round-trip a varint through the project's own BufferWriter/BufferReader,
 // sizing the buffer to the EXACT encoded length so BufferWriter.end()'s
@@ -47,7 +47,7 @@ function roundTripVarInt(n) {
   const buf = w.end(); // throws unless offset === capacity
   const r = new BufferReader(buf);
   const decoded = r.readVarInt();
-  return { buf, len, decoded, consumed: r.offset };
+  return { buf, len, decoded: Number(decoded), consumed: r.offset };
 }
 
 describe('Boundary: varint size-class thresholds', function () {

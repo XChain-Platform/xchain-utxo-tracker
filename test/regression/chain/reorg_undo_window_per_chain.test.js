@@ -30,7 +30,7 @@
 // the window map omits": the coin that reaches that path is a newly onboarded
 // one, so a window sized for 10-minute BTC blocks is wrong in exactly the
 // unsafe direction. It is a refusal now, pinned in
-// test/unit/undo-blocks.test.js.
+// test/unit/undo_blocks.test.js.
 
 const { expect } = require('chai');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker');

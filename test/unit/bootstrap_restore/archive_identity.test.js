@@ -168,7 +168,11 @@ describe('restore archive identity helpers', function () {
         expect(parseArchiveMeta(JSON.stringify({ format: 2, module: 'x' }))).to.equal(null);
         expect(parseArchiveMeta('{')).to.equal(null);
         expect(parseArchiveMeta(JSON.stringify({ format: 1, module: 'xchain-utxo-tracker', coin: 'bitcoin', network: 7 })))
-            .to.deep.equal({ module: 'xchain-utxo-tracker', coin: 'bitcoin', network: null });
+            .to.deep.equal({ module: 'xchain-utxo-tracker', coin: 'bitcoin', network: null, height: null });
+        expect(parseArchiveMeta(JSON.stringify(meta())))
+            .to.deep.equal({ module: 'xchain-utxo-tracker', coin: 'bitcoin', network: 'mainnet', height: 100 });
+        for (const height of [-1, 1.5, '100'])
+            expect(parseArchiveMeta(JSON.stringify(meta({ height }))).height).to.equal(null);
     });
 
     it('leaves missing archive fields unchecked but rejects missing target fields', function () {

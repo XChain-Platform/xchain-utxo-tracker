@@ -35,6 +35,36 @@ function sanitizeRpcError(error){
     return (error && error.message) ? error.message : String(error)
 }
 
+// Accept only a non-empty, byte-aligned hex string from block RPCs.
+function isWholeHex(value){
+    return typeof value === 'string' && value.length > 0 && value.length % 2 === 0
+        && /^[0-9a-fA-F]+$/.test(value)
+}
+
+const BLOCK_HASH_HEX = /^[0-9a-fA-F]{64}$/
+
+// Returns a getblockhash answer as lowercase 64-hex, or throws. Stored hashes and the
+// decoded headers' prev-hash links are lowercase and compared as strings, so a
+// malformed or case-changed answer must fail into the fetch retry, never read as a
+// fork. The error is deliberately untagged: it is a wire fault, not evidence about
+// the block's own bytes, so the AuxPoW reassembly recovery must not fire on it.
+function normalizeBlockHash(value, where){
+    if (typeof value !== 'string' || !BLOCK_HASH_HEX.test(value)){
+        throw new Error('Error getting block hash: malformed result for ' + where + ' ('
+            + typeof value + ' ' + String(JSON.stringify(value)).slice(0, 80) + ')')
+    }
+    return value.toLowerCase()
+}
+
+// Throws unless a hex-mode block RPC answer is whole hex. The error is deliberately
+// untagged: it is a wire fault, so the caller retries it as a fetch error rather
+// than reading it as evidence about the block's own bytes.
+function assertWholeBlockHex(method, where, value){
+    if (isWholeHex(value)) return
+    const shape = typeof value === 'string' ? 'string length ' + value.length : typeof value
+    throw new Error(method + ' returned malformed block hex for ' + where + ' (' + shape + ')')
+}
+
 // Reorder a JSON-RPC batch response into an array indexed by request id (0..N-1).
 // The batch handlers below build requests with id:i, so sorting the response by id
 // and then reading the result POSITIONALLY corrects reordering and nothing else: a
@@ -96,4 +126,7 @@ function nodeReachabilityFrom(startedAt, lastNodeOkAt, lastNodeFailAt, now = Dat
     }
 }
 
-module.exports = { sanitizeRpcError, orderBatchResults, nodeReachabilityFrom }
+module.exports = {
+    sanitizeRpcError, isWholeHex, assertWholeBlockHex, orderBatchResults, nodeReachabilityFrom,
+    BLOCK_HASH_HEX, normalizeBlockHash
+}

@@ -148,6 +148,12 @@ module.exports = {
                 if (DEBUG_TRACE) _tt.sb += Date.now() - _s0
 
                 await db.insertOutputBlock({scriptPubKey: scriptHash, txHash: nextTxId, outputIndex: txOutputIndex, blockHash})
+                // The address's native history: this tx paid it this output. An
+                // OP_RETURN (0x6a) data output has no address to ask for it and can
+                // never be spent, so it gets no row; every protocol tx carries one.
+                if (nextOutput.script[0] !== 0x6a) {
+                    await db.addHistoryMovement({script: scriptHash, blockHash, txid: nextTxId, received: BigInt(nextOutput.value)})
+                }
             }
         }
 

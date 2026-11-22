@@ -13,6 +13,7 @@
 const { expect } = require('chai');
 const {
   satoshiToDecimalString,
+  resolveNodeTip,
   nodeTipIsParseable,
   nodeStillCatchingUp,
   catchUpWaitState
@@ -32,13 +33,25 @@ describe('catch-up helpers: nodeTipIsParseable', function () {
   });
 
   it('accepts every regtest reply regardless of progress', function () {
-    expect(nodeTipIsParseable({ verificationprogress: 0 }, 'regtest')).to.equal(true);
+    expect(nodeTipIsParseable({ blocks: 1, verificationprogress: 0 }, 'regtest')).to.equal(true);
   });
 
   it('applies the progress threshold outside regtest', function () {
-    expect(nodeTipIsParseable({ verificationprogress: 0.98999 }, 'mainnet')).to.equal(false);
-    expect(nodeTipIsParseable({ verificationprogress: 0.99 }, 'mainnet')).to.equal(true);
-    expect(nodeTipIsParseable({}, 'testnet')).to.equal(true);
+    expect(nodeTipIsParseable({ blocks: 1, verificationprogress: 0.98999 }, 'mainnet')).to.equal(false);
+    expect(nodeTipIsParseable({ blocks: 1, verificationprogress: 0.99 }, 'mainnet')).to.equal(true);
+    expect(nodeTipIsParseable({ blocks: 1 }, 'testnet')).to.equal(true);
+  });
+});
+
+describe('catch-up helpers: resolveNodeTip', function () {
+  it('uses the first valid height and otherwise reports unknown', function () {
+    expect(resolveNodeTip({ latestKnownChainTip: 12, blockchainInfoLastBlock: 11 })).to.equal(12);
+    for (const invalid of ['12', NaN, undefined, null, -1, 1.5, Infinity]) {
+      expect(resolveNodeTip({ latestKnownChainTip: invalid, blockchainInfoLastBlock: 11 }))
+        .to.equal(11);
+    }
+    expect(resolveNodeTip({ latestKnownChainTip: 'bad', blockchainInfoLastBlock: NaN })).to.equal(-1);
+    expect(resolveNodeTip()).to.equal(-1);
   });
 });
 

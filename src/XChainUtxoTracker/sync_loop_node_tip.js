@@ -22,8 +22,15 @@ const nodeUtil = require('node:util')
 const { CHECK_BLOCK_DELAY_MS, MEMPOOL_INTERVAL, P_PENDING_CLEANUP_KEY, logger } = require('./constants.js')
 // The tip parse gate lives in catch_up_helpers.js (a leaf module) so the reorg
 // walk can apply it without a require cycle; re-exported below for its callers.
-const { nodeStillCatchingUp, catchUpWaitState, nodeTipIsParseable } = require('./catch_up_helpers.js')
+const {
+    nodeStillCatchingUp,
+    catchUpWaitState,
+    nodeTipIsParseable,
+    isValidHeight,
+    isNodeRpcStale
+} = require('./catch_up_helpers.js')
 const { indexNextBlock, resetBatchAfterReorg, resyncMempoolAfterReorg, verifyReorgHandingBackTipRefusal, countRefusedWalk, flushPendingAtTip } = require('./sync_loop_block_apply.js')
+const { revokeMempoolReadiness } = require('./mempool_readiness.js')
 // The sync loop and reorg walk share one rule for settling a lower node tip.
 const { settleNodeTipBelow } = require('./reorg_node_reads.js')
 
@@ -34,17 +41,20 @@ const { settleNodeTipBelow } = require('./reorg_node_reads.js')
 async function refreshNodeTip(sync){
     try {
         sync.lastBlockchainInfo = await this.connector.getBlockchainInfo()
-        this.latestKnownChainTip = sync.lastBlockchainInfo["blocks"]
+        const tip = sync.lastBlockchainInfo && sync.lastBlockchainInfo["blocks"]
+        if (isValidHeight(tip)) this.latestKnownChainTip = tip
 
         if (!nodeTipIsParseable(sync.lastBlockchainInfo, this.consensusNetwork)){
             if (!sync.nodeSyncedProblem){
-                logger.info("The node is not synced. Waiting for it to synchronize...")
+                logger.info(isValidHeight(tip)
+                    ? "The node is not synced. Waiting for it to synchronize..."
+                    : "The node returned an unusable block height. Waiting for a usable tip...")
             }
 
             // A refused tip has not been reconciled, whatever height it reports.
             // The first parseable pass at the committed tip raises the latch again.
             this.synced = false
-            this.mempoolReconverged = false
+            revokeMempoolReadiness.call(this)
             sync.lastBlockchainInfo = null
             sync.nodeSyncedProblem = true
             await this.sleep(3000)
@@ -53,7 +63,7 @@ async function refreshNodeTip(sync){
             sync.nodeSyncedProblem = false
         }
 
-        this.blockchainInfoLastBlock = sync.lastBlockchainInfo["blocks"]
+        this.blockchainInfoLastBlock = tip
         sync.lastBlockchainInfoRefreshAt = Date.now()
         // Stamped only here, past the verification-progress gate, so
         // "node RPC ok" means a USABLE tip: an unsynced node that answers
@@ -62,6 +72,12 @@ async function refreshNodeTip(sync){
         this.lastNodeRpcOkAt = sync.lastBlockchainInfoRefreshAt
     } catch (e){
         logger.error(nodeUtil.format('Error fetching blockchain info from node: ' + e.message, e))
+        // A short outage keeps the latch stable. Once the usable-tip stamp is
+        // stale, clear both readiness latches on the next retry through here.
+        if (isNodeRpcStale({ lastNodeRpcOkAt: this.lastNodeRpcOkAt })){
+            this.synced = false
+            revokeMempoolReadiness.call(this)
+        }
         await this.sleep(3000)
         return
     }
@@ -139,8 +155,8 @@ async function waitAfterRefusedTipBelow(sync){
 async function recoverFromTipBelowOurs(sync){
     const { lastBlockchainInfo, lastProcessedBlockIndex } = sync
     // Clear the latch on every branch below (wait, refusal, rollback, repair) so
-    // isSynced(), the synced gauge and GET /status agree without a floor; the
-    // next pass at the node's tip sets it again.
+    // isSynced(), the synced gauge and GET /status agree here because the latch
+    // itself is cleared; the next pass at the node's tip sets it again.
     this.synced = false
     if (nodeStillCatchingUp(lastBlockchainInfo)) return waitOnCatchingUpNode.call(this, sync)
     if (sync.nodeCatchingUpProblem){
@@ -212,6 +228,7 @@ async function rollBackToNodeTip(sync, lastBlockDb){
         logger.warn("WARNING! The last processed block height ("+lastBlockDb.height+") is greater than the last block from the network ("+this.blockchainInfoLastBlock+"). The node likely reset or reorged below our tip; rolling back to its chain.")
     }
     this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+    const rollbacksBefore = this.reorgRollbacksThisProcess || 0
     try {
         await this.verifyReorg(this.blockchainInfoLastBlock)
     } catch (err){
@@ -225,8 +242,14 @@ async function rollBackToNodeTip(sync, lastBlockDb){
             sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
             sync.lastProcessedBlockHash = await this.db.getLastBlockHash()
             sync.lastBlockchainInfo = null
+            // Blocks deleted before the refusal return their spends to the node
+            // mempool, so withdraw readiness and rerun the pass as the success
+            // path does. A refusal before any delete leaves the store as it was.
+            const walkedBack = (this.reorgRollbacksThisProcess || 0) - rollbacksBefore
+            if (walkedBack > 0) resyncMempoolAfterReorg.call(this)
+            countRefusedWalk.call(this, walkedBack)
             await this.sleep(5000)
-            return countRefusedWalk.call(this, lastBlockDb.height - sync.lastProcessedBlockIndex)
+            return
         }
         throw err
     }
@@ -247,7 +270,15 @@ async function repairLastBlockPointer(sync, lastBlockDb){
     // below claim a fix that never reaches disk. The
     // discardInflightBatchForReorg() call above satisfies the
     // precondition. Rationale at commitLastBlockPointerRepair().
+    const moved = !(await this.lastBlockPointerNames(lastBlockDb.hash, lastBlockDb.height))
     await this.commitLastBlockPointerRepair(lastBlockDb.hash, lastBlockDb.height)
+    // Count and warn only when the durable pointer named another block: a drop
+    // that discarded staged blocks leaves it already on the committed tip.
+    if (moved){
+        this.countLastBlockPointerRepair()
+        logger.warn("Repaired the stored last-block pointer to height " + lastBlockDb.height +
+            " and hash " + lastBlockDb.hash + ".")
+    }
     return () => {
         sync.lastProcessedBlockIndex = lastBlockDb.height
         sync.lastProcessedBlockHash = lastBlockDb.hash
@@ -275,7 +306,25 @@ async function pollAtChainTip(sync){
         } catch (err){
             logger.error(nodeUtil.format('Error re-checking the committed tip hash from node: ' + err.message, err))
         }
-        if (tipHashFromNode && tipHashFromNode != sync.lastProcessedBlockHash){
+        // A brief failure preserves readiness. A sustained run cannot confirm
+        // that the committed tip is still canonical, so withdraw readiness
+        // until a hash comparison succeeds.
+        if (!tipHashFromNode){
+            if (sync.tipHashFailingSince === null) sync.tipHashFailingSince = Date.now()
+            if (isNodeRpcStale({ lastNodeRpcOkAt: sync.tipHashFailingSince })){
+                this.synced = false
+                revokeMempoolReadiness.call(this)
+                if (!sync.tipHashStaleProblem){
+                    logger.warn('Committed tip hash checks have remained unavailable; readiness is withdrawn until a comparison succeeds.')
+                    sync.tipHashStaleProblem = true
+                }
+            }
+            await this.sleep(CHECK_BLOCK_DELAY_MS)
+            return
+        }
+        sync.tipHashFailingSince = null
+        sync.tipHashStaleProblem = false
+        if (tipHashFromNode != sync.lastProcessedBlockHash){
             return rollBackSameHeightTipSwap.call(this, sync)
         }
     }
@@ -285,8 +334,8 @@ async function pollAtChainTip(sync){
     // staged, reports synced.
     if (pending) return flushPendingAtTip.call(this, sync)
 
-    // The committed tip is the node's (or the re-check could not ask) and
-    // nothing is staged: the one place the latch rises.
+    // The committed tip is the node's and nothing is staged: the one place the
+    // latch rises.
     this.synced = true
 
     if (this.mempoolInterval == null){
@@ -329,7 +378,7 @@ async function rollBackSameHeightTipSwap(sync){
         await this.db.db.put(P_PENDING_CLEANUP_KEY,
             Buffer.from(JSON.stringify(this.pendingKMCleanup)))
     }
-    this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+    await this.reloadUndoWindow()
     await verifyReorgHandingBackTipRefusal.call(this, sync)
     sync.lastProcessedBlockIndex = await this.db.getLastBlockHeight()
     sync.lastProcessedBlockHash = await this.db.getLastBlockHash()

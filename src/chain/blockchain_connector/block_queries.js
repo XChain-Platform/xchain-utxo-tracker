@@ -14,8 +14,11 @@
 
 const util = require('node:util');
 const { logger } = require('./constants');
-const { sanitizeRpcError } = require('./rpc_helpers');
+const { sanitizeRpcError, isWholeHex, assertWholeBlockHex, BLOCK_HASH_HEX } = require('./rpc_helpers');
 const { encodeVarintHex, stripAuxPowFromBlockHex } = require('./auxpow_codec');
+
+// The pure block header is 80 bytes.
+const HEADER_HEX_LENGTH = 160
 
 module.exports = {
     async getBlockchainInfo(){
@@ -55,11 +58,19 @@ module.exports = {
 
             const response = await this.rpcPost(data)
 
-            if (response.data.result) {
-                return response.data.result;
-            } else {
+            const result = response.data.result
+            if (!result) {
                 throw new Error('Error getting block hash');
             }
+            // Require a 64-hex block hash: the tip re-check and the reorg walk roll back
+            // on a mismatch with the stored hash, so a malformed answer (a proxy's object,
+            // number or short string) must fail into the caller's retry, never read as a fork.
+            if (typeof result !== 'string' || !BLOCK_HASH_HEX.test(result)) {
+                throw new Error('Error getting block hash: malformed result (' + typeof result + ' '
+                    + String(JSON.stringify(result)).slice(0, 80) + ')');
+            }
+            // Stored hashes are lowercase, so a case-changing hop must not read as a fork.
+            return result.toLowerCase();
         } catch (error) {
             // sanitizeRpcError scrubs error.config.auth (the node RPC password) in
             // place, so the rethrow cannot leak the credential through an upstream
@@ -120,7 +131,14 @@ module.exports = {
         try {
             // Older daemons append the AuxPoW bytes to getblockheader; the pure
             // header is always the first 80 bytes either way.
-            const headerHex = (await this.getBlockHeader(blockhash, true)).substring(0, 160)
+            const rawHeader = await this.getBlockHeader(blockhash, true)
+            // Check before the per-tx fan-out. A short or non-hex header would
+            // otherwise build a truncated block after every raw-tx fetch.
+            if (!isWholeHex(rawHeader) || rawHeader.length < HEADER_HEX_LENGTH) {
+                const shape = typeof rawHeader === 'string' ? 'string length ' + rawHeader.length : typeof rawHeader
+                throw new Error('getblockheader returned malformed block hex for ' + blockhash + ' (' + shape + ')')
+            }
+            const headerHex = rawHeader.substring(0, HEADER_HEX_LENGTH)
             const verboseBlock = await this.getBlockVerbose(blockhash)
             if (!verboseBlock || !Array.isArray(verboseBlock.tx)) {
                 throw new Error('verbose getblock returned no tx array')
@@ -169,7 +187,7 @@ module.exports = {
         }
     },
 
-    // The two RPC fetches are deliberately OUTSIDE the try, matching the decoder twin
+    // The two RPC fetches and malformed-reply check stay OUTSIDE the try, matching the decoder twin
     // (xchain-decoder/src/chain/blockchain_connector/block_queries.js getBlockWithoutAuxPow). A transport
     // fault (a Dogecoin 1.14 node dropping the connection when its RPC queue fills, a
     // restart, a network blip) must propagate unwrapped with error.code intact, because
@@ -178,8 +196,14 @@ module.exports = {
     // erased that distinction and let ~15s of node unavailability flip the tracker into
     // per-tx block reassembly aimed at the node that was already saturated.
     async getBlockWithoutAuxPow(blockhash) {
-        let blockHeaderHex = await this.getBlockHeader(blockhash, true)
-        let blockHex = await this.getBlock(blockhash, true)
+        const blockHeaderHex = await this.getBlockHeader(blockhash, true)
+        const blockHex = await this.getBlock(blockhash, true)
+        if (!isWholeHex(blockHeaderHex) || !isWholeHex(blockHex)) {
+            const badMethod = !isWholeHex(blockHeaderHex) ? 'getblockheader' : 'getblock'
+            const badValue = badMethod === 'getblockheader' ? blockHeaderHex : blockHex
+            const shape = typeof badValue === 'string' ? 'string length ' + badValue.length : typeof badValue
+            throw new Error(badMethod + ' returned malformed block hex for ' + blockhash + ' (' + shape + ')')
+        }
 
         try {
             // Dogecoin Core 1.14.x getblockheader always returns the pure 80-byte header
@@ -213,6 +237,8 @@ module.exports = {
             const response = await this.postWithRetry(data)
 
             if (response.data.result) {
+                // Only hex mode: verbose mode answers a JSON object.
+                if (hexFormat) assertWholeBlockHex('getblock', blockhash, response.data.result)
                 return response.data.result;
             } else {
                 throw new Error('Error getting block hex');

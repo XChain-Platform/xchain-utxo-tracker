@@ -6,6 +6,11 @@ services:
     # The image bakes no .env (Dockerfile); the README's .env is handed to the
     # container here instead.
     env_file: .env
+    # Compose's own stop wait is 10 s, which would SIGKILL a bulk-sync drain before it
+    # removes the interrupted target DB. This matches the 120 s xchain-node stamps on
+    # the container and must stay above SHUTDOWN_TIMEOUT_MS (default 100000), so the
+    # drain ends in a logged exit before the daemon steps in; raise both together.
+    stop_grace_period: 120s
     # Without this block the tracker is the one XChain service whose container
     # logs are unbounded: docker's json-file driver rotates nothing by default,
     # so a compose-run tracker grows until the host disk fills (spec

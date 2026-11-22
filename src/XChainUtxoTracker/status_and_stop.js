@@ -54,10 +54,10 @@ module.exports = {
 
     // Drain entry for SIGTERM (src/server/shutdown.js). Unlike stopParsing(), which is
     // the RPC-facing pause and RESTORES the loop when it cannot stop within ten
-    // seconds, this only asks: the loop takes its else branch at its next
-    // keepParsing check (a block boundary), closes the store and breaks, and
-    // start() resolves. The caller bounds the wait with its hard-exit timer.
+    // seconds, this latches the request: boot and a concurrent admin pause cannot
+    // restore the loop. The caller bounds the wait with its hard-exit timer.
     stop(){
+        this.drainRequested = true
         this.keepParsing = false
         if (this.mempoolInterval) {
             clearInterval(this.mempoolInterval)
@@ -83,6 +83,7 @@ module.exports = {
             // a second stop call falls through to the resolve path below.
             if (this.parsingAborted && !this.parsingStopped){
                 try {
+                    await this.stopNativeHistory()
                     await this.db.close()
                 } catch (err) {
                     // Reject explicitly: a throw inside this executor never reaches the
@@ -110,13 +111,13 @@ module.exports = {
                 // sets parsingStopped=true, so start() resolves and launchTracker's
                 // .catch never relaunches: every query then 500s on a closed store
                 // with no process exit for a restart policy to catch. A failed stop
-                // must be a no-op that leaves the tracker running: restore
-                // keepParsing so the loop continues, and re-arm the mempool poller
-                // (the loop also re-arms it once synced, but do it here in case the
-                // loop is parked in the synced branch's sleep).
-                this.keepParsing = true
-                if (this.mempoolInterval == null){
-                    this.mempoolInterval = setInterval(this.updateMempool.bind(this), MEMPOOL_INTERVAL)
+                // must be a no-op that leaves the tracker running unless shutdown
+                // has latched a drain. A drain keeps both loop and poller stopped.
+                if (!this.drainRequested) {
+                    this.keepParsing = true
+                    if (this.mempoolInterval == null){
+                        this.mempoolInterval = setInterval(this.updateMempool.bind(this), MEMPOOL_INTERVAL)
+                    }
                 }
                 reject(new Error("There was an error trying to stop the parsing"))
             } else {
@@ -126,6 +127,7 @@ module.exports = {
     },
 
     getAddressType(address, network) {
+        address = this.canonicalP2shAddress(address, network)
         try {
             bitcoin.payments.p2pkh({ address, network })
             return 'p2pkh'

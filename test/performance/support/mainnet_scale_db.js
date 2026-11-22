@@ -42,14 +42,14 @@ const os = require('os');
 const path = require('path');
 const { createHash } = require('crypto');
 const bitcoin = require('bitcoinjs-lib');
-const ECPairFactory = require('ecpair');
+const { ECPairFactory } = require('ecpair');
 const ecc = require('tiny-secp256k1');
 const { ClassicLevel } = require('classic-level');
 
 const LevelUpStore = require('../../../src/store/level_up_db');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker');
 
-const ECPair = ECPairFactory.ECPairFactory(ecc);
+const ECPair = ECPairFactory(ecc);
 const NETWORK = bitcoin.networks.regtest;
 
 // `fillerScripts` distinct scriptPubKeys each hold `utxosPerFiller` outputs;
@@ -108,7 +108,7 @@ function deriveProbeKey(name) {
         address: p2pkh.address,
         script,
         scriptHash: createHash('sha256').update(script).digest('hex'),
-        scriptHex: script.toString('hex')
+    scriptHex: Buffer.from(script).toString('hex')
     };
 }
 

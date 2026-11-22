@@ -48,6 +48,32 @@ function makeConnector(overrides) {
     return Object.assign(connector, overrides);
 }
 
+async function caught(task) {
+    try {
+        await task();
+        return null;
+    } catch (err) {
+        return err;
+    }
+}
+
+function expectMalformedReply(err, method) {
+    expect(err).to.be.an('error');
+    expect(err.message).to.match(new RegExp(method + ' returned malformed block hex'));
+    expect(err.auxPowParseFailure).to.equal(undefined);
+}
+
+function malformedBatchReply(method, value) {
+    return async (payload) => ({
+        data: payload.map((request, id) => ({
+            id,
+            result: request.method === 'getblockhash'
+                ? 'ab'.repeat(32)
+                : (request.method === method ? value : HEADER_HEX),
+        })),
+    });
+}
+
 describe('malformed-AuxPoW block reassembly fallback', function () {
 
     it('encodeVarintHex encodes each varint width and refuses >2^32-1', function () {
@@ -85,6 +111,23 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
             expect(await connector.getBlockReassembled('hash')).to.equal(HEADER_HEX + '01' + TX_HEX);
         });
 
+        it('rejects a malformed getblockheader reply before any per-tx fetch', async function () {
+            const badHeaders = [{}, 123, 'abc', HEADER_HEX.slice(0, -2), HEADER_HEX.slice(0, -1) + 'z'];
+            for (const bad of badHeaders) {
+                let verboseCalls = 0;
+                let rawCalls = 0;
+                const connector = makeConnector({
+                    getBlockHeader: async () => bad,
+                    getBlockVerbose: async () => { verboseCalls++; return { tx: [TXID] }; },
+                    getRawTransaction: async () => { rawCalls++; return TX_HEX; },
+                });
+                const err = await caught(() => connector.getBlockReassembled('hash'));
+                expectMalformedReply(err, 'getblockheader');
+                expect(verboseCalls).to.equal(0);
+                expect(rawCalls).to.equal(0);
+            }
+        });
+
         it('fails loudly when an in-block tx cannot be fetched', async function () {
             const connector = makeConnector({
                 getBlockHeader: async () => HEADER_HEX,
@@ -118,7 +161,10 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
                 getBlockVerbose: async () => ({ tx: txids }),
                 getRawTransaction: async (txid) => {
                     peak = Math.max(peak, ++inFlight);
-                    await new Promise((r) => setTimeout(r, 10 - Number(txid[0])));
+                    // Stagger by event-loop turns so later txids complete first without wall-clock timing.
+                    for (let turns = 10 - Number(txid[0]); turns > 0; turns--) {
+                        await new Promise((r) => setImmediate(r));
+                    }
                     inFlight--;
                     return 'aa' + txid.slice(0, 2);
                 },
@@ -245,6 +291,22 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
             expect(err.auxPowParseFailure).to.equal(true);
             expect(err.cause).to.be.an('error');
         });
+
+        it('getBlockWithoutAuxPow leaves malformed RPC replies untagged', async function () {
+            for (const bad of [{}, 123, 'abc', HEADER_HEX.slice(0, -1) + 'z']) {
+                const badHeader = makeConnector({
+                    getBlockHeader: async () => bad,
+                    getBlock: async () => HEADER_HEX,
+                });
+                expectMalformedReply(await caught(() => badHeader.getBlockWithoutAuxPow('hash')), 'getblockheader');
+
+                const badBlock = makeConnector({
+                    getBlockHeader: async () => HEADER_HEX,
+                    getBlock: async () => bad,
+                });
+                expectMalformedReply(await caught(() => badBlock.getBlockWithoutAuxPow('hash')), 'getblock');
+            }
+        });
     });
 });
 
@@ -260,7 +322,7 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
             const batchOk = async (payload) => ({
                 data: payload.map((p, i) => ({
                     id: i,
-                    result: p.method === 'getblockhash' ? 'h'.repeat(64)
+                    result: p.method === 'getblockhash' ? 'ab'.repeat(32)
                         : (p.method === 'getblockheader' ? HEADER_HEX : UNSTRIPPABLE_BLOCK)
                 }))
             });
@@ -280,6 +342,20 @@ describe('malformed-AuxPoW block reassembly fallback', function () {
             expect(err).to.be.an('error');
             expect(err.code).to.equal('ECONNRESET');
             expect(err.auxPowParseFailure).to.equal(undefined);
+        });
+
+        it('getBlocksBatchWithoutAuxPow leaves malformed RPC replies untagged', async function () {
+            for (const bad of [{}, 123, 'abc', HEADER_HEX.slice(0, -1) + 'z']) {
+                const badHeader = makeConnector({ postWithRetry: malformedBatchReply('getblockheader', bad) });
+                const headerErr = await caught(() => badHeader.getBlocksBatchWithoutAuxPow([100]));
+                expectMalformedReply(headerErr, 'getblockheader');
+                expect(headerErr.message).to.match(/block 100/);
+
+                const badBlock = makeConnector({ postWithRetry: malformedBatchReply('getblock', bad) });
+                const blockErr = await caught(() => badBlock.getBlocksBatchWithoutAuxPow([100]));
+                expectMalformedReply(blockErr, 'getblock');
+                expect(blockErr.message).to.match(/block 100/);
+            }
         });
     });
 });

@@ -15,7 +15,7 @@ const lock = require('../../package-lock.json');
 const manifest = require('../../package.json');
 
 const REQUIRED_DEPENDENCIES = {
-  'varuint-bitcoin': '^1.1.2',
+  'varuint-bitcoin': '^2.0.1',
 };
 
 describe('package declared dependencies', () => {

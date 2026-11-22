@@ -14,6 +14,9 @@ const { expect } = require('chai');
 const sinon = require('sinon');
 const BlockchainConnector = require('../../../src/chain/blockchain_connector');
 
+const HASH10 = 'a1'.repeat(32);
+const HASH11 = 'b2'.repeat(32);
+
 // Build an axios-shaped error that carries the RPC password on error.config.auth,
 // exactly as axios attaches the request config to a thrown error. The leak:
 // getBlockchainInfo / getBlockHash / getRawMempool rethrew this object
@@ -81,17 +84,17 @@ describe('getBlocksBatch trusts id bijection, not positional sort', function () 
   afterEach(function () { sinon.restore(); });
 
   it('returns hex aligned to the requested height on a well-formed response', async function () {
-    clientStub.onFirstCall().resolves({ data: [ { id: 1, result: 'hash11' }, { id: 0, result: 'hash10' } ] }); // deliberately reordered
-    clientStub.onSecondCall().resolves({ data: [ { id: 0, result: 'hex10' }, { id: 1, result: 'hex11' } ] });
+    clientStub.onFirstCall().resolves({ data: [ { id: 1, result: HASH11 }, { id: 0, result: HASH10 } ] }); // deliberately reordered
+    clientStub.onSecondCall().resolves({ data: [ { id: 0, result: 'a10a' }, { id: 1, result: 'b11b' } ] });
     const out = await connector.getBlocksBatch([10, 11]);
     expect(out).to.deep.equal([
-      { height: 10, hash: 'hash10', hex: 'hex10' },
-      { height: 11, hash: 'hash11', hex: 'hex11' },
+      { height: 10, hash: HASH10, hex: 'a10a' },
+      { height: 11, hash: HASH11, hex: 'b11b' },
     ]);
   });
 
   it('throws on a duplicated response id (would otherwise map a block to the wrong height)', async function () {
-    clientStub.onFirstCall().resolves({ data: [ { id: 0, result: 'hash10' }, { id: 1, result: 'hash11' } ] });
+    clientStub.onFirstCall().resolves({ data: [ { id: 0, result: HASH10 }, { id: 1, result: HASH11 } ] });
     clientStub.onSecondCall().resolves({ data: [ { id: 0, result: 'hexA' }, { id: 0, result: 'hexB' } ] });
     let caught = null;
     try { await connector.getBlocksBatch([10, 11]); } catch (e) { caught = e; }
@@ -100,7 +103,7 @@ describe('getBlocksBatch trusts id bijection, not positional sort', function () 
   });
 
   it('throws on a short response instead of a bare TypeError on an undefined element', async function () {
-    clientStub.onFirstCall().resolves({ data: [ { id: 0, result: 'hash10' }, { id: 1, result: 'hash11' } ] });
+    clientStub.onFirstCall().resolves({ data: [ { id: 0, result: HASH10 }, { id: 1, result: HASH11 } ] });
     clientStub.onSecondCall().resolves({ data: [ { id: 0, result: 'hexA' } ] }); // only 1 of 2
     let caught = null;
     try { await connector.getBlocksBatch([10, 11]); } catch (e) { caught = e; }
@@ -109,7 +112,7 @@ describe('getBlocksBatch trusts id bijection, not positional sort', function () 
   });
 
   it('throws on an out-of-range response id', async function () {
-    clientStub.onFirstCall().resolves({ data: [ { id: 0, result: 'hash10' }, { id: 5, result: 'hash11' } ] });
+    clientStub.onFirstCall().resolves({ data: [ { id: 0, result: HASH10 }, { id: 5, result: HASH11 } ] });
     let caught = null;
     try { await connector.getBlocksBatch([10, 11]); } catch (e) { caught = e; }
     expect(caught).to.be.an('error');

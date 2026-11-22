@@ -269,62 +269,15 @@ module.exports = {
     },
 
     async removeOutputWithInput(input) {
-        const hKey = kOutHint(input.prevTxHash, input.prevOutputIndex)
-        const mKey = kHintDel(input.blockHash, input.prevTxHash, input.prevOutputIndex)
-
-        // abstract-level .get returns undefined on a missing key (it does NOT
-        // throw). Real I/O errors still reject the promise and propagate up;
-        // we deliberately do NOT swallow them here, unlike the previous
-        // catch-all which treated every error as "not committed yet".
-        const scriptPubKeyBuf = await this.db.get(hKey)                            // 32-byte Buffer or undefined
-        let oVal = undefined
-        let oKey = null
-        if (scriptPubKeyBuf !== undefined) {
-            oKey = kOutputFromBuf(scriptPubKeyBuf, input.prevTxHash, input.prevOutputIndex)
-            oVal = await this.db.get(oKey)
-        }
-
-        if (scriptPubKeyBuf === undefined || oVal === undefined) {
-            // Output not yet committed: check in-memory transaction map
-            const inMemScript = this.getTransactionValue(hKey)
-            if (inMemScript != null){
-                const inMemOKey = kOutputFromBuf(inMemScript, input.prevTxHash, input.prevOutputIndex)
-                // Capture the staged output value BEFORE removal so a cross-block
-                // spend can write durable K/M restore records (see
-                // writeCrossBlockSpendRecovery). Same-block spends write nothing.
-                const inMemOVal = this.getTransactionValue(inMemOKey)
-                if (!this.removeTransaction(inMemOKey, input.blockHash)){
-                    throw Error("Missing output match for input "+JSON.stringify(input))
-                }
-                if (!this.removeTransaction(hKey, input.blockHash)){
-                    throw Error("Missing outputHintKey match for input "+JSON.stringify(input))
-                }
-                await this.writeCrossBlockSpendRecovery(input, inMemScript, inMemOVal)
-            } else if (scriptPubKeyBuf !== undefined && oVal === undefined) {
-                // H present on disk, O missing: a live-store divergence, NOT the benign
-                // pre-REMOVE_SPENT legacy case (the hint key is present, not missing). Mirror
-                // the batch path (delOutput) message VERBATIM so an operator grepping for the
-                // divergence signal catches occurrences on both code paths. Leave O/H intact -
-                // deleting H with no K/M undo record would be unrecoverable on reorg unwind.
-                logger.info("Warning: Missing output value for input " + JSON.stringify(input) + " while its outputHintKey is present - leaving O/H records intact, not deleting without an undo record")
-            } else {
-                logger.info("Warning: Missing outputHintKey for input "+JSON.stringify(input)+" - output may have been indexed before REMOVE_SPENT was enabled")
-            }
-            return true
-        }
-
-        const kKey = kOutDelFromBuf(input.blockHash, scriptPubKeyBuf, input.prevTxHash, input.prevOutputIndex)
-
-        // Stage for deferred deletion: will be purged after batch commit
-        await this.addTransaction("put", mKey, scriptPubKeyBuf)
-        await this.addTransaction("put", kKey, oVal)
-        await this.addTransaction("del", oKey)
-        await this.addTransaction("del", hKey)
+        // Keep the legacy single-input API for callers and tests, but route its
+        // behavior through the production batch implementation so spend and undo
+        // rules have one authority.
+        await this.removeOutputsWithInputsBatch([input])
         return true
     },
 
-    // Batch version of removeOutputWithInput: collects all inputs for a block,
-    // resolves hints and outputs with 2 getMany calls instead of N individual db.get().
+    // Canonical spend-removal implementation. Collects all inputs for a block and
+    // resolves hints and outputs with 2 getMany calls instead of N individual reads.
     async removeOutputsWithInputsBatch(inputs) {
         if (inputs.length === 0) return 0
 
@@ -359,30 +312,38 @@ module.exports = {
         // Phase 3: stage all deletes
         const _tStage = Date.now()
         for (let i = 0; i < inputs.length; i++) {
-            if (!resolved[i]) continue
-            const inp = inputs[i]
-            const r = resolved[i]
-            if (r.inMem) {
-                const inMemOVal = unstageInMemorySpend(this, inp, r)
-                await this.writeCrossBlockSpendRecovery(inp, r.scriptPubKeyBuf, inMemOVal)
-                continue
-            }
-            if (r.oVal == null) {
-                warnMissingOutputValue(this, inp, r)
-                continue
-            }
-
-            const mKey = kHintDel(inp.blockHash, inp.prevTxHash, inp.prevOutputIndex)
-            const kKey = kOutDelFromBuf(inp.blockHash, r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
-            if (DEBUG_TRACE) {
-                logger.info(`TRACE delOutput db=${this.dbName} path=archive sh=${r.scriptPubKeyBuf.toString('hex')} tx=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
-            }
-            await this.addTransaction("put", mKey, r.scriptPubKeyBuf)
-            await this.addTransaction("put", kKey, r.oVal)
-            await this.addTransaction("del", r.oKey)
-            await this.addTransaction("del", r.hKey)
+            if (resolved[i]) await stageSpend(this, inputs[i], resolved[i])
         }
         this.constructor.parseInBuckets.stage += Date.now() - _tStage
         return inputs.length
     },
+}
+
+// Phase 3 for one resolved input: unstage a same-batch output or archive an
+// on-disk one into K/M, then record the spend in the address's native history.
+// The history write needs the spending txid (input.txHash), which the block
+// apply path carries; a caller without it records the spend in the UTXO set only.
+async function stageSpend(store, inp, r) {
+    let spentVal
+    if (r.inMem) {
+        spentVal = unstageInMemorySpend(store, inp, r)
+        await store.writeCrossBlockSpendRecovery(inp, r.scriptPubKeyBuf, spentVal)
+    } else if (r.oVal == null) {
+        // No value means no spend was staged, so there is nothing to record either.
+        return warnMissingOutputValue(store, inp, r)
+    } else {
+        spentVal = r.oVal
+        const mKey = kHintDel(inp.blockHash, inp.prevTxHash, inp.prevOutputIndex)
+        const kKey = kOutDelFromBuf(inp.blockHash, r.scriptPubKeyBuf, inp.prevTxHash, inp.prevOutputIndex)
+        if (DEBUG_TRACE) {
+            logger.info(`TRACE delOutput db=${store.dbName} path=archive sh=${r.scriptPubKeyBuf.toString('hex')} tx=${inp.prevTxHash} idx=${inp.prevOutputIndex} blk=${inp.blockHash}`)
+        }
+        await store.addTransaction("put", mKey, r.scriptPubKeyBuf)
+        await store.addTransaction("put", kKey, r.oVal)
+        await store.addTransaction("del", r.oKey)
+        await store.addTransaction("del", r.hKey)
+    }
+    if (inp.txHash && spentVal != null) {
+        await store.addHistoryMovement({ script: r.scriptPubKeyBuf, blockHash: inp.blockHash, txid: inp.txHash, sent: spentVal.readBigUInt64BE(0) })
+    }
 }

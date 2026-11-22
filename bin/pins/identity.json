@@ -8,14 +8,14 @@
     "src/observability/": 4
   },
   "files": {
-    "src/coins/BTC.js": "6868afc2d18911ba112234c980c094fda71cfc3e744a00f493def781c7610f8d",
+    "src/coins/BTC.js": "ec37a13d1be3375c18fb77dd162ddd2047e598410de6c8050c12cff2766bde81",
     "src/coins/DOGE.js": "29ac02299b0c779f4e3eda579eeaa9f673c454b73cfe9978a35f03f0e9aed33c",
     "src/coins/LTC.js": "6155195bfa5fdfeab77dec3802ce67b5cc47a77695e81a4a5545d980e4c421dd",
     "src/coins/consensus_pin.js": "342bf7af224a19ea0a98ff9cfb2c9a70b3fd5be75de7ecef2db05936f82baa63",
-    "src/coins/index.js": "08b678d934fa647d3c7d14dc5ccdaeb86722ee32a3662de69e4a31cd7b09234c",
-    "src/observability/README.md": "4f58f8e59d21121ddd794f68f1fe2a6318484c5c868b158a5b7311c9a0e1166a",
-    "src/observability/index.js": "6d29637dc3a815d896076642823393866e4f74a68b59dc363ff1cd828aff422a",
-    "src/observability/logShipper.js": "fbb1e5b3f01229417117c718da24ee2d62fefd9740adbbec2a4e941a67dbd027",
+    "src/coins/index.js": "c76c079e3c0e2793f57120c5450ca3a6b7050cd4d4373c207fc9655715c092dc",
+    "src/observability/README.md": "e797cb8d46dc601c3a256d7ef066b80b42cdc2fcd22f1f9f33859b288e1f0a06",
+    "src/observability/index.js": "913ba5cf8e1d06cefbfda448f6aec5738f2e630efc75f36bff09b17f5c04b3f6",
+    "src/observability/logShipper.js": "61417fe54844edbc83f22ab4b949b86e9e667bbecea7acae7209838a9f825a75",
     "src/observability/metrics.js": "b29a0f2855e0dc4d8d97dde22c36daa6ab0408391945eda1b47b47398c0cd261"
   }
 }

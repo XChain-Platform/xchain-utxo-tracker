@@ -36,6 +36,9 @@
  *   W: [0x57][blockHash(32)][txid(32)][outputIndex(4)]                =  69 B
  *   X: [0x58][txid(32)]                                               =  33 B
  *   Y: [0x59][blockHash(32)][txid(32)]                                =  65 B
+ *   A: [0x41][scriptPubKey(32)][~height(4)][txid(32)]                 =  69 B
+ *   V: [0x56][blockHash(32)][scriptPubKey(32)][txid(32)]              =  97 B
+ *   U: [0x55][scriptPubKey(32)][field(1)]                             =  34 B
  *   R: [0x52]                                                         =   1 B
  *   LAYOUT_VERSION (UTF-8 string key, reserved 'L' byte): decimal version
  *
@@ -55,40 +58,21 @@
  *   W: [scriptPubKey(32)]                                             = 32 B
  *   X: [blockHash(32)]                                                = 32 B
  *   Y: [fullTxid(32)]                                                 = 32 B
+ *   A: [received(8)][sent(8)][blockTime(4)], ~height = 0xFFFFFFFF-h   = 20 B
+ *   V: [height(4)]                                                    =  4 B
+ *   U: [0x55][scriptPubKey(32)][field(1)]: START [from(4)], LIVE [liveFrom(4)],
+ *      PROGRESS UTF-8 JSON {next, done, open}; A, V and U exist only for watched addresses
  *   R: UTF-8 JSON {"reason","height","at"}                            = variable
  *
  ********************************************************************/
 
 // Load required libraries
 const util = require('../common/util')
-const loadPart = require
+const { installMethods } = require('../common/install_methods')
 const { AddressTooLargeError, InvalidCursorError } = require('./level_up_db/store_errors')
 const { encodeOutput, decodeOutput, encodeBlock, encodeTx, encodeInputVal, encodeOutHint } = require('./level_up_db/value_codec')
 const { kOutBlk, kOutputFromBuf, kOutDelFromBuf, kScriptBlkFromBuf, kBlkScriptFromBuf, kBlock, kTx, kScriptBlk, kBlkScript, kInput, kOutput, kOutHint, kInHint, kOutDel, kHintDel, kStoredBlk, kTxExact, kTxBlockRecovery, rangeEnd } = require('./level_up_db/key_codec')
-
-// A class split into part modules has to put the moved methods back on its
-// prototype. Object.assign would do that as ENUMERABLE own properties, while
-// a method written in the class body is non-enumerable, so the split would
-// change what for...in over an instance, Object.keys of the prototype and a
-// spread of it return. installMethods defines each moved method with the
-// flags class syntax gives (writable, configurable, not enumerable), so a
-// split prototype reads the same as the original class. Byte-identical
-// private copy of the one exported from XChainUtxoTracker.js.
-function installMethods(target, ...sources) {
-    for (const source of sources) {
-        for (const key of Reflect.ownKeys(source)) {
-            if (!Object.prototype.propertyIsEnumerable.call(source, key)) continue
-            Object.defineProperty(target, key, {
-                value: source[key],
-                writable: true,
-                enumerable: false,
-                configurable: true,
-            })
-        }
-    }
-    return target
-}
-
+const { kHistory, kHistoryBlock, kHistoryWatch } = require('./level_up_db/history_keys')
 
 // Whole key of the halt marker: the one record that says this store was declared
 // unrecoverable (rolled back past its undo window) and why. 0x52 ('R') is unused
@@ -186,15 +170,19 @@ class LevelUpStore {
 
 module.exports = LevelUpStore
 
-installMethods(LevelUpStore.prototype,
-    loadPart('./level_up_db/store_lifecycle.js'),
-    loadPart('./level_up_db/blocks_and_transactions.js'),
-    loadPart('./level_up_db/inputs.js'),
-    loadPart('./level_up_db/outputs.js'),
-    loadPart('./level_up_db/output_cleanup.js'),
-    loadPart('./level_up_db/output_scripts.js'),
-    loadPart('./level_up_db/store_layout.js'),
-)
+// Load the part modules after the export is set: they require this file back.
+const storeLifecycleMethods = require('./level_up_db/store_lifecycle.js')
+const blocksAndTransactionsMethods = require('./level_up_db/blocks_and_transactions.js')
+const inputMethods = require('./level_up_db/inputs.js')
+const outputMethods = require('./level_up_db/outputs.js')
+const outputCleanupMethods = require('./level_up_db/output_cleanup.js')
+const outputScriptMethods = require('./level_up_db/output_scripts.js')
+const storeLayoutMethods = require('./level_up_db/store_layout.js')
+const historyMethods = require('./level_up_db/history.js')
+
+installMethods(LevelUpStore.prototype, storeLifecycleMethods, blocksAndTransactionsMethods,
+    inputMethods, outputMethods, outputCleanupMethods, outputScriptMethods,
+    storeLayoutMethods, historyMethods)
 
 // Attached to the class rather than exported one line at a time: one export
 // shape per file, and every call site already reaches these through the module
@@ -243,6 +231,9 @@ Object.assign(module.exports, {
     kStoredBlk,
     kTxExact,
     kTxBlockRecovery,
+    kHistory,
+    kHistoryBlock,
+    kHistoryWatch,
     rangeEnd,
     // Exported so the halt-marker tests can assert the record sits under the one
     // reserved byte and collides with no k* builder.

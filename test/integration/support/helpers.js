@@ -13,12 +13,12 @@
 const crypto = require('crypto');
 const { createHash } = require('crypto');
 const bitcoin = require('bitcoinjs-lib');
-const ECPairFactory = require('ecpair');
+const { ECPairFactory } = require('ecpair');
 const ecc = require('tiny-secp256k1');
 const LevelUpStore = require('../../../src/store/level_up_db');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker');
 
-const ECPair = ECPairFactory.ECPairFactory(ecc);
+const ECPair = ECPairFactory(ecc);
 const NETWORK = bitcoin.networks.regtest;
 const SATOSHI = 100000000;
 
@@ -35,7 +35,7 @@ for (let i = 1; i <= 10; i++) {
     publicKey: keyPair.publicKey,
     script,
     scriptHash,
-    scriptHex: script.toString('hex')
+    scriptHex: Buffer.from(script).toString('hex')
   });
 }
 

@@ -74,6 +74,10 @@ describe('XChainUtxoTracker (more)', function () {
             expect(tracker.keepParsing).to.be.true;
         });
 
+        it('initializes drainRequested to false', function () {
+            expect(tracker.drainRequested).to.be.false;
+        });
+
         it('initializes pendingKMCleanup to empty array', function () {
             expect(tracker.pendingKMCleanup).to.deep.equal([]);
         });

@@ -21,7 +21,6 @@ const config = require('./config')
 const coins = require('./coins')
 const { assertBigIntBufferutils } = require('./chain/assert_bigint_bufferutils')
 const crypto = require('crypto');
-const bs58check = require('bs58check')
 const bitcoin = require('bitcoinjs-lib')
 const ecc = require('tiny-secp256k1')
 const fs = require('fs')
@@ -30,7 +29,7 @@ const CryptoNetworks = require('./chain/crypto_networks')
 const XChainBlockDecoder = require('./chain/XChainBlockDecoder')
 const { hrtime } = require('node:process');
 
-// bitcoinjs-lib v6 needs an ECC backend registered before it can parse/validate
+// bitcoinjs-lib needs an ECC backend registered before it can parse/validate
 // Taproot (P2TR, witness v1) addresses. Without this, payments.p2tr() throws
 // "No ECC Library provided" and getAddressType() silently classified every
 // taproot address as 'unknown' (and any taproot balance/UTXO query mislabelled
@@ -47,7 +46,7 @@ const PARSE_MODE_BULK_INSERTS = 1
 // stays comfortably above that chain's cross-chain confirmation gate (an ordinary
 // reorg inside the trust window is auto-recovered, never a manual resync). On
 // 1-minute DOGE blocks the old flat value of 10 was only ~10 minutes of headroom.
-// Single-sourced in undo-blocks.js so the live worker and the bulk seeder can never drift.
+// Single-sourced in src/chain/undo_blocks.js so the live worker and the bulk seeder can never drift.
 // Import the RESOLVER only, never the table or the MAX_SAFE_UNDO_BLOCKS ceiling: this
 // worker consults neither, and naming them here reads as a second clamp that does not
 // exist. Both live inside resolveUndoBlocks, which is the one place they may live.
@@ -66,7 +65,7 @@ const { resolveCoinbaseMaturity } = require('./chain/coinbase_maturity.js')
 const { WIRE_FORMAT } = require('./coins')
 
 const { SYNCED_THRESHOLD, DEBUG_TRACE, logger, MAX_ADDRESS_OUTPUTS, MAX_BLOCK_FETCH_RETRIES, AUXPOW_REASSEMBLE_AFTER } = require('./XChainUtxoTracker/constants.js')
-const { satoshiToDecimalString, nodeStillCatchingUp, catchUpWaitState } = require('./XChainUtxoTracker/catch_up_helpers.js')
+const { satoshiToDecimalString, nodeStillCatchingUp, catchUpWaitState, deriveSyncedVerdict } = require('./XChainUtxoTracker/catch_up_helpers.js')
 
 class XChainUtxoTracker {
     static parseOutBuckets = { hash: 0, ins: 0, sb: 0 }
@@ -138,10 +137,6 @@ class XChainUtxoTracker {
         return !!(err && err.unrecoverableReorg === true)
     }
 
-    // A coinbase transaction is the block's generation tx: exactly one input
-    // whose prevout index is 0xFFFFFFFF (the same marker the input passes use to
-    // skip tracing it). Its outputs are unspendable until this chain's coinbase
-    // maturity depth (this.coinbaseMaturity), so they must be marked at insert time.
     // Pure freshness computation shared by the API's per-query freshness surface
     // and its regression test, so the lag/synced contract cannot drift.
     // lag is null when nothing is indexed yet or the node tip is unknown; callers
@@ -165,13 +160,10 @@ class XChainUtxoTracker {
         const tracker_height = (typeof committedHeight === 'number') ? committedHeight : -1
         const node_height    = (typeof nodeTip === 'number') ? nodeTip : -1
         const lag = (node_height >= 0 && tracker_height >= 0) ? (node_height - tracker_height) : null
-        // Floor BOTH verdicts, as get_sync_status (src/api/sync_status.js) does, on the faults
-        // the raw latch cannot see: a negative lag (outputs in blocks a reset node no longer
-        // recognizes), a stale node tip (lag against a frozen cache) and a halt (frozen store,
-        // stopped mempool poller). create_tx gates on THIS sibling. A null lag and lag over
-        // SYNCED_THRESHOLD stay with the latch and the consumer's lag budget, so those can differ.
-        const orphaned  = (lag !== null && lag < 0)
-        const isSynced  = (synced === true) && !orphaned && nodeHeightStale !== true && halted !== true
+        // Both surfaces apply the same bounded verdict; only their tip source differs.
+        // get_sync_status reads live while this path uses the loop's cached tip.
+        const isSynced = deriveSyncedVerdict({ lag, nodeHeightStale })
+            && synced === true && halted !== true
         const freshness = {
             tracker_height, node_height, lag,
             synced: isSynced,
@@ -186,6 +178,10 @@ class XChainUtxoTracker {
         return freshness
     }
 
+    // A coinbase transaction is the block's generation tx: exactly one input
+    // whose prevout index is 0xFFFFFFFF (the same marker the input passes use to
+    // skip tracing it). Its outputs are unspendable until this chain's coinbase
+    // maturity depth (this.coinbaseMaturity), so they must be marked at insert time.
     static isCoinbaseTransaction(transaction){
         return Array.isArray(transaction.ins) && transaction.ins.length === 1
             && transaction.ins[0] && transaction.ins[0].index === 4294967295
@@ -204,6 +200,8 @@ function initSyncState(network){
     // restart the mempool is briefly empty while synced already reads true.
     // Readiness must gate on both so callers never see a synced-but-empty mempool.
     this.mempoolReconverged = false
+    // Moves on every readiness withdrawal outside a pass (mempool_readiness.js).
+    this.mempoolReadinessGen = 0
 
     this.blockchainInfoLastBlock = -1
     this.latestKnownChainTip = null
@@ -243,6 +241,7 @@ function initSyncState(network){
     this.undoWindowWatermarkPersisted = null
 
     this.keepParsing = true
+    this.drainRequested = false
     this.pendingKMCleanup = []
 }
 
@@ -258,6 +257,7 @@ function initStatusCounters(){
     // detect chains that reorg frequently and know how deep the last one was.
     this.reorgCount = 0
     this.lastReorgDepth = 0
+    this.lastBlockPointerRepairCount = 0
     this.mempoolEpoch = Date.now()
 
     // Forward-progress heartbeat, stamped when a block batch is committed.
@@ -338,34 +338,13 @@ const transactionParsingMethods = require('./XChainUtxoTracker/transaction_parsi
 const reorgVerificationMethods = require('./XChainUtxoTracker/reorg_verification.js')
 const syncLoopMethods = require('./XChainUtxoTracker/sync_loop.js')
 const mempoolRefreshMethods = require('./XChainUtxoTracker/mempool_refresh.js')
-
-// A class split into part modules has to put the moved methods back on its
-// prototype. Object.assign would do that as ENUMERABLE own properties, while
-// a method written in the class body is non-enumerable, so the split would
-// change what for...in over an instance, Object.keys of the prototype and a
-// spread of it return. installMethods defines each moved method with the
-// flags class syntax gives (writable, configurable, not enumerable), so a
-// split prototype reads the same as the original class. blockchain_connector.js
-// and level_up_db.js carry byte-identical private copies of this function.
-function installMethods(target, ...sources) {
-    for (const source of sources) {
-        for (const key of Reflect.ownKeys(source)) {
-            if (!Object.prototype.propertyIsEnumerable.call(source, key)) continue
-            Object.defineProperty(target, key, {
-                value: source[key],
-                writable: true,
-                enumerable: false,
-                configurable: true,
-            })
-        }
-    }
-    return target
-}
+const nativeHistoryMethods = require('./native_history/tracker_methods.js')
+const { installMethods } = require('./common/install_methods.js')
 
 installMethods(XChainUtxoTracker.prototype, haltMarkerMethods, lastBlocksWindowMethods,
     fetchFailuresAndHaltMethods, statusAndStopMethods, addressQueryMethods,
     transactionParsingMethods, reorgVerificationMethods, syncLoopMethods,
-    mempoolRefreshMethods)
+    mempoolRefreshMethods, nativeHistoryMethods)
 
 // Attached to the class rather than exported one line at a time: one export
 // shape per file, and every call site already reaches these through the module
@@ -385,8 +364,7 @@ Object.assign(module.exports, {
     // only be right for one chain. Callers that need the depth read
     // tracker.coinbaseMaturity, or resolve it per network through this resolver.
     resolveCoinbaseMaturity,
-    // Exported so the descriptor test can exercise the installer's generic
-    // contract once; blockchain_connector.js and level_up_db.js carry their
-    // own private copies, checked indirectly through their own prototypes.
+    // Re-exported so the descriptor test can exercise the shared installer's
+    // generic contract once.
     installMethods,
 })

@@ -16,7 +16,7 @@
  *
  ********************************************************************/
 
-const { SATOSHI_BIGINT, MIN_VERIFICATION_PROGRESS_TO_PARSE } = require('./constants.js')
+const { SATOSHI_BIGINT, MIN_VERIFICATION_PROGRESS_TO_PARSE, SYNCED_THRESHOLD } = require('./constants.js')
 
 
 // Exact satoshi -> decimal-string conversion: takes SATOSHIS, returns COIN units
@@ -30,6 +30,40 @@ function satoshiToDecimalString(satoshis) {
     const whole = abs / SATOSHI_BIGINT
     const frac = abs % SATOSHI_BIGINT
     return (val < 0n ? '-' : '') + whole.toString() + '.' + frac.toString().padStart(8, '0')
+}
+
+
+function isValidHeight(value){
+    return Number.isSafeInteger(value) && value >= 0
+}
+
+
+// One fallback rule for every surface that reports the node tip.
+function resolveNodeTip(tracker){
+    if (!tracker) return -1
+    if (isValidHeight(tracker.latestKnownChainTip)) return tracker.latestKnownChainTip
+    if (isValidHeight(tracker.blockchainInfoLastBlock)) return tracker.blockchainInfoLastBlock
+    return -1
+}
+
+
+let NODE_RPC_STALE_MS = 150000
+
+function configureNodeRpcStaleMs(value){
+    NODE_RPC_STALE_MS = value
+}
+
+function isNodeRpcStale({ lastNodeRpcOkAt, now = Date.now(), windowMs = NODE_RPC_STALE_MS } = {}){
+    if (typeof lastNodeRpcOkAt !== 'number' || !Number.isFinite(lastNodeRpcOkAt)) return false
+    return (now - lastNodeRpcOkAt) > windowMs
+}
+
+
+// One bounded sync verdict for both the live status probe and per-response metadata.
+function deriveSyncedVerdict({ lag, nodeHeightStale = false, threshold = SYNCED_THRESHOLD } = {}){
+    if (nodeHeightStale) return false
+    if (typeof lag !== 'number' || !Number.isFinite(lag)) return false
+    return lag >= 0 && lag <= threshold
 }
 
 
@@ -51,7 +85,7 @@ function satoshiToDecimalString(satoshis) {
 // The `< MIN` comparison keeps its original form so an ABSENT field (an older
 // node, a trimmed proxy) still reads usable instead of inverting to a refusal.
 function nodeTipIsParseable(info, consensusNetwork){
-    if (!info) return false
+    if (!info || !isValidHeight(info["blocks"])) return false
     if (consensusNetwork === 'regtest') return true
     return !(info["verificationprogress"] < MIN_VERIFICATION_PROGRESS_TO_PARSE)
 }
@@ -82,4 +116,15 @@ function catchUpWaitState(previous, nodeHeight, storedHeight){
     }
 }
 
-module.exports = { satoshiToDecimalString, nodeTipIsParseable, nodeStillCatchingUp, catchUpWaitState }
+module.exports = {
+    satoshiToDecimalString,
+    isValidHeight,
+    resolveNodeTip,
+    configureNodeRpcStaleMs,
+    isNodeRpcStale,
+    deriveSyncedVerdict,
+    NODE_RPC_STALE_MS,
+    nodeTipIsParseable,
+    nodeStillCatchingUp,
+    catchUpWaitState
+}

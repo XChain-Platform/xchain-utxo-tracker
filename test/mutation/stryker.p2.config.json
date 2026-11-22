@@ -1,14 +1,9 @@
 {
   "$schema": "node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "testRunner": "mocha",
-  "plugins": [
-    "@stryker-mutator/mocha-runner"
-  ],
-  "mochaOptions": {
-    "spec": [
-      "test/unit/**/*.test.js"
-    ],
-    "config": "test/mutation/.mocharc.stryker.yml"
+  "testRunner": "command",
+  "plugins": [],
+  "commandRunner": {
+    "command": "node node_modules/mocha/bin/mocha.js --config test/mutation/.mocharc.stryker.yml --reporter dot 'test/unit/**/*.test.js'"
   },
   "mutate": [
     "src/api.js",
@@ -32,7 +27,7 @@
   "concurrency": 4,
   "timeoutMS": 30000,
   "timeoutFactor": 1.5,
-  "coverageAnalysis": "perTest",
+  "coverageAnalysis": "off",
   "thresholds": {
     "high": 90,
     "low": 80,

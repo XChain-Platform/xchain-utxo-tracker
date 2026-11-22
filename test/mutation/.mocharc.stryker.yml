@@ -2,3 +2,25 @@
 # Overrides --timeout 0 from npm scripts with a finite timeout so Stryker
 # can detect infinite-loop mutants.
 timeout: 30000
+require:
+  - test/helpers/setup.js
+
+# Stryker sandboxes are not Git worktrees, and source-contract tests cannot
+# inspect instrumented text. The normal CI suites still run every test below.
+ignore:
+  - test/unit/bin_tools/pin_identity.test.js
+  - test/unit/bootstrap_signing_key_parity.test.js
+  - test/unit/bulk_sync_env_validation.test.js
+  - test/unit/bulk_sync_stop_drain.test.js
+  - test/unit/consensus_pin_boot.test.js
+  - test/unit/crash_handlers.test.js
+  - test/unit/env_example_default_drift.test.js
+  - test/unit/exit_flush/exit_flush.test.js
+  - test/unit/halt_marker/halt_marker_wiring.test.js
+  - test/unit/no_key_boot_warning.test.js
+  - test/unit/node_catch_up_wait.test.js
+  - test/unit/node_catching_up_status.test.js
+  - test/unit/reorg_detection_warn_level.test.js
+  - test/unit/sync_loop/undo_watermark_discard_sites.test.js
+  - test/unit/txindex_probe.test.js
+  - test/unit/unrecoverable_reorg_halt.test.js

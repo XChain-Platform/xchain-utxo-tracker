@@ -52,6 +52,7 @@ function wire(tracker, top) {
     removeOutputScriptsInBlock: async () => {},
     processDeletedOutputs: async () => {},
     removeCreatedOutputsInBlock: async () => {},
+    removeHistoryInBlock: async () => {},
     deleteBlock: async (hash) => { const h = heightOf(hash); deleted.push(h); top = h - 1; },
     setLastBlockHash: async () => {},
     setLastBlockHeight: async () => {}

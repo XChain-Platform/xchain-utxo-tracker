@@ -45,7 +45,7 @@ function makeTx(tag, coinbase) {
     } else {
         tx.addInput(sha256('prev' + tag), tag % 3, 0xFFFFFFFF);
     }
-    tx.addOutput(Buffer.from([0x6a, 0x01, tag & 0xff]), 1234);
+    tx.addOutput(Buffer.from([0x6a, 0x01, tag & 0xff]), 1234n);
     return tx;
 }
 

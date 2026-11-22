@@ -206,6 +206,26 @@ function registerGetFirstSeenTests() {
 
 function registerSyncStatusTests() {
   describe('get_sync_status', function () {
+    it('publishes the committed tip hash when the store supplies one', async function () {
+      const hash = 'a'.repeat(64);
+      mockTracker.db.getLastBlockHash = sinon.stub().resolves(hash);
+      const status = await get_sync_status(mockTracker);
+      expect(status.committed_hash).to.equal(hash);
+    });
+
+    it('omits the committed tip hash on an empty store', async function () {
+      mockTracker.db.getLastBlockHash = sinon.stub().resolves(null);
+      const status = await get_sync_status(mockTracker);
+      expect(status).not.to.have.property('committed_hash');
+    });
+
+    it('keeps the status probe available when the tip hash read fails', async function () {
+      mockTracker.db.getLastBlockHash = sinon.stub().rejects(new Error('hash unavailable'));
+      const status = await get_sync_status(mockTracker);
+      expect(status).not.to.have.property('committed_hash');
+      expect(status.committed_height).to.equal(100);
+    });
+
     it('reports a halted tracker at lag 2 as not synced', async function () {
       mockTracker.db.getLastBlockHeight.resolves(100);
       mockTracker.connector = {

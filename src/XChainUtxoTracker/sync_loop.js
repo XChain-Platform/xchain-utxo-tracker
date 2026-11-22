@@ -20,6 +20,7 @@ const LevelUpStore = require('../store/level_up_db.js')
 const { BLOCKCHAIN_INFO_REFRESH_MS, P_PENDING_CLEANUP_KEY, logger } = require('./constants.js')
 const { refreshNodeTip, pollAtTipOrIndex } = require('./sync_loop_node_tip.js')
 const { warnIfTxIndexMissing } = require('../chain/txindex_check.js')
+const { revokeMempoolReadiness } = require('./mempool_readiness.js')
 
 module.exports = {
     async start(){
@@ -36,6 +37,7 @@ module.exports = {
         // time and height on /status, and never re-enters the loop: the window it
         // would roll back through is the drained one the marker was written over.
         if (await this.resumeHaltFromMarker()) return
+        await this.initNativeHistory()
 
         // Only an AuxPoW chain can reach getBlockReassembled (shouldReassembleBlock), so
         // unlike the decoder's unconditional probe this one skips Bitcoin and Litecoin,
@@ -48,7 +50,8 @@ module.exports = {
         recoverPendingCleanup.call(this, cursor.pendingCleanup)
         const sync = newSyncLoopState.call(this, cursor)
 
-        this.keepParsing = true
+        // A shutdown requested during the awaited boot steps must remain sticky.
+        this.keepParsing = !this.drainRequested
         this.parsingStopped = false
         // A relaunched loop is running again, so the previous abort no longer
         // describes it; leaving this set would let stopParsing close a live store.
@@ -56,25 +59,14 @@ module.exports = {
 
         while (true){
             if (this.keepParsing){
+                await claimIdleHistory.call(this, sync)
                 // A pass whose last node or store call leaves bookkeeping behind
                 // hands it back as `finish`, which runs here before the loop goes
                 // round, so no await separates the two.
                 const finish = await pollSyncLoop.call(this, sync)
                 if (finish) finish()
             } else {
-                logger.info("Stopping the parsing...")
-                if (this.mempoolInterval) {
-                    clearInterval(this.mempoolInterval)
-                    this.mempoolInterval = null
-                }
-                // Drop the readiness latches with the store: a closed (or soon wiped
-                // and restored) store is neither synced nor mempool ready, and a
-                // stopped loop waits on no catching-up node.
-                this.synced = false
-                this.mempoolReconverged = false
-                this.nodeCatchingUp = null
-                await this.db.close()
-                this.parsingStopped = true
+                await stopSyncLoop.call(this)
                 break
             }
         }
@@ -87,6 +79,31 @@ module.exports = {
 // store call or a sleep: an async step returns only right after such an await,
 // a step whose work runs on synchronously hands the pass to the next step by
 // returning that step's call, and the synchronous stretches are plain functions.
+
+async function stopSyncLoop(){
+    logger.info("Stopping the parsing...")
+    if (this.mempoolInterval) {
+        clearInterval(this.mempoolInterval)
+        this.mempoolInterval = null
+    }
+    // Drop the readiness latches with the store: a closed (or soon wiped
+    // and restored) store is neither synced nor mempool ready, and a
+    // stopped loop waits on no catching-up node.
+    this.synced = false
+    revokeMempoolReadiness.call(this)
+    this.nodeCatchingUp = null
+    await this.stopNativeHistory()
+    await this.db.close()
+    this.parsingStopped = true
+}
+
+// With no batch open, an address that joined the history watch list is live from
+// the next block this loop stages, so its liveFrom is claimed here between passes.
+async function claimIdleHistory(sync){
+    if (sync.blocksQuantity === 0 && this.historyWatch.unclaimedCount > 0) {
+        await this.claimHistoryLiveFrom(sync.lastProcessedBlockIndex + 1, { staged: false })
+    }
+}
 
 // Loads the committed cursor and the in-memory windows the loop starts from:
 // the tip height and hash, the last-blocks window and the undo watermark, and
@@ -130,23 +147,19 @@ function recoverPendingCleanup(pVal){
 // The loop's working state: the in-memory cursor, the open batch's counters and
 // timings, the prefetch queue, and the latches and streaks that keep a fault to
 // one log line per transition. Also seeds the node-RPC stamps /status reads.
-function newSyncLoopState({ lastProcessedBlockIndex, lastProcessedBlockHash }){
-    const sync = { lastProcessedBlockIndex, lastProcessedBlockHash, lastBlockchainInfo: null, lastBlockchainInfoRefreshAt: 0 }
-    // Instance-visible twin of lastBlockchainInfoRefreshAt, read by GET /status.
-    // The sync loop retries a failing getBlockchainInfo forever, so a coin node
-    // that is down or unsynced stalls block tracking while LevelDB stays perfectly
-    // readable and the DB-only probe kept reporting 'ok'. Seeded here
-    // rather than in the constructor so the window starts when tracking starts.
+function initializeSyncLoopReadiness(){
+    // Seed the status window when tracking starts instead of at construction.
     this.lastNodeRpcOkAt = Date.now()
     this.blockchainInfoLastBlock = -1
-    // The previous run's tip, which every tip consumer reads first, goes with it.
     this.latestKnownChainTip = null
-    // A relaunched loop re-earns readiness against the store it just opened:
-    // only pollAtChainTip and the mempool poller may raise these again. The
-    // published catch-up wait goes with the run, like its nodeCatchingUpProblem twin.
     this.synced = false
-    this.mempoolReconverged = false
+    revokeMempoolReadiness.call(this)
     this.nodeCatchingUp = null
+}
+
+function newSyncLoopState({ lastProcessedBlockIndex, lastProcessedBlockHash }){
+    const sync = { lastProcessedBlockIndex, lastProcessedBlockHash, lastBlockchainInfo: null, lastBlockchainInfoRefreshAt: 0 }
+    initializeSyncLoopReadiness.call(this)
     return Object.assign(sync, {
         blocksQuantity: 0,
         // Transactions confirmed in this batch that need their mempool records
@@ -163,6 +176,11 @@ function newSyncLoopState({ lastProcessedBlockIndex, lastProcessedBlockHash }){
         // Prefetch queue: each entry is { height, promise } where promise resolves to { hash, hex }
         prefetchQueue: [],
         nodeSyncedProblem: false,
+        // A usable height response does not prove that the committed tip is
+        // still canonical. Bound how long hash-check failures may preserve
+        // readiness, while tolerating a brief RPC fault.
+        tipHashFailingSince: null,
+        tipHashStaleProblem: false,
         // Node-tip-below-ours latches, one line per transition each: the node is
         // still in initial block download (wait, never reconcile), or the gap is
         // too deep to walk back and verifyReorg refused before deleting (wait,

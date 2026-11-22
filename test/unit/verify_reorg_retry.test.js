@@ -35,7 +35,7 @@ function createRetryState(failuresPerBlock) {
     endTransaction: async () => {},
     removeOutputScriptsInBlock: async () => {},
     processDeletedOutputs: async () => {},
-    removeCreatedOutputsInBlock: async () => {},
+    removeCreatedOutputsInBlock: async () => {}, removeHistoryInBlock: async () => {},
     deleteBlock: async (hash) => {
       const h = heightOf(hash);
       if (failsLeft[h] > 0) { failsLeft[h]--; throw new Error('transient DB error'); }
@@ -179,7 +179,7 @@ describe('XChainUtxoTracker.verifyReorg node-tip-below-committed', function () {
       endTransaction: async () => {},
       removeOutputScriptsInBlock: async () => {},
       processDeletedOutputs: async () => {},
-      removeCreatedOutputsInBlock: async () => {},
+      removeCreatedOutputsInBlock: async () => {}, removeHistoryInBlock: async () => {},
       deleteBlock: async (hash) => { const h = heightOf(hash); deleted.push(h); top = h - 1; },
       setLastBlockHash: async () => {},
       setLastBlockHeight: async () => {}
@@ -229,7 +229,7 @@ function buildTipDropTracker({ top = 105, nodeTip = 100, info, undoBlocks = 1000
     endTransaction: async () => {},
     removeOutputScriptsInBlock: async () => {},
     processDeletedOutputs: async () => {},
-    removeCreatedOutputsInBlock: async () => {},
+    removeCreatedOutputsInBlock: async () => {}, removeHistoryInBlock: async () => {},
     deleteBlock: async (hash) => { const h = heightOf(hash); state.deleted.push(h); state.top = h - 1; },
     setLastBlockHash: async () => {},
     setLastBlockHeight: async () => {}

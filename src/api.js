@@ -20,19 +20,21 @@
 
 // Load required libraries
 const dotenv = require('dotenv')
-dotenv.config()
+dotenv.config({ quiet: true })
 const cfg = require('./config');
 
 // Before anything else logs. The UTXO_TRACKER_API_KEY notice immediately below
 // is exactly the line an operator needs levelled and timestamped, and
 // installObservability does not run until ~390 lines further down.
 const { patchConsole } = require('./observability');
-patchConsole({
+const { registerLogFlush, shipperFlusher, exitAfterFlush } = require('./server/exit_flush.js');
+const logPatch = patchConsole({
     service: 'xchain-utxo-tracker',
     version: require('../package.json').version,
     coin:    cfg.COIN || '',
     network: cfg.NETWORK || ''
 });
+registerLogFlush(shipperFlusher(logPatch.logger));
 
 const { spawn } = require('child_process');
 const LevelUpStore = require('./store/level_up_db.js')
@@ -126,7 +128,7 @@ const MAX_PAGE_LIMIT = cfg.MAX_PAGE_LIMIT
 
 // Validate-or-fall-back resolver for the bulk-sync numeric env knobs. The reader
 // itself now lives in src/config/env_int.js and is the SAME function resolveUndoBlocks
-// (undo-blocks.js) and resolveCoinbaseMaturity call, so the parity is true by
+// (src/chain/undo_blocks.js) and resolveCoinbaseMaturity call, so the parity is true by
 // construction rather than by hand-copy; before that extraction those two sites
 // were still on parseInt while this comment asserted otherwise.
 // Number() rather than parseInt() because parseInt happily truncates '10abc' to 10
@@ -191,7 +193,7 @@ function launchTracker(tracker){
             return
         }
         noteCrash('pollingLoopTerminated', err)
-        process.exit(1)
+        await exitAfterFlush(1)
     })
 }
 
@@ -199,7 +201,6 @@ function launchTracker(tracker){
 // unmatched request by its first path segment, so caller-invented paths mint one
 // series each and fill the per-metric cap, dropping real routes from the scrape.
 const UNMATCHED_ROUTE_LABEL = '/*unmatched';
-
 // Mounts FIRST, ahead of every layer that can shed a request, so a shed request
 // is labelled too; a specific route later in the stack overwrites the label, and
 // bare `/` matches no wildcard segment and keeps its own single series.
@@ -207,8 +208,6 @@ function installUnmatchedRouteLabel(app){
     app.all(UNMATCHED_ROUTE_LABEL, (req, res, next) => next());
     return app;
 }
-
-
 async function isDbEmpty() {
     const store = new LevelUpStore(DB_NAME)
     try {
@@ -342,8 +341,12 @@ if (require.main === module) {
     // Ahead of the bulk-sync boot, so a throw anywhere in it is a CRASH record
     // rather than node's bare stderr dump.
     installCrashHandlers()
-    const bulkBoot = createBulkBoot({ dbPath: DB_PATH })
-    const bootShutdown = createShutdown({ drain: () => bulkBoot.stop() })
+    const bulkBoot = createBulkBoot({ dbPath: DB_PATH, workDir: BULK_SYNC_WORK_DIR })
+    const bootShutdown = createShutdown({
+        drain: () => bulkBoot.stop(),
+        exit: (code, remainingMs, shouldExit) => exitAfterFlush(code, { timeoutMs: remainingMs, shouldExit }),
+        forceExit: (code) => process.exit(code)
+    })
     const removeBootSignals = registerShutdownSignals(bootShutdown)
     runBulkSyncIfEmpty(bulkBoot)
         .then(() => {
@@ -368,10 +371,9 @@ if (require.main === module) {
             if (bulkBoot.stopping) return
             if (err && err.crashKind === 'oomKilled') noteCrash('oomKilled', err)
             else noteCrash('bootFailed', err)
-            process.exit(1)
+            return exitAfterFlush(1)
         })
 }
-
 module.exports = {
     deriveHealthStatus,
     isNodeRpcStale,

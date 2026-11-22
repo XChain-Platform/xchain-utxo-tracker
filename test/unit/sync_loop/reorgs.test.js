@@ -52,3 +52,55 @@ describe('XChainUtxoTracker sync loop: reorgs', function () {
         expect(h.tracker.reorgCount).to.equal(0);
     });
 });
+
+describe('XChainUtxoTracker sync loop: reorgs and the synced latch', function () {
+    const h = useSyncLoopHarness();
+
+    it('keeps a lowered latch down while re-checking the committed tip hash fails', async function () {
+        const node = makeNode(buildChain(13));
+        const seen = await h.run(node, (n, s) => {
+            if (n === 1) {
+                h.tracker.synced = false;
+                node.faults.hash = [new Error('tip hash unavailable')];
+            }
+            if (n === 2) s.afterFailure = h.tracker.isSynced();
+            if (n === 3) s.afterCompare = h.tracker.isSynced();
+            return n >= 3 ? 'stop' : null;
+        });
+        expect(seen.afterFailure, 'the latch rose with no hash compare').to.equal(false);
+        expect(seen.afterCompare, 'the next compare raises it').to.equal(true);
+    });
+
+    it('keeps a raised latch up while re-checking the committed tip hash fails', async function () {
+        const node = makeNode(buildChain(13));
+        const seen = await h.run(node, (n, s) => {
+            if (n === 1) node.faults.hash = [new Error('tip hash unavailable')];
+            if (n === 2) s.afterFailure = h.tracker.isSynced();
+            return n >= 2 ? 'stop' : null;
+        });
+        expect(seen.afterFailure).to.equal(true);
+    });
+
+    it('withdraws readiness when committed tip hash checks stay unavailable', async function () {
+        const node = makeNode(buildChain(13));
+        const seen = await h.run(node, (n, s) => {
+            if (n === 1) {
+                h.tracker.mempoolReconverged = true;
+                node.faults.hash = new Array(170).fill(new Error('tip hash unavailable'));
+            }
+            if (n === 2) {
+                s.briefFailureSynced = h.tracker.isSynced();
+                s.briefFailureMempoolReady = h.tracker.isMempoolReconverged();
+            }
+            if (n === 154) {
+                s.longFailureSynced = h.tracker.isSynced();
+                s.longFailureMempoolReady = h.tracker.isMempoolReconverged();
+            }
+            return n >= 154 ? 'stop' : null;
+        });
+        expect(seen.briefFailureSynced).to.equal(true);
+        expect(seen.briefFailureMempoolReady).to.equal(true);
+        expect(seen.longFailureSynced).to.equal(false);
+        expect(seen.longFailureMempoolReady).to.equal(false);
+    });
+});

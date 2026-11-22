@@ -21,6 +21,7 @@ const { DB_TRANSACTION_BLOCKS_QUANTITY, HEAP_FLUSH_THRESHOLD_MB, P_PENDING_CLEAN
 const { fillPrefetchQueue, fetchNextBlock } = require('./sync_loop_block_fetch.js')
 const { withStoreCommit } = require('./store_commit_lock.js')
 const { logBatchTiming, recordSyncProgress, logSyncEta } = require('./sync_loop_progress.js')
+const { revokeMempoolReadiness } = require('./mempool_readiness.js')
 
 // Sync loop steps, called with the tracker as `this`; sync_loop.js says how.
 
@@ -33,7 +34,7 @@ async function indexNextBlock(sync){
         // Falling out of sync invalidates mempool readiness: the
         // mempool poller is torn down here and must reconverge once
         // before readiness is asserted again.
-        this.mempoolReconverged = false
+        revokeMempoolReadiness.call(this)
         if (this.mempoolInterval != null){
             logger.info("Mempool updates stopped!")
             clearInterval(this.mempoolInterval)
@@ -93,8 +94,9 @@ async function rollBackOnPrevHashMismatch(sync){
     }
     // Reload in ascending height order (tip last); the raw
     // getLastStoredBlocks() order is lexicographic by hash,
-    // which makes verifyReorg's removeFromLastBlocks throw.
-    this.lastBlocks = await this.loadLastBlocksSortedByHeight()
+    // which makes verifyReorg's removeFromLastBlocks throw. The undo watermark
+    // staged with the batch went with it, so it reloads alongside the window.
+    await this.reloadUndoWindow()
     // console.warn: the prev-hash-mismatch path is the ordinary reorg
     // trigger, so leaving it at info is what makes a routine reorg
     // invisible to a warn+ filter.
@@ -128,6 +130,10 @@ async function stageBlock(sync, block, nextBlockHash, nextBlockHeight, previousB
     //Insert the processed block
     await this.db.insertBlock({hash:nextBlockHash, height:nextBlockHeight, timestamp:block.timestamp, previousHash:previousBlockHash})
     sync.blocksCount = sync.blocksCount + 1
+
+    // The history watch snapshot for this whole block: addresses that joined since
+    // the last block are live from this one.
+    if (this.historyWatch) this.db.historyScripts = await this.claimHistoryLiveFrom(nextBlockHeight, { staged: true })
 
     //Parse the transactions (two-pass approach to allow full parallelism):
     //  Pass 1: insert all outputs for every tx concurrently
@@ -181,12 +187,14 @@ async function parseBlockTransactions(sync, transactions, nextBlockHash, nextBlo
     const _tParseIn = Date.now()
     const removeInputs = []
     for (const tx of transactions) {
+        // The spender's txid, so each spend lands in its address's native history.
+        const txHash = tx.ins.length > 0 ? tx.getId() : null
         for (const nextInput of tx.ins) {
             const standardInput = ("standard_input" in nextInput ? nextInput["standard_input"] : true)
             // A coinbase input spends nothing, so there is no previous output to remove.
             if ((nextInput.index === 4294967295) || !standardInput) continue
             const prevTxHash = util.uint8ArrayToHex(Buffer.from(nextInput.hash).reverse())
-            removeInputs.push({ prevTxHash, prevOutputIndex: nextInput.index, blockHash: nextBlockHash })
+            removeInputs.push({ prevTxHash, prevOutputIndex: nextInput.index, blockHash: nextBlockHash, txHash })
         }
     }
     let blockInputTotal = removeInputs.length
@@ -329,13 +337,14 @@ function resetBatchAfterReorg(sync){
 // get_utxos offers a prevout the node already spends, under mempool_ready true.
 // Drop readiness and run a pass now. Before the poller has started, its
 // first-start pass covers it; a pass already in flight predates the reorg, so
-// wait it out and run a fresh one.
+// wait it out and run a fresh one. The withdrawal also outdates that pass, so it
+// cannot assert readiness when it ends, even once this wait has given up; the
+// next interval pass then restores readiness.
 function resyncMempoolAfterReorg(){
+    revokeMempoolReadiness.call(this)
     if (this.mempoolInterval == null || typeof this.updateMempool !== "function") return
-    this.mempoolReconverged = false
     const pass = async () => {
         for (let i = 0; this.mempoolBusy && i < 600; i++) await new Promise(r => setTimeout(r, 100))
-        this.mempoolReconverged = false
         await this.updateMempool()
     }
     pass().catch(err => logger.error("Post-reorg mempool resync failed: " + err.message))

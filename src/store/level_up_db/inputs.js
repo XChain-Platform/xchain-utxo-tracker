@@ -13,8 +13,17 @@
  **********************************************************************/
 
 const { EMPTY, P_INPUT, P_IN_HINT } = require('./constants')
-const { kInput, kOutHint, kInHint, h2b, pb, rangeEnd } = require('./key_codec')
+const { kInput, kOutHint, kInHint, h2b, pb, rangeEnd, toMapKey } = require('./key_codec')
 const { encodeInputVal } = require('./value_codec')
+
+async function currentInputSpender(store, key){
+    const mapKey = toMapKey(key)
+    if(store.transactionArray && store.transactionArray.has(mapKey)){
+        const staged = store.transactionArray.get(mapKey)
+        return staged && staged.type === 'put' ? staged.value : null
+    }
+    return await store.db.get(key)
+}
 
 module.exports = {
     // Input (I prefix)
@@ -67,14 +76,15 @@ module.exports = {
 
         for await (const [key] of this.db.iterator(options)) {
             // J key layout: [J(1)][txid(32)][prevTxid(32)][outputIndex(4)]
+            const spenderBuf  = key.slice(1, 33)
             const prevTxidBuf = key.slice(33, 65)
             const idxBytes    = key.slice(65, 69)
+            const inputKey    = Buffer.concat([pb(P_INPUT), prevTxidBuf, idxBytes])
+            const current     = await currentInputSpender(this, inputKey)
 
-            await this.addTransaction(
-                "del",
-                Buffer.concat([pb(P_INPUT), prevTxidBuf, idxBytes]),
-                null
-            )
+            // A surviving replacement may own the shared outpoint marker.
+            if(current != null && Buffer.from(current).equals(spenderBuf))
+                await this.addTransaction("del", inputKey, null)
             await this.addTransaction("del", key, null)
             inputsCount++
         }

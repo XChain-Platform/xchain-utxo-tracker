@@ -35,9 +35,21 @@ class AddressTooLargeError extends Error {
 }
 
 // Thrown when a pagination cursor is malformed (the API layer maps to HTTP 400).
+// The cursor is caller input, so the echo is capped to keep error bodies small.
+const MAX_CURSOR_ECHO = 128
+
+function echoCursor(cursor) {
+    let text = JSON.stringify(cursor)
+    if (typeof text !== 'string') text = String(cursor)
+    if (text.length > MAX_CURSOR_ECHO) {
+        text = `${text.slice(0, MAX_CURSOR_ECHO)}...(${text.length} chars)`
+    }
+    return text
+}
+
 class InvalidCursorError extends Error {
     constructor(cursor) {
-        super(`invalid pagination cursor ${JSON.stringify(cursor)} (expected "<txid>:<vout>")`)
+        super(`invalid pagination cursor ${echoCursor(cursor)} (expected "<txid>:<vout>")`)
         this.name = 'InvalidCursorError'
         this.code = 'INVALID_CURSOR'
         // Mirror .code into .data for the same reason as AddressTooLargeError above.

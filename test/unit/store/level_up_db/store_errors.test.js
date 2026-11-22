@@ -45,4 +45,27 @@ describe('store_errors', function () {
         expect(error.data).to.deep.equal({ code: 'INVALID_CURSOR' });
     });
 
+    it('bounds the echoed cursor so an oversized cursor gives a small error', function () {
+        const error = new InvalidCursorError('z'.repeat(90000));
+
+        expect(error.message.length).to.be.below(1024);
+        expect(error.code).to.equal('INVALID_CURSOR');
+        expect(error.data).to.deep.equal({ code: 'INVALID_CURSOR' });
+        expect(JSON.stringify(error.message).length).to.be.below(1024);
+    });
+
+    it('bounds a non-string cursor echo too', function () {
+        const error = new InvalidCursorError({ a: 'q'.repeat(50000) });
+
+        expect(error.message.length).to.be.below(1024);
+    });
+
+    it('keeps a short cursor verbatim in the message', function () {
+        const error = new InvalidCursorError('abc');
+
+        expect(error.message).to.equal(
+            'invalid pagination cursor "abc" (expected "<txid>:<vout>")'
+        );
+    });
+
 });

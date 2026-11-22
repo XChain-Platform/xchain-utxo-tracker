@@ -79,6 +79,64 @@ describe('LAST_BLOCK_* pointer repair reaches disk', function () {
     });
 });
 
+describe('LAST_BLOCK_* pointer repair counter', function () {
+
+    it('does not count a repair whose durable commit fails', async function () {
+        const { tracker, db } = scanRepairTracker();
+        db.endTransaction = async () => { throw new Error('commit failed'); };
+
+        let failure;
+        try {
+            await tracker.verifyReorg();
+        } catch (error) {
+            failure = error;
+        }
+        expect(failure).to.be.an('error').with.property('message', 'commit failed');
+        expect(tracker.lastBlockPointerRepairCount).to.equal(0);
+    });
+
+    it('counts one committed scan repair of a pointer naming a missing block', async function () {
+        const { tracker } = scanRepairTracker();
+        expect(await tracker.verifyReorg()).to.equal(true);
+        expect(tracker.lastBlockPointerRepairCount).to.equal(1);
+    });
+
+    it('tells a pointer already on the committed tip from one that must move', async function () {
+        const db = await bootStore();
+        const tracker = Object.create(XChainUtxoTracker.prototype);
+        tracker.db = db;
+        expect(await tracker.lastBlockPointerNames(HASH, HEIGHT)).to.equal(false);
+        await tracker.commitLastBlockPointerRepair(HASH, HEIGHT);
+        expect(await tracker.lastBlockPointerNames(HASH, HEIGHT)).to.equal(true);
+        expect(await tracker.lastBlockPointerNames(HASH, HEIGHT - 1)).to.equal(false);
+        expect(await tracker.lastBlockPointerNames('c'.repeat(64), HEIGHT)).to.equal(false);
+        await db.close();
+    });
+});
+
+// A tracker whose stored pointer names a block missing from the index, so
+// verifyReorg takes the scan repair once and then finds the node agreeing.
+function scanRepairTracker() {
+    const tracker = new XChainUtxoTracker(
+        'bitcoin-regtest', '127.0.0.1', '18443', 'user', 'pass', 'test-db', false);
+    tracker.undoBlocks = 1000;
+    tracker.sleep = async () => {};
+    const pointer = { hash: 'a'.repeat(64), height: HEIGHT };
+    const db = {
+        getLastBlockHeight: async () => pointer.height,
+        getLastBlockHash: async () => pointer.hash,
+        getBlock: async (hash) => (hash === HASH ? { h: HEIGHT } : null),
+        getLastBlock: async () => ({ hash: HASH, height: HEIGHT }),
+        beginTransaction: async () => {},
+        setLastBlockHash: async (hash) => { db.staged = hash; },
+        setLastBlockHeight: async () => {},
+        endTransaction: async () => { pointer.hash = db.staged; },
+    };
+    tracker.db = db;
+    tracker.connector = { getBlockHash: async () => HASH };
+    return { tracker, db };
+}
+
 describe('LAST_BLOCK_* pointer repair reaches disk', function () {
 
     it('leaves no batch open for the caller to strand', async function () {

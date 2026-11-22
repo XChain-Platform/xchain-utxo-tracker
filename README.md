@@ -4,8 +4,8 @@
 # XChain Platform UTXO Tracker
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.27.0-blue" alt="Version">
-  <img src="https://img.shields.io/badge/tests-2%2C035%2B%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/version-0.28.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/tests-2%2C285%2B%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/node-%3E%3D22-green" alt="Node">
   <img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue" alt="License">
 </p>
@@ -22,6 +22,7 @@ UTXO indexing service for the XChain Platform. Continuously polls the coin nodes
 - **Compact binary encoding**: 11 LevelDB key prefix types stored as raw binary Buffers, reducing DB size ~50% vs hex strings
 - **Full txid keys**: every index key that names a transaction carries the whole 32-byte txid (store layout 2), so two transactions that share leading txid bytes never touch each other's records
 - **Active-UTXO-only storage**: only unspent outputs in the live index; spent outputs archived temporarily for reorg recovery
+- **Native coin history for watched addresses**: `POST /history` answers confirmed history for up to 20 addresses in one request, newest first and paged by one cursor; an address is watched from its first request and its past is rebuilt from the coin node in the background
 - **Real-time mempool tracking**: unconfirmed transactions in a separate in-memory LevelDB, updated every 60 seconds
 - **BigInt precision**: JSON-RPC `get_info` returns full-precision balance strings via `satoshiToDecimalString()`; the REST `/balance` endpoint returns a float (use `get_info` when precision matters)
 - **Reorg handling**: per-chain, per-network undo history (mainnet BTC: 12, LTC: 120, DOGE: 120 blocks; LTC testnet: 5000; other testnets: 120; regtest as mainnet) with K/M archive records and automatic rollback on chain reorganization; depth overridable via `XCHAIN_UNDO_BLOCKS_<COIN>`
@@ -99,9 +100,75 @@ npm run api
 >   `<64-hex txid>:<vout>`; a cursor issued before the upgrade is rejected with
 >   `INVALID_CURSOR`, so a client restarts that walk from the first page.
 
+Native history (`POST /history`) needs no migration: an upgraded or bulk-seeded store
+starts with an empty watch list and builds each address's history on its first request.
+
 Bulk sync writes the same full-txid `T`, `X`, and `Y` transaction indexes as
 live indexing when the transaction index is enabled, so `get_tx_block` has the
 same lookup behavior for bulk-seeded and incrementally indexed history.
+
+## Native history: `POST /history`
+
+Request body (JSON). Only `addresses` is required:
+
+| field | meaning |
+|---|---|
+| `addresses` | 1 to 20 address strings, counted before duplicates collapse |
+| `from_height`, `to_height` | inclusive block-height bounds |
+| `from_time`, `to_time` | inclusive block-time bounds (Unix seconds), applied as filters |
+| `limit` | rows per address per page, default 100, at most 1000 |
+| `cursor` | the `cursor` of the previous page |
+
+The tracker keeps history only for addresses callers ask about. The first request
+for an address adds it to a persistent watch list: from then on live indexing writes
+its rows, and a background job rebuilds its past by scanning the tracker's own block
+source from the address's first-seen height (Bitcoin Core keeps no address index).
+The answer never waits for that job; it carries what is known so far.
+
+Response: `transactions` is newest block first, then txid order within a block.
+Each entry is `{ txid, height, time, net, addresses: { <address>: { received, sent, net } } }`.
+Amounts are base-unit decimal strings, and `net` can be negative. The entry's own
+`net` is the sum over the distinct scripts the request named. `cursor` is `null`
+on the last page. A page ends where every address has been read, so a transaction
+never appears without one of its addresses' shares. `sync` carries the same
+freshness fields as `get_utxos`, and the `X-Tracker-Height`,
+`X-Tracker-Tip-Hash` and `X-Reorg-Count` headers come with it. A pager restarts
+from the first page when `sync.reorg_count` moves. Time bounds are filters, so one
+address's scan stops after 2,500 rows, and a page can hold no transactions while its
+`cursor` is still set. Keep paging until `cursor` is `null`.
+
+`addresses` maps each requested address to its state:
+
+| `history_status` | meaning |
+|---|---|
+| `complete` | every row from `history_from_height` (its first-seen height) is present |
+| `backfilling` | rows from `history_from_height` (where live indexing took it over) are present; older rows are still being rebuilt |
+| `not_watched` | refused a watch slot; `history_refused` says why |
+| `unavailable` | the address holds too many open outputs to rebuild this way |
+
+`backfilling` turns `complete` once the job reaches the block where live indexing
+took the address over. An address the tracker has never seen is complete as soon
+as the sync loop next passes between blocks.
+
+Watching is bounded so the route cannot make the tracker scan for arbitrary
+addresses for free. Each source IP (`req.ip`, the per-IP limiter's key) may add
+`UTXO_TRACKER_HISTORY_NEW_PER_IP` new addresses an hour (default 200). The list
+holds at most `UTXO_TRACKER_HISTORY_WATCH_MAX` addresses (default 100000). An
+address refused because the list is full (`WATCH_LIST_FULL`) is refused to every
+caller, and one refused for a spent budget (`IP_BUDGET`) to that IP only, for
+`UTXO_TRACKER_HISTORY_COOLDOWN_SECONDS` (`COOLDOWN`, default 600). The list has no
+eviction: a watched address stays watched.
+At most `UTXO_TRACKER_HISTORY_BACKFILL_CONCURRENCY` backfill passes run at once
+(default 1). A pass rebuilds up to 20 addresses together, 10 blocks per chunk with
+a pause after each, and yields between blocks. The explorer sends no client address
+to the tracker today, so behind it every wallet shares the explorer's one per-IP
+budget: a pass-through should keep its own per-client budget (as it does for
+`/info`), or forward the client in `X-Forwarded-For` with
+`UTXO_TRACKER_TRUST_PROXY_HOPS=1` on the tracker. Before the tracker has indexed
+any block, the route answers 503 `NOT_READY`.
+
+Refusals answer 400 with `{ error, code }`. The codes are `INVALID_ADDRESSES`,
+`TOO_MANY_ADDRESSES`, `INVALID_ADDRESS`, `INVALID_CURSOR` and `BAD_REQUEST`.
 
 ## Metrics and log shipping (optional, off by default)
 
@@ -137,13 +204,13 @@ neither source sets one, so these defaults hold on an unconfigured box:
 | Command | Description |
 |---|---|
 | `npm run api` | Start the tracker and API server |
-| `npm test` | Unit tests (~1,355 tests) |
+| `npm test` | Unit tests (~1,551 tests) |
 | `npm run test:smoke` | Smoke tests (9 tests) |
 | `npm run test:integration` | Integration tests (~76 tests) |
 | `npm run test:e2e` | End-to-end tests (~36 tests) |
 | `npm run test:boundary` | Boundary condition tests (~29 tests) |
-| `npm run test:security` | Security tests (~85 tests) |
-| `npm run test:regression` | Regression tests (~265 tests) |
+| `npm run test:security` | Security tests (~89 tests) |
+| `npm run test:regression` | Regression tests (~315 tests) |
 | `npm run test:fuzz` | Fuzz tests (13 campaigns, 1000 iterations each, 106 tests) |
 | `npm run test:fuzz:quick` | Quick fuzz (100 iterations, 106 tests) |
 | `npm run test:fuzz:deep` | Deep fuzz (10,000 iterations, 106 tests) |
@@ -151,7 +218,7 @@ neither source sets one, so these defaults hold on an unconfigured box:
 | `npm run test:perf:quick` | Quick performance (small scale, 32 tests) |
 | `npm run test:perf:deep` | Deep performance (large scale, 4 GB heap, 32 tests) |
 | `npm run test:chaos` | Chaos engineering tests (~31 tests) |
-| `npm run test:all` | All unit + integration + e2e tests (1,866 tests) |
+| `npm run test:all` | All unit + integration + e2e tests (2,116 tests) |
 | `npm run mutate` | Mutation testing (Stryker Mutator) |
 | `npm run mutate:quick` | Quick mutation testing |
 | `npm run mutate:p1` | P1 priority mutation testing |

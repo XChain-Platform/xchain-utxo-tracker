@@ -86,12 +86,14 @@ async function closeStores(handles, log){
  * @param {object}   opts
  * @param {function} opts.drain      async work to finish before exiting
  * @param {number}   [opts.timeoutMs] hard-exit budget (default SHUTDOWN_TIMEOUT_MS / 100000)
- * @param {function} [opts.exit]     process-exit seam (tests pass their own)
+ * @param {function} [opts.exit]     graceful exit, called with (code, remainingMs)
+ * @param {function} [opts.forceExit] deadline exit that must not flush or wait
  * @param {object}   [opts.log]      console-shaped logger
  * @returns {function(string): void} handler to register on SIGTERM / SIGINT
  */
-function createShutdown({ drain, timeoutMs, exit, log } = {}){
+function createShutdown({ drain, timeoutMs, exit, forceExit, log } = {}){
     const onExit  = exit || ((code) => process.exit(code))
+    const onForceExit = forceExit || onExit
     const logger  = log || console
     const budget  = resolveTimeoutMs(timeoutMs)
     let signalled = false
@@ -106,30 +108,45 @@ function createShutdown({ drain, timeoutMs, exit, log } = {}){
         signalled = true
         logger.log('Received ' + (signal || 'signal') + ', draining (hard exit in ' + budget + 'ms)...')
 
+        const deadline = Date.now() + budget
         let finished = false
         const timer = setTimeout(() => {
             if (finished) return
             finished = true
             // Non-zero: the drain did NOT complete, so work was cut off exactly as a
             // SIGKILL would have cut it. A clean drain below exits 0.
-            logger.error('Shutdown drain exceeded ' + budget + 'ms; exiting hard.')
-            onExit(1)
+            logger.error('Shutdown deadline exceeded ' + budget + 'ms; exiting hard.')
+            onForceExit(1)
         }, budget)
+
+        const finish = (code) => {
+            if (finished) return
+            const remainingMs = Math.max(0, deadline - Date.now())
+            Promise.resolve().then(() => onExit(code, remainingMs, () => !finished)).then(
+                () => {
+                    if (finished) return
+                    finished = true
+                    clearTimeout(timer)
+                },
+                () => {
+                    if (finished) return
+                    finished = true
+                    clearTimeout(timer)
+                    onForceExit(1)
+                }
+            )
+        }
 
         Promise.resolve().then(() => drain()).then(
             () => {
                 if (finished) return
-                finished = true
-                clearTimeout(timer)
                 logger.log('Shutdown drain complete; exiting.')
-                onExit(0)
+                finish(0)
             },
             (err) => {
                 if (finished) return
-                finished = true
-                clearTimeout(timer)
                 logger.error('Shutdown drain failed:', err)
-                onExit(1)
+                finish(1)
             }
         )
     }
@@ -155,10 +172,9 @@ function registerShutdownSignals(shutdown, proc = process){
  * The tracker's drain, as its own function so the exit path is unit-testable.
  *
  * Order is load-bearing:
- *   1. stop() the tracker: keepParsing goes false and the mempool poller is
- *      cleared. The block loop takes its else branch at its next check, which
- *      is a block boundary, closes the main store and breaks, so start()
- *      resolves.
+ *   1. stop() the tracker: a sticky drain request makes keepParsing false and
+ *      clears the mempool poller. Boot and stopParsing cannot restore the loop;
+ *      its next check closes the main store and resolves start().
  *   2. drain the HTTP server and the block loop together.
  *   3. close the stores LAST (the main store is normally closed by the loop
  *      already; the halted-for-resync case, where the loop is gone and never
@@ -171,22 +187,30 @@ function registerShutdownSignals(shutdown, proc = process){
  * @param {object}   opts
  * @param {object}   opts.tracker      XChainUtxoTracker instance
  * @param {object}   opts.server       http.Server returned by app.listen()
- * @param {Promise}  [opts.loopSettled] promise that settles when start()'s loop exits
+ * @param {Promise|Function} [opts.loopSettled] promise that settles when start()'s loop
+ *        exits, or a getter returning the loop running now: an admin relaunch replaces
+ *        the loop, so the getter is read at drain time and again after each wait
  * @param {object}   [opts.log]        console-shaped logger
  */
 function createTrackerDrain({ tracker, server, loopSettled, log } = {}){
     const logger = log || console
+    const currentLoop = typeof loopSettled === 'function' ? loopSettled : () => loopSettled
+    // start() resolves when the block loop breaks on keepParsing. It is already
+    // .catch()'d at the call site (a fatal error exits 1 there, a halt keeps the
+    // process up), so a rejection here is that same handled error and must not
+    // fail the drain. A loop launched while an earlier one was being awaited is
+    // awaited too, so the stores never close under a running loop.
+    async function waitForLoops(){
+        let waited
+        do {
+            waited = currentLoop()
+            await Promise.resolve(waited).catch(() => {})
+        } while (currentLoop() !== waited)
+    }
     return async function drain(){
         if (tracker && typeof tracker.stop === 'function') tracker.stop()
 
-        await Promise.all([
-            closeServer(server),
-            // start() resolves when the block loop breaks on keepParsing. It is
-            // already .catch()'d at the call site (a fatal error exits 1 there, a
-            // halt keeps the process up), so a rejection here is that same handled
-            // error and must not fail the drain.
-            Promise.resolve(loopSettled).catch(() => {})
-        ])
+        await Promise.all([closeServer(server), waitForLoops()])
 
         await closeStores(tracker ? [tracker.db, tracker.mempoolDb] : [], logger)
     }

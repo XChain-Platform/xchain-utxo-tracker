@@ -67,6 +67,24 @@ describe('utxo-tracker sync-freshness metrics', function () {
     registerMetricGateTests(helpers);
     registerMetricNodeRpcTests(helpers);
 
+    it('drops a cleared node tip and republishes the next known height', function () {
+        const obs = realObservability();
+        const tracker = fakeTracker({ latestKnownChainTip: 100, blockchainInfoLastBlock: 100 });
+        installUtxoTrackerMetrics(obs, tracker);
+        if(!/^xchain_utxo_tracker_node_height 100$/m.test(obs.registry.render()))
+            throw new Error('initial node height missing');
+
+        tracker.latestKnownChainTip = null;
+        tracker.blockchainInfoLastBlock = -1;
+        const cleared = obs.registry.render();
+        if(/^xchain_utxo_tracker_node_height /m.test(cleared))
+            throw new Error('cleared node height retained:\n' + cleared);
+
+        tracker.latestKnownChainTip = 101;
+        if(!/^xchain_utxo_tracker_node_height 101$/m.test(obs.registry.render()))
+            throw new Error('replacement node height missing');
+    });
+
     it('exposes the undo window size and its current depth', function () {
         const obs = realObservability();
         const tracker = fakeTracker({ undoBlocks: 120, lastBlocks: [{}, {}, {}] });

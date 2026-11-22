@@ -30,15 +30,15 @@ function makeBlock(prevId, height, tag, spends) {
     coinbase.version = 1;
     coinbase.addInput(Buffer.alloc(32), 0xffffffff, 0xffffffff, Buffer.from([height & 0xff, (height >> 8) & 0xff, tag]));
     const keyHash = crypto.createHash('sha256').update('k' + height + ':' + tag).digest().subarray(0, 20);
-    coinbase.addOutput(bitcoin.payments.p2pkh({ hash: keyHash }).output, 5000000000);
-    coinbase.addOutput(bitcoin.payments.p2wpkh({ hash: keyHash }).output, 1000);
+    coinbase.addOutput(bitcoin.payments.p2pkh({ hash: keyHash }).output, 5000000000n);
+    coinbase.addOutput(bitcoin.payments.p2wpkh({ hash: keyHash }).output, 1000n);
     const txs = [coinbase];
     for (const s of spends) {
         const tx = new bitcoin.Transaction();
         tx.version = 2;
         tx.addInput(Buffer.from(s.txid, 'hex').reverse(), s.vout, 0xffffffff, Buffer.from([0x51]));
         const spendHash = crypto.createHash('sha256').update('s' + height + ':' + tag + s.txid).digest().subarray(0, 20);
-        tx.addOutput(bitcoin.payments.p2pkh({ hash: spendHash }).output, 4000000000);
+        tx.addOutput(bitcoin.payments.p2pkh({ hash: spendHash }).output, 4000000000n);
         txs.push(tx);
     }
     const block = new bitcoin.Block();
@@ -79,11 +79,12 @@ function makeNode(chain) {
         async getBlockchainInfo() {
             node.infoCalls++;
             fault('info');
+            if (node.infoReply) return node.infoReply(node);
             return { blocks: node.chain.length - 1, verificationprogress: node.progress, initialblockdownload: node.ibd };
         },
         async getBlockHash(h) { fault('hash'); return at(h).hash; },
         async getBlock(hash) { return byHash(hash).hex; },
-        async getBlockWithoutAuxPow(hash) { return byHash(hash).hex; },
+        async getBlockWithoutAuxPow(hash) { fault('strip'); return byHash(hash).hex; },
         async getBlocksBatch(hs) { if (node.onBatch) node.onBatch(hs); fault('batch'); return hs.map((h) => at(h)); },
         async getBlocksBatchWithoutAuxPow(hs) { fault('batch'); return hs.map((h) => at(h)); },
         async getBlockReassembled(hash) { node.reassembled++; return byHash(hash).hex; },

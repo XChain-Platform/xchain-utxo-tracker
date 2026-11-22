@@ -11,16 +11,14 @@
 // contact legal@dankest.llc.
 //
 // XChainUtxoTracker, BlockchainConnector and LevelUpStore each split their
-// methods into part modules that get put back on the class prototype by a
-// local installMethods function. Object.assign would install them as
+// methods into part modules that get put back on the class prototype by the
+// shared installMethods function. Object.assign would install them as
 // ENUMERABLE own properties, unlike a method written directly in the class
 // body, which would change what for...in over an instance, Object.keys of
 // the prototype and a spread of it return. This pins every method the part
 // modules contribute to non-enumerable, writable, configurable and callable,
-// and exercises the installer's generic contract through the copy
-// XChainUtxoTracker.js exports for this purpose (blockchain_connector.js
-// and level_up_db.js carry byte-identical private copies, checked
-// indirectly through their own prototype's descriptor rows below).
+// and exercises the installer's generic contract through the helper
+// XChainUtxoTracker.js re-exports for this purpose.
 
 const assert = require('assert');
 const { installMethods } = require('../../src/XChainUtxoTracker.js');
@@ -109,6 +107,8 @@ function registerStoreDescriptorTests() {
         require('../../src/store/level_up_db/outputs.js'),
         require('../../src/store/level_up_db/output_cleanup.js'),
         require('../../src/store/level_up_db/output_scripts.js'),
+        require('../../src/store/level_up_db/store_layout.js'),
+        require('../../src/store/level_up_db/history.js'),
     ];
 
     it('installs every part-module method non-enumerable and callable', function () {

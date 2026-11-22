@@ -10,18 +10,17 @@
 // license (without AGPL source-disclosure terms) is available -
 // contact legal@dankest.llc.
 
-// The synced latch drops whenever the node's tip sits below ours, so the
-// xchain_utxo_tracker_synced gauge (which publishes the raw latch) and the
-// GET /status verdict (which floors a negative lag) agree on every branch of
-// the tip-below-ours path, and the latch rises again once the loop is back at
-// the node's tip.
+// The synced latch drops whenever the node's tip sits below ours. The
+// xchain_utxo_tracker_synced gauge and GET /status also floor that latch, so
+// all three agree on every branch of the tip-below-ours path, and the latch
+// rises again once the loop is back at the node's tip.
 
 const { expect } = require('chai');
 const { buildChain, makeNode, useSyncLoopHarness } = require('./support/harness');
 const { installObservability, _resetObservability: resetObservability } = require('../../../src/observability');
 const { installUtxoTrackerMetrics } = require('../../../src/server/utxo_tracker_metrics.js');
 const XChainUtxoTracker = require('../../../src/XChainUtxoTracker.js');
-const { get_sync_status } = require('../../../src/api/sync_status.js');
+const { get_sync_status, isNodeRpcStale, NODE_RPC_STALE_MS } = require('../../../src/api/sync_status.js');
 const { TIP_SETTLE_STABLE_READS } = require('../../../src/XChainUtxoTracker/reorg_node_reads.js');
 
 const SETTLE_EXTRA_SLEEPS = TIP_SETTLE_STABLE_READS - 1;
@@ -93,6 +92,50 @@ describe('XChainUtxoTracker sync loop: synced latch on a refused rollback or a c
         expect(seen.waiting).to.include({ gauge: 0, status: false, committed: 12, tip: 9 });
         expect(h.tracker.reorgCount).to.equal(1);
         expect(seen.back).to.include({ gauge: 1, status: true, committed: 9, tip: 9 });
+    });
+});
+
+describe('XChainUtxoTracker sync loop: synced latch through a node RPC outage', function () {
+    const h = useSyncLoopHarness();
+    const metrics = useMetrics(h);
+    const install = () => metrics.install();
+    const reg = () => metrics.registry;
+
+    it('drops the latch only after a node RPC outage passes the stale window', async function () {
+        const node = makeNode(buildChain(6));
+        let staleAt = null;
+        const seen = await h.run(node, async (n, s) => {
+            if (n === 1) {
+                install();
+                h.tracker.mempoolReconverged = true;
+                s.atTip = await sample(h.tracker, reg());
+                node.faults.info = new Array(70).fill(new Error('node RPC down'));
+            }
+            if (n === 2) s.inside = await sample(h.tracker, reg());
+            const stale = isNodeRpcStale({ lastNodeRpcOkAt: h.tracker.lastNodeRpcOkAt });
+            if (!s.floored && stale && h.tracker.isSynced()) {
+                const status = await get_sync_status(h.tracker);
+                s.floored = { gauge: Number(gaugeNow(reg())), synced: h.tracker.isSynced(),
+                    mempool: h.tracker.isMempoolReconverged(), status: status.synced };
+            }
+            if (staleAt === null && stale && !h.tracker.isSynced()) {
+                const status = await get_sync_status(h.tracker);
+                s.stale = { gauge: 0, synced: h.tracker.isSynced(),
+                    mempool: h.tracker.isMempoolReconverged(), status: status.synced };
+                staleAt = n;
+                node.faults.info = [];
+            } else if (staleAt !== null && n > staleAt) {
+                s.back = await sample(h.tracker, reg());
+                return 'stop';
+            }
+            return null;
+        });
+        expect(NODE_RPC_STALE_MS).to.be.greaterThan(0);
+        expect(seen.atTip).to.include({ gauge: 1, status: true });
+        expect(seen.inside).to.include({ gauge: 1, status: true });
+        expect(seen.floored).to.deep.equal({ gauge: 0, synced: true, mempool: true, status: false });
+        expect(seen.stale).to.deep.equal({ gauge: 0, synced: false, mempool: false, status: false });
+        expect(seen.back).to.include({ gauge: 1, status: true });
     });
 });
 
@@ -186,8 +229,10 @@ describe('XChainUtxoTracker sync loop: synced latch through a same-height tip sw
         node.retired = full;
         node.chain = buildChain(full.length, 1, full, full.length - 1);
         const verifyReorg = h.tracker.verifyReorg;
-        h.tracker.verifyReorg = function (...args) {
-            s.duringWalk = { gauge: gaugeNow(reg()), synced: h.tracker.isSynced() };
+        h.tracker.verifyReorg = async function (...args) {
+            const status = await get_sync_status(h.tracker);
+            s.duringWalk = { gauge: gaugeNow(reg()), synced: h.tracker.isSynced(),
+                healthSynced: status.synced, mempoolReady: status.mempool_ready };
             return verifyReorg.apply(this, args);
         };
     }
@@ -202,7 +247,8 @@ describe('XChainUtxoTracker sync loop: synced latch through a same-height tip sw
         });
         expect(seen.atTip).to.include({ gauge: 1, status: true });
         expect(h.tracker.reorgCount).to.equal(1);
-        expect(seen.duringWalk, 'the orphaned tip is served under synced').to.deep.equal({ gauge: '0', synced: false });
+        expect(seen.duringWalk, 'the orphaned tip is served under synced').to.deep.equal(
+            { gauge: '0', synced: false, healthSynced: false, mempoolReady: false });
         expect(seen.back).to.include({ gauge: 1, status: true, committed: 12 });
         expect(seen.hash).to.equal(node.chain[12].hash);
     });
@@ -225,7 +271,8 @@ describe('XChainUtxoTracker sync loop: synced latch through a same-height tip sw
             return n >= 4 ? 'stop' : null;
         });
         expect(seen.atCompare, 'the latch rose before the tip hash was checked').to.equal(false);
-        expect(seen.duringWalk).to.deep.equal({ gauge: '0', synced: false });
+        expect(seen.duringWalk).to.deep.equal(
+            { gauge: '0', synced: false, healthSynced: false, mempoolReady: false });
     });
 });
 
@@ -248,8 +295,10 @@ describe('XChainUtxoTracker sync loop: synced latch through a prev-hash reorg', 
                 node.retired = full;
                 node.chain = buildChain(full.length + 1, 1, full, full.length - 1);
                 const verifyReorg = h.tracker.verifyReorg;
-                h.tracker.verifyReorg = function (...args) {
-                    s.duringWalk = { gauge: gaugeNow(reg()), synced: h.tracker.isSynced() };
+                h.tracker.verifyReorg = async function (...args) {
+                    const status = await get_sync_status(h.tracker);
+                    s.duringWalk = { gauge: gaugeNow(reg()), synced: h.tracker.isSynced(),
+                        healthSynced: status.synced, mempoolReady: status.mempool_ready };
                     return verifyReorg.apply(this, args);
                 };
             }
@@ -258,7 +307,8 @@ describe('XChainUtxoTracker sync loop: synced latch through a prev-hash reorg', 
         });
         expect(seen.atTip).to.include({ gauge: 1, status: true });
         expect(h.tracker.reorgCount).to.equal(1);
-        expect(seen.duringWalk, 'the orphaned tip is served under synced').to.deep.equal({ gauge: '0', synced: false });
+        expect(seen.duringWalk, 'the orphaned tip is served under synced').to.deep.equal(
+            { gauge: '0', synced: false, healthSynced: false, mempoolReady: false });
         expect(seen.back).to.include({ gauge: 1, status: true, committed: 13 });
         expect(seen.hash).to.equal(node.chain[13].hash);
     });

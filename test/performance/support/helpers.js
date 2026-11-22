@@ -12,7 +12,7 @@
 
 const { createHash } = require('crypto');
 const bitcoin = require('bitcoinjs-lib');
-const ECPairFactory = require('ecpair');
+const { ECPairFactory } = require('ecpair');
 const ecc = require('tiny-secp256k1');
 const express = require('express');
 const jsonRouter = require('express-json-rpc-router');
@@ -49,7 +49,7 @@ const SCALE_CONFIGS = {
 
 const SCALE = SCALE_CONFIGS[process.env.PERF_SCALE || 'medium'];
 
-const ECPair = ECPairFactory.ECPairFactory(ecc);
+const ECPair = ECPairFactory(ecc);
 
 const _addressCache = new Map();
 
@@ -74,7 +74,7 @@ function generateAddressPool(n) {
       publicKey: keyPair.publicKey,
       script,
       scriptHash,
-      scriptHex: script.toString('hex')
+    scriptHex: Buffer.from(script).toString('hex')
     });
   }
 

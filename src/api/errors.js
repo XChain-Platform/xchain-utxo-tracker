@@ -1,3 +1,14 @@
+/*********************************************************************
+ *
+ * Copyright © 2025-2026 Dankest, LLC
+ * Based on XChain Platform by Dankest, LLC - https://dankest.llc
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * This file is part of XChain Platform. Licensed under the GNU Affero
+ * General Public License v3.0 or later; see LICENSE.md.
+ *
+ **********************************************************************/
 'use strict'
 
 const { spawn, spawnSync } = require('child_process')
@@ -236,7 +247,7 @@ async function verifyBootstrapProvenanceOrThrow(source) {
             throw new Error(`Refusing to restore "${source}": detached signature ${sigPath} does not verify `
                 + `against the pinned bootstrap signing key - the archive is not the one that was published.`)
         logger.info(`Restore archive provenance verified: ${sigPath} checks out against the pinned signing key`)
-        return
+        return true
     }
 
     const missing = !publicKey
@@ -249,6 +260,7 @@ async function verifyBootstrapProvenanceOrThrow(source) {
             + `BOOTSTRAP_RESTORE_ALLOW_UNSIGNED=1 to restore an unsigned archive at your own risk.`)
     logger.warn(`WARNING: restoring "${source}" WITHOUT provenance verification (${missing}) because `
         + `BOOTSTRAP_RESTORE_ALLOW_UNSIGNED=1 is set; the checksum only detects transport corruption, not tampering.`)
+    return false
 }
 
 // Content gate: refuse an archive that is not a LevelDB store at all. Checksums and
@@ -268,19 +280,18 @@ async function assertLevelDbArchiveOrThrow(archivePath, reportedSource) {
             + `from inside that directory (tar -cf - -C <store> .).`)
 }
 
-// Post-extraction ground truth: the store must be AT the database root, because that
-// is the only place ClassicLevel("/data/<DB_NAME>") will look for it. The pre-wipe
+// Post-extraction ground truth: the store must be AT the extraction root, because that
+// is the only place ClassicLevel looks for it once the files are in place. The pre-wipe
 // member gate predicts the same layout from the tar listing and refuses a nested store
-// before the wipe; this is the backstop for whatever the listing could not predict.
-// Throwing here routes the restore into handleRestoreFailure's fail-loud branch:
-// the DB is already gone either way, so the choice is between an operator who knows
-// the restore failed and a tracker that quietly serves an empty database.
+// before extraction; this is the backstop for whatever the listing could not predict.
+// The restore extracts into a staging directory first, so a throw here aborts it with
+// the live store untouched.
 function assertExtractedStoreOrThrow(destination) {
     let entries = []
     try { entries = fs.readdirSync(destination) }
     catch (err) {
         throw new Error(`Restore extracted to "${destination}" but that directory cannot be read `
-            + `(${err && err.message}); the database was wiped and must be resynced.`)
+            + `(${err && err.message}); the live database was left untouched.`)
     }
     const hasCurrent  = entries.includes('CURRENT')
     const hasManifest = entries.some(name => /^MANIFEST-\d+$/.test(name))
@@ -292,7 +303,7 @@ function assertExtractedStoreOrThrow(destination) {
         + `(CURRENT=${hasCurrent}, MANIFEST-<n>=${hasManifest})`
         + (nested.length ? `; the archive nests its store under ${nested.map(n => `"${n}"`).join(', ')}, `
             + `which must be repacked from inside the store directory (tar -cf - -C <store> .)` : '')
-        + `. The database was wiped by the restore and must be resynced.`)
+        + `. The live database was left untouched.`)
 }
 
 // Validate a restore archive BEFORE the destructive /data wipe. Returns the effective
@@ -307,13 +318,14 @@ function assertExtractedStoreOrThrow(destination) {
 // content (the effective archive really is a LevelDB store). `options.identity`
 // overrides the target derived from the configured NETWORK (tests use it).
 async function validateBootstrapArchiveOrThrow(source, options = {}) {
-    await verifyBootstrapProvenanceOrThrow(source)
+    const provenanceVerified = await verifyBootstrapProvenanceOrThrow(source)
 
     const members = await listArchiveMembers(source, 10)
     if (isWrapperArchive(members)) {
         const unwrapped = await unwrapBootstrapArchive(source)
+        let meta
         try {
-            assertArchiveIdentityOrThrow(unwrapped.tmpDir, source,
+            meta = assertArchiveIdentityOrThrow(unwrapped.tmpDir, source,
                 options.identity || trackerArchiveIdentity(readRestoreOptions().network))
             await assertLevelDbArchiveOrThrow(unwrapped.effectiveSource, source)
         } catch (err) {
@@ -322,7 +334,7 @@ async function validateBootstrapArchiveOrThrow(source, options = {}) {
             try { fs.rmSync(unwrapped.tmpDir, { recursive: true, force: true }) } catch (_) {}
             throw err
         }
-        return unwrapped
+        return { ...unwrapped, meta, provenanceVerified }
     }
 
     const sidecarPath = source + '.sha256'
@@ -346,7 +358,7 @@ async function validateBootstrapArchiveOrThrow(source, options = {}) {
             + `unverified at your own risk.`)
     }
     await assertLevelDbArchiveOrThrow(source, source)
-    return { effectiveSource: source, tmpDir: null }
+    return { effectiveSource: source, tmpDir: null, meta: null, provenanceVerified }
 }
 
 module.exports = { configureRestoreOptions, sendAddressError, safeBootstrapFilename, getGzipJsonMetadata, listArchiveMembers, sha256File, unwrapBootstrapArchive, verifyBootstrapProvenanceOrThrow, assertLevelDbArchiveOrThrow, assertExtractedStoreOrThrow, validateBootstrapArchiveOrThrow }

@@ -136,10 +136,14 @@ describe('XChainUtxoTracker (more)', function () {
 
         it('getRawMempool throws → logs error and resets mempoolBusy', async function () {
             sinon.stub(tracker.connector, 'getRawMempool').rejects(new Error('node down'));
+            tracker.mempoolReconverged = true;
+            const readinessGeneration = tracker.mempoolReadinessGen;
 
             await tracker.updateMempool();
 
             expect(tracker.mempoolBusy).to.be.false;
+            expect(tracker.mempoolReconverged).to.be.false;
+            expect(tracker.mempoolReadinessGen).to.be.greaterThan(readinessGeneration);
         });
 
         it('getRawTransactions fails MEMPOOL_MAX_TX_FETCH_RETRIES times → breaks and resets mempoolBusy', async function () {

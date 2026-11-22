@@ -17,44 +17,15 @@
  ********************************************************************/
 
 const { createHash } = require('crypto')
-const bitcoin = require('bitcoinjs-lib')
 const util = require('../common/util')
 const { satoshiToDecimalString } = require('./catch_up_helpers.js')
 const { MAX_ADDRESS_OUTPUTS } = require('./constants.js')
 const { withStoreRead } = require('./store_commit_lock.js')
-
-// Litecoin Core on test networks hands out P2SH addresses with SCRIPT_ADDRESS2
-// (0x3a, 'Q...') by default, alongside the legacy 0xc4 form. Both encode the
-// same hash160 and spend the same P2SH script, but the network definition
-// carries only 0xc4, so bitcoinjs-lib rejects the 0x3a form. Mainnet is left
-// strict: its definition and the 0x3a version byte are not tied together here.
-const LTC_TEST_BECH32 = new Set(['tltc', 'rltc'])
-const LTC_P2SH_V2_VERSION = 0x3a
-
-// A bad, oversized (bech32 tops out at 90) or wrong-network address is a caller
-// mistake: a BAD_REQUEST error answered 400 / -32602 with no error log. Only
-// input within the bound is decoded, so the message echoes at most 128 chars.
-function addressToScript(address, network){
-    let reason = 'invalid address for this network'
-    try {
-        if (typeof address === 'string' && address.length > 0 && address.length <= 128) return decodeAddressScript(address, network)
-    } catch (err) { reason = String((err && err.message) || reason).slice(0, 256) }
-    throw Object.assign(new Error(reason), { code: 'BAD_REQUEST' })
-}
-
-function decodeAddressScript(address, network){
-    try {
-        return bitcoin.address.toOutputScript(address, network)
-    } catch (err) {
-        if (!network || !LTC_TEST_BECH32.has(network.bech32)) throw err
-        let decoded
-        try { decoded = bitcoin.address.fromBase58Check(address) } catch (_) { throw err }
-        if (decoded.version !== LTC_P2SH_V2_VERSION || decoded.hash.length !== 20) throw err
-        return bitcoin.address.toOutputScript(bitcoin.address.toBase58Check(decoded.hash, network.scriptHash), network)
-    }
-}
+const { addressToScript, canonicalP2shAddress } = require('./address_script.js')
 
 module.exports = {
+    canonicalP2shAddress,
+
     // Both store snapshots are taken under the store-commit lock (store_commit_lock.js).
     async getBalanceInfo(address){
         return withStoreRead(this, () => readBalanceInfo.call(this, address))
@@ -73,6 +44,12 @@ module.exports = {
         if (!record) return null
 
         return { height: record.h }
+    },
+
+    // The tx's block row labelled with the committed tip, both read under the
+    // store-commit lock so the label is the tip the row was read at.
+    async getTxBlockAt(txid){
+        return withStoreRead(this, () => this.db.getTxBlock(txid))
     },
 
     // getFirstSeen's answer with the snapshot it was read at, under the store-commit lock.
@@ -120,10 +97,10 @@ async function readBalanceInfo(address){
     const confirmedKeys = new Set()
 
     for (let nextOutput of confirmedOutputs) {
-        // Same fail-loud guard as getUtxosAddress: a 16-char fallback means
-        // the O-record predates the fullTxHash field. get_utxos already throws
-        // here; get_info must too, or a pre-format DB silently returns balances
-        // while every spend path errors, masking the need for a re-index.
+        // Same fail-loud guard as getUtxosAddress: an output whose txid is not
+        // 64 chars is a corrupt record. get_utxos already throws here; get_info
+        // must too, or a damaged DB silently returns balances while every spend
+        // path errors.
         let txid = requireFullTxid(nextOutput)
 
         confirmedKeys.add(txid + ':' + nextOutput.vout)
@@ -142,8 +119,8 @@ async function readBalanceInfo(address){
     }
 
     for (let nextOutput of mempoolOutputs) {
-        // See the confirmed-output loop above: a 16-char fallback means the
-        // O-record predates the fullTxHash field and can never spend validly.
+        // See the confirmed-output loop above: a txid that is not 64 chars is a
+        // corrupt record and can never spend validly.
         let txid = requireFullTxid(nextOutput)
 
         // Skip an outpoint already counted from the confirmed store (just-mined
@@ -217,8 +194,8 @@ async function readUtxosAddress(address, { limit = null, after = null } = {}){
 // Adds the response entry for one mempool output, unless the confirmed store
 // already serves that outpoint or another mempool tx spends it.
 async function addServableMempoolUtxo(results, nextOutput, { confirmedKeys, paged, scriptPubKeyHex }){
-    // See the confirmed-output loop above: a 16-char fallback means the
-    // O-record predates the fullTxHash field and can never spend validly.
+    // See the confirmed-output loop above: a txid that is not 64 chars is a
+    // corrupt record and can never spend validly.
     let txid = requireFullTxid(nextOutput)
     // Skip an outpoint already emitted from the confirmed store (just-mined
     // tx still present in both stores during the cleanup window). confirmedKeys
@@ -252,7 +229,7 @@ function requireFullTxid(nextOutput){
     if (txid.length !== 64) {
         throw new Error(
             `UTXO record is missing a fullTxHash (got ${txid.length}-char key prefix instead of a 64-char txid).` +
-            ` This record predates the O-record fullTxHash field; re-index this LevelDB before use.` +
+            ` The O key must hold the whole 32-byte txid, so this record is corrupt; rebuild this LevelDB before use.` +
             ` UTXO key: ${nextOutput.txid}`
         )
     }

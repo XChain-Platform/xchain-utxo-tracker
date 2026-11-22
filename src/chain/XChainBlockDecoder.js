@@ -23,7 +23,7 @@ const crypto = require('crypto');
 const bitcoinjs = require('bitcoinjs-lib');
 // BigInt-safe 64-bit reader/writer, applied in-process so a >2^53-1 sat DOGE
 // output cannot wedge block decode even when the Dockerfile COPY patch is absent.
-const bufferutils_js_1 = require('./apply_bufferutils_patch');
+const bufferutils_js_1 = require('./bitcoinjs_v7_compat');
 const transaction_js_1 = require('bitcoinjs-lib/src/transaction');
 const coins = require('../coins');
 
@@ -189,7 +189,7 @@ function assertBlockBodyIntact(block, bufferLength, bodyEnd, extensionFollows) {
     if (bodyEnd !== bufferLength && !extensionFollows) {
         throw new Error('Block has ' + (bufferLength - bodyEnd) + ' bytes after its last transaction')
     }
-    if (!bitcoinjs.Block.calculateMerkleRoot(txs).equals(block.merkleRoot)) {
+    if (!Buffer.from(bitcoinjs.Block.calculateMerkleRoot(txs)).equals(Buffer.from(block.merkleRoot))) {
         throw new Error('Block merkle root mismatch: the header root is not the root of its transactions')
     }
 }
@@ -234,10 +234,11 @@ function validateMwebTransactionCount(bufferReader, nTransactions){
     // the tracker fail-closed on the same forged input the decoder twin
     // already rejects by name.
     const remainingBytes = bufferReader.buffer.length - bufferReader.offset;
-    if (nTransactions > remainingBytes / 10) {
+    if (nTransactions > BigInt(Math.floor(remainingBytes / 10))) {
         throw new Error('Block declares ' + nTransactions + ' transactions but only ' +
             remainingBytes + ' bytes remain (invalid transaction count)');
     }
+    return Number(nTransactions)
 }
 
 // Reads the block's transactions and reports whether the last one is MWEB-flagged,
@@ -324,8 +325,8 @@ class XChainBlockDecoder {
                 // The count read and its bound fail as a TransactionParseError too, as
                 // in the decoder twin, so callers that branch on the class agree.
                 try {
-                    const nTransactions = bufferReader.readVarInt();
-                    validateMwebTransactionCount(bufferReader, nTransactions);
+                    const nTransactions = validateMwebTransactionCount(
+                        bufferReader, bufferReader.readVarInt());
                     extensionFollows = readMwebTransactions(bufferReader, block, nTransactions);
                 } catch (err) {
                     throw transactionParseError('Block transaction parse failed: ' + (err && err.message ? err.message : err), err)

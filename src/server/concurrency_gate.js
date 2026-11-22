@@ -78,7 +78,9 @@ function createGateMiddleware(limit, retryAfter, skip, body, state, SLOT){
             state.inFlight--;
         };
         // work: promises registered through track() that the slot must outlive.
-        const slot = { release, claimed: false, work: [] };
+        // tail: settles when the last JSON-RPC method call on this slot is done,
+        // so trackMethods can run a batch's entries one at a time.
+        const slot = { release, claimed: false, work: [], tail: Promise.resolve() };
         req[SLOT] = slot;
 
         // 'finish' fires on a fully-sent response; 'close' on a client abort or
@@ -165,7 +167,21 @@ function trackMethodTable(methods, SLOT){
     const tracked = Object.create(null);
     for(const [name, fn] of Object.entries(methods)){
         tracked[name] = typeof fn === 'function'
-            ? (params, raw) => trackWork(raw && raw.req, (async () => fn.call(methods, params, raw))(), SLOT)
+            ? (params, raw) => {
+                const req = raw && raw.req;
+                const slot = req && req[SLOT];
+                // No slot (gate off or request exempt): nothing to bound, run at once.
+                if(!slot) return trackWork(req, (async () => fn.call(methods, params, raw))(), SLOT);
+                // One slot is one unit of read concurrency. The router starts every
+                // batch entry at once, so without this a 20-entry batch runs 20
+                // heavy reads on a single slot and the cap of N requests becomes
+                // N x 20 reads. Entries of one request run back to back instead,
+                // in call order; a failed entry settles its own promise and never
+                // blocks the next.
+                const run = slot.tail.then(() => fn.call(methods, params, raw));
+                slot.tail = run.then(() => {}, () => {});
+                return trackWork(req, run, SLOT);
+            }
             : fn;
     }
     return tracked;
@@ -209,4 +225,32 @@ function createConcurrencyGate(options){
     return middleware;
 }
 
-module.exports = { createConcurrencyGate, resolveLimit };
+/**
+ * Split a body parser around the gates: read the body ahead of them, raise its error behind them.
+ *
+ * A gate counts a request from its headers until its response, and Node keeps
+ * a slow upload open for its full requestTimeout (300 s by default). A body
+ * parsed behind the gates therefore holds a slot for the whole upload, and one
+ * client dripping bytes on a few sockets fills the cap (or the probe reserve)
+ * and sheds every other caller. Mount `parse` before the gates so an upload
+ * holds only its own socket.
+ *
+ * A parse failure (bad JSON, oversize body) is parked on the request instead of
+ * skipping the gates, and `raise`, mounted right after them, passes it on, so
+ * such a request is still counted and shed like any other before it is answered.
+ *
+ * @param {function} parser Body-parser middleware, such as express.json().
+ * @returns {{parse: function, raise: function}} The two halves, mounted around the gates.
+ */
+function splitBodyParser(parser){
+    const PARSE_ERROR = Symbol('bodyParseError');
+    return {
+        parse: (req, res, next) => parser(req, res, (err) => {
+            if(err) req[PARSE_ERROR] = err;
+            next();
+        }),
+        raise: (req, res, next) => next(req[PARSE_ERROR])
+    };
+}
+
+module.exports = { createConcurrencyGate, resolveLimit, splitBodyParser };

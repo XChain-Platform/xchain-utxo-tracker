@@ -35,15 +35,17 @@ function handleBootstrapFailure({ tasks, taskId, error, relaunch, log = console.
     relaunch()
 }
 
-// Restore (decompression) wipes /data BEFORE extracting, so a mid-restore
-// failure leaves the on-disk DB partially wiped and untrustworthy. Do NOT
+// Restore (decompression) wipes /data once the archive has been extracted and
+// checked in a staging directory, so a failure after that point leaves the
+// on-disk DB partially replaced and untrustworthy. Do NOT
 // silently resume indexing on a corrupt store: record the failure and fail loud
 // via `failLoud` so the supervisor restarts the process into a clean recovery
 // path (empty /data -> bulk-sync, or an operator resync).
 //
-// EXCEPTION: pre-wipe validation aborts (error.preWipe) happen BEFORE /data is
-// touched - a wrong-layout, unverifiable, or checksum-failing archive rejected by
-// validateBootstrapArchiveOrThrow. The live DB is intact and indexing can simply
+// EXCEPTION: pre-wipe aborts (error.preWipe) happen BEFORE /data is touched - an
+// unverifiable or checksum-failing archive rejected by validateBootstrapArchiveOrThrow,
+// a failed extraction, or an extracted store whose layout this tracker does not read.
+// The live DB is intact and indexing can simply
 // resume, so these must NOT fail loud (that would kill the process with a factually
 // wrong "AFTER /data was wiped" message). Resume via `relaunch`, like a bootstrap
 // failure. `relaunch` is optional for back-compat; without it a pre-wipe error

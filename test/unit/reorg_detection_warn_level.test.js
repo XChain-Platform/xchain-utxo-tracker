@@ -28,7 +28,7 @@ const fs = require('fs');
 const path = require('path');
 
 describe('reorg detection log severity @regression', function () {
-    const src = ['sync_loop_node_tip.js', 'sync_loop_block_apply.js']
+    const src = ['sync_loop_node_tip.js', 'sync_loop_block_apply.js', 'reorg_verification.js']
         .map((f) => fs.readFileSync(path.join(__dirname, '../../src/XChainUtxoTracker', f), 'utf8'))
         .join('\n');
 
@@ -36,6 +36,8 @@ describe('reorg detection log severity @regression', function () {
     // emits them rather than by line number, which drifts on every edit.
     const DETECTIONS = [
         'WARNING! The last processed block height (',
+        'Repaired the stored last-block pointer to height ',
+        'The blocks height for the same hash are not equal.',
         'A same-height tip reorg has been detected.',
         'A reorg has been detected.'
     ];

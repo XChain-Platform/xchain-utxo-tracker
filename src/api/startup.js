@@ -1,3 +1,4 @@
+/* Copyright © 2025-2026 Dankest, LLC; SPDX-License-Identifier: AGPL-3.0-or-later */
 'use strict'
 
 const express = require('express')
@@ -8,14 +9,20 @@ const XChainUtxoTracker = require('../XChainUtxoTracker')
 const { installObservability, getLogger } = require('../observability')
 const { installUtxoTrackerMetrics } = require('../server/utxo_tracker_metrics')
 const { createShutdown, createTrackerDrain } = require('../server/shutdown.js')
+const { exitAfterFlush } = require('../server/exit_flush.js')
 const concurrencyGate = require('../server/concurrency_gate.js')
 const { parseCorsOrigin } = require('../server/cors_origin.js')
+const { limitedHandler } = require('../server/rate_limit_log.js')
 const { intKnob } = require('../config/env_int')
 const memoryBudget = require('../store/memory_budget')
 const { nodeReachabilityFields, isNodeRpcStale } = require('./sync_status.js')
+const { resolveNodeTip } = require('../XChainUtxoTracker/catch_up_helpers.js')
 const { registerRoutes } = require('./routes.js')
+const { parsePageOpts } = require('./page_opts.js')
+const { installAdminGuard } = require('./admin_guard.js')
 const logger = getLogger()
 const appTrackers = new WeakMap()
+const appLoops = new WeakMap()
 
 async function getUtxos(tracker, address, opts){
     return await tracker.getUtxosAddress(address, opts)
@@ -38,23 +45,6 @@ async function getInfo(tracker, address){
     return await tracker.getBalanceInfo(address)
 }
 
-// Parse optional ?limit=&after= pagination params into tracker opts. Throws a
-// BAD_REQUEST-coded error on a malformed limit so the route returns HTTP 400.
-function parsePageOpts(query, maxPageLimit){
-    const opts = {}
-    if (query && query.limit != null && query.limit !== '') {
-        const n = Number(query.limit)
-        if (!Number.isInteger(n) || n <= 0) {
-            const e = new Error('limit must be a positive integer')
-            e.code = 'BAD_REQUEST'
-            throw e
-        }
-        opts.limit = Math.min(n, maxPageLimit)
-    }
-    if (query && query.after != null && query.after !== '') opts.after = String(query.after)
-    return opts
-}
-
 // Per-query freshness surface. UTXO/balance results are
 // served from the last COMMITTED height, which can lag the node tip during
 // catch-up or a reorg, so a caller (e.g. the encoder selecting inputs) can
@@ -75,9 +65,7 @@ async function getFreshnessMeta(tracker, knownCommittedHeight, readAt){
     let committedHeight = -1
     if (typeof knownCommittedHeight === 'number') committedHeight = knownCommittedHeight
     else { try { committedHeight = await tracker.db.getLastBlockHeight() } catch (e) {} }
-    const rawTip = (typeof tracker.latestKnownChainTip === 'number')
-        ? tracker.latestKnownChainTip
-        : (typeof tracker.blockchainInfoLastBlock === 'number' ? tracker.blockchainInfoLastBlock : -1)
+    const rawTip = resolveNodeTip(tracker)
     const page = readAt || {}
     const freshness = XChainUtxoTracker.computeFreshness(committedHeight, rawTip, tracker.isSynced(), {
         mempoolReconverged: typeof page.mempoolReconverged === 'boolean' ? page.mempoolReconverged : tracker.isMempoolReconverged(),
@@ -171,8 +159,7 @@ function installBaseMiddleware(app, config) {
     config.installUnmatchedRouteLabel(app)
     // Use Helmet to increase security
     app.use(helmet())
-    // Allow JSON requests
-    app.use(express.json())
+    // The JSON body parser is NOT installed here: see createApp.
     // CORS disabled by default. CORS_ORIGIN is a comma-separated ALLOWLIST, not a
     // single origin: handing `cors` the raw string makes it echo that string
     // verbatim to every caller, a multi-value header no browser accepts, so every
@@ -189,15 +176,28 @@ function installBaseMiddleware(app, config) {
     // port could otherwise drive unbounded backing-DB work. Mirrors the per-IP
     // limiter every peer service front-loads (explorer/hub/decoder/encoder);
     // override the 500 rpm default with UTXO_TRACKER_RATE_LIMIT_RPM.
+    const rateLimitWindowMs = 60 * 1000
+    const rateLimitRpm = resolveRateLimitRpm(config.UTXO_TRACKER_RATE_LIMIT_RPM)
     app.use(rateLimit({
-        windowMs: 60 * 1000,
-        limit: resolveRateLimitRpm(config.UTXO_TRACKER_RATE_LIMIT_RPM),
+        windowMs: rateLimitWindowMs,
+        limit: rateLimitRpm,
         standardHeaders: true,
         legacyHeaders: false,
         // With no trusted hop, an X-Forwarded-For header is caller noise that is
         // ignored; skip the library's once-per-process warning about it.
         validate: { xForwardedForHeader: trustProxyHops > 0 },
-        message: { error: 'Too many requests', code: 'RATE_LIMITED' }
+        // A bare `message` option sends the 429 and logs nothing, so a caller
+        // the limiter starves leaves no trace here; the handler sends the same
+        // body and logs a refusal count once per window.
+        handler: limitedHandler({
+            service: 'UTXO tracker',
+            name: 'per-IP',
+            envVar: 'UTXO_TRACKER_RATE_LIMIT_RPM',
+            limit: rateLimitRpm,
+            windowMs: rateLimitWindowMs,
+            message: { error: 'Too many requests', code: 'RATE_LIMITED' },
+            log: (line) => logger.warn(line)
+        })
     }))
 }
 
@@ -273,44 +273,6 @@ function installMetrics(app, tracker, config, gates) {
     installUtxoTrackerMetrics(observability, tracker, gates)
 }
 
-// API key enforcement for admin JSON-RPC methods. Fails closed: without a
-// configured key these methods are rejected, never left open.
-//
-// Both a single request (body is an object) and a JSON-RPC batch (body is
-// an array) reach the router registered after this guard, and the router executes every entry of
-// a batch. So the guard must inspect EVERY method in the request, not just
-// req.body.method: for an array body req.body.method is undefined, so without
-// this guard an admin method smuggled inside a batch (e.g.
-// [{"method":"restorebootstrap",...}]) skips the key check entirely and runs
-// unauthenticated. Gate the whole request when ANY entry is an admin method.
-function installAdminGuard(app, config) {
-    app.use((req, res, next) => {
-        const body = req.body
-        // Bound batch fan-out BEFORE the router's uncapped Promise.all executes every
-        // entry: an over-cap array is an amplification vector, not a legitimate request.
-        if(Array.isArray(body) && body.length > config.MAX_JSONRPC_BATCH){
-            return res.status(400).json({
-                jsonrpc: '2.0', id: null,
-                error: { code: -32600, message: 'Batch too large (max ' + config.MAX_JSONRPC_BATCH + ' requests per call)' }
-            })
-        }
-        const entries = Array.isArray(body) ? body : [body]
-        const wantsAdmin = entries.some(e =>
-            e && typeof e.method === 'string' && config.ADMIN_METHODS.has(e.method.toLowerCase()))
-        if(wantsAdmin){
-            const header = req.headers['authorization']
-            if(!config.UTXO_TRACKER_API_KEY || !header
-                || !config.keyEquals(header, 'Bearer ' + config.UTXO_TRACKER_API_KEY)){
-                return res.status(401).json({
-                    jsonrpc: '2.0', id: (!Array.isArray(body) && body && body.id) || null,
-                    error: { code: -32001, message: 'Unauthorized' }
-                })
-            }
-        }
-        next()
-    })
-}
-
 // Last middleware: body-parser failures (bad JSON, oversize body) and router
 // param-decode failures (bad percent-escape) carry a 4xx status and would
 // otherwise reach Express's default handler, which renders an HTML page with the
@@ -336,13 +298,33 @@ function installErrorHandler(app) {
     })
 }
 
-function listen(app, tracker, trackerExited, config) {
+// Records the block loop each launch starts. The admin RPCs relaunch the loop and
+// drop the promise they get back, so the shutdown drain reads the current one from
+// here. Once shutdown has begun a relaunch is refused, since a loop started then
+// would run on past the stores the drain is about to close.
+function createLoopRecorder(launchTracker) {
+    const recorder = { current: undefined, closing: false }
+    recorder.launch = typeof launchTracker !== 'function' ? launchTracker : (tracker) => {
+        if (recorder.closing) {
+            logger.info('Shutdown in progress: not relaunching the tracker')
+            return Promise.resolve()
+        }
+        recorder.current = launchTracker(tracker)
+        return recorder.current
+    }
+    return recorder
+}
+
+function listen(app, tracker, loops, config) {
     const server = app.listen(config.UTXO_TRACKER_API_PORT, () => {
         logger.info('API listening on port ' + config.UTXO_TRACKER_API_PORT)
         logger.info(memoryBudget.describe(config.BULK_SYNC_RAM_BUDGET))
     })
+    const drain = createTrackerDrain({ tracker, server, loopSettled: () => loops.current })
     const shutdown = createShutdown({
-        drain: createTrackerDrain({ tracker, server, loopSettled: trackerExited })
+        drain: () => { loops.closing = true; return drain() },
+        exit: (code, remainingMs, shouldExit) => exitAfterFlush(code, { timeoutMs: remainingMs, shouldExit }),
+        forceExit: (code) => process.exit(code)
     })
     process.on('SIGTERM', () => shutdown('SIGTERM'))
     process.on('SIGINT', () => shutdown('SIGINT'))
@@ -363,8 +345,14 @@ function createApp(config){
     // Create the app
     const app = express()
     appTrackers.set(app, tracker)
+    const loops = createLoopRecorder(config.launchTracker)
+    appLoops.set(app, loops)
     installBaseMiddleware(app, config)
+    // Parse ahead of the gates, raise parse errors behind them: see splitBodyParser.
+    const bodyParse = concurrencyGate.splitBodyParser(express.json())
+    app.use(bodyParse.parse)
     const { probeGate, requestGate } = installConcurrencyGates(app, config)
+    app.use(bodyParse.raise)
     installMetrics(app, tracker, config, { request: requestGate, probe: probeGate })
     installAdminGuard(app, config)
     const routeContext = Object.freeze({
@@ -380,7 +368,7 @@ function createApp(config){
         getFreshnessMeta: (height, readAt) => getFreshnessMeta(tracker, height, readAt),
         setFreshnessHeaders: (res, height, readAt) => setFreshnessHeaders(tracker, res, height, readAt),
         DB_NAME: config.DB_NAME,
-        launchTracker: config.launchTracker,
+        launchTracker: loops.launch,
         jsonRpcMethods: config.jsonRpcMethods
     })
     registerRoutes(routeContext)
@@ -392,8 +380,8 @@ function createApp(config){
 async function startApi(config){
     const app = createApp(config)
     const tracker = appTrackers.get(app)
-    const trackerExited = config.launchTracker(tracker)
-    listen(app, tracker, trackerExited, config)
+    const loops = appLoops.get(app)
+    loops.launch(tracker)
+    listen(app, tracker, loops, config)
 }
-
-module.exports = { createApp, startApi, resolveRateLimitRpm, resolveTrustProxyHops, installBaseMiddleware }
+module.exports = { parsePageOpts, createApp, startApi, resolveRateLimitRpm, resolveTrustProxyHops, installBaseMiddleware, createLoopRecorder }

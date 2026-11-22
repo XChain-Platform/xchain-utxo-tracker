@@ -50,6 +50,9 @@ const REGISTRY = [
     { name: 'kOutBlk',    len: 69, key: () => LevelUpStore.kOutBlk(HASH64, TXID64, IDX) },
     { name: 'kTxExact',   len: 33, key: () => LevelUpStore.kTxExact(HASH64) },
     { name: 'kTxBlockRecovery', len: 65, key: () => LevelUpStore.kTxBlockRecovery(HASH64, TXID64) },
+    { name: 'kHistory',   len: 69, key: () => LevelUpStore.kHistory(BUF32, 0, TXID64) },
+    { name: 'kHistoryBlock', len: 97, key: () => LevelUpStore.kHistoryBlock(HASH64, BUF32, TXID64) },
+    { name: 'kHistoryWatch', len: 34, key: () => LevelUpStore.kHistoryWatch(BUF32, 0x02) },
 ];
 
 // Buffer-variant builders mirror a hex builder's bytes, not a new family.
@@ -148,5 +151,23 @@ describe('LevelUpDb key-schema invariants', function () {
         const prefix = key.slice(0, 33);
         expect(Buffer.compare(key, LevelUpStore.rangeEnd(prefix))).to.be.at.most(0);
         expect(Buffer.compare(key, prefix)).to.be.above(0);
+    });
+
+    // The history read seeks [A][scriptHash] and the reorg unwind scans [V][blockHash]:
+    // the newest (height 0xFFFFFFFE) and oldest (height 0) keys of each must sort in range.
+    it('kHistory / kHistoryBlock: their prefix scans reach every key of one address or block', function () {
+        for (const height of [0, 0xFFFFFFFE]) {
+            const a = LevelUpStore.kHistory(BUF32, height, 'ff'.repeat(32));
+            expect(Buffer.compare(a, LevelUpStore.rangeEnd(a.slice(0, 33)))).to.be.at.most(0);
+            expect(Buffer.compare(a, a.slice(0, 33))).to.be.above(0);
+        }
+        const v = LevelUpStore.kHistoryBlock(HASH64, Buffer.alloc(32, 0xFF), 'ff'.repeat(32));
+        expect(Buffer.compare(v, LevelUpStore.rangeEnd(v.slice(0, 33)))).to.be.at.most(0);
+    });
+
+    it('kHistory orders one address newest block first', function () {
+        const older = LevelUpStore.kHistory(BUF32, 100, TXID64);
+        const newer = LevelUpStore.kHistory(BUF32, 101, TXID64);
+        expect(Buffer.compare(newer, older)).to.be.below(0);
     });
 });
