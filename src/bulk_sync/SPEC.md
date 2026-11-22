@@ -54,6 +54,9 @@ streams like `meta-*.dat`).
 ## outputs-*.dat  (magic `XCHNOUT2`, record_size = 113)
 
 One record per TxOut in the block range. Coinbases included. Unsorted, append-only.
+A provably unspendable output (an OP_RETURN script, or one longer than the 10000-byte
+script cap; `src/common/script.js`) gets no record, so it seeds no O/H/S/Z/W row,
+matching the live sync path; later outputs keep their real vout.
 
 ```
 offset    size  field

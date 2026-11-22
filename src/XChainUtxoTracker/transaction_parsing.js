@@ -18,6 +18,7 @@
 
 const { createHash } = require('crypto')
 const util = require('../common/util')
+const { isProvablyUnspendable } = require('../common/script.js')
 const { DEBUG_TRACE } = require('./constants.js')
 const XChainUtxoTracker = require('../XChainUtxoTracker.js')
 
@@ -70,6 +71,8 @@ async function parseTransactionInputs(db, transaction, blockHash, nextTxId, addH
 async function parseTransactionOutputs(db, transaction, blockHash, blockHeight, nextTxId, isCoinbase, addHints, removeSpent) {
         // Process all outputs concurrently (each output is fully independent
         await Promise.all(transaction.outs.map(async (nextOutput, txOutputIndex) => {
+            // Same rule as parseTxOutputs: an unspendable output gets no UTXO records.
+            if (isProvablyUnspendable(nextOutput.script)) return
             const scriptHash = createHash('sha256').update(nextOutput.script).digest('hex')
 
             await db.insertOutput({scriptPubKey:scriptHash, txHash:nextTxId, outputIndex:txOutputIndex, value:nextOutput.value, height:blockHeight, fullTxHash:nextTxId, coinbase:isCoinbase})
@@ -127,6 +130,10 @@ module.exports = {
         // here raced, producing non-deterministic S-record winners.
         for (let txOutputIndex = 0; txOutputIndex < transaction.outs.length; txOutputIndex++) {
             const nextOutput = transaction.outs[txOutputIndex]
+            // An OP_RETURN data output (every protocol tx and every segwit coinbase carries
+            // one) can never be spent, so no spend would ever delete its O/H rows and its
+            // S row has no address to be read through. Bulk sync drops the same outputs.
+            if (isProvablyUnspendable(nextOutput.script)) continue
             const _h0 = DEBUG_TRACE ? Date.now() : 0
             // Keep the hash as a Buffer: insertOutput / insertOutputHint /
             // insertOutputScriptBlock all accept Buffers and use buf.copy()
@@ -148,12 +155,8 @@ module.exports = {
                 if (DEBUG_TRACE) _tt.sb += Date.now() - _s0
 
                 await db.insertOutputBlock({scriptPubKey: scriptHash, txHash: nextTxId, outputIndex: txOutputIndex, blockHash})
-                // The address's native history: this tx paid it this output. An
-                // OP_RETURN (0x6a) data output has no address to ask for it and can
-                // never be spent, so it gets no row; every protocol tx carries one.
-                if (nextOutput.script[0] !== 0x6a) {
-                    await db.addHistoryMovement({script: scriptHash, blockHash, txid: nextTxId, received: BigInt(nextOutput.value)})
-                }
+                // The address's native history: this tx paid it this output.
+                await db.addHistoryMovement({script: scriptHash, blockHash, txid: nextTxId, received: BigInt(nextOutput.value)})
             }
         }
 

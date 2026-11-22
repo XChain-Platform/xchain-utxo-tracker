@@ -24,6 +24,7 @@
  ********************************************************************/
 
 const crypto = require('crypto')
+const { isProvablyUnspendable } = require('../common/script.js')
 
 function reverseBytes32(src) {
     const out = Buffer.alloc(32)
@@ -46,6 +47,9 @@ function appendOutputs(tx, txid, height, blockHash, writer) {
     const outs = tx.outs
     for (let vout = 0; vout < outs.length; vout++) {
         const o = outs[vout]
+        // Dropped here so derive_keys writes no O/H/S/Z/W for it, matching the live
+        // path; the real vout index of every later output is kept.
+        if (isProvablyUnspendable(o.script)) continue
         const scriptHash = sha256(o.script)
         writer.append(
             txid,

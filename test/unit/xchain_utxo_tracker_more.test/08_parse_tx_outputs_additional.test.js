@@ -35,7 +35,7 @@ function makeTx(opts = {}) {
 function makeOutput(valueSats = 100000000) {
     return {
         value: BigInt(valueSats),
-        script: crypto.randomBytes(25)
+        script: Buffer.concat([Buffer.from('76a914', 'hex'), crypto.randomBytes(20), Buffer.from('88ac', 'hex')])
     };
 }
 
