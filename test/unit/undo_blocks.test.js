@@ -193,6 +193,8 @@ describe('undo-blocks enforces network-specific safety ceilings', function () {
     }
     expect(safeUndoBlocksCeiling('litecoin-mainnet')).to.equal(MAX_SAFE_UNDO_BLOCKS);
     expect(safeUndoBlocksCeiling('litecoin-testnet')).to.equal(5006);
+    expect(safeUndoBlocksCeiling('bitcoin-testnet')).to.equal(5006);
+    expect(safeUndoBlocksCeiling('dogecoin-testnet')).to.equal(MAX_SAFE_UNDO_BLOCKS);
   });
 
   it('refuses a network with no net suffix rather than guessing a net', function () {
@@ -225,11 +227,25 @@ describe('undo-blocks per-network window: the coin override and the lockstep war
     expect(resolveUndoBlocks('bitcoin-mainnet')).to.equal(60);
   });
 
-  it('the lockstep guard still fires on a testnet window pushed past the ceiling', function () {
-    process.env[KEY] = String(MAX_SAFE_UNDO_BLOCKS + 1);
-    expect(resolveUndoBlocks('bitcoin-testnet')).to.equal(MAX_SAFE_UNDO_BLOCKS + 1);
-    expect(errorStub.args.join('\n')).to.match(/exceeds the decoder dispenser-expiry safe depth/);
-    expect(errorStub.args.join('\n')).to.match(/bitcoin-testnet/);
+  // BTC testnet carries the deliberate 5000-block override under its own 5006 ceiling.
+  it('the live BTC testnet 5000-block override sits inside its ceiling and does not warn', function () {
+    process.env[KEY] = '5000';
+    expect(resolveUndoBlocks('bitcoin-testnet')).to.equal(5000);
+    expect(errorStub.called).to.equal(false);
+  });
+
+  it('the lockstep guard still fires on a BTC testnet window pushed past its ceiling', function () {
+    process.env[KEY] = '5007';
+    expect(resolveUndoBlocks('bitcoin-testnet')).to.equal(5007);
+    expect(errorStub.args.join('\n')).to.match(/exceeds the decoder dispenser-expiry safe depth \(5006\)/);
+  });
+
+  it('the lockstep guard still fires on a standard-ceiling testnet window pushed past 126', function () {
+    process.env.XCHAIN_UNDO_BLOCKS_DOGE = String(MAX_SAFE_UNDO_BLOCKS + 1);
+    try {
+      expect(resolveUndoBlocks('dogecoin-testnet')).to.equal(MAX_SAFE_UNDO_BLOCKS + 1);
+      expect(errorStub.args.join('\n')).to.match(/dogecoin-testnet/);
+    } finally { delete process.env.XCHAIN_UNDO_BLOCKS_DOGE; }
   });
 });
 

@@ -65,14 +65,17 @@ const DEFAULT_UNDO_BLOCKS = {
 }
 
 // The recovery window MUST NOT exceed the decoder's dispenser-expiry safe depth.
-// The standard ceiling and the LTC testnet ceiling MUST equal their matching
-// decoder depths:
+// The standard ceiling and the LTC and BTC testnet ceilings MUST equal their
+// matching decoder depths:
 // the decoder aborts reorg recovery past that depth, so an XCHAIN_UNDO_BLOCKS_<COIN>
 // env override that raises a chain's tracker window above this ceiling silently
 // splits the two components' effective reorg windows. Raising either constant
 // requires raising both, in lockstep.
 const MAX_SAFE_UNDO_BLOCKS = 126
 const LTC_TESTNET_SAFE_UNDO_BLOCKS = 5006
+// BTC testnet runs a deliberate 5000-block XCHAIN_UNDO_BLOCKS_BTC override, so its
+// ceiling follows the LTC testnet pairing rather than the standard 126.
+const BTC_TESTNET_SAFE_UNDO_BLOCKS = 5006
 
 // Map a network string ('bitcoin-mainnet', 'dogecoin-regtest', ...) to a coin
 // tick, THROUGH the canonical registry (item 5803). A hardcoded coin-name list
@@ -112,7 +115,9 @@ function undoBlocksKey(coin, net){
 
 function safeUndoBlocksCeiling(network){
     const key = undoBlocksKey(coinFromNetwork(network), netFromNetwork(network))
-    return key === 'LTC_TESTNET' ? LTC_TESTNET_SAFE_UNDO_BLOCKS : MAX_SAFE_UNDO_BLOCKS
+    if (key === 'LTC_TESTNET') return LTC_TESTNET_SAFE_UNDO_BLOCKS
+    if (key === 'BTC_TESTNET') return BTC_TESTNET_SAFE_UNDO_BLOCKS
+    return MAX_SAFE_UNDO_BLOCKS
 }
 
 // SINGLE-SOURCED env-override resolver, shared by the live worker
