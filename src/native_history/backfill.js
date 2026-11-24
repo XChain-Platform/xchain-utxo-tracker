@@ -23,9 +23,16 @@
 //
 // Bounded: at most `concurrency` passes run at once, each over at most `passMax`
 // addresses, a chunk of `chunkBlocks` blocks at a time with a pause after each.
-// Resumable: each chunk commits the address's rows with its progress (next
-// height and open outputs), and a restart picks every unfinished address up
-// from its last committed chunk. A chunk is written only for blocks this store
+// Resumable: each chunk commits the address's rows, and its progress (next
+// height and open outputs) is checkpointed with them; a restart picks every
+// unfinished address up from its last checkpoint. The progress record holds
+// every open output, so writing it each chunk would make a deep address's
+// writes grow as open outputs times chunks. It is stored only once the blocks
+// scanned since the last checkpoint earn it (OPEN_PER_BLOCK outputs a block),
+// which keeps the record bytes written per block bounded whatever the open set.
+// A lagging checkpoint is safe: rows are absolute puts, so rescanning from an
+// older (next, open) pair rewrites the same rows. The in-memory progress still
+// moves every chunk, so a rollback and a pass retry see the true position. A chunk is written only for blocks this store
 // has committed, re-checked inside the history write section, so a reorg can
 // neither slip a stale block in nor strand rows the rollback did not see.
 
@@ -37,10 +44,14 @@ const { getLogger } = require('../observability')
 
 const logger = getLogger()
 
+// Open outputs each scanned block earns toward the next progress checkpoint.
+// An address with up to this many outputs a block is checkpointed every chunk.
+const OPEN_PER_BLOCK = 50
+
 function stateFrom(hex, entry){
     return {
         hex, buf: entry.buf, latin: entry.buf.toString('latin1'), target: -1, epoch: entry.epoch,
-        next: entry.progress.next,
+        next: entry.progress.next, unsavedBlocks: 0,
         open: new Map((entry.progress.open || []).map(([outpoint, value]) => [outpoint, BigInt(value)])),
     }
 }
@@ -219,15 +230,29 @@ class HistoryBackfill {
             const checks = await this.tracker.db.getBackfillBlockChecks(scanned.map((b) => b.hash))
             if (checks.some((c, i) => c.height !== scanned[i].height)) return false
             const inWindow = new Map(scanned.map((b, i) => [b.hash, checks[i].inWindow]))
-            const progress = work.map((w) => ({ script: w.buf, record: w.open.size > this.options.openMax
-                ? { next: w.next, done: false, unavailable: true, open: [] } : progressRecord(w, false) }))
+            const progress = work.map((w) => this.chunkProgress(w, scanned.length))
             const writes = rows.filter((r) => r.state.open.size <= this.options.openMax).map((r) => ({
                 script: r.state.buf, height: r.height, txid: r.txid, received: r.received, sent: r.sent,
                 time: r.time, blockHash: r.hash, indexed: inWindow.get(r.hash) }))
-            await withStoreCommit(this.tracker, () => this.tracker.db.writeHistoryBackfill(writes, progress))
+            const due = progress.filter((p) => p.save).map(({ script, record }) => ({ script, record }))
+            await withStoreCommit(this.tracker, () => this.tracker.db.writeHistoryBackfill(writes, due))
             for (const { script, record } of progress) this.watch.get(script.toString('hex')).progress = record
             return true
         })
+    }
+
+    // One address's progress after a chunk of `blocks` blocks, and whether it is
+    // stored now. Unavailable is stored at once; a state with no checkpoint
+    // counter (built outside stateFrom) is stored every chunk.
+    chunkProgress(w, blocks){
+        if (w.open.size > this.options.openMax) {
+            return { script: w.buf, save: true, record: { next: w.next, done: false, unavailable: true, open: [] } }
+        }
+        const perBlock = this.options.checkpointOpenPerBlock ?? OPEN_PER_BLOCK
+        const unsaved = (w.unsavedBlocks ?? Infinity) + blocks
+        const save = w.open.size <= unsaved * perBlock
+        w.unsavedBlocks = save ? 0 : unsaved
+        return { script: w.buf, save, record: progressRecord(w, false) }
     }
 }
 
